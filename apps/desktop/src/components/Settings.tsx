@@ -14,6 +14,7 @@ import {
   UI_MODES,
   type EngineSelection,
   type ExtensionBundle,
+  type FusionModeOverride,
   type FusionPreset,
   type FusionStrategy,
   type LanguageRuntime,
@@ -502,6 +503,61 @@ function EnginesSection() {
                 </button>
               </div>
             ))}
+            <div className="setx-permode">
+              <span className="eyebrow">MODELOS POR ATIVIDADE (OPCIONAL)</span>
+              <p className="setx-hint">
+                Defina modelos específicos por aba — ex.: Code com um orquestrador mais forte. Em branco, a aba usa o
+                preset base acima.
+              </p>
+              {UI_MODES.map((activity) => {
+                const override = draft.perMode?.[activity];
+                const patchMode = (patch: FusionModeOverride | undefined) => {
+                  const perMode = { ...(draft.perMode ?? {}) };
+                  if (patch && (patch.orchestrator || patch.executors?.length)) perMode[activity] = patch;
+                  else delete perMode[activity];
+                  setDraft({ ...draft, perMode: Object.keys(perMode).length ? perMode : undefined });
+                };
+                const asKey = (target?: ModelTarget) => (target ? `${target.providerId}/${target.model}` : "");
+                const fromKey = (key: string): ModelTarget | undefined => {
+                  const entry = settings.modelCatalog.find((item) => `${item.providerId}/${item.model}` === key);
+                  return entry ? { providerId: entry.providerId, model: entry.model } : undefined;
+                };
+                return (
+                  <div className="setx-permode-row" key={activity}>
+                    <strong>{modeLabels[activity]}</strong>
+                    <select
+                      aria-label={`Orquestrador de ${modeLabels[activity]}`}
+                      value={asKey(override?.orchestrator)}
+                      onChange={(event) =>
+                        patchMode({ ...override, orchestrator: fromKey(event.target.value) })
+                      }
+                    >
+                      <option value="">orquestrador — usar o preset base</option>
+                      {settings.modelCatalog.map((entry) => (
+                        <option key={`o-${entry.providerId}/${entry.model}`} value={`${entry.providerId}/${entry.model}`}>
+                          {entry.label ?? entry.model} · {entry.providerId}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`Executor de ${modeLabels[activity]}`}
+                      value={asKey(override?.executors?.[0])}
+                      onChange={(event) => {
+                        const target = fromKey(event.target.value);
+                        patchMode({ ...override, executors: target ? [target] : undefined });
+                      }}
+                    >
+                      <option value="">executor — usar o preset base</option>
+                      {settings.modelCatalog.map((entry) => (
+                        <option key={`e-${entry.providerId}/${entry.model}`} value={`${entry.providerId}/${entry.model}`}>
+                          {entry.label ?? entry.model} · {entry.providerId}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
             <label className="lg-field">
               Notas (opcional)
               <input

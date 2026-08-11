@@ -24,6 +24,7 @@ import {
   fusionRolePolicy,
   parseSubtasks
 } from "./fusionPrompts";
+import { resolvePresetForMode } from "./fusionResolve";
 import { streamChat, type ChatMessage, type GatewaySession } from "./gateway";
 import { runtime } from "./runtime";
 
@@ -394,7 +395,8 @@ export async function chatOnce(
     case "fusion": {
       const preset = ctx.fusionPresets.find((item) => item.id === selection.presetId);
       if (!preset) throw new Error("Preset de fusion não encontrado.");
-      return fusionTurn(preset, mode, messages, ctx, events, signal);
+      // Modelos específicos da atividade (aba) sobrepõem o preset base.
+      return fusionTurn(resolvePresetForMode(preset, mode), mode, messages, ctx, events, signal);
     }
   }
 }
