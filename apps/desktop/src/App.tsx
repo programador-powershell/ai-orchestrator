@@ -4,7 +4,6 @@ import {
   lazy,
   useEffect,
   useState,
-  type CSSProperties,
   type ErrorInfo,
   type ReactNode
 } from "react";
@@ -36,6 +35,7 @@ import {
 } from "lucide-react";
 import { listWorkspaces } from "./lib/gateway";
 import { runtime } from "./lib/runtime";
+import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
 import { GlassFilters } from "./components/GlassFilters";
 import { Composer } from "./components/Composer";
@@ -249,13 +249,17 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.ctrlKey && !event.shiftKey && !event.altKey) {
-        const index = Number(event.key) - 1;
         const visible = useApp.getState().settings.visibleModes;
         const list = visible.length ? visible : [...UI_MODES];
-        if (index >= 0 && index < list.length) {
+        const target = modeForDigitKey(event.key, list);
+        if (target) {
           event.preventDefault();
-          switchModeWithTransition(useApp.getState().mode, list[index], () => setMode(list[index]));
+          switchModeWithTransition(useApp.getState().mode, target, () => setMode(target));
         }
+      }
+      if (isSettingsShortcut(event)) {
+        event.preventDefault();
+        useApp.getState().setSettingsOpen(!useApp.getState().settingsOpen);
       }
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
@@ -312,6 +316,25 @@ function App() {
           <Plus size={16} />
           {railOpen && railAction[mode]}
         </button>
+        <nav className="rail-nav" aria-label="Modos">
+          {visibleModes.map((item) => {
+            const Icon = modeMeta[item].icon;
+            return (
+              <button
+                key={item}
+                className={`rail-nav-item ${mode === item ? "active" : ""}`}
+                aria-pressed={mode === item}
+                title={railOpen ? undefined : modeMeta[item].label}
+                onClick={() => switchModeWithTransition(mode, item, () => setMode(item))}
+              >
+                <span className="rail-nav-icon">
+                  <Icon size={15} />
+                </span>
+                {railOpen && <span className="rail-nav-label">{modeMeta[item].label}</span>}
+              </button>
+            );
+          })}
+        </nav>
         {railOpen && (
           <nav className="rail-panel" key={mode}>
             <Suspense fallback={<div className="mode-loading" style={{ height: 120 }} />}>
@@ -321,7 +344,14 @@ function App() {
         )}
         {!railOpen && <nav />}
         <div className="rail-footer">
-          <button onClick={() => setSettingsOpen(true)}>
+          <button
+            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+            aria-label={theme === "light" ? "Ativar modo escuro" : "Ativar modo claro"}
+          >
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+            {railOpen && (theme === "light" ? "Modo escuro" : "Modo claro")}
+          </button>
+          <button onClick={() => setSettingsOpen(true)} title="Configurações (Ctrl+,)">
             <Settings size={16} />
             {railOpen && "Configurações"}
           </button>
@@ -330,24 +360,8 @@ function App() {
 
       <section className="workspace">
         <header className="topbar glass" data-tauri-drag-region>
-          <div className="mode-tabs">
-            <span className="tab-lens" style={{ "--tab": Math.max(0, visibleModes.indexOf(mode)) } as CSSProperties} />
-            {visibleModes.map((item) => {
-              const Icon = modeMeta[item].icon;
-              return (
-                <button
-                  key={item}
-                  aria-pressed={mode === item}
-                  className={mode === item ? "selected" : ""}
-                  onClick={() => switchModeWithTransition(mode, item, () => setMode(item))}
-                >
-                  <span className="mode-icon">
-                    <Icon size={14} />
-                  </span>
-                  <span>{modeMeta[item].label}</span>
-                </button>
-              );
-            })}
+          <div className="topbar-mode" data-tauri-drag-region>
+            <strong>{modeMeta[mode].label}</strong>
           </div>
           <div className="topbar-actions" id="topbar-actions" />
           <div className="topbar-right">
@@ -356,13 +370,6 @@ function App() {
               <span className="pill-label">
                 {gatewayConnected ? "Gateway conectado" : runtimeStatus.running ? "Runtime local" : "Desconectado"}
               </span>
-            </button>
-            <button
-              className="theme-toggle"
-              onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-              aria-label={theme === "light" ? "Ativar modo escuro" : "Ativar modo claro"}
-            >
-              <span className="theme-thumb">{theme === "light" ? <Sun size={12} /> : <Moon size={12} />}</span>
             </button>
             <div className="window-controls">
               <button onClick={() => void appWindow?.minimize()} aria-label="Minimizar">
