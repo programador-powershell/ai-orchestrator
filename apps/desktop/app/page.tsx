@@ -22,7 +22,11 @@ export default function Page() {
         ]);
         migrateLegacyLocalSettings();
         await configureBackgroundUpdater().catch(() => undefined);
-      })();
+      })().catch((cause: unknown) => {
+        // Boot não pode derrubar a UI, mas falha de migração/chunk precisa
+        // ficar visível — antes rodava síncrono e quebrava o render inteiro.
+        console.error("boot do app falhou:", cause);
+      });
     });
   }, []);
 
