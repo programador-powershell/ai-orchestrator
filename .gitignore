@@ -2,10 +2,13 @@ node_modules/
 .pnpm-store/
 dist/
 target/
+out/
+.next/
+next-env.d.ts
 *.tsbuildinfo
-apps/*/vite.config.js
-apps/*/vite.config.d.ts
 packages/*/dist/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 .env
 .env.*
 !.env.example
