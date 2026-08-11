@@ -11,12 +11,13 @@
 ## :heavy_check_mark: Features
 
 - Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
-- **7 abas** — Chat, Code, Design, Data, Work, Security e Agent — todas com chat e modo planejamento.
-- **Fine-Tuning 100% em nuvem**: dataset builder + validação + job na API do provedor (chave BYOK); nada é instalado e nenhum código de terceiros é embutido — saída na conversa como cartões.
+- **Shell estilo Unsloth Studio**: navegação de modos na sidebar (pílulas, colapsável), topbar slim, Settings em modal (Ctrl+,).
+- **9 abas** — Chat, Code, Design, Data, Work, Security, Agent, Game e **Tuning** — com comandos de barra (`/review`, `/explain`, `/testgen`) no composer.
+- **Fine-Tuning 100% em nuvem**: harness no gateway (jobs persistidos, eventos SSE, catálogo, reconciliador) + aba Train (Configurar/Execução/Histórico, SFT/DPO, hiperparâmetros, custo estimado); nada instalado, nenhum código de terceiros embutido.
 - **Memória persistente** independente de fornecedor (SQLite/IndexedDB), com import de histórico Claude/OpenAI.
 - **Modelos fusion**: orquestrador+executor, merge e race entre modelos.
 - **BYOK** (traga sua própria chave) armazenado no keyring do sistema operacional.
-- **Editor ERD** na aba Data com export SQL (PostgreSQL, MySQL e ANSI).
+- **Editor ERD** na aba Data com export SQL (PostgreSQL, MySQL, ANSI, SQLite e MSSQL), migração up/down e export SVG.
 - **Editor de vídeo** estilo OpenCut na aba Design.
 - **Sandbox** estilo ai-jail na aba Security.
 - **Import de plugins/skills** nas Configurações.
@@ -28,19 +29,19 @@
 
 ## :new: Releases Notes
 
-### :up: V.4.1
+### :up: V.4.2
 ### :warning: Latest Changes
 
-- **Harness de fine-tuning no gateway** (Rust/Axum): jobs persistidos (`fine_tune_jobs`), eventos com replay via SSE (`/finetune/jobs/:id/events/stream`) + polling, validação server-side de dataset (chat e DPO), catálogo de modelos tunados e reconciliador em background que acompanha o job mesmo com o app fechado. LGPD: nenhum conteúdo de dataset é persistido, só metadados.
-- **Aba Train estilo Studio**: 3 sub-abas (Configurar / Execução / Histórico), seleção de método **SFT ou DPO**, hiperparâmetros (épocas, batch, LR multiplier), **estimativa de custo** pré-upload e cancelamento de job.
+- **Comandos de barra** no composer (`/review`, `/explain`, `/testgen`): prompts reutilizáveis expandidos antes do envio, com `$ARGS` e variáveis nomeadas.
+- **Aba Data com paridade drawDB ampliada**: dialetos **SQLite** e **MSSQL** no export, relação **n-n** agora gera tabela de junção real (2 FKs + PK composta), FKs com **ON UPDATE/ON DELETE**, **migração down** (rollback `down.sql`) e **export do diagrama como SVG**.
 
 ### :pushpin: Fixes
 
-- `provider_fetch` e o payload do job passam a suportar `method`/`validation_file`; suffix segue truncado em 18 chars (regra da API).
+- Correctness: relação n-n exportava só FK simples; agora materializa a tabela de junção. `downloadText` usa MIME correto para `.svg`.
 
 ### :construction_worker: Refactors
 
-- Conversores de formato (alpaca/sharegpt→chat), validação DPO e estimativa de custo extraídos para `lib/tunelab` (puros, com testes); auth/RBAC do gateway promovidos a `pub(crate)` para reuso no módulo de fine-tuning.
+- Conversores/validação de dataset em `lib/tunelab`, comandos em `lib/commands` e render de ERD em `lib/erdSvg` — todos puros e testados (309 testes no desktop).
 
 ## :wrench: Instalação
 
