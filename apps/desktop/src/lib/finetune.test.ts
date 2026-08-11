@@ -50,6 +50,37 @@ describe("buildJobPayload", () => {
   it("omite suffix vazio", () => {
     expect(buildJobPayload("file-x", "gpt-4o-mini")).toEqual({ training_file: "file-x", model: "gpt-4o-mini" });
   });
+
+  it("monta method supervised com hiperparâmetros quando há opções", () => {
+    const payload = buildJobPayload("file-a", "gpt-4o-mini", undefined, {
+      epochs: 3,
+      batchSize: 4,
+      lrMultiplier: 2
+    });
+    expect(payload).toEqual({
+      training_file: "file-a",
+      model: "gpt-4o-mini",
+      method: {
+        type: "supervised",
+        supervised: { hyperparameters: { n_epochs: 3, batch_size: 4, learning_rate_multiplier: 2 } }
+      }
+    });
+  });
+
+  it("monta method dpo com validation_file e omite hiperparâmetro ausente", () => {
+    const payload = buildJobPayload("file-b", "gpt-4o-mini", "pref", {
+      method: "dpo",
+      epochs: 1,
+      validationFileId: "file-val"
+    });
+    expect(payload).toEqual({
+      training_file: "file-b",
+      model: "gpt-4o-mini",
+      suffix: "pref",
+      validation_file: "file-val",
+      method: { type: "dpo", dpo: { hyperparameters: { n_epochs: 1 } } }
+    });
+  });
 });
 
 describe("normalizeJob", () => {
