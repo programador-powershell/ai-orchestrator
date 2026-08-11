@@ -10,8 +10,9 @@
 
 ## :heavy_check_mark: Features
 
-- Interface **liquid glass**: app desktop Tauri 2 + React 19.
+- Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
 - **7 abas** — Chat, Code, Design, Data, Work, Security e Agent — todas com chat e modo planejamento.
+- **Fine-Tuning 100% em nuvem**: dataset builder + validação + job na API do provedor (chave BYOK); nada é instalado e nenhum código de terceiros é embutido — saída na conversa como cartões.
 - **Memória persistente** independente de fornecedor (SQLite/IndexedDB), com import de histórico Claude/OpenAI.
 - **Modelos fusion**: orquestrador+executor, merge e race entre modelos.
 - **BYOK** (traga sua própria chave) armazenado no keyring do sistema operacional.
@@ -21,25 +22,26 @@
 - **Import de plugins/skills** nas Configurações.
 - Gateway próprio (Rust/Axum, PostgreSQL e Redis) e runtime local opcional.
 - Instalador `AI-Orchestrator-Setup.exe` com download HTTPS retomável e validação Ed25519, SHA-256 e Authenticode.
+- **Clean-room**: referências externas (Unsloth Studio, drawdb, opencode, soup) documentadas em `docs/creditos-inspiracao.md` — zero código de terceiros no repositório.
 
 ![App Screenshot](https://placehold.co/960x540?text=AI+Orchestrator+V2)
 
 ## :new: Releases Notes
 
-### :up: V.2.3
+### :up: V.3
 ### :warning: Latest Changes
 
-- Fine-Tuning 100% interno: o soup viaja EMBUTIDO no app (`third_party/soup`, Apache-2.0, fonte + templates como recursos do desktop) e roda da cópia local via Python — nada é instalado. Escada real de detecção: binário no PATH → cópia embutida → fonte sem runtime (rotulado honestamente); treino na nuvem interno via API de fine-tuning (chave BYOK) segue como caminho principal, com job persistido, acompanhamento automático e modelo resultante no catálogo.
-- Saída de execução na CONVERSA: comandos do soup, validação de dataset, eventos do job e avisos aparecem como cartões na janela de conversa da aba (código com rótulo de linguagem e copiar), junto das respostas do agente — como o Claude mostra diffs na conversa.
-- Repositórios de referência embutidos em `third_party/` (clones vendorizados sem `.git`): soup (Apache-2.0, executável), opencode (MIT, referência do CLI nativo) e drawdb (AGPL-3.0 — **somente referência**, nunca compilado no app; uso além disso requer análise TI/SI). Papéis e regras em `third_party/THIRD_PARTY.md`.
+- **Frontend migrado de Vite 7 para Next.js 16.3** (App Router, export estático em `out/`): o app segue SPA dentro do Tauri (`dynamic` com `ssr:false`), com boot guardado contra o duplo-efeito do StrictMode e checagem de porta 1420 no dev (o Next não tem strictPort).
+- **Fine-Tuning só nuvem**: removida a execução local do soup (escada binário→embutido, editor `soup.yaml`, botão GPU); o fluxo interno — dataset builder, validação, upload, job BYOK, eventos na conversa e catálogo — permanece completo.
+- **`third_party/` removido por inteiro** (soup, opencode e drawdb): as funções seguem nativas no app e as referências externas estão registradas em `docs/creditos-inspiracao.md` (regime clean-room; AGPL nunca entra no repo).
 
 ### :pushpin: Fixes
 
-- Barra superior não quebra mais no redimensionamento: tiers por container query medindo a largura REAL da topbar (rail aberta/recolhida entra na conta) — abas encolhem para ícones, segmented mostra só o ativo, status vira ponto compacto e a área de ações recorta (`overflow: clip`) em vez de invadir os controles da janela.
+- `.gitignore` cobre os artefatos do Next (`out/`, `.next/`, `next-env.d.ts`) e a config local do Claude; regras dos `vite.config` gerados mantidas para o bootstrapper (que segue no Vite).
 
 ### :construction_worker: Refactors
 
-- TuneView sem log bruto: painel de execução substituído pelo feed do thread da aba (mensagens persistem no histórico de conversas do rail).
+- tsconfig do desktop unificado (exclusão de testes preservada para o type-check do `next build`); dependências do Vite removidas do desktop; React atualizado para 19.2.
 
 ## :wrench: Instalação
 
@@ -63,15 +65,14 @@ corepack pnpm build
 ```
 ├── Raiz
 │   ├── apps
-│   │   ├── desktop        # cliente Tauri 2/React 19 distribuído ao usuário
+│   │   ├── desktop        # cliente Tauri 2 + Next.js 16.3/React 19 distribuído ao usuário
 │   │   └── bootstrapper   # instalador gráfico que baixa e valida o NSIS do cliente
 │   ├── packages
 │   │   └── contracts      # contratos públicos compartilhados pelo cliente e gateway
 │   ├── services
 │   │   └── gateway        # API Rust/Axum, PostgreSQL e Redis
 │   ├── scripts            # build local, assinatura e manifestos de release
-│   ├── docs               # documentação de release e specs de design
-│   └── third_party        # repositórios embutidos: soup (Apache-2.0, executável), opencode (MIT) e drawdb (AGPL-3.0, só referência)
+│   └── docs               # documentação de release, specs de design e créditos (clean-room)
 └── main
 ```
 
