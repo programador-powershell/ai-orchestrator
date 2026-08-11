@@ -71,6 +71,8 @@ export interface AppSettings {
   visibleModes: UiMode[];
   /** Abas que este perfil já conheceu — permite exibir abas NOVAS sem ressuscitar ocultadas. */
   modesSeen: UiMode[];
+  /** Servidores MCP externos (nome + URL JSON-RPC + token opcional). */
+  mcpServers: Array<{ name: string; url: string; token?: string }>;
 }
 
 export const effortLevels = ["Baixo", "Médio", "Alto", "Extra", "Máximo"] as const;
@@ -267,7 +269,8 @@ export const useApp = create<AppState>()(
         providerBaseOverrides: {},
         catalogSeed: CATALOG_SEED,
         visibleModes: [...UI_MODES],
-        modesSeen: [...UI_MODES]
+        modesSeen: [...UI_MODES],
+        mcpServers: []
       },
       session: null,
       runtimeStatus: { installed: false, running: false, models: [] },
