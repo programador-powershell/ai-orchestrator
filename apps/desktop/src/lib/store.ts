@@ -155,6 +155,8 @@ interface AppState {
   settingsOpen: boolean;
   planMode: boolean;
   researchMode: boolean;
+  /** Modo agente: o modelo executa ferramentas (fs/terminal) com aprovação. */
+  toolsMode: boolean;
   input: string;
   error: string;
   threads: Record<UiMode, ThreadState>;
@@ -182,6 +184,7 @@ interface AppState {
   setSettingsOpen: (open: boolean) => void;
   setPlanMode: (on: boolean) => void;
   setResearchMode: (on: boolean) => void;
+  setToolsMode: (on: boolean) => void;
   setInput: (value: string) => void;
   setError: (message: string) => void;
   setActivePlan: (plan: ExecutionPlan | null) => void;
@@ -226,6 +229,7 @@ export const useApp = create<AppState>()(
       settingsOpen: false,
       planMode: false,
       researchMode: false,
+      toolsMode: false,
       input: "",
       error: "",
       threads: {
@@ -282,6 +286,7 @@ export const useApp = create<AppState>()(
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
       setPlanMode: (planMode) => set({ planMode }),
       setResearchMode: (researchMode) => set({ researchMode }),
+      setToolsMode: (toolsMode) => set({ toolsMode }),
       setInput: (input) => set({ input }),
       setError: (error) => set({ error }),
       setActivePlan: (activePlan) => set({ activePlan }),
