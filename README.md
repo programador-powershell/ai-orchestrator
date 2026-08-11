@@ -28,19 +28,19 @@
 
 ## :new: Releases Notes
 
-### :up: V.4
+### :up: V.4.1
 ### :warning: Latest Changes
 
-- **Shell no padrão Unsloth Studio**: a navegação de modos saiu da topbar e virou linhas em pílula na **sidebar** (ativa marcada por tom de superfície, accent só no ícone; colapsada vira rail de ícones com tooltip); a topbar ficou slim — título do modo ativo, ações da aba, status e controles da janela.
-- **Ctrl+,** abre/fecha as Configurações (modal), padrão de apps desktop; tema claro/escuro agora no rodapé da sidebar.
+- **Harness de fine-tuning no gateway** (Rust/Axum): jobs persistidos (`fine_tune_jobs`), eventos com replay via SSE (`/finetune/jobs/:id/events/stream`) + polling, validação server-side de dataset (chat e DPO), catálogo de modelos tunados e reconciliador em background que acompanha o job mesmo com o app fechado. LGPD: nenhum conteúdo de dataset é persistido, só metadados.
+- **Aba Train estilo Studio**: 3 sub-abas (Configurar / Execução / Histórico), seleção de método **SFT ou DPO**, hiperparâmetros (épocas, batch, LR multiplier), **estimativa de custo** pré-upload e cancelamento de job.
 
 ### :pushpin: Fixes
 
-- Tiers de redimensionamento da topbar recalibrados para o layout sem abas (ações e status encolhem sem invadir os controles da janela).
+- `provider_fetch` e o payload do job passam a suportar `method`/`validation_file`; suffix segue truncado em 18 chars (regra da API).
 
 ### :construction_worker: Refactors
 
-- CSS das mode-tabs/lente líquida e do toggle de tema removidos (órfãos após o novo shell); atalhos de teclado extraídos para `lib/shortcuts.ts` com testes.
+- Conversores de formato (alpaca/sharegpt→chat), validação DPO e estimativa de custo extraídos para `lib/tunelab` (puros, com testes); auth/RBAC do gateway promovidos a `pub(crate)` para reuso no módulo de fine-tuning.
 
 ## :wrench: Instalação
 
@@ -69,7 +69,7 @@ corepack pnpm build
 │   ├── packages
 │   │   └── contracts      # contratos públicos compartilhados pelo cliente e gateway
 │   ├── services
-│   │   └── gateway        # API Rust/Axum, PostgreSQL e Redis
+│   │   └── gateway        # API Rust/Axum, PostgreSQL e Redis (inclui harness de fine-tuning)
 │   ├── scripts            # build local, assinatura e manifestos de release
 │   └── docs               # documentação de release, specs de design e créditos (clean-room)
 └── main
