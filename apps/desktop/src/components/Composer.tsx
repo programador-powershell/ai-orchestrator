@@ -16,11 +16,19 @@ import {
   Server,
   Sparkles,
   Telescope,
+  Wrench,
   X
 } from "lucide-react";
 import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
 import type { ChatMessage } from "../lib/gateway";
 import { chatOnce, describeSelection, fusionModels, type EngineContext } from "../lib/engine";
+import {
+  agentSystemInstruction,
+  dispatchTool,
+  runAgentLoop,
+  type ToolCall,
+  type ToolResult
+} from "../lib/agent";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
@@ -29,6 +37,19 @@ import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner
 import { effortDirective, useApp } from "../lib/store";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
+
+/** Cartão de "vou executar a ferramenta X" na conversa. */
+function toolStartCard(call: ToolCall): string {
+  const detail = call.args.path ?? call.args.command ?? call.args.sub ?? call.args.query ?? "";
+  return `🛠️ **${call.tool}** ${detail ? `\`${String(detail).slice(0, 120)}\`` : ""}`.trim();
+}
+
+/** Cartão do resultado da ferramenta (código com rótulo console). */
+function toolResultCard(call: ToolCall, result: ToolResult): string {
+  const status = result.ok ? "✓" : "✗";
+  const body = result.output.length > 1200 ? `${result.output.slice(0, 1200)}\n… (truncado)` : result.output;
+  return `${status} \`${call.tool}\`\n\`\`\`console\n${body}\n\`\`\``;
+}
 
 const modePlaceholders: Record<string, string> = {
   chat: "Pergunte, pesquise ou pense junto…",
@@ -50,6 +71,8 @@ export function Composer() {
   const setPlanMode = useApp((state) => state.setPlanMode);
   const researchMode = useApp((state) => state.researchMode);
   const setResearchMode = useApp((state) => state.setResearchMode);
+  const toolsMode = useApp((state) => state.toolsMode);
+  const setToolsMode = useApp((state) => state.setToolsMode);
   const settings = useApp((state) => state.settings);
   const setEngine = useApp((state) => state.setEngine);
   const session = useApp((state) => state.session);
@@ -67,6 +90,7 @@ export function Composer() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [executingPlan, setExecutingPlan] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const planSourceRef = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -104,7 +128,7 @@ export function Composer() {
       }),
     // send captura o estado atual via getState/closures a cada registro
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, planMode, researchMode, settings, session, runtimeStatus]
+    [mode, planMode, researchMode, toolsMode, settings, session, runtimeStatus]
   );
 
   async function attachFiles(files: FileList | null) {
@@ -148,6 +172,34 @@ export function Composer() {
       onStage: (stage) => setStage(stage)
     }, signal);
     return final;
+  }
+
+  /** Turno agêntico: o modelo executa ferramentas (com aprovação) até concluir. */
+  async function runAgentTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
+    const root = window.localStorage.getItem("code.root") ?? ".";
+    const messages: ChatMessage[] = [{ role: "system", content: agentSystemInstruction() }, ...request];
+    return runAgentLoop(messages, {
+      runTurn: (msgs) => {
+        appendMessage(mode, { role: "assistant", content: "" });
+        return chatOnce(
+          selection,
+          mode,
+          msgs,
+          ctx,
+          { onDelta: (delta) => patchLastAssistant(mode, delta), onStage: (stage) => setStage(stage) },
+          signal
+        );
+      },
+      runTool: (call) => dispatchTool(call, root),
+      requestApproval: (call) =>
+        new Promise<boolean>((resolve) => setPendingApproval({ call, resolve })),
+      onToolStart: (call) => {
+        setStage(`Ferramenta: ${call.tool}`);
+        appendMessage(mode, { role: "assistant", content: toolStartCard(call), meta: { kind: "ops" } });
+      },
+      onToolResult: (call, result) =>
+        appendMessage(mode, { role: "assistant", content: toolResultCard(call, result), meta: { kind: "ops" } })
+    });
   }
 
   async function send(rawText?: string, options?: ComposerSendOptions) {
@@ -214,7 +266,9 @@ export function Composer() {
         .slice(-12)
         .map(({ role, content }) => ({ role, content }));
       request.push(...history, { role: "user", content: text });
-      const final = await runAssistantTurn(request, abort.signal);
+      const final = toolsMode
+        ? await runAgentTurn(request, abort.signal)
+        : await runAssistantTurn(request, abort.signal);
 
       const channel = opsChannelForMode[mode];
       if (channel && final) opsBus.publish(channel, final);
@@ -274,6 +328,36 @@ export function Composer() {
           onApprove={() => void executePlan(activePlan)}
           onDismiss={() => setActivePlan(null)}
         />
+      )}
+      {pendingApproval && (
+        <div className="tool-approval glass-strong" role="alertdialog" aria-label="Aprovar ação do agente">
+          <div className="tool-approval-body">
+            <strong>O agente quer executar {pendingApproval.call.tool}</strong>
+            <code>
+              {String(pendingApproval.call.args.path ?? pendingApproval.call.args.command ?? "").slice(0, 160)}
+            </code>
+          </div>
+          <div className="tool-approval-actions">
+            <button
+              className="lg-button"
+              onClick={() => {
+                pendingApproval.resolve(false);
+                setPendingApproval(null);
+              }}
+            >
+              Recusar
+            </button>
+            <button
+              className="lg-button primary"
+              onClick={() => {
+                pendingApproval.resolve(true);
+                setPendingApproval(null);
+              }}
+            >
+              Aprovar
+            </button>
+          </div>
+        </div>
       )}
       <div className="composer glass-strong">
         {attachments.length > 0 && (
@@ -378,6 +462,15 @@ export function Composer() {
             <i />
             <ListChecks size={12} />
             Planejar
+          </button>
+          <button
+            className={`lg-toggle ${toolsMode ? "on" : ""}`}
+            onClick={() => setToolsMode(!toolsMode)}
+            title="Modo agente: o modelo lê arquivos, roda comandos e edita — com aprovação para ações que alteram o projeto"
+          >
+            <i />
+            <Wrench size={12} />
+            Ferramentas
           </button>
           {mode === "chat" && (
             <button
