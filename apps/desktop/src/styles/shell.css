@@ -428,6 +428,29 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .error-banner button { border: 0; background: transparent; color: inherit; cursor: pointer; display: grid; place-items: center; }
 
+.tool-approval {
+  width: var(--composer-w);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+  border-radius: var(--radius-md);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.tool-approval-body { display: grid; gap: 3px; min-width: 0; }
+.tool-approval-body strong { font-size: var(--fs-small); }
+.tool-approval-body code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-approval-actions { display: flex; gap: 6px; flex: none; }
+
 .composer {
   width: var(--composer-w);
   border-radius: var(--radius-lg);
