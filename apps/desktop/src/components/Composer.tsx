@@ -29,6 +29,7 @@ import {
   type ToolCall,
   type ToolResult
 } from "../lib/agent";
+import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
@@ -165,6 +166,26 @@ export function Composer() {
     return system;
   }
 
+  /**
+   * Auto-compact: se o histórico passa do orçamento, resume as mensagens
+   * antigas num único system e AVISA na conversa (sem pedir confirmação).
+   */
+  async function compactHistory(history: ChatMessage[], signal: AbortSignal): Promise<ChatMessage[]> {
+    const plan = planCompaction(history, { maxTokens: 12_000, keepRecent: 8 });
+    if (!plan) return history.slice(-12);
+    const summary = await chatOnce(
+      selection,
+      mode,
+      buildSummaryRequest(plan.toSummarize),
+      ctx,
+      { onDelta: () => undefined },
+      signal
+    ).catch(() => "");
+    if (!summary) return history.slice(-12);
+    appendMessage(mode, { role: "assistant", content: compactionNotice(plan.toSummarize.length), meta: { kind: "ops" } });
+    return [{ role: "system", content: `Resumo da conversa anterior:\n${summary}` }, ...plan.keep];
+  }
+
   async function runAssistantTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
     appendMessage(mode, { role: "assistant", content: "" });
     const final = await chatOnce(selection, mode, request, ctx, {
@@ -261,10 +282,10 @@ export function Composer() {
       }
 
       const priorMessages = useApp.getState().threads[mode].messages;
-      const history = priorMessages
+      const fullHistory = priorMessages
         .slice(0, options?.echoUser === false ? undefined : -1)
-        .slice(-12)
         .map(({ role, content }) => ({ role, content }));
+      const history = await compactHistory(fullHistory, abort.signal);
       request.push(...history, { role: "user", content: text });
       const final = toolsMode
         ? await runAgentTurn(request, abort.signal)
