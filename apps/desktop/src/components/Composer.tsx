@@ -23,6 +23,7 @@ import type { ChatMessage } from "../lib/gateway";
 import { chatOnce, describeSelection, fusionModels, type EngineContext } from "../lib/engine";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
+import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
 import { effortDirective, useApp } from "../lib/store";
@@ -150,7 +151,9 @@ export function Composer() {
   }
 
   async function send(rawText?: string, options?: ComposerSendOptions) {
-    const text = (rawText ?? input).trim();
+    const raw = (rawText ?? input).trim();
+    // Comando de barra (/review, /explain…) vira o prompt completo antes do envio.
+    const text = expandCommand(raw, DEFAULT_COMMANDS) ?? raw;
     const currentAttachments = useApp.getState().attachments;
     if (!text || useApp.getState().threads[mode].sending) return;
     setError("");
