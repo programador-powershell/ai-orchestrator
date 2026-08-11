@@ -26,7 +26,7 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: var(--fs-body);
   /* Não transicione custom properties aqui: o WebView congela a re-resolução do var()
      (bug do motor). O efeito "liquid hue" vem dos elementos pintados que já animam
-     background/box-shadow (orbes do .ambient, .brand-mark, .tab-lens, .send-button). */
+     background/box-shadow (orbes do .ambient, .brand-mark, .send-button). */
 }
 
 /* Ambiente: orbes de luz que mudam de matiz com a aba */
@@ -165,6 +165,38 @@ button { -webkit-tap-highlight-color: transparent; }
 .rail nav > button:hover, .rail nav > button.active { color: var(--ink); background: var(--glass); }
 .rail nav > button.active { box-shadow: inset 0 0 0 1px var(--glass-border); }
 
+/* Navegação de modos na sidebar — linhas em pílula, superfície por tom
+   (sem sombra), accent reservado ao item ativo. Padrão Studio. */
+.rail-nav {
+  flex: none;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  overflow: visible;
+}
+.rail nav > .rail-nav-item {
+  border-radius: 999px;
+}
+.rail nav > .rail-nav-item .rail-nav-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: inherit;
+}
+.rail nav > .rail-nav-item.active {
+  color: var(--ink);
+  background: var(--glass-strong);
+  box-shadow: none;
+}
+.rail nav > .rail-nav-item.active .rail-nav-icon { color: var(--accent-strong); }
+.rail-nav-label { overflow: hidden; text-overflow: ellipsis; }
+.rail.collapsed .rail-nav .rail-nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
 .rail-panel {
   animation: float-in var(--t-base) var(--spring) both;
 }
@@ -261,68 +293,19 @@ button { -webkit-tap-highlight-color: transparent; }
   container-name: topbar;
 }
 
-/* Tab bar com lente líquida */
-.mode-tabs {
-  --tab-w: 88px;
-  position: relative;
-  height: 40px;
+/* Título do modo ativo — a navegação vive na sidebar (padrão Studio) */
+.topbar-mode {
   flex: none;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: var(--tab-w);
-  gap: 2px;
-  isolation: isolate;
-}
-.tab-lens {
-  --tab: 0;
-  position: absolute;
-  left: 0;
-  top: 1px;
-  width: var(--tab-w);
-  height: 38px;
-  z-index: -1;
-  overflow: hidden;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  background: linear-gradient(115deg, var(--glass-strong), var(--glass));
-  box-shadow: 0 6px 18px rgba(28, 46, 58, 0.13), inset 0 1px 0 var(--glass-inner),
-    -1px 0 hsl(var(--accent-h) 70% 60% / 0.35), 1px 0 hsl(calc(var(--accent-h) + 60) 70% 62% / 0.25);
-  backdrop-filter: blur(16px) saturate(170%);
-  transform: translate3d(calc(var(--tab) * (var(--tab-w) + 2px)), 0, 0);
-  transition: transform 640ms var(--spring), box-shadow var(--t-base) ease;
-}
-.tab-lens::before {
-  content: "";
-  position: absolute;
-  width: 55%;
-  height: 160%;
-  top: -30%;
-  left: -72%;
-  transform: skewX(-18deg);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), hsl(var(--accent-h) 80% 76% / 0.25), transparent);
-  opacity: 0;
-}
-.app-shell[data-theme="dark"] .tab-lens::before { opacity: 0.4; }
-.mode-tabs > button {
-  height: 40px;
-  padding: 0 8px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--fs-micro);
-  font-weight: 560;
-  cursor: pointer;
-  transition: color var(--t-fast) ease;
+  padding: 0 6px;
+  white-space: nowrap;
 }
-.mode-tabs > button:hover, .mode-tabs > button.selected { color: var(--ink); }
-.mode-tabs > button.selected { font-weight: 660; }
-.mode-tabs > button .mode-icon { display: grid; place-items: center; color: inherit; }
-.mode-tabs > button.selected .mode-icon { color: var(--accent-strong); }
+.topbar-mode strong {
+  font-size: var(--fs-base);
+  font-weight: 640;
+  letter-spacing: -0.4px;
+}
 
 /* Slot de ações da aba ativa — injetado por portal, anima a cada troca */
 .topbar-actions {
@@ -363,21 +346,15 @@ button { -webkit-tap-highlight-color: transparent; }
 .topbar-right { flex: none; display: flex; align-items: center; gap: 7px; }
 
 /* Tiers de redimensionamento — medidos na topbar (rail incluída na conta).
-   9 abas + ações + grupo da direita cabem SEM sobreposição até a janela mínima. */
-@container topbar (max-width: 1559px) {
-  .mode-tabs { --tab-w: 56px; }
-  .mode-tabs > button > span:last-child { display: none; }
-}
-@container topbar (max-width: 1129px) {
+   Sem as abas, sobra espaço: os tiers cuidam só de ações e status. */
+@container topbar (max-width: 929px) {
   .topbar-actions .lg-button span.tb-label { display: none; }
   .topbar-actions .segmented > button:not(.active) { display: none; }
 }
-@container topbar (max-width: 989px) {
-  .mode-tabs { --tab-w: 48px; }
+@container topbar (max-width: 719px) {
   .status-pill { max-width: 132px; }
 }
-@container topbar (max-width: 869px) {
-  .mode-tabs { --tab-w: 42px; }
+@container topbar (max-width: 599px) {
   .status-pill .pill-label { display: none; }
 }
 
@@ -400,29 +377,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .status-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
 .status-pill .pill-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill .dot.online { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 65%, transparent); }
-
-.theme-toggle {
-  width: 50px;
-  height: 30px;
-  padding: 3px;
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  background: var(--glass);
-  cursor: pointer;
-}
-.theme-thumb {
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--panel-solid);
-  box-shadow: 0 3px 9px rgba(28, 46, 58, 0.18);
-  transition: transform var(--t-base) var(--spring);
-}
-.app-shell[data-theme="dark"] .theme-thumb { transform: translateX(20px); }
 
 .window-controls { display: flex; align-items: center; gap: 1px; }
 .window-controls button {
