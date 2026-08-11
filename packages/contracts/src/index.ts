@@ -189,6 +189,13 @@ export interface OrchestrationPlan {
 
 export type FusionStrategy = "orchestrate" | "merge" | "race";
 
+/** Modelos específicos para um tipo de atividade (aba) dentro de um preset. */
+export interface FusionModeOverride {
+  orchestrator?: ModelTarget;
+  executors?: ModelTarget[];
+  strategy?: FusionStrategy;
+}
+
 export interface FusionPreset {
   id: string;
   name: string;
@@ -197,6 +204,11 @@ export interface FusionPreset {
   orchestrator: ModelTarget;
   /** Modelos que produzem o conteúdo. Em "merge"/"race" pode haver vários. */
   executors: ModelTarget[];
+  /**
+   * Modelos por TIPO DE ATIVIDADE (chat, code, data…): sobrepõem o preset base
+   * só na aba correspondente. Ausente = usa o preset base.
+   */
+  perMode?: Partial<Record<UiMode, FusionModeOverride>>;
   notes?: string;
 }
 

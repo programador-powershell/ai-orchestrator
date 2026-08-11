@@ -236,6 +236,18 @@
   gap: 8px;
   align-items: end;
 }
+
+/* Modelos por atividade dentro do preset de fusion */
+.setx-permode { display: grid; gap: 6px; margin: 10px 0 4px; }
+.setx-permode .eyebrow { margin-bottom: 2px; }
+.setx-permode-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.setx-permode-row strong { font-size: var(--fs-small); font-weight: 560; }
+.setx-permode-row select { min-width: 0; }
 .setx-item {
   padding: 9px 11px;
   display: grid;
