@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Orchestrator",
+  "version": "0.1.0",
+  "identifier": "com.aiorchestrator.desktop",
+  "build": {
+    "beforeDevCommand": "corepack pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "corepack pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main",
+      "title": "AI Orchestrator",
+      "width": 1380,
+      "height": 860,
+      "minWidth": 1000,
+      "minHeight": 680,
+      "decorations": false,
+      "transparent": false,
+      "shadow": true,
+      "center": true
+    }],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/icon.ico"],
+    "targets": ["nsis"],
+    "resources": {
+      "../../../third_party/soup/src/": "third_party/soup/src/",
+      "../../../third_party/soup/templates/": "third_party/soup/templates/",
+      "../../../third_party/soup/run_soup.py": "third_party/soup/run_soup.py",
+      "../../../third_party/soup/LICENSE": "third_party/soup/LICENSE",
+      "../../../third_party/soup/NOTICE": "third_party/soup/NOTICE"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "__TAURI_UPDATER_PUBLIC_KEY__",
+      "endpoints": ["https://github.com/__GITHUB_REPOSITORY__/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

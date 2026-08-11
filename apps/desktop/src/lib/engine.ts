@@ -1,0 +1,349 @@
+/**
+ * Motor de execução unificado — "flexibilidade de fornecedor".
+ *
+ * Uma única função `chatOnce` resolve a EngineSelection ativa:
+ *  - workspace  → gateway (streaming SSE)
+ *  - local      → runtime GGUF local (llama.cpp)
+ *  - model      → provedor direto via comando Rust (chave fica no keyring, nunca no JS)
+ *  - fusion     → orquestrador + executores (orchestrate/merge/race), client-side
+ *
+ * Sem nenhuma conexão, cai em modo demonstração claramente rotulado, para que a
+ * interface continue navegável e verificável.
+ */
+import { invoke } from "@tauri-apps/api/core";
+import { MODES, type EngineSelection, type FusionPreset, type Mode, type ModelTarget, type UiMode } from "@ai-orchestrator/contracts";
+import { byok, providerExtraHeaders } from "./byok";
+import {
+  buildBriefRequest,
+  buildDecomposeRequest,
+  buildExecuteFusionRequest,
+  buildIntegrateRequest,
+  buildReviewRequest,
+  buildSubtaskRequest,
+  fallbackSubtasks,
+  fusionRolePolicy,
+  parseSubtasks
+} from "./fusionPrompts";
+import { streamChat, type ChatMessage, type GatewaySession } from "./gateway";
+import { runtime } from "./runtime";
+
+const isTauriHost = "__TAURI_INTERNALS__" in window;
+
+export interface EngineContext {
+  session: GatewaySession | null;
+  runtimeRunning: boolean;
+  fusionPresets: FusionPreset[];
+  /** Base URLs custom por provedor (compatíveis/self-hosted), vindas do Settings. */
+  baseOverrides?: Record<string, string>;
+}
+
+export function resolveBaseUrl(providerId: string, overrides?: Record<string, string>): string {
+  const override = overrides?.[providerId]?.trim();
+  if (override) return override.replace(/\/$/, "");
+  return providerBaseUrls[providerId] ?? providerBaseUrls["openai-compatible"];
+}
+
+export interface EngineEvents {
+  onDelta: (delta: string) => void;
+  /** Notas de progresso do fusion/pesquisa ("orquestrador planejando…"). */
+  onStage?: (stage: string) => void;
+}
+
+const DEMO_NOTE =
+  "— modo demonstração: conecte o gateway, um provedor (BYOK) ou o runtime local em Configurações —\n\n";
+
+/** Nomes de conta no keyring por provedor. A chave nunca transita pelo JS. */
+export const providerBaseUrls: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  /** Camada de compatibilidade OpenAI da Anthropic (Bearer + /chat/completions). */
+  anthropic: "https://api.anthropic.com/v1",
+  moonshot: "https://api.moonshot.ai/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  mistral: "https://api.mistral.ai/v1",
+  openrouter: "https://openrouter.ai/api/v1",
+  "openai-compatible": ""
+};
+
+export interface CatalogLabel {
+  providerId: string;
+  model: string;
+  label?: string;
+}
+
+/** Nome amigável do modelo (rótulo do catálogo quando houver; senão o id). */
+export function modelLabel(target: ModelTarget, catalog?: CatalogLabel[]): string {
+  const entry = catalog?.find((item) => item.providerId === target.providerId && item.model === target.model);
+  return entry?.label ?? target.model;
+}
+
+/** Modelos que o preset funde — ex.: "GPT-5.1 + Kimi + DeepSeek Chat". */
+export function fusionModels(preset: FusionPreset, catalog?: CatalogLabel[]): string {
+  const targets =
+    preset.strategy === "orchestrate"
+      ? [preset.executors[0] ?? preset.orchestrator, preset.orchestrator]
+      : preset.executors;
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const target of targets) {
+    const label = modelLabel(target, catalog);
+    if (!seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  return labels.join(" + ");
+}
+
+export function describeSelection(
+  selection: EngineSelection,
+  presets: FusionPreset[],
+  catalog?: CatalogLabel[]
+): string {
+  switch (selection.kind) {
+    case "workspace":
+      return "Rota do workspace";
+    case "local":
+      return "Runtime local";
+    case "model":
+      return `${selection.target.providerId} · ${selection.target.model}`;
+    case "fusion": {
+      const preset = presets.find((item) => item.id === selection.presetId);
+      if (!preset) return "Fusion";
+      return `${preset.name} · ${fusionModels(preset, catalog)}`;
+    }
+  }
+}
+
+async function demoStream(messages: ChatMessage[], events: EngineEvents, signal?: AbortSignal): Promise<string> {
+  const last = messages.at(-1)?.content ?? "";
+  const body =
+    `${DEMO_NOTE}Recebi: "${last.slice(0, 160)}"\n\n` +
+    "Neste modo eu não chamo nenhum modelo. Tudo o mais funciona: memória, planos, " +
+    "diagramas, diffs e orquestração. Configure um motor para respostas reais.";
+  let output = "";
+  for (const chunk of body.match(/.{1,14}/gs) ?? []) {
+    if (signal?.aborted) break;
+    output += chunk;
+    events.onDelta(chunk);
+    await new Promise((resolve) => setTimeout(resolve, 12));
+  }
+  return output;
+}
+
+async function providerChat(
+  target: ModelTarget,
+  messages: ChatMessage[],
+  events: EngineEvents,
+  overrides?: Record<string, string>,
+  signal?: AbortSignal
+): Promise<string> {
+  events.onStage?.(`${target.providerId}/${target.model}`);
+  const baseUrl = resolveBaseUrl(target.providerId, overrides);
+  if (!baseUrl) throw new Error(`Configure a base URL do provedor "${target.providerId}" em Configurações → Provedores.`);
+
+  if (isTauriHost) {
+    const content = await invoke<string>("provider_chat", {
+      request: {
+        baseUrl,
+        account: `provider:${target.providerId}`,
+        model: target.model,
+        messages
+      }
+    });
+    events.onDelta(content);
+    return content;
+  }
+
+  // Navegador: chamada direta com a chave do armazenamento local (BYOK web).
+  const key = await byok.readForWebCall(target.providerId);
+  if (!key) {
+    throw new Error(
+      `Sem chave para "${target.providerId}". Adicione em Configurações → Provedores (no navegador ela fica neste perfil; prefira o app desktop).`
+    );
+  }
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    signal,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+      ...providerExtraHeaders(target.providerId)
+    },
+    body: JSON.stringify({ model: target.model, messages, stream: false })
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`${target.providerId} respondeu ${response.status}: ${detail.slice(0, 300)}`);
+  }
+  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const content = payload.choices?.[0]?.message?.content ?? "";
+  if (!content) throw new Error(`${target.providerId} não retornou conteúdo.`);
+  events.onDelta(content);
+  return content;
+}
+
+async function singleTurn(
+  backend: "workspace" | "local" | "model",
+  target: ModelTarget | null,
+  mode: Mode | UiMode,
+  messages: ChatMessage[],
+  ctx: EngineContext,
+  events: EngineEvents,
+  signal?: AbortSignal
+): Promise<string> {
+  if (backend === "workspace") {
+    if (!ctx.session?.accessToken || !ctx.session.workspaceId) return demoStream(messages, events, signal);
+    // Abas novas (ex.: tune) não existem no contrato do gateway — roteia como chat.
+    const wireMode: Mode = (MODES as readonly string[]).includes(mode) ? (mode as Mode) : "chat";
+    let output = "";
+    await streamChat(
+      ctx.session,
+      wireMode,
+      messages,
+      (delta) => {
+        output += delta;
+        events.onDelta(delta);
+      },
+      signal
+    );
+    return output;
+  }
+  if (backend === "local") {
+    if (!ctx.runtimeRunning) return demoStream(messages, events, signal);
+    const response = await runtime.chat(messages);
+    const content = response.choices?.[0]?.message?.content ?? "O runtime não retornou conteúdo.";
+    events.onDelta(content);
+    return content;
+  }
+  if (!target) throw new Error("Modelo não informado.");
+  return providerChat(target, messages, events, ctx.baseOverrides, signal);
+}
+
+/** Chamada silenciosa (sem stream na UI) usada pelo orquestrador do fusion. */
+async function quietTurn(
+  target: ModelTarget | "workspace",
+  mode: Mode | UiMode,
+  messages: ChatMessage[],
+  ctx: EngineContext,
+  signal?: AbortSignal
+): Promise<string> {
+  const sink: EngineEvents = { onDelta: () => undefined };
+  if (target === "workspace") return singleTurn("workspace", null, mode, messages, ctx, sink, signal);
+  try {
+    return await providerChat(target, messages, sink, ctx.baseOverrides, signal);
+  } catch {
+    // Sem chave/desktop: usa a rota do workspace como melhor esforço.
+    return singleTurn("workspace", null, mode, messages, ctx, sink, signal);
+  }
+}
+
+/**
+ * Fusion de produção — cooperação SEM sobreposição (ver lib/fusionPrompts.ts):
+ *  - orchestrate: orquestrador especifica → executor produz → orquestrador
+ *    revisa por conformidade (proibido reescrever do zero).
+ *  - merge: orquestrador DECOMPÕE em focos complementares (um por executor),
+ *    executores trabalham em recortes exclusivos, orquestrador integra.
+ *  - race: latência mínima — primeiro executor a responder vence.
+ * Políticas por aba: security = menos salvaguarda orquestra / restrito executa;
+ * code = inteligente orquestra / barato executa.
+ */
+async function fusionTurn(
+  preset: FusionPreset,
+  mode: Mode | UiMode,
+  messages: ChatMessage[],
+  ctx: EngineContext,
+  events: EngineEvents,
+  signal?: AbortSignal
+): Promise<string> {
+  const question = messages.at(-1)?.content ?? "";
+  const policy = fusionRolePolicy(mode);
+  const roleTag = policy.policy === "safeguard" ? "salvaguarda" : policy.policy === "cost" ? "custo" : "capacidade";
+
+  if (preset.strategy === "race") {
+    events.onStage?.("Fusion · race — primeiro executor a responder vence");
+    const attempts = preset.executors.map((executor) => quietTurn(executor, mode, messages, ctx, signal));
+    const winner = await Promise.any(attempts).catch(() => "");
+    events.onDelta(winner || "Nenhum executor respondeu.");
+    return winner;
+  }
+
+  if (preset.strategy === "merge") {
+    // 1) Decomposição: focos complementares, um por executor — sem sobreposição.
+    events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} decompondo em ${preset.executors.length} focos`);
+    const decomposition = await quietTurn(
+      preset.orchestrator,
+      mode,
+      buildDecomposeRequest(mode, question, preset.executors.length),
+      ctx,
+      signal
+    );
+    let subtasks = parseSubtasks(decomposition, preset.executors.length);
+    if (!subtasks) {
+      events.onStage?.("Fusion · decomposição malformada — usando focos padrão");
+      subtasks = fallbackSubtasks(question, preset.executors.length);
+    }
+    while (subtasks.length < preset.executors.length) {
+      subtasks.push(fallbackSubtasks(question, preset.executors.length)[subtasks.length]);
+    }
+
+    // 2) Execução paralela: cada executor SOMENTE no seu recorte.
+    events.onStage?.(`Fusion (${roleTag}) · ${preset.executors.length} executores em focos exclusivos`);
+    const results = await Promise.allSettled(
+      preset.executors.map((executor, index) =>
+        quietTurn(executor, mode, buildSubtaskRequest(mode, question, subtasks[index], index, preset.executors.length), ctx, signal)
+      )
+    );
+    const parts = results
+      .map((result, index) =>
+        result.status === "fulfilled" && result.value ? { focus: subtasks[index], content: result.value } : null
+      )
+      .filter((part): part is { focus: string; content: string } => part !== null);
+    if (!parts.length) return demoStream(messages, events, signal);
+
+    // 3) Integração: costura sem reescrever o trabalho dos executores.
+    events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} integrando ${parts.length} partes`);
+    const integrated = await quietTurn(preset.orchestrator, mode, buildIntegrateRequest(mode, question, parts), ctx, signal);
+    events.onDelta(integrated || parts.map((part) => part.content).join("\n\n"));
+    return integrated || parts.map((part) => part.content).join("\n\n");
+  }
+
+  // orchestrate: especifica → produz → revisa por conformidade.
+  events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} especificando`);
+  const brief = await quietTurn(preset.orchestrator, mode, buildBriefRequest(mode, question), ctx, signal);
+  const executor = preset.executors[0] ?? preset.orchestrator;
+  events.onStage?.(`Fusion (${roleTag}) · ${executor.model} executando a spec`);
+  const draft = await quietTurn(executor, mode, buildExecuteFusionRequest(mode, brief, messages), ctx, signal);
+  events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} revisando conformidade`);
+  const final = await quietTurn(preset.orchestrator, mode, buildReviewRequest(mode, question, draft), ctx, signal);
+  const answer = final || draft;
+  events.onDelta(answer);
+  return answer;
+}
+
+export async function chatOnce(
+  selection: EngineSelection,
+  mode: Mode | UiMode,
+  messages: ChatMessage[],
+  ctx: EngineContext,
+  events: EngineEvents,
+  signal?: AbortSignal
+): Promise<string> {
+  switch (selection.kind) {
+    case "workspace":
+      return singleTurn("workspace", null, mode, messages, ctx, events, signal);
+    case "local":
+      return singleTurn("local", null, mode, messages, ctx, events, signal);
+    case "model":
+      try {
+        return await singleTurn("model", selection.target, mode, messages, ctx, events, signal);
+      } catch (cause) {
+        if (ctx.session?.accessToken) return singleTurn("workspace", null, mode, messages, ctx, events, signal);
+        throw cause;
+      }
+    case "fusion": {
+      const preset = ctx.fusionPresets.find((item) => item.id === selection.presetId);
+      if (!preset) throw new Error("Preset de fusion não encontrado.");
+      return fusionTurn(preset, mode, messages, ctx, events, signal);
+    }
+  }
+}

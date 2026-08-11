@@ -1,0 +1,610 @@
+/* ------------------------------------------------------------------ */
+/* CODE — IDE agêntica (todas as classes prefixadas com .codex-)       */
+/* Geometria vem dos primitivos (.surface/.v-*); aqui só o conteúdo.   */
+/* Explorer no rail lateral, terminal-CLI no centro, orquestrador em   */
+/* popup da toolbar.                                                   */
+/* ------------------------------------------------------------------ */
+
+.codex-center {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* O popup do orquestrador nasce na toolbar e precisa pairar sobre o corpo. */
+.codex-surface .v-toolbar { position: relative; z-index: 30; }
+
+/* --------------------- Explorer (no rail lateral) ------------------- */
+.codex-root {
+  flex: none;
+  padding: 0 2px 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.codex-root input {
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.codex-root input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.codex-root .icon-button { width: 28px; height: 28px; }
+
+.codex-rail-tree {
+  flex: none;
+  max-height: 44vh;
+  overflow-y: auto;
+  padding: 0 2px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.codex-tree-row {
+  --depth: 0;
+  min-height: 26px;
+  width: 100%;
+  padding: 3px 8px 3px calc(8px + var(--depth) * 13px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease, transform var(--t-fast) var(--spring);
+}
+.codex-tree-row:hover { background: var(--glass); color: var(--ink); transform: translateX(2px); }
+.codex-tree-row.active { background: var(--accent-soft); color: var(--ink); }
+.codex-tree-row svg { flex: none; }
+.codex-tree-row > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.codex-tree-row small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.codex-tree-note {
+  --depth: 0;
+  flex: none;
+  padding: 3px 8px 3px calc(22px + var(--depth) * 13px);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.codex-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+/* ------------------ Busca da toolbar (icon → campo) ----------------- */
+.codex-toolbar-search {
+  height: 32px;
+  width: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: width var(--t-slow) var(--spring-soft), border-color var(--t-fast) ease,
+    background var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.codex-toolbar-search.open {
+  width: 230px;
+  border-color: var(--line);
+  background: var(--panel);
+}
+.codex-toolbar-search.open:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.codex-toolbar-search .icon-button { border: 0; }
+.codex-toolbar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  outline: none;
+  opacity: 0;
+  transition: opacity var(--t-base) ease;
+}
+.codex-toolbar-search.open input { opacity: 1; }
+
+/* ------------------------------- Tabs ------------------------------ */
+.codex-tabs {
+  flex: none;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  overflow-x: auto;
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.codex-tab {
+  height: 30px;
+  padding: 0 5px 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease, transform var(--t-fast) var(--spring);
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.codex-tab:hover { background: var(--glass); color: var(--ink); transform: translateY(-1px); }
+.codex-tab.active { background: var(--accent-soft); color: var(--ink); }
+.codex-tab svg { flex: none; }
+.codex-tab button {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.codex-tab button:hover { background: var(--glass-strong); color: var(--ink); }
+.codex-saved { animation: pop-in var(--t-base) var(--spring) both; }
+
+/* ------------------------------ Editor ----------------------------- */
+.codex-editor {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.codex-editor-host { position: absolute; inset: 0; overflow: hidden; }
+.codex-editor-host .cm-editor { height: 100%; }
+.codex-editor-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-content: center;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  background: var(--panel);
+}
+
+/* --------------- Terminal — CLI do composer (liquid glass) ---------- */
+/* Material vem de .glass-terminal (glass.css); aqui só layout/detalhe. */
+.codex-term {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  animation: float-in var(--t-slow) var(--spring-soft) both;
+}
+.codex-term.full { flex: 1; }
+.codex-term.dock { flex: none; height: 38%; min-height: 150px; }
+.codex-term pre {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 14px 6px;
+  overflow-y: auto;
+  font-size: var(--fs-micro);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.codex-term-line {
+  display: block;
+  animation: codex-line-in var(--t-base) var(--spring-soft) both;
+}
+@keyframes codex-line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.codex-prompt {
+  flex: none;
+  padding: 8px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--terminal-ink) 12%, transparent);
+}
+.codex-prompt-sign {
+  flex: none;
+  color: hsl(var(--accent-h) var(--accent-s) 68%);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+.codex-prompt-line {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.codex-prompt-line input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--terminal-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  outline: none;
+  caret-color: var(--accent);
+}
+.codex-prompt-line input.no-caret { caret-color: transparent; }
+.codex-caret {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 8px;
+  height: 15px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 75%, var(--terminal-ink));
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: codex-caret-blink 1.1s steps(1) infinite;
+  pointer-events: none;
+}
+@keyframes codex-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+
+/* ---------------- Overlays: Quick Open, busca e diff --------------- */
+.codex-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: codex-fade-in var(--t-fast) ease both;
+}
+.codex-overlay.top { place-items: start center; padding-top: 42px; }
+@keyframes codex-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.codex-quick {
+  width: min(640px, 100%);
+  max-height: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  box-shadow: 0 22px 50px rgba(18, 32, 42, 0.28);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.codex-quick > header {
+  flex: none;
+  min-height: 40px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.codex-quick > header input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  outline: none;
+}
+.codex-quick-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.codex-quick-item {
+  padding: 5px 9px;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 7px;
+  align-items: center;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) ease;
+}
+.codex-quick-item svg { grid-row: 1 / span 2; color: var(--muted); }
+.codex-quick-item strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 570;
+}
+.codex-quick-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.codex-quick-item:hover,
+.codex-quick-item.active { background: var(--accent-soft); }
+.codex-quick > footer {
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.5;
+}
+
+/* Modal de diff (Ver alterações / Aplicar IA) */
+.codex-modal { width: min(780px, 100%); max-height: min(560px, 100%); }
+.codex-modal-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+.codex-diff-scroll { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; }
+.codex-diff-skip span,
+.codex-diff-skip code { color: var(--faint); font-style: italic; }
+.codex-modal-note {
+  flex: none;
+  margin: 0;
+  padding: 7px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+.codex-modal-actions {
+  flex: none;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* -------------------- Orquestrador (popup da toolbar) --------------- */
+.codex-orc-anchor { position: relative; flex: none; }
+.codex-orc-anchor .lg-button.codex-orc-on {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+/* O sufixo -menu herda float-in + blur do passe liquid glass (glass.css). */
+.codex-orc-menu {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 70;
+  width: 320px;
+  max-height: min(480px, 62vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  box-shadow: 0 22px 50px rgba(18, 32, 42, 0.28);
+}
+.codex-orc-head {
+  flex: none;
+  min-height: 38px;
+  padding: 9px 12px 4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+}
+.codex-orc-head svg { flex: none; color: var(--accent-strong); }
+.codex-orc-head strong { flex: 1; min-width: 0; font-size: var(--fs-small); }
+.codex-orc-head small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.codex-orc-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 4px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.codex-stages {
+  flex: none;
+  padding: 2px 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+.codex-stage {
+  position: relative;
+  flex: none;
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.codex-stage + .codex-stage::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: -7px;
+  width: 1px;
+  height: 13px;
+  background: var(--line-strong);
+}
+.codex-stage-index {
+  width: 25px;
+  height: 25px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  font-weight: 640;
+}
+.codex-stage-index.s0 { background: color-mix(in srgb, var(--tone-amber) 24%, transparent); color: color-mix(in srgb, var(--tone-amber) 62%, var(--ink)); }
+.codex-stage-index.s1 { background: color-mix(in srgb, var(--tone-cyan) 24%, transparent); color: color-mix(in srgb, var(--tone-cyan) 62%, var(--ink)); }
+.codex-stage-index.s2 { background: color-mix(in srgb, var(--tone-violet) 24%, transparent); color: color-mix(in srgb, var(--tone-violet) 62%, var(--ink)); }
+.codex-stage-index.s3 { background: color-mix(in srgb, var(--tone-mint) 24%, transparent); color: color-mix(in srgb, var(--tone-mint) 62%, var(--ink)); }
+.codex-stage-copy { flex: 1; min-width: 0; }
+.codex-stage-copy strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  font-weight: 580;
+}
+.codex-stage-copy small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
+.codex-add-stage {
+  margin: 4px 10px 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: none;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.codex-add-stage:hover {
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+}
+.codex-validate {
+  margin: 8px 10px 0;
+  flex: none;
+  width: calc(100% - 20px);
+}
+.codex-validation {
+  margin: 7px 12px 0;
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+}
+.codex-validation svg { flex: none; margin-top: 1px; color: var(--accent-strong); }
+
+/* ------------------------------ Fusion ----------------------------- */
+.codex-fusion {
+  margin: 12px 8px 0;
+  padding: 10px;
+  flex: none;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, var(--tone-amber) 9%, transparent), transparent 62%),
+    var(--panel-2);
+}
+.codex-fusion header { display: flex; align-items: center; gap: 8px; }
+.codex-fusion header > span {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.codex-fusion header strong { display: block; font-size: var(--fs-small); }
+.codex-fusion header small {
+  display: block;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.codex-fusion p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
