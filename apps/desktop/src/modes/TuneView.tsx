@@ -1,12 +1,11 @@
 /**
- * FINE-TUNING — interno, com o soup EMBUTIDO (third_party/soup, Apache-2.0).
+ * FINE-TUNING — 100% interno e SÓ NUVEM (API de fine-tuning com a chave BYOK).
  *
- * O app NÃO instala nada. Escada de execução local: binário `soup` no PATH →
- * cópia embutida rodando via Python do usuário (`run_soup.py`, sem pip) →
- * fonte presente sem runtime (rotulado honestamente). O treino na nuvem é
- * 100% interno (API de fine-tuning com a chave BYOK).
+ * O app NÃO instala nada e não depende de runtime local: o dataset é montado
+ * aqui, validado e enviado ao provedor; o job roda na infraestrutura dele e o
+ * modelo resultante entra no catálogo do app.
  *
- * Toda execução (comandos, saídas, eventos do job) aparece na CONVERSA da
+ * Toda execução (validação, upload, eventos do job) aparece na CONVERSA da
  * aba como cartões — igual ao Claude mostrando diffs na conversa.
  */
 import "../styles/modes/tune.css";
@@ -14,7 +13,6 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import {
   Cloud,
-  Cpu,
   Download,
   FlaskConical,
   FolderOpen,
@@ -23,8 +21,7 @@ import {
   Save,
   Sparkles,
   Trash2,
-  Upload,
-  Wand2
+  Upload
 } from "lucide-react";
 import {
   EmptyHero,
@@ -49,34 +46,12 @@ import {
   validateJsonlForFineTune,
   type FineTuneJob
 } from "../lib/finetune";
-import { fsRead, fsWrite, isTauriFs } from "../lib/fsx";
-import { terminal } from "../lib/terminal";
+import { fsWrite, isTauriFs } from "../lib/fsx";
 import { useApp } from "../lib/store";
-import { vendoredSoupCommand, vendoredSoupLauncher } from "../lib/vendored";
 
-const isTauriHost = "__TAURI_INTERNALS__" in window;
 const ROOT_KEY = "tune.root";
 const DATASET_KEY = "tune.dataset";
 const JOB_KEY = "tune.job";
-
-/**
- * Template interno do soup.yaml (compatível com o soup-cli homologado) —
- * gerado pelo PRÓPRIO app, sem binário externo. Ajuste livre no editor.
- */
-const SOUP_TEMPLATE = `# soup.yaml — gerado internamente pelo AI Orchestrator (template chat)
-# Docs do formato: github.com/MakazhanAlpamys/Soup
-model: meta-llama/Llama-3.1-8B-Instruct
-dataset: dataset.jsonl
-template: chat
-output: ./soup-out
-train:
-  method: lora
-  epochs: 3
-  batch_size: auto
-  quantization: nf4
-  # GPUs pequenas (ex.: 4 GB): ative o layer streaming (BETA)
-  stream_layers: false
-`;
 
 interface TuneExample {
   id: string;
@@ -97,7 +72,7 @@ function loadDataset(): TuneExample[] {
   }
 }
 
-/** JSONL no formato chat (uma linha por exemplo) — o que o soup treina. */
+/** JSONL no formato chat (uma linha por exemplo) — o que a API treina. */
 export function datasetToJsonl(examples: TuneExample[]): string {
   return examples
     .map((example) =>
@@ -114,12 +89,8 @@ export function datasetToJsonl(examples: TuneExample[]): string {
 
 interface TuneState {
   root: string;
-  /** Escada local: binário no PATH → cópia EMBUTIDA via Python → só fonte. */
-  soup: { status: "unknown" | "ok" | "vendored" | "missing"; version: string; launcher: string | null };
   examples: TuneExample[];
   selectedId: string | null;
-  busy: boolean;
-  configText: string;
   /** Job de treino na nuvem (persistido para acompanhar entre sessões). */
   job: FineTuneJob | null;
   cloudBusy: boolean;
@@ -140,11 +111,8 @@ function loadJob(): FineTuneJob | null {
 
 const useTune = create<TuneState>()((set) => ({
   root: localStorage.getItem(ROOT_KEY) ?? "",
-  soup: { status: "unknown", version: "", launcher: null },
   examples: loadDataset(),
   selectedId: null,
-  busy: false,
-  configText: "",
   job: loadJob(),
   cloudBusy: false,
   setRoot: (root) => {
@@ -175,94 +143,11 @@ useTune.subscribe((state, previous) => {
 });
 
 /**
- * Toda execução vai para a CONVERSA da aba (thread "tune") — comandos e
- * saídas viram cartões, como o Claude mostra diffs na conversa.
+ * Toda execução vai para a CONVERSA da aba (thread "tune") — validações e
+ * eventos viram cartões, como o Claude mostra diffs na conversa.
  */
 const feed = (content: string) =>
   useApp.getState().appendMessage("tune", { role: "assistant", content, meta: { kind: "ops" } });
-
-/** Saída de terminal como cartão de código na conversa. */
-const feedConsole = (command: string, output: string, footer?: string) =>
-  feed(`\`\`\`console\n$ ${command}\n${output.trimEnd()}\n\`\`\`${footer ? `\n${footer}` : ""}`);
-
-async function detectSoup() {
-  if (!isTauriHost) {
-    useTune.setState({ soup: { status: "missing", version: "", launcher: null } });
-    return;
-  }
-  try {
-    const result = await terminal.execute("soup --version");
-    if (result.exitCode === 0) {
-      useTune.setState({
-        soup: { status: "ok", version: result.stdout.trim().split("\n")[0] ?? "", launcher: null }
-      });
-      return;
-    }
-  } catch {
-    // binário ausente: tenta a cópia embutida
-  }
-  // Cópia EMBUTIDA (third_party/soup) via Python do usuário — sonda REAL.
-  const launcher = await vendoredSoupLauncher();
-  if (launcher) {
-    try {
-      const probe = await terminal.execute(vendoredSoupCommand(launcher, "--version"));
-      if (probe.exitCode === 0) {
-        useTune.setState({
-          soup: { status: "vendored", version: probe.stdout.trim().split("\n")[0] ?? "", launcher }
-        });
-        return;
-      }
-    } catch {
-      // Python/deps ausentes: fonte embutida segue disponível, sem runtime
-    }
-  }
-  useTune.setState({ soup: { status: "missing", version: "", launcher } });
-}
-
-/** Comando local REAL — binário ou a cópia embutida — com saída na conversa. */
-async function runSoup(command: string) {
-  const { root, busy, soup } = useTune.getState();
-  if (busy) return;
-  if (!isTauriHost) {
-    feedConsole(command, "execução local real acontece no app desktop — aqui no navegador só o treino na nuvem roda.");
-    return;
-  }
-  // soup <args>: traduz para a cópia embutida quando não há binário no PATH.
-  let real = command;
-  if (command.startsWith("soup") && soup.status === "vendored" && soup.launcher) {
-    real = vendoredSoupCommand(soup.launcher, command.replace(/^soup\s*/, ""));
-  }
-  useTune.setState({ busy: true });
-  try {
-    const result = await terminal.execute(real, root.trim() || undefined);
-    const output = [result.stdout, result.stderr].filter(Boolean).join("");
-    feedConsole(command, output || "(sem saída)", `\`exit ${result.exitCode ?? "n/a"} · ${result.durationMs} ms\``);
-  } catch (cause) {
-    feedConsole(command, cause instanceof Error ? cause.message : String(cause));
-  } finally {
-    useTune.setState({ busy: false });
-  }
-}
-
-/** Init INTERNO: o app gera o soup.yaml do template embutido — sem binário. */
-async function initInternal() {
-  const { root } = useTune.getState();
-  useTune.setState({ configText: SOUP_TEMPLATE });
-  if (isTauriFs && root.trim()) {
-    try {
-      await fsWrite(root.trim(), "soup.yaml", SOUP_TEMPLATE);
-      feed("**Init interno** — `soup.yaml` gerado no projeto (template chat embutido, nenhum binário usado):\n```yaml\n" + SOUP_TEMPLATE.trimEnd() + "\n```");
-      return;
-    } catch (cause) {
-      feed(`Init interno falhou ao gravar: ${cause instanceof Error ? cause.message : String(cause)}`);
-      return;
-    }
-  }
-  feed(
-    "**Init interno** — template carregado no editor de config" +
-      (isTauriFs ? " — defina a pasta do projeto para gravar o soup.yaml." : " (gravação em disco no app desktop).")
-  );
-}
 
 /** Treino NA NUVEM — interno, via API de fine-tuning com a chave BYOK. */
 async function startCloudTraining(model: string, suffix: string) {
@@ -361,12 +246,10 @@ function downloadJsonl(examples: TuneExample[]) {
   URL.revokeObjectURL(anchor.href);
 }
 
-/** Rail dinâmico: projeto, status do soup, dataset e sessões. */
+/** Rail dinâmico: projeto, dataset e sessões. */
 export function TuneRail() {
   const root = useTune((state) => state.root);
-  const soup = useTune((state) => state.soup);
   const examples = useTune((state) => state.examples);
-  const busy = useTune((state) => state.busy);
   const { setRoot } = useTune.getState();
 
   return (
@@ -377,27 +260,12 @@ export function TuneRail() {
         <input
           value={root}
           onChange={(event) => setRoot(event.target.value)}
-          placeholder="pasta do projeto soup"
+          placeholder="pasta do projeto"
           aria-label="Pasta do projeto de fine-tuning"
         />
       </label>
-      <button className="lg-button compact" onClick={() => void detectSoup()} disabled={busy}>
-        <RefreshCw size={13} />
-        Detectar soup
-      </button>
-      <span className="chip accent" style={{ margin: "2px 6px" }} title="Init, dataset e treino na nuvem são do próprio app — nada precisa ser instalado">
+      <span className="chip accent" style={{ margin: "2px 6px" }} title="Dataset e treino na nuvem são do próprio app — nada precisa ser instalado">
         tuning · interno
-      </span>
-      <span
-        className={`chip ${soup.status === "ok" || soup.status === "vendored" ? "ok" : ""}`}
-        style={{ margin: "0 6px 2px" }}
-        title="O soup viaja EMBUTIDO no app (third_party/soup, Apache-2.0) e roda da cópia local via Python — sem instalar nada. Sem runtime Python/ML, o treino interno na nuvem cobre tudo."
-      >
-        {soup.status === "ok"
-          ? `soup local: ${soup.version}`.trim()
-          : soup.status === "vendored"
-            ? `soup embutido: ${soup.version}`.trim()
-            : "soup embutido: requer Python p/ rodar"}
       </span>
       <span className="eyebrow">DATASET</span>
       <button className="row-item" onClick={addExample}>
@@ -413,11 +281,8 @@ export function TuneRail() {
 
 export function TuneView() {
   const root = useTune((state) => state.root);
-  const soup = useTune((state) => state.soup);
   const examples = useTune((state) => state.examples);
   const selectedId = useTune((state) => state.selectedId);
-  const busy = useTune((state) => state.busy);
-  const configText = useTune((state) => state.configText);
   const { select } = useTune.getState();
   const messages = useApp((state) => state.threads.tune.messages);
   const sending = useApp((state) => state.threads.tune.sending);
@@ -425,12 +290,10 @@ export function TuneView() {
   const feedRef = useRef<HTMLDivElement | null>(null);
   const job = useTune((state) => state.job);
   const cloudBusy = useTune((state) => state.cloudBusy);
-  const [configNote, setConfigNote] = useState("");
   const [baseModel, setBaseModel] = useState(FINETUNABLE_MODELS[0]);
   const [suffix, setSuffix] = useState("");
 
   const selected = examples.find((example) => example.id === selectedId) ?? null;
-  const soupReady = isTauriHost && (soup.status === "ok" || soup.status === "vendored");
   const jobRunning = job !== null && !["succeeded", "failed", "cancelled"].includes(job.status);
 
   // Job em andamento: atualização automática periódica enquanto a aba está aberta.
@@ -440,39 +303,11 @@ export function TuneView() {
     return () => window.clearInterval(timer);
   }, [jobRunning]);
 
-  // Sonda o soup ao abrir a aba no desktop — o "Treinar" reflete o estado real.
-  useEffect(() => {
-    if (isTauriHost && useTune.getState().soup.status === "unknown") void detectSoup();
-  }, []);
-
   // Conversa acompanha a última mensagem (saídas de execução incluídas).
   useEffect(() => {
     const node = feedRef.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [messages.length, sending]);
-
-  async function loadConfig() {
-    if (!isTauriFs || !root.trim()) {
-      setConfigNote("leitura real do soup.yaml requer o app desktop e a pasta definida");
-      return;
-    }
-    try {
-      useTune.setState({ configText: await fsRead(root.trim(), "soup.yaml") });
-      setConfigNote("soup.yaml carregado do projeto");
-    } catch {
-      setConfigNote("soup.yaml não encontrado — rode o Init");
-    }
-  }
-
-  async function saveConfig() {
-    if (!isTauriFs || !root.trim()) return;
-    try {
-      await fsWrite(root.trim(), "soup.yaml", configText);
-      setConfigNote("soup.yaml salvo no projeto");
-    } catch (cause) {
-      setConfigNote(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
 
   async function writeDatasetToProject() {
     if (!isTauriFs || !root.trim()) return;
@@ -487,17 +322,9 @@ export function TuneView() {
   return (
     <Surface className="tunex">
       <TopbarActions>
-        <span className="chip accent" title="Init, dataset e treino na nuvem são internos do app — nada é instalado">
+        <span className="chip accent" title="Dataset e treino na nuvem são internos do app — nada é instalado">
           interno
         </span>
-        <button
-          className="lg-button ghost"
-          title="Gera o soup.yaml do template EMBUTIDO no app (sem binário externo)"
-          onClick={() => void initInternal()}
-        >
-          <Wand2 size={13} />
-          Init
-        </button>
         <button
           className="lg-button ghost"
           disabled={!examples.length}
@@ -507,24 +334,6 @@ export function TuneView() {
           <Download size={13} />
           JSONL
         </button>
-        {soupReady && (
-          <button
-            className="lg-button ghost"
-            disabled={busy}
-            title={
-              soup.status === "vendored"
-                ? "Treino local com o soup EMBUTIDO (roda da cópia do app via Python) — pode levar horas"
-                : "Treino local com o soup do PATH na sua GPU — pode levar horas"
-            }
-            onClick={() => {
-              feed("**Treino local** — `soup train` é um treino real e pode levar muito tempo; a saída completa chega aqui na conversa ao concluir.");
-              void runSoup("soup train");
-            }}
-          >
-            <Cpu size={13} />
-            {busy ? "Treinando…" : "Treinar local"}
-          </button>
-        )}
         <button
           className="lg-button primary"
           disabled={cloudBusy || !examples.length}
@@ -574,9 +383,9 @@ export function TuneView() {
                 {examples.length === 0 && (
                   <EmptyHero
                     icon={<FlaskConical size={26} />}
-                    kicker="FINE-TUNING · SOUP"
-                    title="Um dataset. Um comando."
-                    detail='Monte exemplos (sistema/usuário/assistente), exporte o JSONL e rode "soup train" — o soup cuida de LoRA, quantização e batch automaticamente.'
+                    kicker="FINE-TUNING · NUVEM"
+                    title="Um dataset. Um clique."
+                    detail='Monte exemplos (sistema/usuário/assistente) e clique em "Treinar na nuvem" — o job roda na infraestrutura do provedor com a sua chave e o modelo entra no catálogo.'
                   >
                     <button className="lg-button primary" onClick={addExample}>
                       <Plus size={14} />
@@ -612,13 +421,13 @@ export function TuneView() {
             <div className="tunex-feed v-panel">
               <header>
                 <span className="eyebrow">CONVERSA · EXECUÇÃO</span>
-                {(busy || cloudBusy) && <span className="chip accent">rodando…</span>}
+                {cloudBusy && <span className="chip accent">rodando…</span>}
               </header>
               <div className="tunex-feed-scroll" ref={feedRef} aria-live="polite">
                 {messages.length === 0 && (
                   <p className="tunex-feed-empty">
-                    Comandos, saídas do soup e eventos do treino aparecem aqui como cartões — junto das respostas do
-                    agente. Init → dataset → Treinar.
+                    Validações do dataset e eventos do treino aparecem aqui como cartões — junto das respostas do
+                    agente. Dataset → Treinar na nuvem.
                   </p>
                 )}
                 {messages.map((message, index) => (
@@ -753,42 +562,6 @@ export function TuneView() {
                   </div>
                 )}
               </div>
-              <PanelTitle icon={<Cpu size={13} />} label="Config & hardware" meta="soup.yaml (acelerador local)" />
-              <PanelScroll>
-                <div className="tunex-config">
-                  <div className="tunex-cfg-actions">
-                    <button className="lg-button compact" onClick={() => void loadConfig()} disabled={!isTauriFs}>
-                      <RefreshCw size={12} />
-                      Carregar
-                    </button>
-                    <button className="lg-button compact" onClick={() => void saveConfig()} disabled={!isTauriFs || !configText}>
-                      <Save size={12} />
-                      Salvar
-                    </button>
-                    <button
-                      className="lg-button compact"
-                      disabled={busy}
-                      title="nvidia-smi real — nome e VRAM da GPU"
-                      onClick={() => void runSoup("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")}
-                    >
-                      <Cpu size={12} />
-                      GPU
-                    </button>
-                  </div>
-                  <textarea
-                    className="tunex-yaml"
-                    value={configText}
-                    onChange={(event) => useTune.setState({ configText: event.target.value })}
-                    placeholder={isTauriFs ? 'soup.yaml — carregue do projeto ou rode "Init"' : "edição real do soup.yaml requer o app desktop"}
-                    spellCheck={false}
-                  />
-                  {configNote && <small className="tunex-note">{configNote}</small>}
-                  <p className="tunex-hint">
-                    Dica do Soup: GPUs pequenas treinam 8B com <code>stream_layers: true</code> (layer streaming BETA —
-                    3,32 GB de pico numa RTX 3050 4 GB).
-                  </p>
-                </div>
-              </PanelScroll>
             </>
           )}
         </VRight>
@@ -796,19 +569,14 @@ export function TuneView() {
 
       <VStatus>
         <span>
-          <FlaskConical size={11} />{" "}
-          {soup.status === "ok"
-            ? `soup ${soup.version || "ok"}`
-            : soup.status === "vendored"
-              ? `soup embutido ${soup.version || "ok"}`
-              : "soup embutido (fonte) · nuvem interna ativa"}
+          <Cloud size={11} /> treino na nuvem · interno
         </span>
         <span>{examples.length} exemplo{examples.length === 1 ? "" : "s"} no dataset</span>
         <span>
           <FolderOpen size={11} /> {root.trim() || "pasta não definida"}
         </span>
         <div className="spacer" />
-        <span>{busy ? "comando em execução…" : sending ? stage || "gerando…" : "pronto"}</span>
+        <span>{sending ? stage || "gerando…" : "pronto"}</span>
       </VStatus>
     </Surface>
   );

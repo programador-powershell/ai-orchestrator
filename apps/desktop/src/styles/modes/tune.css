@@ -1,4 +1,4 @@
-/* FINE-TUNING (soup embutido) — dataset builder + conversa de execução */
+/* FINE-TUNING (só nuvem) — dataset builder + conversa de execução */
 
 .tunex-center {
   position: absolute;
@@ -131,21 +131,6 @@
 
 .tunex-config { display: grid; gap: 8px; padding: 4px 4px 10px; }
 .tunex-cfg-actions { display: flex; gap: 5px; flex-wrap: wrap; }
-.tunex-yaml {
-  min-height: 220px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: 1.6;
-  resize: vertical;
-  outline: none;
-  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
-}
-.tunex-yaml:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tunex-note { color: var(--muted); font-size: var(--fs-eyebrow); }
 .tunex-hint { margin: 0 0 4px; color: var(--muted); font-size: var(--fs-micro); line-height: 1.55; }
 

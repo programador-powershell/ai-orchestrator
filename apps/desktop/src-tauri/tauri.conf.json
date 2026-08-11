@@ -28,13 +28,6 @@
     "active": true,
     "icon": ["icons/icon.ico"],
     "targets": ["nsis"],
-    "resources": {
-      "../../../third_party/soup/src/": "third_party/soup/src/",
-      "../../../third_party/soup/templates/": "third_party/soup/templates/",
-      "../../../third_party/soup/run_soup.py": "third_party/soup/run_soup.py",
-      "../../../third_party/soup/LICENSE": "third_party/soup/LICENSE",
-      "../../../third_party/soup/NOTICE": "third_party/soup/NOTICE"
-    },
     "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
