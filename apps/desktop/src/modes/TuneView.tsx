@@ -16,9 +16,12 @@ import {
   Download,
   FlaskConical,
   FolderOpen,
+  Gauge,
+  History,
   Plus,
   RefreshCw,
   Save,
+  Settings2,
   Sparkles,
   Trash2,
   Upload
@@ -39,15 +42,40 @@ import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
 import {
   FINETUNABLE_MODELS,
+  cancelFineTuneJob,
   createFineTuneJob,
   getFineTuneJob,
+  listFineTuneJobs,
   listJobEvents,
   uploadTrainingFile,
   validateJsonlForFineTune,
-  type FineTuneJob
+  type FineTuneMethod,
+  type FineTuneJob,
+  type JobOptions
 } from "../lib/finetune";
+import { estimateTrainingCost } from "../lib/tunelab";
 import { fsWrite, isTauriFs } from "../lib/fsx";
 import { useApp } from "../lib/store";
+
+type TuneTab = "configure" | "run" | "history";
+
+interface Hyperparams {
+  method: FineTuneMethod;
+  epochs: number;
+  batchSize: number | null;
+  lrMultiplier: number | null;
+}
+
+const DEFAULT_HYPERPARAMS: Hyperparams = { method: "supervised", epochs: 3, batchSize: null, lrMultiplier: null };
+
+function toJobOptions(hyperparams: Hyperparams): JobOptions {
+  return {
+    method: hyperparams.method,
+    epochs: hyperparams.epochs,
+    ...(hyperparams.batchSize !== null ? { batchSize: hyperparams.batchSize } : {}),
+    ...(hyperparams.lrMultiplier !== null ? { lrMultiplier: hyperparams.lrMultiplier } : {})
+  };
+}
 
 const ROOT_KEY = "tune.root";
 const DATASET_KEY = "tune.dataset";
@@ -150,7 +178,7 @@ const feed = (content: string) =>
   useApp.getState().appendMessage("tune", { role: "assistant", content, meta: { kind: "ops" } });
 
 /** Treino NA NUVEM — interno, via API de fine-tuning com a chave BYOK. */
-async function startCloudTraining(model: string, suffix: string) {
+async function startCloudTraining(model: string, suffix: string, hyperparams: Hyperparams) {
   const { examples, cloudBusy } = useTune.getState();
   if (cloudBusy) return;
   const jsonl = datasetToJsonl(examples);
@@ -163,8 +191,8 @@ async function startCloudTraining(model: string, suffix: string) {
   feed(`**Treino na nuvem** — enviando ${validation.examples} exemplos para a OpenAI…`);
   try {
     const fileId = await uploadTrainingFile(jsonl);
-    feed(`Upload ok (\`${fileId}\`) — criando job de fine-tuning em \`${model}\`…`);
-    const job = await createFineTuneJob(fileId, model, suffix);
+    feed(`Upload ok (\`${fileId}\`) — criando job de fine-tuning em \`${model}\` (${hyperparams.method}, ${hyperparams.epochs} época(s))…`);
+    const job = await createFineTuneJob(fileId, model, suffix, toJobOptions(hyperparams));
     setJob(job);
     feed(`Job criado: \`${job.id}\` · status **${job.status}**. Acompanho aqui na conversa (atualização automática).`);
   } catch (cause) {
@@ -292,9 +320,30 @@ export function TuneView() {
   const cloudBusy = useTune((state) => state.cloudBusy);
   const [baseModel, setBaseModel] = useState(FINETUNABLE_MODELS[0]);
   const [suffix, setSuffix] = useState("");
+  const [tab, setTab] = useState<TuneTab>("configure");
+  const [hyperparams, setHyperparams] = useState<Hyperparams>(DEFAULT_HYPERPARAMS);
+  const [history, setHistory] = useState<FineTuneJob[] | null>(null);
 
   const selected = examples.find((example) => example.id === selectedId) ?? null;
   const jobRunning = job !== null && !["succeeded", "failed", "cancelled"].includes(job.status);
+  const cost = estimateTrainingCost(datasetToJsonl(examples), baseModel, hyperparams.epochs);
+
+  // Job iniciado leva o usuário direto para o acompanhamento (padrão Studio).
+  useEffect(() => {
+    if (job) setTab("run");
+  }, [job?.id]);
+
+  // Histórico carrega do provedor ao abrir a sub-aba (jobs anteriores da conta).
+  useEffect(() => {
+    if (tab !== "history") return;
+    let active = true;
+    listFineTuneJobs(20)
+      .then((jobs) => active && setHistory(jobs))
+      .catch(() => active && setHistory([]));
+    return () => {
+      active = false;
+    };
+  }, [tab]);
 
   // Job em andamento: atualização automática periódica enquanto a aba está aberta.
   useEffect(() => {
@@ -334,11 +383,22 @@ export function TuneView() {
           <Download size={13} />
           JSONL
         </button>
+        <div className="segmented" role="tablist" aria-label="Etapas do treino">
+          <button role="tab" aria-selected={tab === "configure"} className={tab === "configure" ? "active" : ""} onClick={() => setTab("configure")}>
+            <Settings2 size={12} /> Configurar
+          </button>
+          <button role="tab" aria-selected={tab === "run"} className={tab === "run" ? "active" : ""} onClick={() => setTab("run")}>
+            <Gauge size={12} /> Execução
+          </button>
+          <button role="tab" aria-selected={tab === "history"} className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
+            <History size={12} /> Histórico
+          </button>
+        </div>
         <button
           className="lg-button primary"
           disabled={cloudBusy || !examples.length}
           title="Treino REAL na nuvem via API de fine-tuning (sua chave OpenAI) — nada instalado; exige ≥10 exemplos"
-          onClick={() => void startCloudTraining(baseModel, suffix)}
+          onClick={() => void startCloudTraining(baseModel, suffix, hyperparams)}
         >
           <Cloud size={13} />
           {cloudBusy ? "Enviando…" : "Treinar na nuvem"}
@@ -491,13 +551,39 @@ export function TuneView() {
                 </div>
               </PanelScroll>
             </>
+          ) : tab === "history" ? (
+            <>
+              <PanelTitle icon={<History size={13} />} label="Histórico de treinos" meta="provedor · conta" />
+              <PanelScroll>
+                <div className="tunex-config">
+                  {history === null && <p className="tunex-hint">Carregando jobs anteriores…</p>}
+                  {history !== null && history.length === 0 && (
+                    <p className="tunex-hint">Nenhum job de fine-tuning na conta ainda.</p>
+                  )}
+                  {history?.map((entry) => (
+                    <div key={entry.id} className="tunex-job">
+                      <div className="tunex-job-head">
+                        <code className="setx-code">{entry.id}</code>
+                        <span
+                          className={`chip ${entry.status === "succeeded" ? "ok" : entry.status === "failed" ? "danger" : "accent"}`}
+                        >
+                          {entry.status}
+                        </span>
+                      </div>
+                      {entry.fineTunedModel && <small className="tunex-note">{entry.fineTunedModel}</small>}
+                    </div>
+                  ))}
+                </div>
+              </PanelScroll>
+            </>
           ) : (
             <>
               <PanelTitle icon={<Cloud size={13} />} label="Treino na nuvem" meta="interno · API" />
               <div className="tunex-config">
                 <p className="tunex-hint">
                   Fine-tuning REAL na infraestrutura do provedor com a sua chave — nada instalado. Exige ≥10 exemplos;
-                  o modelo resultante entra no catálogo.
+                  o modelo resultante entra no catálogo. Sem export de pesos: modelos tunados na nuvem ficam no catálogo,
+                  não geram GGUF.
                 </p>
                 <div className="tunex-cfg-actions">
                   <label className="lg-field" style={{ flex: 1 }}>
@@ -520,6 +606,80 @@ export function TuneView() {
                     />
                   </label>
                 </div>
+                <div className="tunex-cfg-actions">
+                  <label className="lg-field" style={{ flex: 1 }}>
+                    Método
+                    <select
+                      value={hyperparams.method}
+                      onChange={(event) => setHyperparams((current) => ({ ...current, method: event.target.value as FineTuneMethod }))}
+                    >
+                      <option value="supervised">Supervisionado (SFT)</option>
+                      <option value="dpo">Preferência (DPO)</option>
+                    </select>
+                  </label>
+                  <label className="lg-field" style={{ flex: 1 }}>
+                    Épocas
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={hyperparams.epochs}
+                      onChange={(event) =>
+                        setHyperparams((current) => ({ ...current, epochs: Math.max(1, Number(event.target.value) || 1) }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="tunex-cfg-actions">
+                  <label className="lg-field" style={{ flex: 1 }}>
+                    Batch (auto se vazio)
+                    <input
+                      type="number"
+                      min={1}
+                      value={hyperparams.batchSize ?? ""}
+                      placeholder="auto"
+                      onChange={(event) =>
+                        setHyperparams((current) => ({ ...current, batchSize: event.target.value ? Number(event.target.value) : null }))
+                      }
+                    />
+                  </label>
+                  <label className="lg-field" style={{ flex: 1 }}>
+                    LR multiplier (auto)
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={hyperparams.lrMultiplier ?? ""}
+                      placeholder="auto"
+                      onChange={(event) =>
+                        setHyperparams((current) => ({
+                          ...current,
+                          lrMultiplier: event.target.value ? Number(event.target.value) : null
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="tunex-preview">
+                  <span>
+                    <FlaskConical size={11} /> {examples.length} exemplo{examples.length === 1 ? "" : "s"}
+                  </span>
+                  <span>
+                    <Gauge size={11} /> ~{cost.tokens.toLocaleString("pt-BR")} tokens
+                  </span>
+                  <span title="Estimativa ~4 chars/token × épocas × preço de treino do provedor. Revise antes de rodar.">
+                    <Cloud size={11} />{" "}
+                    {cost.costUsd === null
+                      ? "custo: modelo sem tabela"
+                      : `~US$ ${cost.costUsd.toFixed(cost.costUsd < 1 ? 3 : 2)}`}
+                  </span>
+                  {hyperparams.method === "dpo" && (
+                    <span className="tunex-note" style={{ flexBasis: "100%" }}>
+                      DPO exige dataset de preferência (input/preferred_output/non_preferred_output) — o construtor de
+                      exemplos acima gera SFT.
+                    </span>
+                  )}
+                </div>
                 {job && (
                   <div className="tunex-job">
                     <div className="tunex-job-head">
@@ -534,6 +694,28 @@ export function TuneView() {
                         <RefreshCw size={12} className={cloudBusy ? "spin" : undefined} />
                         Atualizar status
                       </button>
+                      {jobRunning && (
+                        <button
+                          className="lg-button compact ghost"
+                          disabled={cloudBusy}
+                          title="Cancelar o job no provedor"
+                          onClick={() => {
+                            const current = useTune.getState().job;
+                            if (!current) return;
+                            useTune.setState({ cloudBusy: true });
+                            void cancelFineTuneJob(current.id)
+                              .then((updated) => {
+                                setJob(updated);
+                                feed(`Job \`${updated.id}\` cancelado: **${updated.status}**.`);
+                              })
+                              .catch((cause: unknown) => feed(cause instanceof Error ? cause.message : String(cause)))
+                              .finally(() => useTune.setState({ cloudBusy: false }));
+                          }}
+                        >
+                          <Trash2 size={12} />
+                          Cancelar
+                        </button>
+                      )}
                       {job.status === "succeeded" && job.fineTunedModel && (
                         <button
                           className="lg-button compact primary"

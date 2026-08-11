@@ -56,11 +56,36 @@ export function validateJsonlForFineTune(jsonl: string): JsonlValidation {
   return { ok: issues.length === 0, examples, issues };
 }
 
-export function buildJobPayload(trainingFileId: string, model: string, suffix?: string) {
+export type FineTuneMethod = "supervised" | "dpo";
+
+export interface JobOptions {
+  method?: FineTuneMethod;
+  epochs?: number;
+  batchSize?: number;
+  lrMultiplier?: number;
+  validationFileId?: string;
+}
+
+function buildHyperparameters(options: JobOptions) {
   return {
+    ...(options.epochs !== undefined ? { n_epochs: options.epochs } : {}),
+    ...(options.batchSize !== undefined ? { batch_size: options.batchSize } : {}),
+    ...(options.lrMultiplier !== undefined ? { learning_rate_multiplier: options.lrMultiplier } : {})
+  };
+}
+
+export function buildJobPayload(trainingFileId: string, model: string, suffix?: string, options?: JobOptions) {
+  const base = {
     training_file: trainingFileId,
     model,
     ...(suffix?.trim() ? { suffix: suffix.trim().slice(0, 18) } : {})
+  };
+  if (!options) return base;
+  const method = options.method ?? "supervised";
+  return {
+    ...base,
+    ...(options.validationFileId ? { validation_file: options.validationFileId } : {}),
+    method: { type: method, [method]: { hyperparameters: buildHyperparameters(options) } }
   };
 }
 
@@ -122,10 +147,30 @@ export async function uploadTrainingFile(jsonl: string, fileName = "dataset.json
   return payload.id;
 }
 
-export async function createFineTuneJob(trainingFileId: string, model: string, suffix?: string): Promise<FineTuneJob> {
+export async function createFineTuneJob(
+  trainingFileId: string,
+  model: string,
+  suffix?: string,
+  options?: JobOptions
+): Promise<FineTuneJob> {
   const payload = (await request(OPENAI_BASE, "openai", "POST", "/fine_tuning/jobs", {
-    json: buildJobPayload(trainingFileId, model, suffix)
+    json: buildJobPayload(trainingFileId, model, suffix, options)
   })) as Record<string, unknown>;
+  return normalizeJob(payload);
+}
+
+export async function listFineTuneJobs(limit = 20): Promise<FineTuneJob[]> {
+  const payload = (await request(OPENAI_BASE, "openai", "GET", `/fine_tuning/jobs?limit=${limit}`)) as {
+    data?: Array<Record<string, unknown>>;
+  };
+  return (payload.data ?? []).map(normalizeJob);
+}
+
+export async function cancelFineTuneJob(jobId: string): Promise<FineTuneJob> {
+  const payload = (await request(OPENAI_BASE, "openai", "POST", `/fine_tuning/jobs/${jobId}/cancel`)) as Record<
+    string,
+    unknown
+  >;
   return normalizeJob(payload);
 }
 
