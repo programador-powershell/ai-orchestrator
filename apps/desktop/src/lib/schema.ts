@@ -8,13 +8,22 @@ import type {
   SchemaField,
   SchemaRelation,
   SchemaTable,
-  SqlDialect
+  SqlDialect as SqlDialectBase
 } from "@ai-orchestrator/contracts";
 import type { StructuredOp } from "./ops";
 
 /* ------------------------------ Constantes ------------------------------- */
 
-export const SQL_DIALECTS: SqlDialect[] = ["postgres", "mysql", "ansi"];
+/**
+ * Dialetos suportados no export/diff — superset local do SqlDialect de
+ * contracts (adiciona sqlite/mssql sem tocar no pacote contracts).
+ */
+export type SqlDialect = SqlDialectBase | "sqlite" | "mssql";
+
+/** Ações referenciais de FK (ON UPDATE / ON DELETE). */
+export type FkAction = "CASCADE" | "RESTRICT" | "SET NULL" | "NO ACTION";
+
+export const SQL_DIALECTS: SqlDialect[] = ["postgres", "mysql", "ansi", "sqlite", "mssql"];
 
 /** Tons categóricos — mapeados para var(--tone-*) no CSS da view. */
 const TONES = ["cyan", "violet", "mint", "amber", "blue", "pink", "rose"];
@@ -23,7 +32,9 @@ const TONES = ["cyan", "violet", "mint", "amber", "blue", "pink", "rose"];
 export const dialectFieldTypes: Record<SqlDialect, string[]> = {
   postgres: ["uuid", "text", "varchar", "int", "bigint", "serial", "boolean", "timestamptz", "date", "jsonb", "numeric"],
   mysql: ["uuid", "varchar", "text", "int", "bigint", "serial", "boolean", "timestamptz", "date", "jsonb", "numeric"],
-  ansi: ["uuid", "varchar", "text", "int", "bigint", "boolean", "timestamptz", "date", "numeric"]
+  ansi: ["uuid", "varchar", "text", "int", "bigint", "boolean", "timestamptz", "date", "numeric"],
+  sqlite: ["uuid", "text", "varchar", "int", "bigint", "serial", "boolean", "timestamptz", "date", "jsonb", "numeric"],
+  mssql: ["uuid", "text", "varchar", "int", "bigint", "serial", "boolean", "timestamptz", "date", "jsonb", "numeric"]
 };
 
 /* --------------------- Extensão local: índices nomeados ------------------- */
@@ -36,10 +47,23 @@ export interface SchemaIndexDef {
 }
 
 /**
- * SchemaDoc + índices. Compatibilidade total: todo SchemaDoc é um
- * SchemaDocExt válido (indexes é opcional) e vice-versa por atribuição.
+ * Relação + ações referenciais opcionais (ON UPDATE / ON DELETE) — extensão
+ * local sobre SchemaRelation, sem alterar contracts. As ações são opcionais,
+ * então toda SchemaRelation é uma SchemaRelationExt válida e vice-versa.
  */
-export interface SchemaDocExt extends SchemaDoc {
+export interface SchemaRelationExt extends SchemaRelation {
+  onUpdate?: FkAction;
+  onDelete?: FkAction;
+}
+
+/**
+ * SchemaDoc + índices, dialetos estendidos (sqlite/mssql) e ações de FK.
+ * `dialect`/`relations` são alargados localmente (Omit) — todo SchemaDoc
+ * atribui a SchemaDocExt; a volta vale para os três dialetos de contracts.
+ */
+export interface SchemaDocExt extends Omit<SchemaDoc, "dialect" | "relations"> {
+  dialect: SqlDialect;
+  relations: SchemaRelationExt[];
   indexes?: SchemaIndexDef[];
 }
 
@@ -163,7 +187,7 @@ function relationId(fromTable: string, fromField: string, toTable: string, toFie
   return `rel_${fromTable}_${fromField}__${toTable}_${toField}`;
 }
 
-function upsertRelation(doc: SchemaDocExt, relation: Omit<SchemaRelation, "id">): SchemaDocExt {
+function upsertRelation(doc: SchemaDocExt, relation: Omit<SchemaRelationExt, "id">): SchemaDocExt {
   const exists = doc.relations.some(
     (r) =>
       r.fromTable === relation.fromTable &&
@@ -241,6 +265,10 @@ function asField(value: unknown): SchemaField | undefined {
 
 function asCardinality(value: unknown): SchemaRelation["cardinality"] {
   return value === "1-1" || value === "n-n" ? value : "1-n";
+}
+
+function asFkAction(value: unknown): FkAction | undefined {
+  return value === "CASCADE" || value === "RESTRICT" || value === "SET NULL" || value === "NO ACTION" ? value : undefined;
 }
 
 /* ------------------------- applyOps (canal "data") ------------------------ */
@@ -335,13 +363,18 @@ function applyOp(doc: SchemaDocExt, op: StructuredOp): SchemaDocExt {
       const toTable = asString(op.toTable);
       const toField = asString(op.toField);
       if (!fromTable || !fromField || !toTable || !toField) return doc;
-      const next = upsertRelation(doc, {
+      const relation: Omit<SchemaRelationExt, "id"> = {
         fromTable,
         fromField,
         toTable,
         toField,
         cardinality: asCardinality(op.cardinality)
-      });
+      };
+      const onUpdate = asFkAction(op.onUpdate);
+      const onDelete = asFkAction(op.onDelete);
+      if (onUpdate) relation.onUpdate = onUpdate;
+      if (onDelete) relation.onDelete = onDelete;
+      const next = upsertRelation(doc, relation);
       // Mantém o campo de origem coerente com a FK exportada.
       return {
         ...next,
@@ -434,6 +467,41 @@ const TYPE_MAP: Record<SqlDialect, Record<string, string>> = {
     json: "VARCHAR(4000)",
     numeric: "NUMERIC(18,6)",
     float: "DOUBLE PRECISION"
+  },
+  sqlite: {
+    // SQLite tem afinidade de tipos: sem UUID/BOOLEAN nativos, tudo em TEXT/INTEGER.
+    uuid: "TEXT",
+    text: "TEXT",
+    varchar: "VARCHAR(255)",
+    int: "INTEGER",
+    integer: "INTEGER",
+    bigint: "INTEGER",
+    serial: "INTEGER",
+    boolean: "INTEGER",
+    timestamptz: "DATETIME",
+    timestamp: "DATETIME",
+    date: "DATE",
+    jsonb: "TEXT",
+    json: "TEXT",
+    numeric: "NUMERIC",
+    float: "REAL"
+  },
+  mssql: {
+    uuid: "UNIQUEIDENTIFIER",
+    text: "NVARCHAR(MAX)",
+    varchar: "NVARCHAR(255)",
+    int: "INT",
+    integer: "INT",
+    bigint: "BIGINT",
+    serial: "INT IDENTITY(1,1)",
+    boolean: "BIT",
+    timestamptz: "DATETIME2",
+    timestamp: "DATETIME2",
+    date: "DATE",
+    jsonb: "NVARCHAR(MAX)",
+    json: "NVARCHAR(MAX)",
+    numeric: "DECIMAL(18,6)",
+    float: "FLOAT"
   }
 };
 
@@ -443,12 +511,14 @@ function mapType(type: string, dialect: SqlDialect): string {
 }
 
 function mapDefault(value: string, dialect: SqlDialect): string {
-  if (dialect !== "postgres" && value.toLowerCase() === "now()") return "CURRENT_TIMESTAMP";
-  return value;
+  if (dialect === "postgres" || value.toLowerCase() !== "now()") return value;
+  return dialect === "mssql" ? "SYSUTCDATETIME()" : "CURRENT_TIMESTAMP";
 }
 
 function quote(name: string, dialect: SqlDialect): string {
-  return dialect === "mysql" ? `\`${name}\`` : `"${name}"`;
+  if (dialect === "mysql") return `\`${name}\``;
+  if (dialect === "mssql") return `[${name}]`;
+  return `"${name}"`;
 }
 
 /** DDL de uma coluna (sem indentação): nome, tipo mapeado, NULL e DEFAULT. */
@@ -472,12 +542,81 @@ function renderCreateTable(table: SchemaTable, dialect: SqlDialect): string {
   return `CREATE TABLE ${q(table.name)} (\n${lines.join(",\n")}\n${tail}`;
 }
 
-function renderAddFk(table: string, field: string, refTable: string, refField: string, dialect: SqlDialect): string {
+/** Ações referenciais opcionais de uma FK, na ordem canônica ON UPDATE → ON DELETE. */
+interface FkActions {
+  onUpdate?: FkAction;
+  onDelete?: FkAction;
+}
+
+function renderAddFk(
+  table: string,
+  field: string,
+  refTable: string,
+  refField: string,
+  dialect: SqlDialect,
+  actions?: FkActions
+): string {
   const q = (name: string) => quote(name, dialect);
-  return (
+  let sql =
     `ALTER TABLE ${q(table)} ADD CONSTRAINT ${q(`fk_${table}_${field}`)} ` +
-    `FOREIGN KEY (${q(field)}) REFERENCES ${q(refTable)} (${q(refField)});`
-  );
+    `FOREIGN KEY (${q(field)}) REFERENCES ${q(refTable)} (${q(refField)})`;
+  if (actions?.onUpdate) sql += ` ON UPDATE ${actions.onUpdate}`;
+  if (actions?.onDelete) sql += ` ON DELETE ${actions.onDelete}`;
+  return `${sql};`;
+}
+
+/** Chave estável de uma relação por seus endpoints (from → to). */
+function relKey(fromTable: string, fromField: string, toTable: string, toField: string): string {
+  return `${fromTable} ${fromField} ${toTable} ${toField}`;
+}
+
+/** Índice das relações por endpoints — usado para ações de FK e junções n-n. */
+function relationIndex(doc: SchemaDocExt): Map<string, SchemaRelationExt> {
+  const map = new Map<string, SchemaRelationExt>();
+  for (const r of doc.relations) map.set(relKey(r.fromTable, r.fromField, r.toTable, r.toField), r);
+  return map;
+}
+
+/** PK de uma tabela para referência de junção (fallback: 1º campo ou id/uuid). */
+function primaryKeyField(table: SchemaTable): SchemaField {
+  return table.fields.find((f) => f.primaryKey) ?? table.fields[0] ?? { name: "id", type: "uuid" };
+}
+
+/**
+ * Tabelas de junção derivadas das relações n-n: `<tabelaA>_<tabelaB>` com uma
+ * FK para a PK de cada lado e PK composta das duas colunas. Retorna os CREATE
+ * TABLE e os ALTER TABLE … ADD CONSTRAINT correspondentes.
+ */
+function renderJunctionTables(doc: SchemaDocExt, dialect: SqlDialect): { creates: string[]; fks: string[] } {
+  const creates: string[] = [];
+  const fks: string[] = [];
+  const seen = new Set<string>();
+  const byName = new Map(doc.tables.map((t) => [t.name, t]));
+  const q = (name: string) => quote(name, dialect);
+  for (const relation of doc.relations) {
+    if (relation.cardinality !== "n-n") continue;
+    const a = byName.get(relation.fromTable);
+    const b = byName.get(relation.toTable);
+    if (!a || !b) continue;
+    const name = `${a.name}_${b.name}`;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const pkA = primaryKeyField(a);
+    const pkB = primaryKeyField(b);
+    const colA = `${a.name}_${pkA.name}`;
+    let colB = `${b.name}_${pkB.name}`;
+    if (colA === colB) colB = `${colB}_2`;
+    const lines = [
+      `  ${q(colA)} ${mapType(pkA.type, dialect)} NOT NULL`,
+      `  ${q(colB)} ${mapType(pkB.type, dialect)} NOT NULL`,
+      `  PRIMARY KEY (${q(colA)}, ${q(colB)})`
+    ];
+    const tail = dialect === "mysql" ? ") ENGINE=InnoDB;" : ");";
+    creates.push(`CREATE TABLE ${q(name)} (\n${lines.join(",\n")}\n${tail}`);
+    fks.push(renderAddFk(name, colA, a.name, pkA.name, dialect));
+    fks.push(renderAddFk(name, colB, b.name, pkB.name, dialect));
+  }
+  return { creates, fks };
 }
 
 function renderCreateIndex(index: SchemaIndexDef, dialect: SqlDialect): string {
@@ -489,24 +628,32 @@ function renderCreateIndex(index: SchemaIndexDef, dialect: SqlDialect): string {
 }
 
 /**
- * CREATE TABLE com PK/UNIQUE/NULL/DEFAULT por dialeto.
- * FKs saem como ALTER TABLE ao final, em ordem estável (tabela → campo),
- * seguidas dos CREATE INDEX da extensão local (SchemaDocExt.indexes).
+ * CREATE TABLE com PK/UNIQUE/NULL/DEFAULT por dialeto, seguido das tabelas de
+ * junção das relações n-n. FKs saem como ALTER TABLE ao final, em ordem estável
+ * (tabela → campo; depois as FKs das junções), com ON UPDATE/ON DELETE quando
+ * definidos na relação, seguidas dos CREATE INDEX (SchemaDocExt.indexes).
  */
 export function exportSql(doc: SchemaDocExt, dialect: SqlDialect): string {
   const statements: string[] = [`-- Esquema: ${doc.name}`, `-- Dialeto: ${dialect}`, ""];
+  const relations = relationIndex(doc);
 
   for (const table of doc.tables) {
     statements.push(renderCreateTable(table, dialect), "");
   }
 
+  const junction = renderJunctionTables(doc, dialect);
+  for (const create of junction.creates) statements.push(create, "");
+
   const fks: string[] = [];
   for (const table of doc.tables) {
     for (const field of table.fields) {
       if (!field.references) continue;
-      fks.push(renderAddFk(table.name, field.name, field.references.table, field.references.field, dialect));
+      const relation = relations.get(relKey(table.name, field.name, field.references.table, field.references.field));
+      if (relation?.cardinality === "n-n") continue; // n-n é resolvido pela tabela de junção
+      fks.push(renderAddFk(table.name, field.name, field.references.table, field.references.field, dialect, relation));
     }
   }
+  fks.push(...junction.fks);
   if (fks.length) statements.push(...fks, "");
 
   const indexes = validIndexes(doc).map((index) => renderCreateIndex(index, dialect));
@@ -639,19 +786,26 @@ interface FkEdge {
   field: string;
   refTable: string;
   refField: string;
+  onUpdate?: FkAction;
+  onDelete?: FkAction;
 }
 
 function fkEdges(doc: SchemaDocExt): Map<string, FkEdge> {
   const edges = new Map<string, FkEdge>();
+  const relations = relationIndex(doc);
   for (const table of doc.tables) {
     for (const field of table.fields) {
       if (!field.references) continue;
+      const relation = relations.get(relKey(table.name, field.name, field.references.table, field.references.field));
+      if (relation?.cardinality === "n-n") continue; // n-n não vira FK simples no diff
       const edge: FkEdge = {
         table: table.name,
         field: field.name,
         refTable: field.references.table,
         refField: field.references.field
       };
+      if (relation?.onUpdate) edge.onUpdate = relation.onUpdate;
+      if (relation?.onDelete) edge.onDelete = relation.onDelete;
       edges.set(`${edge.table}.${edge.field}->${edge.refTable}.${edge.refField}`, edge);
     }
   }
@@ -716,7 +870,7 @@ export function diffSchemas(prev: SchemaDocExt, next: SchemaDocExt, dialect: Sql
   const prevFks = fkEdges(prev);
   const nextFks = fkEdges(next);
   for (const [key, edge] of nextFks) {
-    if (!prevFks.has(key)) statements.push(renderAddFk(edge.table, edge.field, edge.refTable, edge.refField, dialect));
+    if (!prevFks.has(key)) statements.push(renderAddFk(edge.table, edge.field, edge.refTable, edge.refField, dialect, edge));
   }
   for (const [key, edge] of prevFks) {
     if (nextFks.has(key) || !nextByName.has(edge.table)) continue;
@@ -739,6 +893,16 @@ export function diffSchemas(prev: SchemaDocExt, next: SchemaDocExt, dialect: Sql
     );
   }
   return statements;
+}
+
+/**
+ * SQL de reversão (down) da migração `prev` → `next`: é exatamente o diff no
+ * sentido oposto (`next` → `prev`). CREATE TABLE vira DROP TABLE, ADD COLUMN
+ * vira DROP COLUMN, ADD CONSTRAINT vira DROP CONSTRAINT, e assim por diante.
+ * Herda as mesmas limitações de diffSchemas (rename = DROP + CREATE).
+ */
+export function diffSchemasDown(prev: SchemaDocExt, next: SchemaDocExt, dialect: SqlDialect): string[] {
+  return diffSchemas(next, prev, dialect);
 }
 
 /* ------------------- Persistência: parse seguro de JSON ------------------- */
@@ -777,7 +941,7 @@ export function parseDocJson(raw: string | null): SchemaDocExt | null {
     });
   }
 
-  const relations: SchemaRelation[] = [];
+  const relations: SchemaRelationExt[] = [];
   for (const entry of rawDoc.relations) {
     if (!entry || typeof entry !== "object") continue;
     const r = entry as Record<string, unknown>;
@@ -786,14 +950,19 @@ export function parseDocJson(raw: string | null): SchemaDocExt | null {
     const toTable = asString(r.toTable);
     const toField = asString(r.toField);
     if (!fromTable || !fromField || !toTable || !toField) continue;
-    relations.push({
+    const relation: SchemaRelationExt = {
       id: asString(r.id) || relationId(fromTable, fromField, toTable, toField),
       fromTable,
       fromField,
       toTable,
       toField,
       cardinality: asCardinality(r.cardinality)
-    });
+    };
+    const onUpdate = asFkAction(r.onUpdate);
+    const onDelete = asFkAction(r.onDelete);
+    if (onUpdate) relation.onUpdate = onUpdate;
+    if (onDelete) relation.onDelete = onDelete;
+    relations.push(relation);
   }
 
   const indexes: SchemaIndexDef[] = [];

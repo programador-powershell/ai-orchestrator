@@ -56,6 +56,7 @@ import {
   autoLayout,
   dialectFieldTypes,
   diffSchemas,
+  diffSchemasDown,
   emptyDoc,
   exportSql,
   importSql,
@@ -66,6 +67,7 @@ import {
   type SchemaDocExt,
   type SchemaIndexDef
 } from "../lib/schema";
+import { renderErdSvg } from "../lib/erdSvg";
 import { useApp } from "../lib/store";
 
 /* Geometria dos cards — única fonte em schema.ts (casa com .datax-table no CSS). */
@@ -468,6 +470,8 @@ export function DataView() {
   /** Diff real snapshot → atual; alimenta o modal de migração e o status. */
   const migration = useMemo(() => (snapshot ? diffSchemas(snapshot, doc, doc.dialect) : []), [snapshot, doc]);
   const migrationSql = useMemo(() => (migration.length ? `${migration.join("\n\n")}\n` : ""), [migration]);
+  const migrationDown = useMemo(() => (snapshot ? diffSchemasDown(snapshot, doc, doc.dialect) : []), [snapshot, doc]);
+  const migrationDownSql = useMemo(() => (migrationDown.length ? `${migrationDown.join("\n\n")}\n` : ""), [migrationDown]);
 
   const problems = doc.relations.filter((relation) => {
     const from = doc.tables.find((t) => t.name === relation.fromTable);
@@ -681,7 +685,8 @@ export function DataView() {
   }
 
   function downloadText(fileName: string, text: string) {
-    const blob = new Blob([text], { type: "application/sql" });
+    const type = fileName.endsWith(".svg") ? "image/svg+xml" : "application/sql";
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -939,6 +944,10 @@ export function DataView() {
                         {copied ? <Check size={13} /> : <Copy size={13} />}
                         {copied ? "Copiado" : "Copiar"}
                       </button>
+                      <button className="lg-button" onClick={() => downloadText("schema.svg", renderErdSvg(doc))}>
+                        <Download size={13} />
+                        Baixar SVG
+                      </button>
                       <button className="lg-button primary" onClick={() => downloadText("schema.sql", sqlPreview)}>
                         <Download size={13} />
                         Baixar schema.sql
@@ -988,10 +997,16 @@ export function DataView() {
                             {copied ? <Check size={13} /> : <Copy size={13} />}
                             {copied ? "Copiado" : "Copiar"}
                           </button>
-                          <button className="lg-button" onClick={() => downloadText("migration.sql", migrationSql)}>
+                          <button className="lg-button" onClick={() => downloadText("migration.up.sql", migrationSql)}>
                             <Download size={13} />
-                            Baixar migration.sql
+                            Baixar up.sql
                           </button>
+                          {migrationDownSql && (
+                            <button className="lg-button" onClick={() => downloadText("migration.down.sql", migrationDownSql)}>
+                              <Download size={13} />
+                              Baixar down.sql
+                            </button>
+                          )}
                         </>
                       )}
                       <button className="lg-button primary" onClick={saveSnapshot}>
