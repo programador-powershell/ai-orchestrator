@@ -10,7 +10,7 @@
  * Sem nenhuma conexão, cai em modo demonstração claramente rotulado, para que a
  * interface continue navegável e verificável.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { MODES, type EngineSelection, type FusionPreset, type Mode, type ModelTarget, type UiMode } from "@ai-orchestrator/contracts";
 import { byok, providerExtraHeaders } from "./byok";
 import {
@@ -142,16 +142,29 @@ async function providerChat(
   if (!baseUrl) throw new Error(`Configure a base URL do provedor "${target.providerId}" em Configurações → Provedores.`);
 
   if (isTauriHost) {
-    const content = await invoke<string>("provider_chat", {
+    // Streaming real: os deltas chegam pelo Channel conforme o provedor envia,
+    // em vez de esperar a resposta inteira. A chave nunca sai do keyring (Rust).
+    const channel = new Channel<StreamEvent>();
+    let streamed = "";
+    channel.onmessage = (event) => {
+      if (event.kind === "delta") {
+        streamed += event.data;
+        events.onDelta(event.data);
+      }
+    };
+    const full = await invoke<string>("provider_chat_stream", {
       request: {
         baseUrl,
         account: `provider:${target.providerId}`,
         model: target.model,
         messages
-      }
+      },
+      onEvent: channel
     });
-    events.onDelta(content);
-    return content;
+    // O retorno é a fonte da verdade; se o Channel não entregou nada (build
+    // antiga), emite de uma vez para não deixar a bolha vazia.
+    if (!streamed && full) events.onDelta(full);
+    return full;
   }
 
   // Navegador: chamada direta com a chave do armazenamento local (BYOK web).
@@ -167,19 +180,57 @@ async function providerChat(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${key}`,
+      Accept: "text/event-stream",
       ...providerExtraHeaders(target.providerId)
     },
-    body: JSON.stringify({ model: target.model, messages, stream: false })
+    body: JSON.stringify({ model: target.model, messages, stream: true })
   });
-  if (!response.ok) {
+  if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => "");
     throw new Error(`${target.providerId} respondeu ${response.status}: ${detail.slice(0, 300)}`);
   }
-  const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = payload.choices?.[0]?.message?.content ?? "";
+  const content = await readSseStream(response.body, events.onDelta);
   if (!content) throw new Error(`${target.providerId} não retornou conteúdo.`);
-  events.onDelta(content);
   return content;
+}
+
+interface StreamEvent {
+  kind: "delta" | "done";
+  data: string;
+}
+
+/** Lê um corpo SSE de chat/completions e emite os deltas de conteúdo. */
+export async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (delta: string) => void): Promise<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let full = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const events = pending.split("\n\n");
+    pending = events.pop() ?? "";
+    for (const event of events) {
+      const data = event
+        .split("\n")
+        .find((line) => line.startsWith("data:"))
+        ?.slice(5)
+        .trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+        const delta = parsed.choices?.[0]?.delta?.content ?? "";
+        if (delta) {
+          full += delta;
+          onDelta(delta);
+        }
+      } catch {
+        // Linha de dados malformada é ignorada; o stream continua.
+      }
+    }
+  }
+  return full;
 }
 
 async function singleTurn(
