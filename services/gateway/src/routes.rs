@@ -24,17 +24,17 @@ use std::{
 };
 use uuid::Uuid;
 
-async fn identity(state: &AppState, headers: &HeaderMap) -> Result<Identity, ApiError> {
+pub(crate) async fn identity(state: &AppState, headers: &HeaderMap) -> Result<Identity, ApiError> {
     state.auth.identity(headers).await
 }
 
-async fn user_id(state: &AppState, identity: &Identity) -> Result<Uuid, ApiError> {
+pub(crate) async fn user_id(state: &AppState, identity: &Identity) -> Result<Uuid, ApiError> {
     let row = sqlx::query("INSERT INTO users (oidc_subject,email,display_name) VALUES ($1,$2,$3) ON CONFLICT (oidc_subject) DO UPDATE SET email=EXCLUDED.email,display_name=EXCLUDED.display_name,updated_at=now() RETURNING id")
         .bind(&identity.subject).bind(&identity.email).bind(&identity.name).fetch_one(&state.pool).await?;
     Ok(row.try_get("id")?)
 }
 
-async fn require_role(
+pub(crate) async fn require_role(
     state: &AppState,
     user: Uuid,
     workspace: Uuid,
@@ -60,7 +60,7 @@ async fn require_role(
     Ok(role)
 }
 
-async fn rate_limit(state: &AppState, workspace: Uuid) -> Result<(), ApiError> {
+pub(crate) async fn rate_limit(state: &AppState, workspace: Uuid) -> Result<(), ApiError> {
     let minute = chrono::Utc::now().timestamp() / 60;
     let key = format!("rate:{workspace}:{minute}");
     let mut connection = state
