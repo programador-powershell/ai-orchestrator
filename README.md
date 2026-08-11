@@ -28,20 +28,19 @@
 
 ## :new: Releases Notes
 
-### :up: V.3
+### :up: V.4
 ### :warning: Latest Changes
 
-- **Frontend migrado de Vite 7 para Next.js 16.3** (App Router, export estático em `out/`): o app segue SPA dentro do Tauri (`dynamic` com `ssr:false`), com boot guardado contra o duplo-efeito do StrictMode e checagem de porta 1420 no dev (o Next não tem strictPort).
-- **Fine-Tuning só nuvem**: removida a execução local do soup (escada binário→embutido, editor `soup.yaml`, botão GPU); o fluxo interno — dataset builder, validação, upload, job BYOK, eventos na conversa e catálogo — permanece completo.
-- **`third_party/` removido por inteiro** (soup, opencode e drawdb): as funções seguem nativas no app e as referências externas estão registradas em `docs/creditos-inspiracao.md` (regime clean-room; AGPL nunca entra no repo).
+- **Shell no padrão Unsloth Studio**: a navegação de modos saiu da topbar e virou linhas em pílula na **sidebar** (ativa marcada por tom de superfície, accent só no ícone; colapsada vira rail de ícones com tooltip); a topbar ficou slim — título do modo ativo, ações da aba, status e controles da janela.
+- **Ctrl+,** abre/fecha as Configurações (modal), padrão de apps desktop; tema claro/escuro agora no rodapé da sidebar.
 
 ### :pushpin: Fixes
 
-- `.gitignore` cobre os artefatos do Next (`out/`, `.next/`, `next-env.d.ts`) e a config local do Claude; regras dos `vite.config` gerados mantidas para o bootstrapper (que segue no Vite).
+- Tiers de redimensionamento da topbar recalibrados para o layout sem abas (ações e status encolhem sem invadir os controles da janela).
 
 ### :construction_worker: Refactors
 
-- tsconfig do desktop unificado (exclusão de testes preservada para o type-check do `next build`); dependências do Vite removidas do desktop; React atualizado para 19.2.
+- CSS das mode-tabs/lente líquida e do toggle de tema removidos (órfãos após o novo shell); atalhos de teclado extraídos para `lib/shortcuts.ts` com testes.
 
 ## :wrench: Instalação
 
