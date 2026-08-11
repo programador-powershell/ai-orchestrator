@@ -1,0 +1,6 @@
+/* AI Orchestrator V2 — entrada de estilos. A ordem importa. */
+@import "./styles/tokens.css";
+@import "./styles/glass.css";
+@import "./styles/motion.css";
+@import "./styles/shell.css";
+@import "./styles/views.css";

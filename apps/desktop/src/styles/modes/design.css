@@ -1,0 +1,524 @@
+/* ------------------------------------------------------------------ */
+/* DESIGN — estúdio visual (canvas editável + tokens + editor de vídeo)*/
+/* Todas as classes têm prefixo .desx- (isolamento por modo).          */
+/* Cores/tamanhos apenas via var(--…) de tokens.css.                   */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------ Toolbar ---------------------------- */
+/* Ferramentas do canvas — lente liquid glass na ferramenta ativa */
+.desx-tools button {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  transition: transform var(--t-fast) var(--spring), background var(--t-base) var(--spring),
+    color var(--t-fast) ease, box-shadow var(--t-base) var(--spring);
+}
+.desx-tools button:hover { color: var(--ink); transform: translateY(-1px); }
+.desx-tools button:active { transform: scale(0.9); }
+.desx-tools button.active {
+  color: var(--accent-strong);
+  background: var(--glass-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px var(--accent-glow), inset 0 1px 0 var(--glass-inner), 0 0 0 1px var(--glass-border);
+}
+
+/* Chip de nota efêmera na toolbar (ex.: "SVG exportado") */
+.desx-note { max-width: 220px; overflow: hidden; }
+
+/* --------------------------- Canvas editável ------------------------ */
+.desx-canvas { cursor: grab; touch-action: none; user-select: none; }
+.desx-canvas.desx-grabbing { cursor: grabbing; }
+.desx-canvas.desx-draw { cursor: crosshair; }
+.desx-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.desx-pan {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  will-change: transform;
+  transition: transform var(--t-base) var(--spring-soft);
+}
+.desx-pan.desx-dragging { transition: none; }
+.desx-world { position: relative; width: 0; height: 0; }
+
+.desx-node { position: absolute; box-sizing: border-box; }
+.desx-node-frame { border: 1px solid var(--line-strong); }
+.desx-node-text {
+  background: transparent;
+  white-space: pre-wrap;
+  padding: 1px 2px;
+}
+.desx-node-tag {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.desx-node { transition: box-shadow var(--t-fast) ease; }
+.desx-sel {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 8px 24px var(--accent-glow);
+}
+
+/* Handles nascem suaves e acompanham o zoom com a mesma mola do pan */
+@keyframes desx-handle-in {
+  from { opacity: 0; }
+}
+.desx-handle {
+  position: absolute;
+  z-index: 3;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  background: var(--panel-solid);
+  box-shadow: 0 2px 8px var(--accent-glow);
+  animation: desx-handle-in var(--t-fast) ease both;
+  transition: transform var(--t-base) var(--spring-soft), box-shadow var(--t-fast) ease,
+    background var(--t-fast) ease;
+}
+.desx-handle:hover { background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); }
+.desx-h-nw { left: -6px; top: -6px; cursor: nwse-resize; }
+.desx-h-ne { right: -6px; top: -6px; cursor: nesw-resize; }
+.desx-h-sw { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.desx-h-se { right: -6px; bottom: -6px; cursor: nwse-resize; }
+
+/* Overlay de replicação (varredura scan-sweep) */
+.desx-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  pointer-events: none;
+}
+.desx-scan i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 8%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    var(--accent-soft),
+    color-mix(in srgb, var(--accent) 35%, transparent),
+    transparent
+  );
+  animation: scan-sweep 1.5s linear infinite;
+}
+.desx-scan span {
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+
+/* --------------------------- Painéis laterais ---------------------- */
+/* Grupos do rail lateral (páginas/camadas/mídia/clipes no DesignRail) */
+.desx-rail-group {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.desx-rail-group > .lg-button { margin: 2px 6px 6px; justify-content: center; }
+.desx-side-tabs { flex: none; padding: 6px 8px 0; display: flex; }
+.desx-side-tabs .segmented { width: 100%; }
+.desx-side-tabs .segmented button { flex: 1; justify-content: center; }
+
+.desx-props { padding: 6px 8px; display: grid; gap: 6px; }
+.desx-prop {
+  min-height: 26px;
+  padding: 3px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  font-size: var(--fs-small);
+}
+.desx-prop small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.desx-prop code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.desx-mini-swatch {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+/* Inspect: campos editáveis de verdade */
+.desx-inputs {
+  padding: 6px 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.desx-field { display: grid; gap: 3px; min-width: 0; }
+.desx-field small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.desx-field input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.desx-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.desx-field input[type="color"] {
+  width: 34px;
+  flex: none;
+  padding: 2px;
+  cursor: pointer;
+}
+.desx-span2 { grid-column: 1 / -1; }
+.desx-fill-row { display: flex; align-items: center; gap: 6px; }
+.desx-fill-row input:not([type="color"]) { flex: 1; }
+
+.desx-order { padding: 2px 8px 8px; display: flex; gap: 6px; }
+.desx-order .lg-button { flex: 1; justify-content: center; }
+
+/* Tokens: colar HTML/CSS + extração local */
+.desx-paste { padding: 4px 8px 8px; display: grid; gap: 6px; }
+.desx-paste textarea {
+  min-height: 96px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.desx-paste textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.desx-paste textarea::placeholder { color: var(--faint); }
+
+.desx-swatches { padding: 4px 8px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+.desx-swatch {
+  position: relative;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--spring);
+}
+.desx-swatch:hover { transform: translateY(-2px) scale(1.04); }
+.desx-swatch small {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel-solid) 78%, transparent);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.desx-copied { margin: 2px 8px 0; align-self: flex-start; max-width: calc(100% - 16px); overflow: hidden; }
+.desx-chips { padding: 4px 8px 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+
+.desx-hint { margin: 0; padding: 6px 10px; color: var(--muted); font-size: var(--fs-small); line-height: 1.5; }
+.desx-hidden { display: none; }
+.desx-x {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.desx-x:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+/* --------------------------- Editor de vídeo ----------------------- */
+.desx-video-col {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.desx-player {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--terminal-bg);
+}
+.desx-player video { max-width: 100%; max-height: 100%; }
+
+.desx-transport {
+  flex: none;
+  height: 44px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+.desx-time {
+  min-width: 118px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+}
+.desx-keys {
+  flex: none;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  white-space: nowrap;
+}
+.desx-scrub { flex: 1; min-width: 60px; accent-color: var(--accent); }
+
+.desx-timeline {
+  flex: none;
+  height: 122px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+.desx-timeline-head {
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: 620;
+}
+.desx-timeline-head small { margin-left: auto; color: var(--faint); font-family: var(--font-mono); font-size: var(--fs-eyebrow); }
+
+.desx-track-area { position: relative; flex: 1; min-height: 0; }
+.desx-ruler {
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.desx-tick {
+  position: absolute;
+  top: 0;
+  bottom: 2px;
+  display: flex;
+  align-items: flex-end;
+  transform: translateX(-50%);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  pointer-events: none;
+}
+.desx-tick::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 6px;
+  background: var(--line-strong);
+}
+.desx-track {
+  position: absolute;
+  inset: 22px 0 0;
+  padding: 8px;
+  display: flex;
+  gap: 2px;
+}
+.desx-clip {
+  min-width: 0;
+  height: 100%;
+  padding: 6px 8px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-xs);
+  background: linear-gradient(160deg, var(--accent-soft), color-mix(in srgb, var(--accent) 6%, transparent));
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.desx-clip strong {
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.desx-clip small { color: var(--muted); font-family: var(--font-mono); font-size: var(--fs-eyebrow); }
+.desx-clip.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+.desx-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+.desx-playhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: var(--accent);
+}
+.desx-playhead::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  transform: rotate(45deg);
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* Card de export (ffmpeg local) */
+.desx-export {
+  margin: 2px 8px 8px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.desx-export p { margin: 0; color: var(--muted); font-size: var(--fs-micro); line-height: 1.5; }
+.desx-term {
+  max-height: 72px;
+  padding: 7px 9px;
+  overflow-y: auto;
+  border-radius: var(--radius-xs);
+  background: var(--terminal-bg);
+  color: var(--terminal-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  word-break: break-all;
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+
+/* Aba Site: campo de URL no topo + pill Editar (estilo "Pedir ao agente") */
+.desx-url-top {
+  height: 30px;
+  min-width: 240px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.desx-url-top:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.desx-url-top input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+.desx-editar {
+  height: 30px;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px) saturate(150%);
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+  font-weight: 650;
+  cursor: pointer;
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-base) ease;
+}
+.desx-editar:hover:not(:disabled) { transform: translateY(-2px) scale(1.03); box-shadow: 0 10px 24px var(--accent-glow); }
+.desx-editar:disabled { opacity: 0.55; cursor: default; }

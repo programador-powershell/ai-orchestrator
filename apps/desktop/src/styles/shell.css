@@ -1,0 +1,830 @@
+/* ------------------------------------------------------------------ */
+/* Shell — geometria fixa idêntica para todas as abas                  */
+/* ------------------------------------------------------------------ */
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; }
+body {
+  margin: 0;
+  min-width: 1000px;
+  min-height: 680px;
+  overflow: hidden;
+  background: #eceff2;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
+  overflow: hidden;
+  isolation: isolate;
+  font-size: var(--fs-body);
+  /* Não transicione custom properties aqui: o WebView congela a re-resolução do var()
+     (bug do motor). O efeito "liquid hue" vem dos elementos pintados que já animam
+     background/box-shadow (orbes do .ambient, .brand-mark, .tab-lens, .send-button). */
+}
+
+/* Ambiente: orbes de luz que mudam de matiz com a aba */
+.ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+.ambient i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 1;
+  transition: background 900ms ease;
+  animation: orb-breathe 9s ease-in-out infinite, orb-drift 26s ease-in-out infinite;
+}
+.ambient i:nth-child(1) {
+  width: 46vw; height: 46vw; top: -20vw; right: -12vw;
+  background: hsl(var(--accent-h) 80% 62% / var(--ambient-a));
+}
+.ambient i:nth-child(2) {
+  width: 38vw; height: 38vw; bottom: -18vw; left: -10vw;
+  background: hsl(calc(var(--accent-h) + 70) 70% 60% / calc(var(--ambient-a) * 0.8));
+  animation-delay: -3.5s;
+}
+.ambient i:nth-child(3) {
+  width: 24vw; height: 24vw; bottom: 6vh; right: 16vw;
+  background: hsl(calc(var(--accent-h) - 50) 72% 66% / calc(var(--ambient-a) * 0.55));
+  animation-delay: -6.5s;
+}
+
+/* ------------------------------ Rail ------------------------------- */
+.rail {
+  width: var(--rail-w);
+  flex: none;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 10px;
+  border-radius: var(--radius-xl);
+  transition: width var(--t-slow) var(--spring-soft);
+}
+.rail.collapsed { width: var(--rail-w-collapsed); }
+/* Recolhida: marca e botão empilham centrados DENTRO da barra */
+.rail.collapsed .brand {
+  height: auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 4px 0 0;
+}
+.rail.collapsed .rail-toggle { margin-left: 0; }
+.rail.collapsed .new-task {
+  padding: 0;
+  justify-content: center;
+}
+.rail.collapsed .rail-footer button {
+  justify-content: center;
+  padding: 0;
+}
+.rail .brand {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: #14232b;
+  background: radial-gradient(circle at 28% 22%, #fff, hsl(var(--accent-h) 70% 88%) 45%, hsl(var(--accent-h) 62% 68% / 0.85));
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 6px 18px var(--accent-glow), inset 0 1px 4px #fff;
+  transition: background 700ms ease, box-shadow 700ms ease;
+}
+.rail .brand strong { font-size: 13px; letter-spacing: -0.3px; overflow: hidden; }
+.rail-toggle { margin-left: auto; }
+
+.rail .new-task {
+  height: 38px;
+  margin: 14px 0 12px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-strong);
+  box-shadow: inset 0 1px 0 var(--glass-inner), 0 4px 12px rgba(24, 42, 54, 0.07);
+  font-weight: 570;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--spring);
+}
+.rail .new-task:hover { transform: translateY(-1px); }
+
+.rail nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rail nav .eyebrow { margin: 6px 8px 6px; }
+.rail nav > button {
+  min-height: 34px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rail nav > button svg { flex: none; }
+.rail nav > button span { overflow: hidden; text-overflow: ellipsis; }
+.rail nav > button:hover, .rail nav > button.active { color: var(--ink); background: var(--glass); }
+.rail nav > button.active { box-shadow: inset 0 0 0 1px var(--glass-border); }
+
+.rail-panel {
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.rail-panel .eyebrow { margin: 8px 8px 5px; display: block; }
+.rail-search {
+  min-height: 32px;
+  margin: 2px 2px 6px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.rail-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.rail-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.rail-empty {
+  margin: 4px 9px;
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+.rail-conversation { position: relative; }
+.rail-conversation span { flex: 1; }
+.rail-conversation small { color: var(--faint); font-size: var(--fs-eyebrow); font-family: var(--font-mono); flex: none; }
+.rail-conversation i {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: none;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--faint);
+  cursor: pointer;
+}
+.rail-conversation:hover i { display: grid; }
+.rail-conversation i:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+.rail-footer { margin-top: 8px; display: grid; gap: 3px; }
+.rail-footer button {
+  min-height: 34px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.rail-footer button:hover { color: var(--ink); background: var(--glass); }
+
+/* ---------------------------- Workspace ---------------------------- */
+.workspace {
+  min-width: 0;
+  flex: 1;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.topbar {
+  height: var(--topbar-h);
+  flex: none;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: var(--radius-lg);
+  z-index: 30;
+  /* Query container: os tiers de encolhimento medem a largura REAL da
+     topbar (que depende da rail aberta/recolhida), não o viewport. */
+  container-type: inline-size;
+  container-name: topbar;
+}
+
+/* Tab bar com lente líquida */
+.mode-tabs {
+  --tab-w: 88px;
+  position: relative;
+  height: 40px;
+  flex: none;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--tab-w);
+  gap: 2px;
+  isolation: isolate;
+}
+.tab-lens {
+  --tab: 0;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: var(--tab-w);
+  height: 38px;
+  z-index: -1;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(115deg, var(--glass-strong), var(--glass));
+  box-shadow: 0 6px 18px rgba(28, 46, 58, 0.13), inset 0 1px 0 var(--glass-inner),
+    -1px 0 hsl(var(--accent-h) 70% 60% / 0.35), 1px 0 hsl(calc(var(--accent-h) + 60) 70% 62% / 0.25);
+  backdrop-filter: blur(16px) saturate(170%);
+  transform: translate3d(calc(var(--tab) * (var(--tab-w) + 2px)), 0, 0);
+  transition: transform 640ms var(--spring), box-shadow var(--t-base) ease;
+}
+.tab-lens::before {
+  content: "";
+  position: absolute;
+  width: 55%;
+  height: 160%;
+  top: -30%;
+  left: -72%;
+  transform: skewX(-18deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), hsl(var(--accent-h) 80% 76% / 0.25), transparent);
+  opacity: 0;
+}
+.app-shell[data-theme="dark"] .tab-lens::before { opacity: 0.4; }
+.mode-tabs > button {
+  height: 40px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 560;
+  cursor: pointer;
+  transition: color var(--t-fast) ease;
+}
+.mode-tabs > button:hover, .mode-tabs > button.selected { color: var(--ink); }
+.mode-tabs > button.selected { font-weight: 660; }
+.mode-tabs > button .mode-icon { display: grid; place-items: center; color: inherit; }
+.mode-tabs > button.selected .mode-icon { color: var(--accent-strong); }
+
+/* Slot de ações da aba ativa — injetado por portal, anima a cada troca */
+.topbar-actions {
+  /* mesmo vazio, absorve o espaço e mantém o grupo da direita no canto */
+  margin-left: auto;
+  min-width: 0;
+  /* Encolhe antes de empurrar os vizinhos; o clip garante que ações largas
+     NUNCA pintem por cima dos controles da janela ao redimensionar. */
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  overflow: clip;
+}
+/* Entrada sem translação (escala para DENTRO): nada cruza o clip do slot. */
+.topbar-actions .slot-inner { animation: slot-pop var(--t-base) var(--spring) both; }
+@keyframes slot-pop {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+.slot-inner {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex: 1;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.statusbar .slot-inner { gap: 16px; justify-content: flex-start; }
+.statusbar .slot-inner .spacer { flex: 1; }
+/* (sem display:none no vazio — o div vazio segura o margin-left:auto
+   e o grupo da direita permanece SEMPRE no canto direito) */
+.topbar-actions .lg-button { min-height: 30px; padding: 0 11px; font-size: var(--fs-micro); white-space: nowrap; }
+.topbar-actions .icon-button { width: 30px; height: 30px; }
+
+.topbar-right { flex: none; display: flex; align-items: center; gap: 7px; }
+
+/* Tiers de redimensionamento — medidos na topbar (rail incluída na conta).
+   9 abas + ações + grupo da direita cabem SEM sobreposição até a janela mínima. */
+@container topbar (max-width: 1559px) {
+  .mode-tabs { --tab-w: 56px; }
+  .mode-tabs > button > span:last-child { display: none; }
+}
+@container topbar (max-width: 1129px) {
+  .topbar-actions .lg-button span.tb-label { display: none; }
+  .topbar-actions .segmented > button:not(.active) { display: none; }
+}
+@container topbar (max-width: 989px) {
+  .mode-tabs { --tab-w: 48px; }
+  .status-pill { max-width: 132px; }
+}
+@container topbar (max-width: 869px) {
+  .mode-tabs { --tab-w: 42px; }
+  .status-pill .pill-label { display: none; }
+}
+
+.status-pill {
+  height: 30px;
+  max-width: 190px;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.status-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.status-pill .pill-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-pill .dot.online { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 65%, transparent); }
+
+.theme-toggle {
+  width: 50px;
+  height: 30px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  background: var(--glass);
+  cursor: pointer;
+}
+.theme-thumb {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel-solid);
+  box-shadow: 0 3px 9px rgba(28, 46, 58, 0.18);
+  transition: transform var(--t-base) var(--spring);
+}
+.app-shell[data-theme="dark"] .theme-thumb { transform: translateX(20px); }
+
+.window-controls { display: flex; align-items: center; gap: 1px; }
+.window-controls button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.window-controls button:hover { background: var(--glass); color: var(--ink); }
+.window-controls .window-close:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+
+/* ---------------------------- Viewport ----------------------------- */
+.mode-viewport {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  view-transition-name: mode-stage;
+}
+.mode-stage { height: 100%; min-height: 0; }
+
+/* --------------------------- Composer dock ------------------------- */
+.composer-wrap {
+  flex: none;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 2px 0 2px;
+  z-index: 24;
+}
+.error-banner {
+  width: var(--composer-w);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel-solid));
+  color: var(--danger);
+  font-size: var(--fs-small);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.error-banner button { border: 0; background: transparent; color: inherit; cursor: pointer; display: grid; place-items: center; }
+
+.composer {
+  width: var(--composer-w);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+  transition: box-shadow var(--t-base) ease, border-color var(--t-base) ease;
+}
+.composer:focus-within {
+  animation: composer-breathe 2.6s ease-in-out infinite;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--glass-border));
+  box-shadow: var(--shadow-float), 0 0 0 4px var(--accent-soft);
+}
+.composer-attachments { display: flex; flex-wrap: wrap; gap: 5px; padding: 2px 4px 0; }
+.composer-attachments .chip i {
+  display: grid;
+  place-items: center;
+  margin-left: 2px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+}
+.composer-attachments .chip i:hover { opacity: 1; }
+
+.composer textarea {
+  width: 100%;
+  min-height: 24px;
+  max-height: 150px;
+  padding: 4px 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: 1.55;
+  resize: none;
+  outline: none;
+}
+.composer textarea::placeholder { color: var(--faint); }
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.composer-row .spacer { flex: 1; }
+
+.model-select {
+  height: 28px;
+  max-width: 240px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 570;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all var(--t-fast) ease;
+}
+.model-select:hover { color: var(--ink); border-color: var(--line-strong); }
+.model-select .fusion-dot {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: conic-gradient(from 40deg, var(--tone-cyan), var(--tone-violet), var(--tone-pink), var(--tone-amber), var(--tone-cyan));
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.engine-menu {
+  position: absolute;
+  bottom: 36px;
+  left: 0;
+  z-index: 60;
+  width: 268px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 7px;
+  display: grid;
+  gap: 2px;
+  border-radius: var(--radius-md);
+  animation: float-in var(--t-fast) var(--spring) both;
+}
+.engine-menu > .eyebrow { margin: 7px 8px 3px; }
+.engine-menu > button {
+  min-height: 32px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+.engine-menu > button:hover { background: var(--accent-soft); }
+.engine-menu > button small { margin-left: auto; color: var(--faint); font-size: var(--fs-eyebrow); font-family: var(--font-mono); }
+.engine-custom { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px; padding: 2px 4px 4px; }
+.engine-custom input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  outline: none;
+}
+.lg-button.compact { min-height: 28px; padding: 0 9px; font-size: var(--fs-micro); }
+
+.send-button {
+  width: 36px;
+  height: 36px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 0;
+  border-radius: 13px;
+  color: #fff;
+  background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 54%), hsl(var(--accent-h) var(--accent-s) 40%));
+  box-shadow: 0 8px 22px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-fast) ease, background 600ms ease;
+}
+.app-shell[data-theme="dark"] .send-button { color: #0a1014; background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 72%), hsl(var(--accent-h) var(--accent-s) 56%)); }
+.send-button:hover { transform: translateY(-1px) scale(1.04); }
+.send-button:active { transform: scale(0.94); }
+.send-button:disabled { opacity: 0.45; transform: none; cursor: default; }
+.send-button.stop { background: linear-gradient(150deg, #5a6772, #38434c); color: #fff; }
+
+/* Rodapé global — depois do composer, alimentado por portal das views */
+.statusbar {
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.statusbar:empty { display: none; }
+
+/* Code não tem balão: o input acontece no CLI (Composer segue montado
+   para o barramento e os envios programáticos continuarem funcionando) */
+.composer-wrap.composer-hidden { display: none; }
+
+/* ------------------------- Barra de esforço ------------------------ */
+.effort-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+}
+.effort-caption {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  font-family: var(--font-mono);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.effort-track {
+  --thumb: 32px;
+  --track-w: 138px;
+  position: relative;
+  width: var(--track-w);
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-clear);
+  box-shadow: inset 0 1px 3px rgba(20, 40, 52, 0.12);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  overflow: visible;
+}
+.app-shell[data-theme="dark"] .effort-track {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.effort-track input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 3;
+}
+/* Preenchimento no acento da aba — transparente que escurece com o nível
+   (cor inline no React; aqui só o vidro: brilho, borda e animação) */
+.effort-fill {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.45), 0 0 12px var(--accent-glow);
+  backdrop-filter: blur(4px) saturate(150%);
+  -webkit-backdrop-filter: blur(4px) saturate(150%);
+  transition: width var(--t-slow) var(--spring), background 500ms ease, box-shadow var(--t-base) ease;
+  pointer-events: none;
+}
+.app-shell[data-theme="dark"] .effort-fill {
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.25), 0 0 16px var(--accent-glow);
+}
+
+/* Lente de vidro transparente, maior que o trilho (sobrepõe acima/abaixo) */
+.effort-thumb {
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: var(--thumb);
+  height: var(--thumb);
+  z-index: 2;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.06) 55%, transparent 75%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.8),
+    inset 0 -2px 5px rgba(255, 255, 255, 0.25),
+    inset 2px 0 4px rgba(255, 255, 255, 0.18),
+    0 4px 14px rgba(18, 38, 50, 0.18);
+  backdrop-filter: blur(6px) brightness(1.08) saturate(140%);
+  -webkit-backdrop-filter: blur(6px) brightness(1.08) saturate(140%);
+  transform: translateY(-50%) scale(1);
+  /* posição via left inline (React) — var() em transform congela neste WebView */
+  transition: left var(--t-slow) var(--spring), transform var(--t-base) var(--spring), box-shadow var(--t-base) ease;
+  pointer-events: none;
+}
+.app-shell[data-theme="dark"] .effort-thumb {
+  /* transparente VISÍVEL: aro claro + miolo quase limpo, como na imagem */
+  border-color: rgba(255, 255, 255, 0.45);
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.04) 55%, transparent 78%);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.55),
+    inset 0 -2px 6px rgba(255, 255, 255, 0.16),
+    0 6px 16px rgba(0, 0, 0, 0.45);
+}
+.effort-slider:hover .effort-thumb { transform: translateY(-50%) scale(1.08); }
+/* Ao clicar/arrastar, a lente cresce como no exemplo */
+.effort-slider.active .effort-thumb {
+  transform: translateY(-50%) scale(1.32);
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.85),
+    inset 0 -3px 7px rgba(255, 255, 255, 0.3),
+    0 8px 22px rgba(18, 38, 50, 0.28);
+}
+.app-shell[data-theme="dark"] .effort-slider.active .effort-thumb {
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.65),
+    inset 0 -3px 7px rgba(255, 255, 255, 0.2),
+    0 10px 26px rgba(0, 0, 0, 0.55);
+}
+.effort-tooltip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  padding: 3px 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px) saturate(150%);
+  color: var(--ink);
+  font-size: var(--fs-eyebrow);
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 4px) scale(0.9);
+  transition: opacity var(--t-fast) ease, transform var(--t-base) var(--spring);
+  pointer-events: none;
+}
+.effort-slider:hover .effort-tooltip,
+.effort-slider.active .effort-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+@media (max-width: 1180px) {
+  .effort-caption { display: none; }
+  .effort-track { --track-w: 108px; }
+}
+
+/* ----------------------------- Plan card --------------------------- */
+.plan-card {
+  width: var(--composer-w);
+  padding: 13px 15px;
+  display: grid;
+  gap: 10px;
+  border-radius: var(--radius-lg);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.plan-card header { display: flex; align-items: center; gap: 9px; }
+.plan-card header strong { font-size: var(--fs-body); }
+.plan-card header small { color: var(--muted); font-size: var(--fs-micro); }
+.plan-card .plan-steps { display: grid; gap: 5px; max-height: 200px; overflow-y: auto; }
+.plan-step {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: var(--fs-small);
+}
+.plan-step > span:first-child {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.plan-step.running > span:first-child { color: var(--accent-strong); background: var(--accent-soft); }
+.plan-step.done > span:first-child { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.plan-step small { display: block; color: var(--muted); font-size: var(--fs-micro); margin-top: 1px; }
+.plan-actions { display: flex; align-items: center; gap: 7px; justify-content: flex-end; }
+.plan-risks { color: var(--warn); font-size: var(--fs-micro); display: grid; gap: 3px; }
+
+/* ------------------------------ Modal ------------------------------ */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-deep) 45%, transparent);
+  backdrop-filter: blur(8px);
+  animation: pop-in var(--t-fast) ease both;
+}
+.modal-panel {
+  width: min(880px, calc(100vw - 80px));
+  max-height: min(720px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+
+@keyframes composer-breathe {
+  0%, 100% { box-shadow: var(--shadow-float), 0 0 0 4px var(--accent-soft); }
+  50% { box-shadow: var(--shadow-float), 0 0 0 7px hsl(var(--accent-h) var(--accent-s) 55% / 0.08), 0 0 24px var(--accent-glow); }
+}

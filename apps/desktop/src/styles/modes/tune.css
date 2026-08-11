@@ -1,0 +1,163 @@
+/* FINE-TUNING (soup embutido) — dataset builder + conversa de execução */
+
+.tunex-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 40%);
+  gap: 6px;
+}
+
+.tunex-dataset {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tunex-ds-actions { display: inline-flex; align-items: center; gap: 5px; }
+.tunex-ds-actions .lg-button { cursor: pointer; }
+
+.tunex-examples {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px 8px 10px;
+}
+.tunex-example {
+  display: grid;
+  grid-template-columns: 26px 1fr 22px;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  cursor: pointer;
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: transform var(--t-fast) var(--spring), border-color var(--t-fast) ease, box-shadow var(--t-base) ease;
+}
+.tunex-example:hover { transform: translateY(-2px); border-color: var(--line-strong); box-shadow: var(--shadow-soft); }
+.tunex-example.selected {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-soft);
+}
+.tunex-example > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font: 9px var(--font-mono);
+}
+.tunex-example strong {
+  display: block;
+  font-size: var(--fs-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tunex-example small {
+  display: block;
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tunex-example i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--faint);
+  opacity: 0;
+  transition: all var(--t-fast) ease;
+}
+.tunex-example:hover i { opacity: 1; }
+.tunex-example i:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+/* Conversa de execução — comandos/saídas como cartões, estilo Claude */
+.tunex-feed {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tunex-feed header {
+  height: 30px;
+  flex: none;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.tunex-feed-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tunex-feed-empty { margin: 0; color: var(--faint); font-size: var(--fs-micro); line-height: 1.6; }
+.tunex-msg {
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.tunex-msg.user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 7px 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  background: var(--accent-soft);
+}
+.tunex-msg.assistant { align-self: stretch; }
+.tunex-msg .md-code { margin: 4px 0; }
+.tunex-msg p { margin: 2px 0; }
+
+.tunex-editor { display: grid; gap: 9px; padding: 4px 4px 10px; }
+.tunex-editor textarea { resize: vertical; font-size: var(--fs-small); line-height: 1.55; }
+
+.tunex-config { display: grid; gap: 8px; padding: 4px 4px 10px; }
+.tunex-cfg-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.tunex-yaml {
+  min-height: 220px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.tunex-yaml:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tunex-note { color: var(--muted); font-size: var(--fs-eyebrow); }
+.tunex-hint { margin: 0 0 4px; color: var(--muted); font-size: var(--fs-micro); line-height: 1.55; }
+
+/* Treino na nuvem (interno) */
+.tunex-job {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(140%);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.tunex-job-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

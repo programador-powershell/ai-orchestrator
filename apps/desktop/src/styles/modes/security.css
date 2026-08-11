@@ -1,0 +1,349 @@
+/* ------------------------------------------------------------------ */
+/* SECURITY — revisão multi-modelo, diff aplicável e auditoria OSV.dev  */
+/* Centro: achados/diff/deps · Direita: escopo · Rail: rota + atalhos.  */
+/* Todas as classes com prefixo .secx- (isolamento por modo).           */
+/* Cores/tamanhos: somente var(--…) de tokens.css.                      */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------ Rail (SecurityRail) ----------------------- */
+.secx-rail-route {
+  margin: 0 8px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+  font-weight: 620;
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-base) ease;
+}
+.secx-rail-route:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px var(--accent-glow);
+}
+.secx-rail-route svg { flex: none; }
+.secx-rail-route > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------- Escopo (VRight) -------------------------- */
+.secx-scope {
+  flex: none;
+  padding: 4px 10px 10px;
+  display: grid;
+  gap: 8px;
+}
+.secx-note {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.secx-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.secx-paste {
+  min-height: 56px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.secx-paste:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* --------------------- Quadro central (VCenter) -------------------- */
+.secx-board {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+  animation: float-in var(--t-slow) var(--spring-soft) both;
+}
+.secx-findings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Achados: entrada em cascata + lift líquido no hover */
+.secx-finding {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  overflow: hidden;
+  animation: float-in var(--t-base) var(--spring) both;
+  animation-delay: min(calc(var(--i, 0) * 40ms), 320ms);
+  transition: border-color var(--t-fast) ease, transform var(--t-fast) var(--spring),
+    box-shadow var(--t-base) ease;
+}
+.secx-finding:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.secx-finding.selected { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+.secx-finding-head {
+  width: 100%;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  align-items: start;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Barra de severidade: cresce ao entrar e satura/alarga no hover */
+@keyframes secx-sev-in {
+  from { transform: scaleY(0.35); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.secx-sev {
+  width: 4px;
+  min-height: 34px;
+  align-self: stretch;
+  border-radius: 999px;
+  transform-origin: left center;
+  animation: secx-sev-in var(--t-slow) var(--spring) both;
+  transition: transform var(--t-base) var(--spring), filter var(--t-base) ease;
+}
+.secx-finding:hover .secx-sev,
+.secx-dep:hover .secx-sev {
+  transform: scaleX(1.6);
+  filter: saturate(1.3) brightness(1.05);
+}
+
+.secx-finding-copy { display: grid; gap: 2px; min-width: 0; }
+.secx-finding-copy strong { font-size: var(--fs-small); font-weight: 620; letter-spacing: -0.1px; }
+.secx-finding-copy small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secx-finding-copy p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+}
+.secx-finding-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+}
+
+.secx-finding-body {
+  padding: 0 12px 12px 26px;
+  display: grid;
+  gap: 8px;
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.secx-suggestion {
+  margin: 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+}
+.secx-suggestion svg { flex: none; margin-top: 2px; }
+.secx-finding-body .diff-block { max-height: 240px; overflow: auto; }
+.secx-patch-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.secx-empty-note {
+  margin: 0;
+  padding: 14px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+
+/* -------------- Auditoria de dependências OSV.dev (VCenter) --------- */
+.secx-deps {
+  flex: none;
+  max-height: 46%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.secx-deps-head {
+  flex: none;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+}
+.secx-deps-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  font-weight: 620;
+}
+.secx-deps-head small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.secx-deps-head .lg-button { margin-left: auto; }
+.secx-deps-clean {
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.secx-deps-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.secx-dep {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  overflow: hidden;
+  animation: pop-in var(--t-base) var(--spring) both;
+  animation-delay: min(calc(var(--i, 0) * 35ms), 280ms);
+  transition: border-color var(--t-fast) ease, transform var(--t-fast) var(--spring),
+    box-shadow var(--t-base) ease;
+}
+.secx-dep:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.secx-dep.selected { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.secx-dep-head {
+  width: 100%;
+  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.secx-dep-copy { display: grid; gap: 1px; min-width: 0; }
+.secx-dep-copy strong {
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  font-weight: 620;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.secx-dep-copy small { color: var(--faint); font-size: var(--fs-eyebrow); }
+.secx-dep-body {
+  padding: 0 10px 10px 23px;
+  display: grid;
+  gap: 6px;
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.secx-vuln {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.secx-vuln > .chip { font-family: var(--font-mono); }
+.secx-vuln-copy { display: grid; gap: 1px; min-width: 0; }
+.secx-vuln-copy strong { font-family: var(--font-mono); font-size: var(--fs-micro); }
+.secx-vuln-copy small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+}
+
+/* Cascata de revisão (rail) — estados reais */
+.secx-cascade { display: grid; gap: 4px; padding: 2px 4px 6px; }
+.secx-cascade-step {
+  display: grid;
+  grid-template-columns: 22px 1fr 8px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-base) ease;
+}
+.secx-cascade-step span {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 9px var(--font-mono);
+}
+.secx-cascade-step strong { display: block; font-size: var(--fs-micro); }
+.secx-cascade-step small { color: var(--faint); font-size: var(--fs-eyebrow); }
+.secx-cascade-step i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); opacity: .5; transition: all var(--t-base) var(--spring); }
+.secx-cascade-step.on { border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.secx-cascade-step.on span { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.secx-cascade-step.on i { background: var(--ok); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent); }

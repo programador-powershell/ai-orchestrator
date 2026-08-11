@@ -1,0 +1,557 @@
+/* ------------------------------------------------------------------ */
+/* Modo DATA — editor ERD liquid glass                                  */
+/* Todas as classes desta view usam o prefixo .datax-                   */
+/* Geometria dos cards casa com as constantes de DataView.tsx           */
+/* (TABLE_W 190 · HEADER_H 30 · ROW_H 22).                              */
+/* O schema navegável vive no rail dinâmico (DataRail).                 */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------- Rail dinâmico (DataRail) ---------------- */
+
+.datax-tabs {
+  margin: 0 2px 4px;
+  display: flex;
+  flex: none;
+}
+.datax-tabs button {
+  flex: 1;
+  justify-content: center;
+}
+
+.datax-rail-list {
+  margin: 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+
+.datax-add {
+  margin: 6px 2px 2px;
+  flex: none;
+}
+
+.datax-hint {
+  padding: 10px 8px;
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* --------------------------------- Canvas -------------------------- */
+
+/* Pan (centralizar via rail) e zoom animados como um só movimento líquido. */
+.datax-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4000px;
+  height: 3000px;
+  transform-origin: 0 0;
+  transition: transform var(--t-slow) var(--spring-soft);
+}
+/* Pan manual (arrasto do fundo): resposta 1:1, sem transição. */
+.datax-stage.panning {
+  transition: none;
+}
+.infinite-canvas.datax-grabbing {
+  cursor: grabbing;
+}
+
+.datax-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.datax-links path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  stroke-width: 1.6;
+  opacity: 0.8;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+  transition: opacity var(--t-fast) ease;
+  animation: datax-draw 0.8s var(--swift);
+}
+@keyframes datax-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+.datax-links circle {
+  fill: var(--accent);
+  opacity: 0.85;
+}
+.datax-links text {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.datax-links g.hot path {
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  opacity: 1;
+  filter: drop-shadow(0 0 5px var(--accent-glow));
+}
+.datax-links g.hot circle {
+  opacity: 1;
+}
+
+/* Card de tabela (drawdb-like) — hover lift + movimentos com transição
+   (auto-layout/undo deslizam; durante o arrasto a resposta é 1:1). */
+.datax-table {
+  --datax-tone: var(--accent);
+  position: absolute;
+  width: 190px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-soft);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  animation: pop-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease,
+    transform var(--t-fast) var(--spring), left var(--t-base) var(--swift), top var(--t-base) var(--swift);
+}
+.datax-table:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--datax-tone) 45%, var(--line-strong));
+  box-shadow: 0 14px 30px rgba(20, 36, 48, 0.16), inset 0 1px 0 var(--glass-inner);
+}
+.datax-table:active {
+  cursor: grabbing;
+}
+.datax-table.dragging {
+  transform: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+  box-shadow: var(--shadow-float);
+  z-index: 6;
+  cursor: grabbing;
+}
+/* Seleção: anel de acento que pulsa ao selecionar e assenta como vidro. */
+.datax-table.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-float);
+  z-index: 5;
+  animation: datax-ring var(--t-slow) var(--spring) both;
+}
+@keyframes datax-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent), var(--shadow-float); }
+  55% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent), var(--shadow-float); }
+  100% { box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-float); }
+}
+
+.datax-table[data-tone="cyan"]   { --datax-tone: var(--tone-cyan); }
+.datax-table[data-tone="violet"] { --datax-tone: var(--tone-violet); }
+.datax-table[data-tone="mint"]   { --datax-tone: var(--tone-mint); }
+.datax-table[data-tone="amber"]  { --datax-tone: var(--tone-amber); }
+.datax-table[data-tone="blue"]   { --datax-tone: var(--tone-blue); }
+.datax-table[data-tone="pink"]   { --datax-tone: var(--tone-pink); }
+.datax-table[data-tone="rose"]   { --datax-tone: var(--tone-rose); }
+
+.datax-table > header {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 620;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--datax-tone) 26%, transparent), transparent 75%);
+}
+.datax-table > header svg {
+  color: var(--datax-tone);
+  flex: none;
+}
+.datax-table > header strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datax-table > header small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
+.datax-field {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 9px;
+  font-size: var(--fs-micro);
+  color: var(--ink);
+}
+.datax-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datax-field span svg {
+  color: var(--datax-tone);
+  flex: none;
+}
+.datax-field span i {
+  width: 10px;
+  height: 1px;
+  flex: none;
+  background: var(--line-strong);
+}
+.datax-field small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  white-space: nowrap;
+}
+.datax-field.pk span {
+  font-weight: 620;
+}
+
+/* ------------------------------ Editor (direita) ------------------- */
+
+.datax-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 2px 8px;
+}
+
+.datax-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px 0;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 620;
+  letter-spacing: 0.2px;
+}
+
+.datax-fieldrow {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.datax-fieldrow:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  box-shadow: 0 4px 14px rgba(20, 36, 48, 0.08);
+}
+.datax-fieldmain {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.datax-fieldrow input,
+.datax-fieldrow select {
+  min-height: 26px;
+  min-width: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.datax-fieldrow input:focus,
+.datax-fieldrow select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.datax-fieldmain input {
+  flex: 1;
+}
+.datax-fieldmain select {
+  width: 92px;
+  flex: none;
+  font-size: var(--fs-micro);
+}
+
+.datax-flags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.datax-flag {
+  height: 20px;
+  padding: 0 7px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.datax-flag:hover {
+  color: var(--ink);
+}
+.datax-flag.on {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.datax-flags .datax-ref {
+  flex: 1;
+  min-width: 0;
+  min-height: 22px;
+  font-size: var(--fs-micro);
+}
+
+.datax-iconbtn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background var(--t-fast) ease, transform var(--t-fast) var(--spring);
+}
+.datax-iconbtn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.datax-iconbtn:active {
+  transform: scale(0.92);
+}
+.datax-subhead .datax-iconbtn:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.datax-dialect {
+  display: flex;
+}
+.datax-dialect button {
+  flex: 1;
+  justify-content: center;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.datax-actions {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
+}
+.lg-button.datax-remove {
+  color: var(--danger);
+}
+
+.datax-empty {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.datax-empty svg {
+  color: var(--faint);
+}
+.datax-empty p {
+  margin: 0;
+  max-width: 200px;
+  line-height: 1.55;
+}
+
+/* ------------------------------- Modal SQL ------------------------- */
+
+.datax-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-deep) 42%, transparent);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  animation: pop-in var(--t-fast) ease both;
+}
+
+.datax-sql {
+  width: min(680px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.datax-sql > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.datax-sql > header strong {
+  font-size: var(--fs-body);
+  letter-spacing: -0.2px;
+}
+.datax-sql pre {
+  margin: 0;
+  padding: 12px;
+  min-height: 160px;
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.65;
+  white-space: pre;
+}
+.datax-sql textarea {
+  min-height: 220px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  outline: none;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.datax-sql textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.datax-sql > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.datax-error {
+  color: var(--danger);
+  font-size: var(--fs-micro);
+}
+
+.datax-note {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+}
+
+/* --------------------- Undo/redo e auto-layout (canvas) ------------------ */
+
+.datax-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* -------------------------------- Índices -------------------------------- */
+
+.datax-indexrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.datax-indexrow > svg {
+  color: var(--muted);
+  flex: none;
+}
+.datax-indexrow code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+.datax-indexrow em {
+  flex: none;
+  font-style: normal;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
+.datax-indexbuilder {
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-xs);
+}
+.datax-indexfields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.datax-indexactions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.datax-indexactions .lg-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ------------------------------- Migração -------------------------------- */
+
+.datax-migration-empty {
+  padding: 20px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  text-align: center;
+}
