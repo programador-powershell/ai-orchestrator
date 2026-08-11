@@ -1,5 +1,7 @@
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::ipc::Channel;
 use tokio::time::Duration;
 
 #[derive(Serialize, Deserialize)]
@@ -18,21 +20,112 @@ pub struct ProviderChatRequest {
     messages: Vec<ChatMessage>,
 }
 
+/// Eventos de streaming enviados ao front conforme os tokens chegam.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", content = "data")]
+pub enum StreamEvent {
+    /// Um pedaço de texto do assistente (delta incremental).
+    Delta(String),
+    /// Fim do stream — carrega o texto completo para conferência.
+    Done(String),
+}
+
+fn read_key(account: &str) -> Result<String, String> {
+    keyring::Entry::new("AI Orchestrator", account)
+        .map_err(|error| error.to_string())?
+        .get_password()
+        .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())
+}
+
+fn validate_base_url(base_url: &str) -> Result<String, String> {
+    let trimmed = base_url.trim().trim_end_matches('/').to_owned();
+    if trimmed.is_empty() {
+        return Err("baseUrl do provedor não configurada".into());
+    }
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        return Err("baseUrl do provedor deve usar http(s)".into());
+    }
+    Ok(trimmed)
+}
+
+/// Extrai o texto de `choices[0].delta.content` de uma linha `data:` do SSE.
+fn parse_sse_delta(data: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(data).ok()?;
+    parsed
+        .get("choices")?
+        .get(0)?
+        .get("delta")?
+        .get("content")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// Chat com STREAMING: a chave sai só do keyring; os deltas chegam ao front
+/// pelo Channel conforme o provedor os envia (SSE `stream: true`), em vez de
+/// esperar a resposta inteira. Retorna o texto completo ao final.
+#[tauri::command]
+pub async fn provider_chat_stream(
+    request: ProviderChatRequest,
+    on_event: Channel<StreamEvent>,
+) -> Result<String, String> {
+    let base_url = validate_base_url(&request.base_url)?;
+    let api_key = read_key(&request.account)?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|error| error.to_string())?
+        .post(format!("{base_url}/chat/completions"))
+        .bearer_auth(api_key)
+        .json(&serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "stream": true
+        }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut full = String::new();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|error| error.to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&bytes));
+        // Eventos SSE são separados por linha em branco; processa os completos.
+        while let Some(boundary) = buffer.find("\n\n") {
+            let event = buffer[..boundary].to_owned();
+            buffer.drain(..boundary + 2);
+            for line in event.lines() {
+                let data = line.strip_prefix("data:").map(str::trim);
+                let Some(data) = data else { continue };
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Some(delta) = parse_sse_delta(data) {
+                    if !delta.is_empty() {
+                        full.push_str(&delta);
+                        on_event
+                            .send(StreamEvent::Delta(delta))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+            }
+        }
+    }
+    on_event
+        .send(StreamEvent::Done(full.clone()))
+        .map_err(|error| error.to_string())?;
+    Ok(full)
+}
+
 /// BYOK: a chave do provedor vive apenas no cofre nativo (keyring) e nunca
 /// transita pelo lado JavaScript — o front informa somente o `account`.
 #[tauri::command]
 pub async fn provider_chat(request: ProviderChatRequest) -> Result<String, String> {
-    let base_url = request.base_url.trim().trim_end_matches('/').to_owned();
-    if base_url.is_empty() {
-        return Err("baseUrl do provedor não configurada".into());
-    }
-    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-        return Err("baseUrl do provedor deve usar http(s)".into());
-    }
-    let api_key = keyring::Entry::new("AI Orchestrator", &request.account)
-        .map_err(|error| error.to_string())?
-        .get_password()
-        .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())?;
+    let base_url = validate_base_url(&request.base_url)?;
+    let api_key = read_key(&request.account)?;
     let response: Value = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
@@ -74,6 +167,34 @@ pub struct ProviderFetchRequest {
     file_name: Option<String>,
     file_content: Option<String>,
     purpose: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_sse_delta, validate_base_url};
+
+    #[test]
+    fn extracts_delta_content() {
+        let data = r#"{"choices":[{"delta":{"content":"olá"}}]}"#;
+        assert_eq!(parse_sse_delta(data).as_deref(), Some("olá"));
+    }
+
+    #[test]
+    fn ignores_lines_without_content() {
+        assert_eq!(parse_sse_delta(r#"{"choices":[{"delta":{}}]}"#), None);
+        assert_eq!(parse_sse_delta("{quebrado"), None);
+        assert_eq!(parse_sse_delta(r#"{"choices":[]}"#), None);
+    }
+
+    #[test]
+    fn rejects_non_http_base_url() {
+        assert!(validate_base_url("ftp://x").is_err());
+        assert!(validate_base_url("  ").is_err());
+        assert_eq!(
+            validate_base_url("https://api.openai.com/v1/").unwrap(),
+            "https://api.openai.com/v1"
+        );
+    }
 }
 
 /// Chamada genérica autenticada ao provedor (fine-tuning, files, jobs…):
