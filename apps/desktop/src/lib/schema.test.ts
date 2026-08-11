@@ -3,11 +3,13 @@ import {
   applyOps,
   autoLayout,
   diffSchemas,
+  diffSchemasDown,
   emptyDoc,
   exportSql,
   importSql,
   indexName,
   parseDocJson,
+  SQL_DIALECTS,
   tableHeight,
   TABLE_GEOMETRY,
   type SchemaDocExt
@@ -467,5 +469,144 @@ describe("indexName", () => {
   it("gera idx_/ux_ determinístico por tabela+campos", () => {
     expect(indexName({ table: "users", fields: ["email"], unique: true })).toBe("ux_users_email");
     expect(indexName({ table: "runs", fields: ["a", "b"], unique: false })).toBe("idx_runs_a_b");
+  });
+});
+
+/* Item 1 — relação n-n gera tabela de junção no export (paridade drawdb). */
+describe("exportSql n-n (tabela de junção)", () => {
+  function nnDoc(): SchemaDocExt {
+    return applyOps(emptyDoc("NN"), [
+      { op: "add_table", name: "students", fields: [{ name: "id", type: "uuid", primaryKey: true }] },
+      { op: "add_table", name: "courses", fields: [{ name: "id", type: "uuid", primaryKey: true }] },
+      { op: "add_relation", fromTable: "students", fromField: "id", toTable: "courses", toField: "id", cardinality: "n-n" }
+    ]);
+  }
+
+  it("gera CREATE TABLE de junção com 2 FKs e PK composta", () => {
+    const sql = exportSql(nnDoc(), "postgres");
+    expect(sql).toContain('CREATE TABLE "students_courses"');
+    expect(sql).toContain('"students_id" uuid NOT NULL');
+    expect(sql).toContain('"courses_id" uuid NOT NULL');
+    expect(sql).toContain('PRIMARY KEY ("students_id", "courses_id")');
+    expect(sql).toContain(
+      'ALTER TABLE "students_courses" ADD CONSTRAINT "fk_students_courses_students_id" FOREIGN KEY ("students_id") REFERENCES "students" ("id");'
+    );
+    expect(sql).toContain(
+      'ALTER TABLE "students_courses" ADD CONSTRAINT "fk_students_courses_courses_id" FOREIGN KEY ("courses_id") REFERENCES "courses" ("id");'
+    );
+    // O n-n vira junção, não FK simples espúria na tabela de origem.
+    expect(sql).not.toContain('CONSTRAINT "fk_students_id"');
+  });
+});
+
+/* Item 2 — novos dialetos sqlite e mssql. */
+describe("exportSql dialetos sqlite e mssql", () => {
+  function typesDoc(): SchemaDocExt {
+    return applyOps(emptyDoc("T"), [
+      {
+        op: "add_table",
+        name: "t",
+        fields: [
+          { name: "id", type: "serial", primaryKey: true },
+          { name: "flag", type: "boolean" },
+          { name: "ref", type: "uuid" },
+          { name: "body", type: "text" },
+          { name: "at", type: "timestamptz", defaultValue: "now()" }
+        ]
+      }
+    ]);
+  }
+
+  it("SQL_DIALECTS inclui os cinco dialetos", () => {
+    expect(SQL_DIALECTS).toContain("sqlite");
+    expect(SQL_DIALECTS).toContain("mssql");
+  });
+
+  it("sqlite: aspas duplas, serial/boolean → INTEGER e now() → CURRENT_TIMESTAMP", () => {
+    const sql = exportSql(typesDoc(), "sqlite");
+    expect(sql).toContain('CREATE TABLE "t"');
+    expect(sql).toContain('"id" INTEGER NOT NULL');
+    expect(sql).toContain('"flag" INTEGER NOT NULL');
+    expect(sql).toContain('"ref" TEXT NOT NULL');
+    expect(sql).toContain('"body" TEXT NOT NULL');
+    expect(sql).toContain('"at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    expect(sql).not.toContain("`");
+    expect(sql).not.toContain("ENGINE=InnoDB");
+  });
+
+  it("mssql: colchetes, uuid → UNIQUEIDENTIFIER, text → NVARCHAR(MAX), serial → INT IDENTITY", () => {
+    const sql = exportSql(typesDoc(), "mssql");
+    expect(sql).toContain("CREATE TABLE [t]");
+    expect(sql).toContain("[id] INT IDENTITY(1,1) NOT NULL");
+    expect(sql).toContain("[flag] BIT NOT NULL");
+    expect(sql).toContain("[ref] UNIQUEIDENTIFIER NOT NULL");
+    expect(sql).toContain("[body] NVARCHAR(MAX) NOT NULL");
+    expect(sql).toContain("[at] DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()");
+    expect(sql).toContain("PRIMARY KEY ([id])");
+    expect(sql).not.toContain("ENGINE=InnoDB");
+  });
+});
+
+/* Item 3 — ON UPDATE / ON DELETE nas FKs. */
+describe("exportSql ON UPDATE / ON DELETE", () => {
+  it("emite ON UPDATE/ON DELETE quando definidos na relação", () => {
+    const doc = applyOps(emptyDoc("Fk"), [
+      { op: "add_table", name: "users", fields: [{ name: "id", type: "uuid", primaryKey: true }] },
+      {
+        op: "add_table",
+        name: "posts",
+        fields: [
+          { name: "id", type: "uuid", primaryKey: true },
+          { name: "user_id", type: "uuid" }
+        ]
+      },
+      {
+        op: "add_relation",
+        fromTable: "posts",
+        fromField: "user_id",
+        toTable: "users",
+        toField: "id",
+        onUpdate: "RESTRICT",
+        onDelete: "CASCADE"
+      }
+    ]);
+    const sql = exportSql(doc, "postgres");
+    expect(sql).toContain(
+      'ALTER TABLE "posts" ADD CONSTRAINT "fk_posts_user_id" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON UPDATE RESTRICT ON DELETE CASCADE;'
+    );
+  });
+
+  it("FK sem ações continua sem cláusula ON (retrocompatível)", () => {
+    const sql = exportSql(demoDoc(), "postgres");
+    expect(sql).toContain('FOREIGN KEY ("owner_id") REFERENCES "users" ("id");');
+    expect(sql).not.toContain("ON DELETE");
+  });
+});
+
+/* Item 4 — migração de reversão (down). */
+describe("diffSchemasDown (rollback)", () => {
+  it("criar tabela → down dropa a tabela", () => {
+    const prev = demoDoc();
+    const next = applyOps(prev, [
+      { op: "add_table", name: "invoices", fields: [{ name: "id", type: "uuid", primaryKey: true }] }
+    ]);
+    const up = diffSchemas(prev, next, "postgres").join("\n");
+    const down = diffSchemasDown(prev, next, "postgres").join("\n");
+    expect(up).toContain('CREATE TABLE "invoices"');
+    expect(down).toContain('DROP TABLE "invoices";');
+    expect(down).not.toContain('CREATE TABLE "invoices"');
+  });
+
+  it("remover tabela → down recria a tabela", () => {
+    const prev = demoDoc();
+    const next = applyOps(prev, [{ op: "drop_table", table: "runs" }]);
+    const down = diffSchemasDown(prev, next, "postgres").join("\n");
+    expect(down).toContain('CREATE TABLE "runs"');
+    expect(down).not.toContain('DROP TABLE "runs"');
+  });
+
+  it("sem mudanças → down vazio", () => {
+    const doc = demoDoc();
+    expect(diffSchemasDown(doc, doc, "postgres")).toEqual([]);
   });
 });
