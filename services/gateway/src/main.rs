@@ -2,12 +2,14 @@ mod auth;
 mod config;
 mod crypto;
 mod error;
+mod finetune;
 mod models;
 mod providers;
 mod routes;
 mod state;
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
     Router,
 };
@@ -36,6 +38,8 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!().run(&pool).await?;
     let redis = redis::Client::open(config.redis_url.clone())?;
     let state = AppState::new(config.clone(), pool, redis);
+    // Reconciliador de fine-tuning: sincroniza jobs não-terminais em background.
+    tokio::spawn(finetune::reconciler(state.clone()));
 
     let api = Router::new()
         .route("/auth/config", get(routes::oidc_config))
@@ -74,6 +78,34 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/workspaces/{workspace}/orchestrations/validate",
             post(routes::orchestration_validate),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/datasets",
+            post(finetune::dataset_upload).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/jobs",
+            get(finetune::jobs_list).post(finetune::job_create),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/jobs/{job}",
+            get(finetune::job_get),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/jobs/{job}/events",
+            get(finetune::job_events),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/jobs/{job}/events/stream",
+            get(finetune::job_events_stream),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/jobs/{job}/cancel",
+            post(finetune::job_cancel),
+        )
+        .route(
+            "/workspaces/{workspace}/finetune/models",
+            get(finetune::models_list),
         );
 
     let request_id = axum::http::HeaderName::from_static("x-request-id");
