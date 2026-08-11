@@ -30,6 +30,7 @@ import {
   type ToolResult
 } from "../lib/agent";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
+import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
@@ -211,7 +212,22 @@ export function Composer() {
           signal
         );
       },
-      runTool: (call) => dispatchTool(call, root),
+      runTool: async (call) => {
+        const result = await dispatchTool(call, root);
+        // Diagnostics pós-edição: após gravar código, roda o check e realimenta.
+        if (call.tool === "fs_write" && result.ok) {
+          const path = String(call.args.path ?? "");
+          const command = diagnosticCommand(path);
+          if (command) {
+            setStage(`Diagnóstico: ${path}`);
+            const check = await dispatchTool({ tool: "terminal", args: { command } }, root);
+            const report = formatDiagnostics(path, check);
+            appendMessage(mode, { role: "assistant", content: report, meta: { kind: "ops" } });
+            return { ok: result.ok, output: `${result.output}\n\n${report}` };
+          }
+        }
+        return result;
+      },
       requestApproval: (call) =>
         new Promise<boolean>((resolve) => setPendingApproval({ call, resolve })),
       onToolStart: (call) => {
