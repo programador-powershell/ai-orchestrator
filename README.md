@@ -13,9 +13,11 @@
 - Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
 - **Shell estilo Unsloth Studio**: navegação de modos na sidebar (pílulas, colapsável), topbar slim, Settings em modal (Ctrl+,).
 - **9 abas** — Chat, Code, Design, Data, Work, Security, Agent, Game e **Tuning** — com comandos de barra (`/review`, `/explain`, `/testgen`) no composer.
+- **Resposta em streaming** (token a token) em todos os caminhos: gateway, modelo direto (BYOK) e runtime local.
+- **Modo agente**: o modelo executa ferramentas (ler/buscar/editar/rodar) com aprovação, diagnostics pós-edição e auto-compact de contexto; **MCP** externo e interno.
+- **Modelos fusion** com preset por estratégia **e modelos específicos por tipo de atividade** (Chat, Code, Data…).
 - **Fine-Tuning 100% em nuvem**: harness no gateway (jobs persistidos, eventos SSE, catálogo, reconciliador) + aba Train (Configurar/Execução/Histórico, SFT/DPO, hiperparâmetros, custo estimado); nada instalado, nenhum código de terceiros embutido.
 - **Memória persistente** independente de fornecedor (SQLite/IndexedDB), com import de histórico Claude/OpenAI.
-- **Modelos fusion**: orquestrador+executor, merge e race entre modelos.
 - **BYOK** (traga sua própria chave) armazenado no keyring do sistema operacional.
 - **Editor ERD** na aba Data com export SQL (PostgreSQL, MySQL, ANSI, SQLite e MSSQL), migração up/down e export SVG.
 - **Editor de vídeo** estilo OpenCut na aba Design.
@@ -29,19 +31,24 @@
 
 ## :new: Releases Notes
 
-### :up: V.4.2
+### :up: V.5
 ### :warning: Latest Changes
 
-- **Comandos de barra** no composer (`/review`, `/explain`, `/testgen`): prompts reutilizáveis expandidos antes do envio, com `$ARGS` e variáveis nomeadas.
-- **Aba Data com paridade drawDB ampliada**: dialetos **SQLite** e **MSSQL** no export, relação **n-n** agora gera tabela de junção real (2 FKs + PK composta), FKs com **ON UPDATE/ON DELETE**, **migração down** (rollback `down.sql`) e **export do diagrama como SVG**.
+- **Streaming real da resposta**: os tokens aparecem conforme o modelo gera, também no caminho de modelo direto — novo comando Rust `provider_chat_stream` (SSE + Tauri Channel, chave só no keyring) e leitura de SSE no navegador. Antes, a resposta só surgia depois de pronta.
+- **Modo agente (toggle Ferramentas)**: o modelo **executa** ferramentas — lê arquivos, busca, roda comandos e edita — em loop ler→propor→executar→realimentar, com **cartões na conversa** e **aprovação humana** para tudo que grava ou executa.
+- **Diagnostics pós-edição**: depois de gravar código, o app roda o check da linguagem (tsc/cargo/py_compile/node) e devolve os erros na conversa, fechando editar→verificar→corrigir.
+- **Auto-compact de contexto**: conversas longas são resumidas automaticamente para caber na janela do modelo — o app apenas **avisa** na conversa, sem pedir confirmação.
+- **MCP**: cliente para servidores externos (JSON-RPC `tools/list`/`tools/call`, ferramentas namespaced `mcp:<servidor>:<tool>` sob aprovação) e **MCP interno** expondo as ferramentas do próprio app.
+- **Fusion por tipo de atividade**: cada preset pode definir **orquestrador, executores e estratégia específicos por aba** (Chat, Code, Data…), escolhidos direto do catálogo; sem override, a aba usa o preset base.
 
 ### :pushpin: Fixes
 
-- Correctness: relação n-n exportava só FK simples; agora materializa a tabela de junção. `downloadText` usa MIME correto para `.svg`.
+- Resposta que só aparecia ao final no caminho de modelo direto (`stream: false`) agora transmite token a token.
+- Corte cego de histórico (`slice(-12)`) substituído por compactação com resumo real.
 
 ### :construction_worker: Refactors
 
-- Conversores/validação de dataset em `lib/tunelab`, comandos em `lib/commands` e render de ERD em `lib/erdSvg` — todos puros e testados (309 testes no desktop).
+- Novos módulos puros e testados: `lib/agent` (loop e ferramentas), `lib/compact`, `lib/diagnostics`, `lib/mcp`, `lib/fusionResolve` — 351 testes no desktop, 18 no gateway e 10 no Rust do desktop.
 
 ## :wrench: Instalação
 
