@@ -1,0 +1,85 @@
+:root {
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  color: #16201e;
+  background: transparent;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-width: 720px; min-height: 520px; overflow: hidden; background: transparent; }
+button { font: inherit; color: inherit; }
+
+.installer {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+}
+
+.glow { position: absolute; border-radius: 50%; filter: blur(76px); opacity: .5; pointer-events: none; }
+.glow-a { width: 330px; height: 330px; top: -205px; right: 1%; background: rgba(190, 255, 232, .82); }
+.glow-b { width: 280px; height: 280px; left: -175px; bottom: -135px; background: rgba(197, 225, 255, .74); }
+.noise { position: absolute; inset: 20px; opacity: .022; pointer-events: none; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E"); }
+
+.card {
+  position: relative;
+  width: 680px;
+  min-height: 450px;
+  padding: 22px 28px 18px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, .86);
+  border-radius: 29px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, .84), rgba(245, 250, 249, .64));
+  backdrop-filter: blur(42px) saturate(155%);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .98), 0 36px 100px rgba(31, 60, 54, .19);
+}
+
+.brand { min-height: 38px; display: flex; align-items: center; gap: 10px; user-select: none; }
+.brand-mark { width: 37px; height: 37px; display: grid; place-items: center; border: 1px solid rgba(255, 255, 255, .95); border-radius: 12px; color: #173b32; background: rgba(255, 255, 255, .76); box-shadow: inset 0 1px rgba(255,255,255,.95), 0 9px 26px rgba(39, 85, 73, .1); }
+.brand > div { display: grid; pointer-events: none; }
+.brand strong { font-size: 13px; letter-spacing: -.2px; }
+.brand small { font: 8px "Cascadia Mono", monospace; letter-spacing: 2px; color: #7b918b; }
+.close-setup { margin-left: auto; width: 33px; height: 33px; display: grid; place-items: center; border: 0; border-radius: 10px; color: #71837f; background: transparent; cursor: pointer; transition: color .18s ease, background .18s ease, transform .18s ease; }
+.close-setup:hover { color: #a63e38; background: rgba(201, 72, 62, .1); transform: scale(1.04); }
+
+.install-copy { padding: 68px 0 34px; text-align: left; }
+.kicker { font: 8px "Cascadia Mono", monospace; letter-spacing: 2.2px; color: #7b948d; }
+.install-copy h1 { margin: 9px 0 7px; font-size: 31px; font-weight: 610; letter-spacing: -1.35px; color: #14211f; }
+.install-copy p { min-height: 18px; margin: 0; color: #71847f; font-size: 11px; }
+
+.progress-panel { padding: 18px 19px 16px; border: 1px solid rgba(255,255,255,.82); border-radius: 18px; background: rgba(255,255,255,.42); box-shadow: inset 0 1px rgba(255,255,255,.92), 0 12px 32px rgba(44,77,69,.06); }
+.progress-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.phase-state { display: flex; align-items: center; gap: 10px; color: #48635c; }
+.phase-state strong { font-size: 11px; font-weight: 600; }
+.percent { font: 18px "Cascadia Mono", monospace; font-weight: 600; color: #285b4e; letter-spacing: -1px; }
+
+.download-pulse { width: 28px; height: 18px; display: flex; align-items: center; justify-content: center; gap: 3px; }
+.download-pulse i { width: 5px; height: 5px; border-radius: 50%; background: rgba(56, 137, 112, .58); box-shadow: 0 0 9px rgba(54, 145, 116, .28); animation: liquidPulse 1.25s ease-in-out infinite; }
+.download-pulse i:nth-child(2) { animation-delay: .14s; }
+.download-pulse i:nth-child(3) { animation-delay: .28s; }
+.phase-paused .download-pulse i, .phase-error .download-pulse i, .phase-cancelled .download-pulse i { animation-play-state: paused; opacity: .45; }
+.complete-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: #2d705e; background: rgba(184, 247, 222, .76); }
+@keyframes liquidPulse { 0%, 100% { transform: translateY(0) scale(.82); opacity: .48; } 50% { transform: translateY(-4px) scale(1.16); opacity: 1; } }
+
+.track { height: 8px; position: relative; overflow: hidden; border-radius: 99px; background: rgba(52, 80, 72, .1); box-shadow: inset 0 1px 2px rgba(32,55,49,.08); }
+.track > i { display: block; height: 100%; position: relative; overflow: hidden; border-radius: inherit; background: linear-gradient(90deg, rgba(89,178,149,.9), rgba(159,230,207,.96)); box-shadow: 0 0 18px rgba(76, 167, 137, .27); transition: width .24s cubic-bezier(.22,.8,.32,1); }
+.track > i > b { position: absolute; inset: 0; background: linear-gradient(110deg, transparent 0 35%, rgba(255,255,255,.62) 48%, transparent 62%); animation: trackGlint 1.8s linear infinite; }
+@keyframes trackGlint { from { transform: translateX(-130%); } to { transform: translateX(130%); } }
+
+.metrics { display: grid; grid-template-columns: 1.25fr 1fr 1fr; margin-top: 15px; color: #60756f; }
+.metrics > div { display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.metrics > div:nth-child(2) { justify-content: center; }
+.metrics > div:last-child { display: grid; justify-content: end; gap: 1px; text-align: right; }
+.metrics small { color: #8e9f9b; }
+.metrics strong { font: 10px "Cascadia Mono", monospace; color: #506762; }
+
+footer { min-height: 62px; margin-top: auto; display: flex; align-items: end; justify-content: space-between; }
+.quiet-status { color: #81938e; font-size: 9px; }
+.actions { display: flex; align-items: center; gap: 7px; }
+.actions button { height: 33px; padding: 0 12px; display: flex; align-items: center; gap: 6px; border-radius: 10px; cursor: pointer; font-size: 9px; transition: transform .16s ease, background .16s ease; }
+.actions button:hover { transform: translateY(-1px); }
+.primary { border: 1px solid rgba(72,145,121,.14); color: #173b31; background: rgba(191,255,230,.9); font-weight: 700; box-shadow: 0 7px 20px rgba(53,117,95,.11); }
+.secondary { border: 1px solid rgba(47,76,68,.1); background: rgba(255,255,255,.58); }
+.ghost { border: 0; background: transparent; color: #718681; }

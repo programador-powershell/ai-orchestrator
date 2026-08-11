@@ -1,0 +1,208 @@
+name: Release AI Orchestrator
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag vX.Y.Z ou vX.Y.Z-beta.N"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/gateway
+      - run: cargo fmt --manifest-path services/gateway/Cargo.toml --check
+      - run: cargo clippy --manifest-path services/gateway/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path services/gateway/Cargo.toml
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/gateway
+          push: false
+          tags: ai-orchestrator-gateway:test
+
+  runtime:
+    if: ${{ vars.RUNTIME_REPOSITORY != '' }}
+    runs-on: windows-2022
+    steps:
+      - name: Checkout pinned runtime fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.RUNTIME_REPOSITORY }}
+          ref: ${{ vars.RUNTIME_REF || 'main' }}
+          token: ${{ secrets.RUNTIME_REPOSITORY_TOKEN || github.token }}
+      - name: Build CPU runtime
+        shell: pwsh
+        run: |
+          cmake -S . -B build-cpu -DGGML_VULKAN=OFF -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-cpu --config Release --target llama-server --parallel
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item (Get-ChildItem build-cpu -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\ai-orchestrator-runtime-cpu.exe
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.1.1
+        with:
+          version: latest
+          cache: true
+      - name: Build Vulkan runtime
+        shell: pwsh
+        run: |
+          cmake -S . -B build-vulkan -DGGML_VULKAN=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-vulkan --config Release --target llama-server --parallel
+          Copy-Item (Get-ChildItem build-vulkan -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\ai-orchestrator-runtime-vulkan.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-runtime
+          path: artifacts/*.exe
+
+  release:
+    needs: [gateway, runtime]
+    if: ${{ always() && needs.gateway.result == 'success' && (needs.runtime.result == 'success' || needs.runtime.result == 'skipped') }}
+    runs-on: windows-2022
+    env:
+      TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      INSTALLER_MANIFEST_PRIVATE_KEY: ${{ secrets.INSTALLER_MANIFEST_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        if: needs.runtime.result == 'success'
+        with:
+          name: local-runtime
+          path: release-assets
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate signing policy
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER }}
+          MANIFEST_PUBLIC_KEY: ${{ secrets.INSTALLER_MANIFEST_PUBLIC_KEY }}
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          $stable = $env:TAG_NAME -notmatch '-'
+          $always = @{
+            INSTALLER_MANIFEST_PRIVATE_KEY = $env:INSTALLER_MANIFEST_PRIVATE_KEY
+            INSTALLER_MANIFEST_PUBLIC_KEY = $env:MANIFEST_PUBLIC_KEY
+            WINDOWS_PUBLISHER = $env:PUBLISHER
+          }
+          foreach ($entry in $always.GetEnumerator()) {
+            if ([string]::IsNullOrWhiteSpace($entry.Value)) { throw "Secret obrigatório ausente: $($entry.Key)" }
+          }
+          $hasUpdater = -not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY) -and -not [string]::IsNullOrWhiteSpace($env:TAURI_PUBLIC_KEY)
+          if ($stable) {
+            $stableSecrets = @{
+              WINDOWS_CERTIFICATE_BASE64 = $env:CERTIFICATE
+              WINDOWS_CERTIFICATE_PASSWORD = $env:CERTIFICATE_PASSWORD
+              TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY
+              TAURI_SIGNING_PUBLIC_KEY = $env:TAURI_PUBLIC_KEY
+            }
+            foreach ($entry in $stableSecrets.GetEnumerator()) {
+              if ([string]::IsNullOrWhiteSpace($entry.Value)) { throw "Release estável exige $($entry.Key)." }
+            }
+          }
+          "IS_STABLE=$($stable.ToString().ToLowerInvariant())" | Add-Content $env:GITHUB_ENV
+          "HAS_UPDATER=$($hasUpdater.ToString().ToLowerInvariant())" | Add-Content $env:GITHUB_ENV
+          "WINDOWS_PUBLISHER=$env:PUBLISHER" | Add-Content $env:GITHUB_ENV
+      - run: pnpm install --frozen-lockfile
+      - name: Configure portable release URLs
+        shell: pwsh
+        env:
+          MANIFEST_PUBLIC_KEY: ${{ secrets.INSTALLER_MANIFEST_PUBLIC_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_SIGNING_PUBLIC_KEY }}
+        run: |
+          $base = if ('${{ vars.RELEASE_BASE_URL }}') { '${{ vars.RELEASE_BASE_URL }}'.TrimEnd('/') + "/$env:TAG_NAME" } else { "https://github.com/${{ github.repository }}/releases/download/$env:TAG_NAME" }
+          .\scripts\configure-release.ps1 -Repository '${{ github.repository }}' -ReleaseBaseUrl $base -UpdaterPublicKey $env:UPDATER_PUBLIC_KEY -ManifestPublicKey $env:MANIFEST_PUBLIC_KEY
+          "RELEASE_BASE_URL=$base" | Add-Content $env:GITHUB_ENV
+          $version = $env:TAG_NAME.TrimStart('v').Split('-')[0]
+          $desktop = Get-Content apps\desktop\src-tauri\tauri.conf.json -Raw | ConvertFrom-Json
+          $desktop.version = $version
+          if ($env:HAS_UPDATER -ne 'true') { $desktop.bundle.createUpdaterArtifacts = $false }
+          $desktop | ConvertTo-Json -Depth 20 | Set-Content apps\desktop\src-tauri\tauri.conf.json -Encoding utf8NoBOM
+      - name: Check frontend contracts
+        run: pnpm check
+      - name: Build desktop executable
+        run: pnpm --filter @ai-orchestrator/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc
+      - name: Authenticode sign desktop executable
+        if: env.IS_STABLE == 'true'
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: .\scripts\sign-windows.ps1 -Files apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop.exe -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD
+      - name: Bundle per-user NSIS client
+        run: pnpm --filter @ai-orchestrator/desktop tauri bundle --bundles nsis --target x86_64-pc-windows-msvc
+      - name: Collect and sign release assets
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          $version = $env:TAG_NAME.TrimStart('v')
+          $nsis = Get-ChildItem apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis -Filter '*setup.exe' | Select-Object -First 1
+          if (-not $nsis) { throw 'NSIS não foi produzido.' }
+          $desktopSetup = "release-assets\AI-Orchestrator-$version-setup.exe"
+          Copy-Item $nsis.FullName $desktopSetup
+          if ($env:IS_STABLE -eq 'true') {
+            $filesToSign = @($desktopSetup)
+            $runtimeFiles = @(Get-ChildItem release-assets -Filter 'ai-orchestrator-runtime-*.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+            if ($runtimeFiles.Count -gt 0) { $filesToSign += $runtimeFiles }
+            .\scripts\sign-windows.ps1 -Files $filesToSign -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD
+          }
+          "DESKTOP_SETUP=$desktopSetup" | Add-Content $env:GITHUB_ENV
+          if ($env:HAS_UPDATER -eq 'true') {
+            pnpm --filter @ai-orchestrator/desktop tauri signer sign -k $env:TAURI_SIGNING_PRIVATE_KEY -p $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD $desktopSetup
+            "UPDATER_ARCHIVE=$desktopSetup" | Add-Content $env:GITHUB_ENV
+            "UPDATER_SIGNATURE=$desktopSetup.sig" | Add-Content $env:GITHUB_ENV
+          }
+      - name: Build small bootstrapper
+        run: pnpm --filter @ai-orchestrator/bootstrapper tauri build --no-bundle --target x86_64-pc-windows-msvc
+      - name: Collect bootstrapper
+        shell: pwsh
+        env:
+          CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $target = "release-assets\AI-Orchestrator-Setup.exe"
+          Copy-Item apps\bootstrapper\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-bootstrapper.exe $target
+          if ($env:IS_STABLE -eq 'true') { .\scripts\sign-windows.ps1 -Files $target -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD }
+          $size = (Get-Item $target).Length
+          if ($size -gt 15MB) { throw "Bootstrapper excedeu 15 MB: $size bytes" }
+      - name: Generate signed installer manifest
+        shell: pwsh
+        run: |
+          $arguments = @('scripts\generate-release-manifests.mjs', '--version', $env:TAG_NAME, '--base-url', $env:RELEASE_BASE_URL, '--publisher', $env:WINDOWS_PUBLISHER, '--desktop', $env:DESKTOP_SETUP, '--output', 'release-assets')
+          if ($env:HAS_UPDATER -eq 'true') { $arguments += @('--updater', $env:UPDATER_ARCHIVE, '--updater-signature', $env:UPDATER_SIGNATURE) }
+          if (Test-Path 'release-assets\ai-orchestrator-runtime-cpu.exe') { $arguments += @('--runtime-cpu', 'release-assets\ai-orchestrator-runtime-cpu.exe') }
+          if (Test-Path 'release-assets\ai-orchestrator-runtime-vulkan.exe') { $arguments += @('--runtime-vulkan', 'release-assets\ai-orchestrator-runtime-vulkan.exe') }
+          node @arguments
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          prerelease: ${{ contains(env.TAG_NAME, '-') }}
+          generate_release_notes: true
+          files: release-assets/*

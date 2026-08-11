@@ -1,0 +1,241 @@
+/* ------------------------------------------------------------------ */
+/* CHAT — pesquisa profunda (todas as classes com prefixo .chatx-)     */
+/* Geometria da superfície vem do CSS global; aqui o painel de fontes, */
+/* os balões com markdown e as ações por mensagem. A busca do          */
+/* histórico vive no rail (.rail-search, shell.css).                   */
+/* ------------------------------------------------------------------ */
+
+.chatx .chatx-pending {
+  color: var(--muted);
+}
+
+/* Rodapé por mensagem: métricas reais + ações no hover */
+.chatx .chatx-msg-foot {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px;
+}
+.chatx .chatx-meta {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  white-space: nowrap;
+}
+.chatx .chatx-actions {
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+.chatx .chatx-row:hover .chatx-actions,
+.chatx .chatx-actions:focus-within {
+  opacity: 1;
+}
+.chatx .chatx-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, border-color var(--t-fast) ease,
+    transform var(--t-fast) var(--spring);
+}
+.chatx .chatx-actions button:hover {
+  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  transform: translateY(-1px);
+}
+.chatx .chatx-actions button:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* Painel de fontes — mesma largura/centralização das mensagens */
+.chatx-sources {
+  width: min(780px, 96%);
+  align-self: center;
+  flex: none;
+  display: grid;
+  gap: 9px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+
+.chatx-sources > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chatx-sources > header .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-strong);
+}
+
+.chatx-sources > footer small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+.chatx-source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+/* Card de fonte clicável */
+.chatx-source {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 9px;
+  padding: 9px 10px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  cursor: pointer;
+  animation: pop-in var(--t-base) var(--spring) both;
+  transition: transform var(--t-fast) var(--spring), border-color var(--t-fast) ease,
+    box-shadow var(--t-base) ease;
+}
+.chatx-source:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  box-shadow: var(--shadow-soft);
+}
+.chatx-source:active {
+  transform: translateY(0) scale(0.99);
+}
+
+/* "Favicon" — letra do domínio */
+.chatx-fav {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+.chatx-source-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.chatx-source-main strong {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chatx-source-main small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.chatx-source-main em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Barra de credibilidade — preenchimento via transform (compositor-only) */
+.chatx-cred {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  overflow: hidden;
+}
+.chatx-cred i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--tone-mint), var(--tone-cyan));
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform var(--t-slow) var(--spring-soft);
+}
+
+/* ---- Balões estilo Unsloth (V2.1 visual) ---- */
+.chatx-thread { gap: 16px; padding: 20px 14px 14px; }
+.chatx-row {
+  width: min(820px, 98%);
+  align-self: center;
+  display: flex;
+  gap: 10px;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.chatx-row.user { justify-content: flex-end; }
+.chatx-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px) saturate(140%);
+  color: var(--accent-strong);
+}
+.chatx-col { max-width: min(680px, 86%); display: grid; gap: 4px; }
+.chatx-row.user .chatx-col { justify-items: end; }
+.chatx-balloon {
+  padding: 10px 14px;
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-base) ease;
+}
+.chatx-balloon:hover { transform: translateY(-1px); }
+.chatx-balloon.assistant {
+  border-radius: 6px 18px 18px 18px;
+  background: var(--glass);
+  box-shadow: var(--shadow-soft);
+}
+.chatx-balloon.user {
+  border-radius: 18px 6px 18px 18px;
+  border-color: transparent;
+  background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 52% / 0.92), hsl(var(--accent-h) var(--accent-s) 42% / 0.92));
+  box-shadow: 0 8px 22px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+.app-shell[data-theme="dark"] .chatx-balloon.user {
+  background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 62% / 0.9), hsl(var(--accent-h) var(--accent-s) 48% / 0.9));
+  color: #0a1014;
+}
+.chatx-balloon.user p { margin: 0; font-size: var(--fs-body); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.chatx-balloon .md-root { font-size: var(--fs-body); }
+.chatx-row .chatx-msg-foot { padding: 0 4px; }

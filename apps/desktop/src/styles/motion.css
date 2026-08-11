@@ -1,0 +1,152 @@
+/* ------------------------------------------------------------------ */
+/* Movimento — transições de aba, keyframes, view transitions          */
+/* Regra: apenas transform/opacity/filter animam (compositor-only).    */
+/* ------------------------------------------------------------------ */
+
+@keyframes lens-glint {
+  0%, 62% { left: -70%; }
+  86%, 100% { left: 130%; }
+}
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+
+@keyframes mode-enter {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); filter: blur(10px) saturate(1.25); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
+@keyframes float-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes core-pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.85); }
+  50% { transform: translate(-50%, -50%) scale(1.15); }
+}
+
+@keyframes particle-burst {
+  0% { transform: rotate(var(--angle)) translateY(4px) scale(0.4); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: rotate(var(--angle)) translateY(calc(var(--distance) * -1)) scale(1); opacity: 0; }
+}
+
+@keyframes typing-dots {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.9s linear infinite; }
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes scan-sweep {
+  from { transform: translateY(-110%); }
+  to { transform: translateY(1200%); }
+}
+
+/* ------------------- Transição de aba (View Transitions) ------------ */
+::view-transition-old(mode-stage) {
+  animation: vt-out 240ms var(--swift) both;
+}
+::view-transition-new(mode-stage) {
+  animation: vt-in 520ms var(--spring) 40ms both;
+}
+@keyframes vt-out {
+  to { opacity: 0; transform: translateY(calc(var(--vt-dir, 1) * -18px)) scale(0.982); filter: blur(12px) saturate(1.3); }
+}
+@keyframes vt-in {
+  from { opacity: 0; transform: translateY(calc(var(--vt-dir, 1) * 20px)) scale(0.982); filter: blur(12px) saturate(1.3); }
+}
+
+/* Fallback quando View Transitions não dispara */
+.mode-stage { animation: mode-enter var(--t-slow) var(--spring-soft) both; }
+
+/* Estado de processamento (esfera de partículas) */
+.process-pulse {
+  min-width: 250px;
+  padding: 7px 16px 7px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: 22px;
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(24px) saturate(160%);
+  animation: pop-in var(--t-base) var(--spring) both;
+}
+.particle-sphere {
+  width: 46px;
+  height: 46px;
+  position: relative;
+  flex: none;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-soft), transparent 70%);
+}
+.particle-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px #fff, 0 0 18px var(--accent-glow);
+  animation: core-pulse 1.25s ease-in-out infinite;
+}
+.burst-particle {
+  --angle: 0deg;
+  --distance: 22px;
+  position: absolute;
+  left: calc(50% - 1px);
+  top: calc(50% - 2px);
+  width: 2px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform-origin: 1px 2px;
+  animation: particle-burst 1.3s cubic-bezier(0.18, 0.7, 0.2, 1) infinite;
+  animation-delay: var(--delay, 0ms);
+}
+.process-copy { display: grid; gap: 2px; }
+.process-copy strong { font-size: var(--fs-body); letter-spacing: -0.2px; }
+.process-copy strong i {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing-dots 1.2s infinite;
+}
+.process-copy strong i:nth-child(2) { animation-delay: 0.15s; }
+.process-copy strong i:nth-child(3) { animation-delay: 0.3s; }
+.process-copy small { color: var(--muted); font-size: var(--fs-micro); }
+
+/* Acessibilidade: reduz tudo */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes orb-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(3vw, 2vh) scale(1.05); }
+  66% { transform: translate(-2vw, -2vh) scale(0.97); }
+}

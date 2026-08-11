@@ -1,0 +1,661 @@
+/* ------------------------------------------------------------------ */
+/* WORK — cowork: início com ações grandes, projeto real, artefatos md */
+/* e automações no rail (builder em popup glass central).              */
+/* Todas as classes desta view usam o prefixo .workx-                  */
+/* ------------------------------------------------------------------ */
+
+/* ---------------------- Palco do centro (panes) --------------------- */
+.workx-stage {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: float-in var(--t-slow) var(--spring-soft) both;
+}
+
+/* ------------------- Ações grandes (tela inicial) ------------------- */
+.workx-actions {
+  width: min(640px, 92%);
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.workx-action {
+  min-height: 148px;
+  padding: 18px;
+  display: grid;
+  gap: 9px;
+  align-content: start;
+  justify-items: start;
+  text-align: left;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-glass), inset 0 1px 0 var(--glass-inner);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  cursor: pointer;
+  animation: float-in var(--t-slow) var(--spring) both;
+  transition: transform var(--t-base) var(--spring), box-shadow var(--t-base) ease,
+    border-color var(--t-fast) ease;
+}
+.workx-action:nth-child(2) { animation-delay: 70ms; }
+.workx-action:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--glass-border));
+  box-shadow: 0 18px 42px rgba(24, 42, 54, 0.16), inset 0 1px 0 var(--glass-inner);
+}
+.workx-action:active { transform: translateY(-1px) scale(0.99); }
+.workx-action-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  transition: transform var(--t-base) var(--spring);
+}
+.workx-action:hover .workx-action-icon { transform: translateY(-2px) scale(1.05); }
+.workx-action strong { font-size: var(--fs-body); font-weight: 620; letter-spacing: -0.2px; }
+.workx-action small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* -------------------- Artefatos salvos (tela inicial) ---------------- */
+.workx-artifacts {
+  width: min(640px, 92%);
+  margin-top: 20px;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  animation: float-in var(--t-slow) var(--spring-soft) both;
+  animation-delay: 120ms;
+}
+.workx-artifact-list {
+  width: 100%;
+  max-height: 176px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+.workx-artifact-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.workx-artifact-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--t-fast) var(--spring), border-color var(--t-fast) ease,
+    background var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.workx-artifact-open:hover {
+  transform: translateX(2px);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: var(--glass-strong);
+  box-shadow: 0 6px 16px rgba(24, 42, 54, 0.1);
+}
+.workx-artifact-open svg { flex: none; color: var(--accent-strong); }
+.workx-artifact-open span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workx-artifact-open small { flex: none; color: var(--faint); font-family: var(--font-mono); font-size: var(--fs-eyebrow); }
+.workx-artifact-act {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background var(--t-fast) ease, transform var(--t-fast) var(--spring);
+}
+.workx-artifact-act:hover { color: var(--ink); background: var(--glass); border-color: var(--glass-border); }
+.workx-artifact-act.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+/* Exclusão armada (1º clique): estado explícito até o clique de confirmação. */
+.workx-artifact-act.armed,
+.workx-artifact-act.armed:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+/* ------------------------ Pasta do projeto -------------------------- */
+.workx-project {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--canvas);
+  overflow-y: auto;
+}
+.workx-project-head {
+  flex: none;
+  min-height: 44px;
+  padding: 6px 8px 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-soft), inset 0 1px 0 var(--glass-inner);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  color: var(--accent-strong);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
+}
+.workx-project-head:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), inset 0 1px 0 var(--glass-inner);
+}
+.workx-project-head input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+}
+
+.workx-project-card {
+  flex: none;
+  padding: 14px;
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--tone-blue) 10%, transparent), transparent 65%),
+    var(--glass-strong);
+  box-shadow: var(--shadow-soft), inset 0 1px 0 var(--glass-inner);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  animation: float-in var(--t-slow) var(--spring) both;
+  animation-delay: 60ms;
+}
+.workx-project-card > strong { font-size: 15px; font-weight: 640; letter-spacing: -0.3px; }
+.workx-project-card > small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  overflow-wrap: anywhere;
+}
+.workx-project-meta { color: var(--faint); font-size: var(--fs-micro); }
+
+.workx-entries {
+  flex: none;
+  display: grid;
+  gap: 3px;
+}
+.workx-entry {
+  min-height: 30px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: transform var(--t-fast) var(--spring), border-color var(--t-fast) ease, color var(--t-fast) ease;
+}
+.workx-entry:hover { transform: translateX(2px); border-color: var(--line-strong); color: var(--ink); }
+.workx-entry svg { flex: none; color: var(--faint); }
+.workx-entry span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workx-entry small { flex: none; color: var(--faint); font-family: var(--font-mono); font-size: var(--fs-eyebrow); }
+
+.workx-listing {
+  flex: none;
+  height: 88px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(100deg, transparent 30%, var(--glass) 50%, transparent 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.1s linear infinite;
+  opacity: 0.6;
+}
+
+.workx-web-note {
+  flex: none;
+  margin: 0;
+  padding: 9px 11px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.workx-web-note svg { flex: none; margin-top: 1px; }
+
+/* ------------------------ Editor de artefato ------------------------ */
+.workx-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.workx-editor > header {
+  flex: none;
+  min-height: 48px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.workx-editor-icon {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.workx-editor-title {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.2px;
+}
+.workx-editor-title::placeholder { color: var(--faint); font-weight: 500; }
+.workx-editor-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.7;
+}
+.workx-editor > footer {
+  flex: none;
+  min-height: 30px;
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.workx-editor > footer .spacer { flex: 1; }
+/* Botão "Excluir" armado no editor (exclusão em dois cliques). */
+.workx-editor > header .lg-button.workx-del-armed,
+.workx-editor > header .lg-button.workx-del-armed:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--glass-border));
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
+/* --------------------- Automações no rail esquerdo ------------------- */
+.workx-rail-rule {
+  flex: none;
+  margin: 0 2px;
+  padding: 8px 9px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease;
+}
+.workx-rail-rule:hover { border-color: var(--line-strong); }
+.workx-rail-rule-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workx-rail-rule-top strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+.workx-rail-rule .lg-toggle { height: 22px; padding: 0 8px 0 5px; flex: none; }
+.workx-rail-rule .lg-toggle i { width: 12px; height: 12px; }
+.workx-rail-rule > small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+}
+.workx-rule-del {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.workx-rule-del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.workx-rail-new {
+  flex: none;
+  margin: 3px 2px 4px;
+}
+/* Restaura o material glass do lg-button sob a regra genérica .rail nav > button */
+.rail nav > button.workx-rail-new {
+  min-height: 32px;
+  padding: 0 13px;
+  justify-content: center;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-strong);
+  box-shadow: 0 5px 14px rgba(24, 42, 54, 0.09), inset 0 1px 0 var(--glass-inner);
+  color: var(--ink);
+  font-weight: 550;
+}
+.rail nav > button.workx-rail-new:hover {
+  transform: translateY(-1px);
+  background: var(--glass-strong);
+  color: var(--ink);
+  box-shadow: 0 9px 22px rgba(24, 42, 54, 0.13), inset 0 1px 0 var(--glass-inner);
+}
+
+/* Log compacto (rail) */
+.workx-log {
+  flex: none;
+  display: grid;
+  gap: 4px;
+  margin: 0 2px 6px;
+}
+.workx-log p {
+  margin: 0;
+  padding: 6px 8px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.workx-log time {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
+/* -------------------- Popup glass do builder (portal) ---------------- */
+@keyframes workx-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.workx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ink) 20%, transparent);
+  backdrop-filter: blur(7px) saturate(120%);
+  -webkit-backdrop-filter: blur(7px) saturate(120%);
+  animation: workx-overlay-in var(--t-base) ease both;
+}
+.workx-modal {
+  width: min(440px, 94vw);
+  max-height: min(78vh, 660px);
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 34px 90px rgba(14, 26, 34, 0.35), var(--shadow-glass);
+  animation: float-in var(--t-slow) var(--spring) both;
+}
+.workx-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.workx-modal-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.workx-modal-head > div { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.workx-modal-head strong { font-size: var(--fs-body); font-weight: 630; letter-spacing: -0.2px; }
+.workx-modal-head small { color: var(--faint); font-family: var(--font-mono); font-size: var(--fs-eyebrow); }
+
+.workx-builder {
+  display: grid;
+  gap: 8px;
+}
+.workx-builder-actions {
+  display: flex;
+  gap: 6px;
+}
+.workx-builder-actions .lg-button { flex: 1; }
+
+.workx-dormant-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+/* ----------------------- Resumo (painel direito) --------------------- */
+.workx-summary {
+  flex: none;
+  display: grid;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.workx-sum-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  animation: float-in var(--t-base) var(--spring) both;
+  transition: border-color var(--t-fast) ease, transform var(--t-fast) var(--spring);
+}
+.workx-sum-row:hover { border-color: var(--line-strong); transform: translateX(2px); }
+.workx-sum-row > svg { flex: none; margin-top: 2px; color: var(--accent-strong); }
+.workx-sum-row > span { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.workx-sum-row strong { font-size: var(--fs-small); font-weight: 600; letter-spacing: -0.1px; }
+.workx-sum-row small {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------- Notas e avisos ---------------------------- */
+.workx-empty-note {
+  flex: none;
+  margin: 2px;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+/* --------------- Suíte M365 (estado REAL: não conectado) ------------ */
+.workx-connector {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.workx-connector-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--workx-tone, var(--accent-strong));
+  background: color-mix(in srgb, var(--workx-tone, var(--accent)) 14%, transparent);
+}
+.workx-connector-copy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.workx-connector-copy strong { font-size: var(--fs-small); font-weight: 580; }
+.workx-connector-copy small {
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.3px;
+}
+.workx-connector-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warn);
+  opacity: 0.7;
+}
+
+.workx-policy {
+  flex: none;
+  margin: 2px 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 6%, transparent);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+.workx-policy svg { flex: none; margin-top: 1px; color: var(--warn); }
+
+.workx-automate {
+  flex: none;
+  align-self: stretch;
+  margin: 3px 2px 6px;
+}
+
+/* Mission control derivado (real) */
+.workx-mission {
+  display: grid;
+  gap: 6px;
+  margin: 4px 4px 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass);
+  backdrop-filter: blur(14px) saturate(140%);
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.workx-mission header { display: flex; align-items: baseline; justify-content: space-between; }
+.workx-mission header strong { font-size: var(--fs-small); }
+.workx-mission header small { color: var(--accent-strong); font-family: var(--font-mono); font-size: var(--fs-micro); }
+.workx-mission-bar {
+  height: 6px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.workx-mission-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, hsl(var(--accent-h) var(--accent-s) 60% / .5), hsl(var(--accent-h) var(--accent-s) 48% / .85));
+  box-shadow: 0 0 10px var(--accent-glow);
+  transition: width var(--t-slow) var(--spring);
+}
+.workx-mission-step {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+.workx-mission-step span {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 10px;
+  transition: all var(--t-base) var(--spring);
+}
+.workx-mission-step.done span { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.workx-mission-step strong { display: block; font-size: var(--fs-micro); color: var(--ink); }
+.workx-mission-step small { color: var(--faint); font-size: var(--fs-eyebrow); }

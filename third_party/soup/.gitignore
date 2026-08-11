@@ -1,0 +1,51 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training outputs
+output/
+out/
+checkpoints/
+wandb/
+
+# Soup local data
+.soup/
+*.db
+
+# Test reports
+report.xml
+.benchmarks
+
+# Secrets
+.env
+*.key
+
+# Internal plan + local dev instructions (not for repo)
+.claude/
+.coverage
+
+# Internal brainstorming plans + design specs (local-only, not for repo)
+docs/superpowers/
+
+# Local scratch / temp scripts at repo root (e.g. _smoke.py, _scratch.py) — never committed
+/_*.py

@@ -1,0 +1,423 @@
+"""Experiment tracking — stores runs in local SQLite.
+
+Usage:
+    tracker = ExperimentTracker()
+    run_id = tracker.start_run(config_dict, device, device_name, gpu_info)
+    tracker.log_metrics(run_id, step=10, loss=2.3, lr=1e-5)
+    tracker.finish_run(run_id, initial_loss=2.5, final_loss=0.8, ...)
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from soup_cli.utils.constants import EXPERIMENTS_DB, SOUP_DIR
+
+_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS runs (
+    run_id          TEXT PRIMARY KEY,
+    experiment_name TEXT,
+    created_at      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'running',
+    config_json     TEXT NOT NULL,
+    device          TEXT,
+    device_name     TEXT,
+    gpu_memory      TEXT,
+    initial_loss    REAL,
+    final_loss      REAL,
+    total_steps     INTEGER,
+    duration_secs   REAL,
+    output_dir      TEXT,
+    base_model      TEXT,
+    task            TEXT,
+    cost_usd        REAL,
+    cost_gpu_label  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS metrics (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id    TEXT NOT NULL REFERENCES runs(run_id),
+    step      INTEGER NOT NULL,
+    epoch     REAL,
+    loss      REAL,
+    lr        REAL,
+    grad_norm REAL,
+    speed     REAL,
+    gpu_mem   TEXT,
+    timestamp TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS eval_results (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id       TEXT REFERENCES runs(run_id),
+    model_path   TEXT NOT NULL,
+    benchmark    TEXT NOT NULL,
+    score        REAL NOT NULL,
+    details_json TEXT,
+    created_at   TEXT NOT NULL
+);
+
+-- Training Intelligence (v0.25.0 Part G)
+CREATE TABLE IF NOT EXISTS checkpoint_quality (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     TEXT REFERENCES runs(run_id),
+    step       INTEGER NOT NULL,
+    metric     TEXT NOT NULL,
+    score      REAL NOT NULL,
+    is_best    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS forgetting_eval (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        TEXT REFERENCES runs(run_id),
+    step          INTEGER NOT NULL,
+    benchmark     TEXT NOT NULL,
+    accuracy      REAL NOT NULL,
+    baseline      REAL NOT NULL,
+    delta         REAL NOT NULL,
+    warning_level TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_run_id ON metrics(run_id);
+CREATE INDEX IF NOT EXISTS idx_eval_run_id ON eval_results(run_id);
+CREATE INDEX IF NOT EXISTS idx_ckpt_quality_run_id ON checkpoint_quality(run_id);
+CREATE INDEX IF NOT EXISTS idx_forgetting_run_id ON forgetting_eval(run_id);
+"""
+
+
+def _get_db_path() -> Path:
+    """Return path to experiments DB, creating parent dir if needed."""
+    import os
+
+    # Allow override via env var (useful for tests and CI)
+    env_path = os.environ.get("SOUP_DB_PATH")
+    if env_path:
+        return Path(env_path)
+
+    soup_dir = Path.home() / SOUP_DIR
+    soup_dir.mkdir(parents=True, exist_ok=True)
+    return soup_dir / EXPERIMENTS_DB
+
+
+def generate_run_id() -> str:
+    """Generate a unique, sortable run ID: run_YYYYMMDD_HHMMSS_xxxxxxxx."""
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = secrets.token_hex(4)
+    return f"run_{ts}_{suffix}"
+
+
+class ExperimentTracker:
+    """SQLite-backed experiment tracker for training runs and evaluations."""
+
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = db_path or _get_db_path()
+        self._conn: Optional[sqlite3.Connection] = None
+        self._ensure_schema()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        return self._conn
+
+    def _ensure_schema(self) -> None:
+        """Create tables if they don't exist.
+
+        Lazy migration adds the v0.34.0 cost columns to legacy DBs. The
+        ALTER TABLE calls are guarded against the "duplicate column" race
+        that can occur when two processes start simultaneously on the same
+        DB (fork-based multi-GPU training, TUI auto-refresh, etc.).
+        """
+        conn = self._get_conn()
+        conn.executescript(_SCHEMA_SQL)
+        for column, ddl in (
+            ("cost_usd", "ALTER TABLE runs ADD COLUMN cost_usd REAL"),
+            ("cost_gpu_label", "ALTER TABLE runs ADD COLUMN cost_gpu_label TEXT"),
+        ):
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+            if column in existing:
+                continue
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError as exc:
+                # Tolerate the race where a sibling process added the column
+                # between our PRAGMA read and the ALTER. Anything else is a
+                # real failure and should surface.
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        conn.commit()
+
+    def init_db(self) -> None:
+        """Public alias for schema initialization (v0.25.0+)."""
+        self._ensure_schema()
+
+    def start_run(
+        self,
+        config_dict: dict,
+        device: str,
+        device_name: str,
+        gpu_info: dict,
+        experiment_name: Optional[str] = None,
+    ) -> str:
+        """Insert a new run and return its run_id."""
+        run_id = generate_run_id()
+        now = datetime.now().isoformat()
+        config_json = json.dumps(config_dict, default=str)
+
+        base_model = config_dict.get("base", "")
+        task = config_dict.get("task", "sft")
+        gpu_memory = gpu_info.get("memory_total", "")
+
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO runs
+               (run_id, experiment_name, created_at, status, config_json,
+                device, device_name, gpu_memory, base_model, task)
+               VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)""",
+            (
+                run_id, experiment_name, now, config_json,
+                device, device_name, gpu_memory, base_model, task,
+            ),
+        )
+        conn.commit()
+        return run_id
+
+    def log_metrics(
+        self,
+        run_id: str,
+        step: int,
+        epoch: float = 0.0,
+        loss: float = 0.0,
+        lr: float = 0.0,
+        grad_norm: float = 0.0,
+        speed: float = 0.0,
+        gpu_mem: str = "",
+    ) -> None:
+        """Log a single metrics row for the given run."""
+        now = datetime.now().isoformat()
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO metrics
+               (run_id, step, epoch, loss, lr, grad_norm, speed, gpu_mem, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, step, epoch, loss, lr, grad_norm, speed, gpu_mem, now),
+        )
+        conn.commit()
+
+    def finish_run(
+        self,
+        run_id: str,
+        initial_loss: float,
+        final_loss: float,
+        total_steps: int,
+        duration_secs: float,
+        output_dir: str,
+    ) -> None:
+        """Mark run as completed and fill summary fields.
+
+        Also computes an informational per-run cost estimate based on the
+        device_name captured at start_run() and the elapsed duration.
+        """
+        conn = self._get_conn()
+        # Look up device name for cost estimate (best-effort).
+        cost_usd: Optional[float] = None
+        cost_label: Optional[str] = None
+        row = conn.execute(
+            "SELECT device_name FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is not None:
+            try:
+                from soup_cli.utils.run_cost import (
+                    estimate_run_cost_usd,
+                    lookup_gpu_rate,
+                )
+
+                device_name = row["device_name"]
+                cost_usd = estimate_run_cost_usd(device_name, duration_secs)
+                looked = lookup_gpu_rate(device_name)
+                if looked is not None:
+                    cost_label, _ = looked
+            except Exception:  # pragma: no cover - defence in depth
+                cost_usd = None
+                cost_label = None
+        conn.execute(
+            """UPDATE runs SET
+               status = 'completed',
+               initial_loss = ?, final_loss = ?,
+               total_steps = ?, duration_secs = ?, output_dir = ?,
+               cost_usd = ?, cost_gpu_label = ?
+               WHERE run_id = ?""",
+            (
+                initial_loss, final_loss, total_steps, duration_secs, output_dir,
+                cost_usd, cost_label, run_id,
+            ),
+        )
+        conn.commit()
+
+    def fail_run(self, run_id: str) -> None:
+        """Mark run as failed."""
+        conn = self._get_conn()
+        conn.execute("UPDATE runs SET status = 'failed' WHERE run_id = ?", (run_id,))
+        conn.commit()
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """Return list of runs ordered by created_at desc."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM runs ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_run(self, run_id: str) -> Optional[dict]:
+        """Get full details of a single run. Supports prefix matching."""
+        conn = self._get_conn()
+        # Try exact match first
+        row = conn.execute(
+            "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+
+        if row is None:
+            # Try prefix match. Escape LIKE wildcards in user input so a
+            # crafted run_id can't widen the match (% expands to "any").
+            escaped = (
+                run_id.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE run_id LIKE ? ESCAPE '\\' "
+                "ORDER BY created_at DESC",
+                (f"{escaped}%",),
+            ).fetchall()
+            if len(rows) == 1:
+                row = rows[0]
+            elif len(rows) > 1:
+                return None  # ambiguous prefix
+
+        return dict(row) if row else None
+
+    def get_metrics(self, run_id: str) -> list[dict]:
+        """Get all metric rows for a run, ordered by step."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM metrics WHERE run_id = ? ORDER BY step", (run_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_metric_series(self, run_id: str, metric: str) -> list[float]:
+        """Per-row series of a single named metric for a run (v0.55.0).
+
+        Used by ``soup eval against`` for run-vs-run paired-bootstrap CI.
+        Returns an empty list when the metric does not appear in any row
+        — the caller treats that as "no signal, do not gate".
+
+        v0.71.5 #164: the per-step ``metrics`` table only carries training
+        columns (``loss`` / ``lr`` / ``grad_norm`` / ``speed`` / ``gpu_mem``).
+        Eval metrics like ``task_accuracy`` / ``refusal_rate`` live in the
+        ``eval_results`` table instead. So when the per-step pass yields no
+        rows we fall back to the per-benchmark scores in ``eval_results``.
+        Querying ``metrics`` first preserves the established behaviour for
+        every training-loop column (no regression for existing callers);
+        the fallback only fires when the column path is empty.
+        """
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be a non-empty string")
+        if not isinstance(metric, str) or not metric:
+            raise ValueError("metric must be a non-empty string")
+        rows = self.get_metrics(run_id)
+        series: list[float] = []
+        for row in rows:
+            value = row.get(metric)
+            if value is None:
+                continue
+            try:
+                series.append(float(value))
+            except (TypeError, ValueError):
+                # Skip non-numeric cells silently — same-run inconsistency
+                # is not the caller's problem; they get a shorter series.
+                continue
+        if series:
+            return series
+        # Bridge to eval_results (v0.71.5 #164) — benchmark scores for
+        # `soup eval against`. Empty when neither table has data.
+        return self._eval_score_series(run_id, metric)
+
+    def _eval_score_series(self, run_id: str, benchmark: str) -> list[float]:
+        """Return the per-row ``score`` series from ``eval_results``.
+
+        Ordered by insertion (``id``) for deterministic pairing in the
+        paired-bootstrap CI. Non-numeric cells are skipped silently.
+        """
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT score FROM eval_results "
+            "WHERE run_id = ? AND benchmark = ? ORDER BY id",
+            (run_id, benchmark),
+        ).fetchall()
+        out: list[float] = []
+        for row in rows:
+            value = row["score"]
+            if value is None:
+                continue
+            try:
+                out.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def save_eval_result(
+        self,
+        model_path: str,
+        benchmark: str,
+        score: float,
+        details: dict,
+        run_id: Optional[str] = None,
+    ) -> None:
+        """Save an evaluation result."""
+        now = datetime.now().isoformat()
+        details_json = json.dumps(details, default=str)
+        conn = self._get_conn()
+        conn.execute(
+            """INSERT INTO eval_results
+               (run_id, model_path, benchmark, score, details_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (run_id, model_path, benchmark, score, details_json, now),
+        )
+        conn.commit()
+
+    def get_eval_results(self, run_id: Optional[str] = None) -> list[dict]:
+        """Get eval results, optionally filtered by run_id."""
+        conn = self._get_conn()
+        if run_id:
+            rows = conn.execute(
+                "SELECT * FROM eval_results WHERE run_id = ? ORDER BY created_at DESC",
+                (run_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM eval_results ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a run and its metrics. Returns True if found."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM metrics WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM eval_results WHERE run_id = ?", (run_id,))
+        cursor = conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def close(self) -> None:
+        """Close the database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None

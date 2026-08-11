@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openship.io/openship.schema.json",
+  "framework": "rust",
+  "runtime": "docker",
+  "port": 8787,
+  "env": {
+    "GATEWAY_BIND": "0.0.0.0:8787",
+    "DATABASE_URL": { "value": "", "secret": true },
+    "REDIS_URL": { "value": "", "secret": true },
+    "OIDC_ISSUER": { "value": "", "secret": true },
+    "OIDC_CLIENT_ID": { "value": "", "secret": true },
+    "OIDC_CLIENT_SECRET": { "value": "", "secret": true },
+    "OIDC_AUDIENCE": { "value": "ai-orchestrator", "secret": false },
+    "PROVIDER_MASTER_KEY": { "value": "", "secret": true },
+    "RUST_LOG": "ai_orchestrator_gateway=info,tower_http=info"
+  }
+}
