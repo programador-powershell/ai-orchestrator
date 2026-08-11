@@ -51,6 +51,17 @@ describe("needsApproval", () => {
     expect(needsApproval({ tool: "fs_list", args: {} })).toBe(false);
     expect(needsApproval({ tool: "search", args: {} })).toBe(false);
   });
+
+  it("toda ferramenta MCP externa exige aprovação", () => {
+    expect(needsApproval({ tool: "mcp:jira:create_issue", args: {} })).toBe(true);
+  });
+});
+
+describe("tool-calls MCP", () => {
+  it("aceita ferramenta namespaced mcp:<servidor>:<tool>", () => {
+    const text = '```tool\n{"tool":"mcp:jira:create_issue","args":{"titulo":"x"}}\n```';
+    expect(parseToolCalls(text)).toEqual([{ tool: "mcp:jira:create_issue", args: { titulo: "x" } }]);
+  });
 });
 
 describe("formatToolResult", () => {

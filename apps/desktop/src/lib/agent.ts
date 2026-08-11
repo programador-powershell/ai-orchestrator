@@ -37,13 +37,16 @@ const TOOL_NAMES = new Set(TOOL_SPECS.map((spec) => spec.name));
 
 const TOOL_BLOCK = /```tool\s*([\s\S]*?)```/g;
 
+/** Ferramentas MCP externas chegam namespaced: mcp:<servidor>:<tool>. */
+const isMcpTool = (name: string) => /^mcp:[^:]+:.+$/.test(name);
+
 /** Extrai os tool-calls válidos do texto do modelo. Puro, testável. */
 export function parseToolCalls(text: string): ToolCall[] {
   const calls: ToolCall[] = [];
   for (const match of text.matchAll(TOOL_BLOCK)) {
     try {
       const parsed = JSON.parse(match[1].trim()) as { tool?: unknown; args?: unknown };
-      if (typeof parsed.tool === "string" && TOOL_NAMES.has(parsed.tool)) {
+      if (typeof parsed.tool === "string" && (TOOL_NAMES.has(parsed.tool) || isMcpTool(parsed.tool))) {
         calls.push({ tool: parsed.tool, args: (parsed.args as Record<string, unknown>) ?? {} });
       }
     } catch {
@@ -60,9 +63,9 @@ export function stripToolCalls(text: string): string {
 
 const MUTATING = new Set(TOOL_SPECS.filter((spec) => spec.mutating).map((spec) => spec.name));
 
-/** Ferramentas que gravam ou executam exigem aprovação humana. */
+/** Ferramentas que gravam/executam — e toda MCP externa — exigem aprovação. */
 export function needsApproval(call: ToolCall): boolean {
-  return MUTATING.has(call.tool);
+  return MUTATING.has(call.tool) || isMcpTool(call.tool);
 }
 
 const MAX_RESULT = 8000;

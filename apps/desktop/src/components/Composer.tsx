@@ -31,6 +31,7 @@ import {
 } from "../lib/agent";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
+import { McpHttpClient, mcpToolsToSpecs, parseNamespaced } from "../lib/mcp";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
@@ -199,7 +200,23 @@ export function Composer() {
   /** Turno agêntico: o modelo executa ferramentas (com aprovação) até concluir. */
   async function runAgentTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
     const root = window.localStorage.getItem("code.root") ?? ".";
-    const messages: ChatMessage[] = [{ role: "system", content: agentSystemInstruction() }, ...request];
+    // Servidores MCP configurados entram no catálogo do agente (namespaced).
+    const mcpClients = new Map<string, McpHttpClient>();
+    const mcpSpecs: string[] = [];
+    for (const server of settings.mcpServers) {
+      try {
+        const client = new McpHttpClient(server);
+        const tools = await client.listTools();
+        mcpClients.set(server.name, client);
+        for (const spec of mcpToolsToSpecs(server.name, tools)) mcpSpecs.push(`- ${spec.name}: ${spec.description}`);
+      } catch {
+        // Servidor MCP fora do ar não bloqueia o turno.
+      }
+    }
+    const instruction = mcpSpecs.length
+      ? `${agentSystemInstruction()}\n\nFerramentas MCP externas (exigem aprovação):\n${mcpSpecs.join("\n")}`
+      : agentSystemInstruction();
+    const messages: ChatMessage[] = [{ role: "system", content: instruction }, ...request];
     return runAgentLoop(messages, {
       runTurn: (msgs) => {
         appendMessage(mode, { role: "assistant", content: "" });
@@ -213,6 +230,13 @@ export function Composer() {
         );
       },
       runTool: async (call) => {
+        // Ferramenta MCP externa (mcp:<servidor>:<tool>) roteia ao cliente.
+        const external = parseNamespaced(call.tool);
+        if (external) {
+          const client = mcpClients.get(external.server);
+          if (!client) return { ok: false, output: `servidor MCP "${external.server}" indisponível` };
+          return client.callTool(external.tool, call.args);
+        }
         const result = await dispatchTool(call, root);
         // Diagnostics pós-edição: após gravar código, roda o check e realimenta.
         if (call.tool === "fs_write" && result.ok) {
