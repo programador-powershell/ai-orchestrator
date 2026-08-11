@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:\\\\Users\\\\daniel.paim\\\\Documents\\\\Code\\\\clone-orchestrator\" && echo \"---- clone ----\" && ls -la \"C:\\\\Users\\\\daniel.paim\\\\Documents\\\\Code\\\\clone-orchestrator\\\\clone\")"
+    ]
+  }
+}
