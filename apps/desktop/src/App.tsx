@@ -316,25 +316,6 @@ function App() {
           <Plus size={16} />
           {railOpen && railAction[mode]}
         </button>
-        <nav className="rail-nav" aria-label="Modos">
-          {visibleModes.map((item) => {
-            const Icon = modeMeta[item].icon;
-            return (
-              <button
-                key={item}
-                className={`rail-nav-item ${mode === item ? "active" : ""}`}
-                aria-pressed={mode === item}
-                title={railOpen ? undefined : modeMeta[item].label}
-                onClick={() => switchModeWithTransition(mode, item, () => setMode(item))}
-              >
-                <span className="rail-nav-icon">
-                  <Icon size={15} />
-                </span>
-                {railOpen && <span className="rail-nav-label">{modeMeta[item].label}</span>}
-              </button>
-            );
-          })}
-        </nav>
         {railOpen && (
           <nav className="rail-panel" key={mode}>
             <Suspense fallback={<div className="mode-loading" style={{ height: 120 }} />}>
@@ -360,9 +341,24 @@ function App() {
 
       <section className="workspace">
         <header className="topbar glass" data-tauri-drag-region>
-          <div className="topbar-mode" data-tauri-drag-region>
-            <strong>{modeMeta[mode].label}</strong>
-          </div>
+          {/* Abas de MÓDULO no topo; a barra esquerda serve o módulo ativo. */}
+          <nav className="mode-tabs" aria-label="Módulos">
+            {visibleModes.map((item) => {
+              const Icon = modeMeta[item].icon;
+              return (
+                <button
+                  key={item}
+                  className={`mode-tab ${mode === item ? "active" : ""}`}
+                  aria-pressed={mode === item}
+                  title={modeMeta[item].label}
+                  onClick={() => switchModeWithTransition(mode, item, () => setMode(item))}
+                >
+                  <Icon size={14} />
+                  <span className="mode-tab-label">{modeMeta[item].label}</span>
+                </button>
+              );
+            })}
+          </nav>
           <div className="topbar-actions" id="topbar-actions" />
           <div className="topbar-right">
             <button className="status-pill" onClick={() => setSettingsOpen(true)}>
