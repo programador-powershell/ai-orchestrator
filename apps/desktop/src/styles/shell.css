@@ -1075,3 +1075,195 @@ button { -webkit-tap-highlight-color: transparent; }
   .shipmodal__body { grid-template-columns: 1fr; }
   .shipmodal__col--targets { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+/* --------------- Janela Conectar Apps (galeria MCP) --------------- */
+.connx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: color-mix(in srgb, var(--ink) 24%, transparent);
+  backdrop-filter: blur(3px);
+}
+.connx {
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 100%);
+  max-height: min(760px, 100%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+.connx__head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.connx__title { flex: 1; min-width: 0; }
+.connx__title h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.connx__title p { margin: 2px 0 0; color: var(--muted); font-size: var(--fs-small); }
+.connx__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 280px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.connx__search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.connx__search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-size: var(--fs-small); }
+
+/* ambientes */
+.connx__envs { display: flex; gap: 8px; padding: 14px 18px 4px; }
+.connx__env {
+  flex: 1;
+  display: grid;
+  gap: 1px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.connx__env:hover { background: var(--hover); }
+.connx__env.is-active { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.connx__env strong { font-size: var(--fs-small); font-weight: 570; }
+.connx__env small { color: var(--muted); font-size: var(--fs-micro); }
+
+/* categorias */
+.connx__cats { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 18px; }
+.connx__cat {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.connx__cat:hover { color: var(--ink); background: var(--hover); }
+.connx__cat.is-active { color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+
+/* grade de conectores */
+.connx__grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  padding: 4px 18px 14px;
+}
+.connx__card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.connx__card:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); transform: translateY(-1px); }
+.connx__card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.connx__logo {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.connx__body { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.connx__name { font-size: var(--fs-body); font-weight: 570; }
+.connx__desc { color: var(--muted); font-size: var(--fs-micro); line-height: 1.4; }
+.connx__badge {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.connx__badge.is-connected { color: hsl(158 62% 34%); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.connx__badge.is-available { color: var(--muted); background: var(--hover); }
+.connx__badge.is-blocked { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.connx__empty { grid-column: 1 / -1; padding: 24px; text-align: center; color: var(--muted); font-size: var(--fs-small); }
+
+/* detalhe do conector selecionado */
+.connx__detail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.connx__detail-head { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.connx__detail-head strong { font-size: var(--fs-small); font-weight: 570; }
+.connx__detail-head small { color: var(--muted); font-size: var(--fs-micro); }
+.connx__connect { display: flex; gap: 8px; flex: 1; max-width: 460px; }
+.connx__endpoint {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+.connx__endpoint:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* rodapé */
+.connx__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}
+.connx__sys { display: flex; align-items: center; gap: 7px; }
+.connx__status { display: flex; align-items: center; gap: 8px; }
+.connx__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.connx__dot.on { background: var(--accent); }
+.connx__manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.connx__manage:hover { background: var(--hover); }
+
+@media (max-width: 720px) {
+  .connx__envs { flex-direction: column; }
+  .connx__search { width: 160px; }
+}

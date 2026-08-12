@@ -1,10 +1,10 @@
 /**
- * Cadastro do servidor remoto de deploy (o "VPS do Openship").
+ * Cadastro do servidor remoto de deploy (o VPS configurado pelo admin).
  *
  * Decisão central: este formulário NÃO tem campo de senha nem de chave privada.
- * O Openship original guardava sshPassword, sshKeyPath, sshKeyPassphrase e
- * tunnelToken em JSON texto puro no userData — é exatamente o anti-padrão que
- * não repetimos. Aqui só trafega metadado; segredo mora no agente SSH (padrão)
+ * Ferramentas de deploy costumam guardar sshPassword, sshKeyPath,
+ * sshKeyPassphrase e tunnelToken em JSON texto puro no userData — é
+ * exatamente o anti-padrão que não repetimos. Aqui só trafega metadado; segredo mora no agente SSH (padrão)
  * ou no keyring do SO, e o JS nunca lê nenhum dos dois de volta.
  *
  * Puro: validação sem IO. Quem chama faz a rede e o keyring.
@@ -29,8 +29,8 @@ export interface DeployServer {
   environment: ServerEnvironment;
   remoteWorkdir: string;
   dockerSocket: string;
-  /** Painel do Openship, só para o botão "abrir". */
-  openshipUrl?: string;
+  /** Painel de administração do servidor, só para o botão "abrir". */
+  panelUrl?: string;
   /** Rastreabilidade: onde a credencial mora no cofre. Metadado, não segredo. */
   vaultItemRef?: string;
   enabled: boolean;
@@ -109,8 +109,8 @@ export function validateDraft(draft: ServerDraft): FieldIssue[] {
   if (!draft.remoteWorkdir.trim()) push("remoteWorkdir", "Informe a pasta do projeto no servidor.");
   else if (!draft.remoteWorkdir.startsWith("/")) push("remoteWorkdir", "Caminho absoluto (começa com /).");
 
-  if (draft.openshipUrl?.trim() && !/^https:\/\//i.test(draft.openshipUrl.trim())) {
-    push("openshipUrl", "O painel do Openship precisa ser https.");
+  if (draft.panelUrl?.trim() && !/^https:\/\//i.test(draft.panelUrl.trim())) {
+    push("panelUrl", "O painel de administração precisa ser https.");
   }
 
   return issues;
@@ -138,7 +138,7 @@ export function emptyDraft(): ServerDraft {
     authMethod: "agent",
     network: "internet",
     environment: "prod",
-    remoteWorkdir: "/opt/openship",
+    remoteWorkdir: "/opt/app",
     dockerSocket: "/var/run/docker.sock"
   };
 }

@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Configurações → Ship (build & deploy) e Servidor Openship.
+ * Configurações → Ship (build & deploy) e Servidor VPS.
  *
  * O cadastro de servidor NÃO tem campo de senha nem de chave privada: o
  * caminho padrão é o agente SSH (o app nunca vê segredo algum) e, quando a
  * chave está em arquivo cifrado, a passphrase vai direto para o keyring do SO
- * e nunca volta para o JS. Isso é o oposto do Openship original, que gravava
+ * e nunca volta para o JS — o oposto de ferramentas que gravam
  * sshPassword e sshKeyPassphrase em JSON texto puro no userData.
  */
 
@@ -191,9 +191,9 @@ export function ShipSection() {
   );
 }
 
-/* --------------------------- Servidor Openship -------------------------- */
+/* ----------------------------- Servidor VPS ----------------------------- */
 
-export function OpenshipSection() {
+export function VpsServerSection() {
   const settings = useApp((state) => state.settings);
   const updateSettings = useApp((state) => state.updateSettings);
   const servers = settings.deployServers ?? [];
@@ -242,7 +242,7 @@ export function OpenshipSection() {
 
   return (
     <Section
-      title="Servidor Openship"
+      title="Servidor VPS"
       detail="O VPS ao qual o Orchestrator se conecta para build e deploy. Sem senha e sem chave privada neste formulário."
     >
       <div className="setx-card">
@@ -300,7 +300,7 @@ export function OpenshipSection() {
         <div className="setx-grid">
           <label className="lg-field">
             Nome
-            <input value={draft.name} onChange={(event) => patch({ name: event.target.value })} placeholder="VPS Openship — produção" />
+            <input value={draft.name} onChange={(event) => patch({ name: event.target.value })} placeholder="VPS de produção" />
           </label>
           <label className="lg-field">
             Host
@@ -359,7 +359,7 @@ export function OpenshipSection() {
             <input
               value={draft.remoteWorkdir}
               onChange={(event) => patch({ remoteWorkdir: event.target.value })}
-              placeholder="/opt/openship/app"
+              placeholder="/opt/app"
               spellCheck={false}
             />
           </label>
@@ -403,10 +403,10 @@ export function OpenshipSection() {
 
         <div className="setx-grid">
           <label className="lg-field">
-            Painel do Openship (opcional)
+            Painel de administração (opcional)
             <input
-              value={draft.openshipUrl ?? ""}
-              onChange={(event) => patch({ openshipUrl: event.target.value })}
+              value={draft.panelUrl ?? ""}
+              onChange={(event) => patch({ panelUrl: event.target.value })}
               placeholder="https://painel.exemplo.com"
               spellCheck={false}
             />
@@ -416,7 +416,7 @@ export function OpenshipSection() {
             <input
               value={draft.vaultItemRef ?? ""}
               onChange={(event) => patch({ vaultItemRef: event.target.value })}
-              placeholder="Vaultwarden: VPS Openship prod"
+              placeholder="Vaultwarden: VPS produção"
               spellCheck={false}
             />
           </label>

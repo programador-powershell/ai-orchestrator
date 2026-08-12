@@ -33,8 +33,11 @@ async function authorizedFetch(
   if (response.status !== 401 || !isTauriHost) return response;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
+    // `force`: o gateway já recusou o token. Sem isso, revogação e rotação de
+    // chave não renovam — só a expiração por relógio renovava.
     const renewed = await invoke<{ accessToken: string } | null>("oidc_restore", {
-      gatewayBaseUrl: session.baseUrl
+      gatewayBaseUrl: session.baseUrl,
+      force: true
     });
     if (!renewed || renewed.accessToken === session.accessToken) return response;
     // Atualiza a sessão viva para as chamadas seguintes não repetirem o 401.

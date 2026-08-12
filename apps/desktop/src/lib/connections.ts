@@ -15,7 +15,7 @@ export type ConnectionState = "online" | "offline" | "configured" | "error";
 
 export interface Connection {
   kind: ConnectionKind;
-  /** Rótulo curto: "VPS Openship", "github.com/acme/api". */
+  /** Rótulo curto: "VPS produção", "github.com/acme/api". */
   label: string;
   state: ConnectionState;
   /** Linha secundária no painel — host, versão, motivo do erro. */

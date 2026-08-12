@@ -126,8 +126,22 @@ fn token_session(value: Value, previous_refresh: Option<String>) -> Result<OidcS
     })
 }
 
+/// Credencial que o IdP recusou de vez (refresh revogado) precisa SAIR do
+/// keyring: senão vira zumbi, retentada a cada reinício para sempre.
+fn discard(gateway_base_url: &str) {
+    if let Ok(entry) = keyring::Entry::new("AI Orchestrator", &account(gateway_base_url)) {
+        let _ = entry.delete_credential();
+    }
+}
+
+/// `force` renova mesmo com o token ainda válido pelo relógio. É o caso do
+/// 401: o gateway já disse que o token não serve — revogação, rotação de
+/// chave ou desvio de relógio não aparecem em `expires_at`.
 #[tauri::command]
-pub async fn oidc_restore(gateway_base_url: String) -> Result<Option<OidcSession>, String> {
+pub async fn oidc_restore(
+    gateway_base_url: String,
+    force: Option<bool>,
+) -> Result<Option<OidcSession>, String> {
     let entry = keyring::Entry::new("AI Orchestrator", &account(&gateway_base_url))
         .map_err(|e| e.to_string())?;
     let value = match entry.get_password() {
@@ -136,9 +150,20 @@ pub async fn oidc_restore(gateway_base_url: String) -> Result<Option<OidcSession
         Err(error) => return Err(error.to_string()),
     };
     let mut session: OidcSession = serde_json::from_str(&value).map_err(|e| e.to_string())?;
-    if session.expires_at <= chrono::Utc::now().timestamp() {
-        session = refresh(&gateway_base_url, &session).await?;
-        store(&gateway_base_url, &session)?;
+    let expired = session.expires_at <= chrono::Utc::now().timestamp();
+    if expired || force.unwrap_or(false) {
+        match refresh(&gateway_base_url, &session).await {
+            Ok(renewed) => {
+                session = renewed;
+                store(&gateway_base_url, &session)?;
+            }
+            Err(error) => {
+                // Refresh recusado: a credencial não volta mais. Apaga e pede
+                // login novo, em vez de falhar em silêncio a cada partida.
+                discard(&gateway_base_url);
+                return Err(error);
+            }
+        }
     }
     Ok(Some(session))
 }

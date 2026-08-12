@@ -41,7 +41,7 @@ export type UpdateCheck =
  * A chave pública do updater é substituída na pipeline de release. Se ela
  * ainda for o placeholder, a assinatura NÃO é verificável — e instalar um
  * binário sem verificar assinatura é o cenário que rejeitamos no estudo do
- * Openship (integridade opcional). Melhor recusar e dizer por quê.
+ * conector de deploy (integridade opcional). Melhor recusar e dizer por quê.
  */
 export function updaterConfigured(pubkey: string | undefined): boolean {
   return Boolean(pubkey) && !pubkey!.startsWith("__") && pubkey!.length > 40;
