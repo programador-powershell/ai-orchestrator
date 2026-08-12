@@ -27,6 +27,7 @@ import {
 import { resolvePresetForMode } from "./fusionResolve";
 import { streamChat, type ChatMessage, type GatewaySession } from "./gateway";
 import { runtime } from "./runtime";
+import { parseSseLine } from "./sseDelta";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -48,6 +49,8 @@ export interface EngineEvents {
   onDelta: (delta: string) => void;
   /** Notas de progresso do fusion/pesquisa ("orquestrador planejando…"). */
   onStage?: (stage: string) => void;
+  /** Bloco de raciocínio do modelo (mostrado recolhido, separado da resposta). */
+  onReasoning?: (delta: string) => void;
 }
 
 const DEMO_NOTE =
@@ -151,7 +154,12 @@ async function providerChat(
     let aborted = false;
     channel.onmessage = (event) => {
       // Após o Parar, deltas em trânsito não entram mais na conversa.
-      if (aborted || event.kind !== "delta") return;
+      if (aborted) return;
+      if (event.kind === "reasoning") {
+        events.onReasoning?.(event.data);
+        return;
+      }
+      if (event.kind !== "delta") return;
       streamed += event.data;
       events.onDelta(event.data);
     };
@@ -206,47 +214,70 @@ async function providerChat(
     const detail = await response.text().catch(() => "");
     throw new Error(`${target.providerId} respondeu ${response.status}: ${detail.slice(0, 300)}`);
   }
-  const content = await readSseStream(response.body, events.onDelta);
+  const content = await readSseStream(response.body, events.onDelta, events.onReasoning);
   if (!content) throw new Error(`${target.providerId} não retornou conteúdo.`);
   return content;
 }
 
 interface StreamEvent {
-  kind: "delta" | "done";
+  kind: "delta" | "reasoning" | "done";
   data: string;
 }
 
-/** Lê um corpo SSE de chat/completions e emite os deltas de conteúdo. */
-export async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (delta: string) => void): Promise<string> {
+/** Resposta cortada pelo provedor no meio do stream (sem sinal de término). */
+export class StreamInterruptedError extends Error {
+  constructor(readonly partial: string) {
+    super("a resposta foi interrompida antes de terminar — o provedor cortou o stream");
+    this.name = "StreamInterruptedError";
+  }
+}
+
+/**
+ * Lê um corpo SSE de chat/completions, separando resposta e raciocínio.
+ *
+ * EOF sem `[DONE]` nem `finish_reason` NÃO é sucesso: significa conexão cortada
+ * no meio. Tratar como sucesso entregaria texto truncado como se fosse a
+ * resposta completa.
+ */
+export async function readSseStream(
+  body: ReadableStream<Uint8Array>,
+  onDelta: (delta: string) => void,
+  onReasoning?: (delta: string) => void
+): Promise<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
   let full = "";
+  let sawTerminal = false;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     pending += decoder.decode(value, { stream: true });
-    const events = pending.split("\n\n");
+    // Enquadra por linha em branco, tolerante a CRLF (provedores variam).
+    const events = pending.split(/\r?\n\r?\n/);
     pending = events.pop() ?? "";
     for (const event of events) {
       const data = event
-        .split("\n")
+        .split(/\r?\n/)
         .find((line) => line.startsWith("data:"))
         ?.slice(5)
         .trim();
-      if (!data || data === "[DONE]") continue;
-      try {
-        const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
-        const delta = parsed.choices?.[0]?.delta?.content ?? "";
-        if (delta) {
-          full += delta;
-          onDelta(delta);
-        }
-      } catch {
-        // Linha de dados malformada é ignorada; o stream continua.
+      if (!data) continue;
+      if (data === "[DONE]") {
+        sawTerminal = true;
+        continue;
+      }
+      const parsed = parseSseLine(data);
+      if (!parsed) continue;
+      if (parsed.finishReason) sawTerminal = true;
+      if (parsed.reasoning) onReasoning?.(parsed.reasoning);
+      if (parsed.content) {
+        full += parsed.content;
+        onDelta(parsed.content);
       }
     }
   }
+  if (!sawTerminal) throw new StreamInterruptedError(full);
   return full;
 }
 

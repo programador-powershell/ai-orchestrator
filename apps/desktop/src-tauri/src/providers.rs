@@ -63,6 +63,8 @@ pub fn provider_chat_cancel(stream_id: String) -> Result<(), String> {
 pub enum StreamEvent {
     /// Um pedaço de texto do assistente (delta incremental).
     Delta(String),
+    /// Pedaço do raciocínio do modelo (bloco "pensando", separado da resposta).
+    Reasoning(String),
     /// Fim do stream — carrega o texto completo para conferência.
     Done(String),
 }
@@ -94,6 +96,17 @@ fn parse_sse_delta(data: &str) -> Option<String> {
         .get("delta")?
         .get("content")?
         .as_str()
+        .map(str::to_owned)
+}
+
+/// Extrai o RACIOCÍNIO do chunk. Provedores usam nomes diferentes para o campo;
+/// sem isto o conteúdo de modelos de raciocínio seria descartado.
+fn parse_sse_reasoning(data: &str) -> Option<String> {
+    let parsed: Value = serde_json::from_str(data).ok()?;
+    let delta = parsed.get("choices")?.get(0)?.get("delta")?;
+    ["reasoning_content", "reasoning", "thinking"]
+        .iter()
+        .find_map(|field| delta.get(field).and_then(Value::as_str))
         .map(str::to_owned)
 }
 
@@ -139,6 +152,13 @@ pub async fn pump_sse_cancellable(
                 let Some(data) = data else { continue };
                 if data == "[DONE]" {
                     continue;
+                }
+                if let Some(reasoning) = parse_sse_reasoning(data) {
+                    if !reasoning.is_empty() {
+                        on_event
+                            .send(StreamEvent::Reasoning(reasoning))
+                            .map_err(|error| error.to_string())?;
+                    }
                 }
                 if let Some(delta) = parse_sse_delta(data) {
                     if !delta.is_empty() {
@@ -254,6 +274,17 @@ mod tests {
     fn extracts_delta_content() {
         let data = r#"{"choices":[{"delta":{"content":"olá"}}]}"#;
         assert_eq!(parse_sse_delta(data).as_deref(), Some("olá"));
+    }
+
+    #[test]
+    fn extracts_reasoning_from_known_fields() {
+        use super::parse_sse_reasoning;
+        let deepseek = r#"{"choices":[{"delta":{"reasoning_content":"pensando"}}]}"#;
+        assert_eq!(parse_sse_reasoning(deepseek).as_deref(), Some("pensando"));
+        let alt = r#"{"choices":[{"delta":{"thinking":"hmm"}}]}"#;
+        assert_eq!(parse_sse_reasoning(alt).as_deref(), Some("hmm"));
+        let only_content = r#"{"choices":[{"delta":{"content":"oi"}}]}"#;
+        assert_eq!(parse_sse_reasoning(only_content), None);
     }
 
     #[test]
