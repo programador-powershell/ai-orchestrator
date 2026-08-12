@@ -183,25 +183,36 @@ pub async fn bootstrap(
         return Ok(axum::http::StatusCode::NOT_MODIFIED.into_response());
     }
 
-    let issued_at = chrono::Utc::now();
+    let issued_at = chrono::Utc::now().to_rfc3339();
+    let expires_at = (chrono::Utc::now() + chrono::Duration::hours(6)).to_rfc3339();
+    let profile = json!({
+        "userId": user,
+        "subject": identity.subject,
+        "email": identity.email,
+        "name": identity.name,
+        "groups": identity.groups,
+        "workspaceId": workspace,
+        "workspaceName": membership.get::<String, _>("name"),
+        "role": membership.get::<String, _>("role"),
+    });
+    let policy_value = serde_json::to_value(&policy).map_err(|error| ApiError::Internal(error.into()))?;
+    // Assinatura Ed25519 sobre a mensagem canônica — o cliente managed RECUSA
+    // política sem assinatura; sem a seed configurada (dev) segue nula.
+    let signature = match &state.config.policy_signing_seed {
+        Some(seed) => Value::String(crate::policy::sign_bootstrap(
+            seed,
+            &crate::policy::signing_message(&issued_at, &expires_at, &profile, &policy_value),
+        )?),
+        None => Value::Null,
+    };
     let body = json!({
         "schemaVersion": 1,
-        "issuedAt": issued_at.to_rfc3339(),
-        "expiresAt": (issued_at + chrono::Duration::hours(6)).to_rfc3339(),
+        "issuedAt": issued_at,
+        "expiresAt": expires_at,
         "etag": etag,
-        // Assinatura Ed25519 entra na S3; ausente = cliente managed recusa.
-        "signature": Value::Null,
-        "profile": {
-            "userId": user,
-            "subject": identity.subject,
-            "email": identity.email,
-            "name": identity.name,
-            "groups": identity.groups,
-            "workspaceId": workspace,
-            "workspaceName": membership.get::<String, _>("name"),
-            "role": membership.get::<String, _>("role"),
-        },
-        "policy": policy,
+        "signature": signature,
+        "profile": profile,
+        "policy": policy_value,
     });
     let mut response = Json(body).into_response();
     response.headers_mut().insert(

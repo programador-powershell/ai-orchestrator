@@ -26,6 +26,7 @@ import {
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
 import { requiresPrompt } from "../lib/approval";
+import { clampEffort, effectiveAgentTools, effectiveApproval, promptMasterMessages } from "../lib/policy";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
 import { loadProjectRules, rulesSystemMessage } from "../lib/projectRules";
@@ -67,11 +68,13 @@ export function Composer() {
   const setPlanMode = useApp((state) => state.setPlanMode);
   const researchMode = useApp((state) => state.researchMode);
   const setResearchMode = useApp((state) => state.setResearchMode);
-  // Loop agentico: decidido pela TI em Configuracoes -> Ship, nao por chip no composer.
-  const toolsMode = useApp((state) => state.settings.agentTools);
+  const policy = useApp((state) => state.policy);
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const settings = useApp((state) => state.settings);
   const updateSettings = useApp((state) => state.updateSettings);
+  // Loop agentico: com politica do servidor presente, ELA decide; sem, vale a
+  // configuracao local da TI (Configuracoes -> Ship).
+  const toolsMode = effectiveAgentTools(policy, settings.agentTools);
   const session = useApp((state) => state.session);
   const runtimeStatus = useApp((state) => state.runtimeStatus);
   const thread = useApp((state) => state.threads[state.mode]);
@@ -152,7 +155,12 @@ export function Composer() {
   };
 
   async function buildSystemMessages(question: string): Promise<ChatMessage[]> {
-    const system: ChatMessage[] = [{ role: "system", content: effortDirective(settings.effort) }];
+    // Prompt master do SERVIDOR primeiro; o local complementa se permitido.
+    // O teto de esforco do grupo limita a diretiva, nao so o slider.
+    const system: ChatMessage[] = [
+      ...promptMasterMessages(policy, settings.localPrompt ?? ""),
+      { role: "system", content: effortDirective(clampEffort(settings.effort, policy)) }
+    ];
     if (settings.memoryEnabled) {
       try {
         const hits = await memory.recall(question, settings.memoryRecallK);
@@ -379,7 +387,7 @@ export function Composer() {
         new Promise<boolean>((resolve) => {
           if (signal.aborted) return resolve(false);
           // Política da TI decide se para e pergunta ou segue direto.
-          if (!requiresPrompt(call, useApp.getState().settings.approvalPolicy ?? "ask")) return resolve(true);
+          if (!requiresPrompt(call, effectiveApproval(useApp.getState().policy, useApp.getState().settings.approvalPolicy))) return resolve(true);
           // Parar durante a aprovação resolve como recusa: sem isso a promise
           // ficaria pendurada e a aba travaria em "enviando".
           const onAbort = () => {
@@ -735,9 +743,9 @@ export function Composer() {
               o controle que o usuário de fato precisa durante a conversa. */}
           {toolsMode && (
             <ApprovalSelect
-              policy={settings.approvalPolicy ?? "ask"}
+              policy={effectiveApproval(policy, settings.approvalPolicy)}
               onChange={(approvalPolicy) => updateSettings({ approvalPolicy })}
-              disabled={thread.sending}
+              disabled={thread.sending || Boolean(policy)}
             />
           )}
           {mode === "chat" && (

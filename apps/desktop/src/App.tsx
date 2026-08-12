@@ -36,6 +36,8 @@ import {
 } from "lucide-react";
 import { listWorkspaces } from "./lib/gateway";
 import { runtime } from "./lib/runtime";
+import { effectiveModes, safeMode } from "./lib/policy";
+import { restorePolicy, syncPolicy } from "./lib/policySync";
 import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
 import { GlassFilters } from "./components/GlassFilters";
@@ -212,13 +214,21 @@ function App() {
   const [closing, setClosing] = useState(false);
   const [shipOpen, setShipOpen] = useState(false);
 
-  const visibleModes = settings.visibleModes.length ? settings.visibleModes : [...UI_MODES];
-  const RailPanel = railViews[mode];
+  const policy = useApp((state) => state.policy);
 
-  // Aba atual foi ocultada nas Configurações → vai para a primeira visível.
+  // Abas efetivas = política do servidor ∩ preferência local. O gate é no
+  // RENDER: a view bloqueada nem monta (gate por useEffect deixava a view
+  // proibida montar e rodar efeitos antes do redirect).
+  const preferredModes = settings.visibleModes.length ? settings.visibleModes : [...UI_MODES];
+  const visibleModes = effectiveModes(policy?.allowedModes ?? null, preferredModes);
+  const activeMode = safeMode(mode, visibleModes);
+  const RailPanel = activeMode ? railViews[activeMode] : null;
+
+  // Mantém o estado coerente com o que está renderizado (a renderização já
+  // usa activeMode, então isto é só sincronização de estado, não gate).
   useEffect(() => {
-    if (!visibleModes.includes(mode)) setMode(visibleModes[0]);
-  }, [visibleModes, mode, setMode]);
+    if (activeMode && activeMode !== mode) setMode(activeMode);
+  }, [activeMode, mode, setMode]);
 
   // Compatibilidade com o original: ?mode=<aba> abre direto na aba pedida.
   useEffect(() => {
@@ -240,6 +250,9 @@ function App() {
 
   useEffect(() => {
     if (!isTauriHost) return;
+    // Política em cache (assinada, reverificada no Rust) vale ANTES da rede:
+    // o gating não espera o gateway responder.
+    void restorePolicy();
     runtime.status().then(setRuntimeStatus).catch(() => undefined);
     invoke<{ accessToken: string } | null>("oidc_restore", { gatewayBaseUrl: settings.gateway.baseUrl })
       .then(async (saved) => {
@@ -252,6 +265,12 @@ function App() {
       .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Sessão viva → renova a política do servidor (perfil, módulos, prompt).
+  useEffect(() => {
+    if (!session?.accessToken) return;
+    void syncPolicy(settings.gateway.baseUrl, session.accessToken);
+  }, [session?.accessToken, settings.gateway.baseUrl]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -323,8 +342,8 @@ function App() {
           <Plus size={16} />
           {railOpen && railAction[mode]}
         </button>
-        {railOpen && (
-          <nav className="rail-panel" key={mode}>
+        {railOpen && RailPanel && (
+          <nav className="rail-panel" key={activeMode ?? "none"}>
             <Suspense fallback={<div className="mode-loading" style={{ height: 120 }} />}>
               <RailPanel />
             </Suspense>
@@ -393,14 +412,25 @@ function App() {
         </header>
 
         <div className="mode-viewport">
-          <div className="mode-stage" key={mode}>
-            <ModeErrorBoundary mode={mode}>
-              <Suspense fallback={<div className="mode-loading" aria-hidden="true" />}>{modeViews[mode]()}</Suspense>
-            </ModeErrorBoundary>
-          </div>
+          {activeMode ? (
+            <div className="mode-stage" key={activeMode}>
+              <ModeErrorBoundary mode={activeMode}>
+                <Suspense fallback={<div className="mode-loading" aria-hidden="true" />}>
+                  {modeViews[activeMode]()}
+                </Suspense>
+              </ModeErrorBoundary>
+            </div>
+          ) : (
+            // Política sem nenhum módulo liberado para o grupo do usuário.
+            <div className="mode-render-error">
+              <ShieldCheck size={20} />
+              <strong>Nenhum módulo liberado para o seu grupo</strong>
+              <small>Fale com a administração para solicitar acesso.</small>
+            </div>
+          )}
         </div>
 
-        <Composer />
+        {activeMode ? <Composer /> : null}
         <footer className="statusbar v-status" id="statusbar-slot" />
       </section>
 

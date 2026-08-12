@@ -12,6 +12,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# Edicao gerenciada: compila FORA os caminhos diretos ao provedor e o
+# runtime local — a politica do servidor passa a ser a unica rota de modelo.
+managed = []
+
 [dependencies]
 base64 = "0.22"
 chrono = "0.4"

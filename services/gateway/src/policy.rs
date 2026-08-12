@@ -388,3 +388,60 @@ mod tests {
         assert_ne!(policy_etag(&a), policy_etag(&b));
     }
 }
+
+/* ------------------------------ assinatura ------------------------------ */
+
+/// PKCS#8 v1 para Ed25519: prefixo DER fixo + seed de 32 bytes. Permite usar
+/// o jsonwebtoken (que já está no projeto) sem dependência nova de assinatura.
+const ED25519_PKCS8_PREFIX: [u8; 16] = [
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
+    0x20,
+];
+
+/// Mensagem canônica assinada: JSON com chaves ordenadas (serde_json usa
+/// BTreeMap por padrão) contendo APENAS issuedAt/expiresAt/profile/policy.
+/// O cliente reconstrói os mesmos bytes a partir do corpo recebido.
+pub fn signing_message(issued_at: &str, expires_at: &str, profile: &Value, policy: &Value) -> String {
+    serde_json::json!({
+        "issuedAt": issued_at,
+        "expiresAt": expires_at,
+        "profile": profile,
+        "policy": policy,
+    })
+    .to_string()
+}
+
+/// Assina a mensagem canônica com a seed Ed25519 da configuração.
+/// Devolve base64url (sem padding), o formato nativo do jsonwebtoken.
+pub fn sign_bootstrap(seed: &[u8; 32], message: &str) -> Result<String, ApiError> {
+    let mut pkcs8 = Vec::with_capacity(48);
+    pkcs8.extend_from_slice(&ED25519_PKCS8_PREFIX);
+    pkcs8.extend_from_slice(seed);
+    let key = jsonwebtoken::EncodingKey::from_ed_der(&pkcs8);
+    jsonwebtoken::crypto::sign(message.as_bytes(), &key, jsonwebtoken::Algorithm::EdDSA)
+        .map_err(|error| ApiError::Internal(error.into()))
+}
+
+#[cfg(test)]
+mod signing_tests {
+    use super::*;
+
+    #[test]
+    fn assinatura_e_deterministica_e_muda_com_a_mensagem() {
+        let seed = [7u8; 32];
+        let message = signing_message("2026-01-01T00:00:00Z", "2026-01-01T06:00:00Z", &serde_json::json!({"a":1}), &serde_json::json!({"b":2}));
+        let first = sign_bootstrap(&seed, &message).unwrap();
+        let second = sign_bootstrap(&seed, &message).unwrap();
+        assert_eq!(first, second);
+        let other = sign_bootstrap(&seed, &format!("{message}x")).unwrap();
+        assert_ne!(first, other);
+    }
+
+    #[test]
+    fn mensagem_canonica_ordena_chaves() {
+        // BTreeMap do serde_json: a ordem de inserção não importa — o cliente
+        // reconstrói os mesmos bytes independente da ordem do wire.
+        let a = signing_message("i", "e", &serde_json::json!({"z":1,"a":2}), &serde_json::json!({}));
+        assert!(a.find("\"a\":2").unwrap() < a.find("\"z\":1").unwrap());
+    }
+}

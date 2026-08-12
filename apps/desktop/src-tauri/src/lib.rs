@@ -2,6 +2,7 @@ mod auth;
 mod extensions;
 mod fsx;
 mod memory;
+mod policy;
 mod providers;
 mod research;
 mod runtime;
@@ -45,6 +46,88 @@ async fn app_shutdown(app: AppHandle, runtime: State<'_, RuntimeManager>) -> Res
     Ok(())
 }
 
+/// Comandos da edição FULL — inclui os caminhos diretos ao provedor (BYOK) e
+/// o runtime local. Ver docs/adr-edicao-gerenciada.md.
+#[cfg(not(feature = "managed"))]
+fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        app_shutdown,
+        credential_store,
+        credential_exists,
+        credential_delete,
+        auth::oidc_login,
+        auth::oidc_restore,
+        auth::oidc_logout,
+        policy::bootstrap_sync,
+        policy::bootstrap_cached,
+        extensions::extension_inspect,
+        extensions::extension_import,
+        extensions::extension_list,
+        runtime::runtime_status,
+        runtime::runtime_install,
+        runtime::runtime_start,
+        runtime::runtime_stop,
+        runtime::runtime_chat,
+        runtime::runtime_chat_stream,
+        runtime::runtime_list_models,
+        runtime::runtime_download_model,
+        runtime::runtime_remove_model,
+        terminal::terminal_catalog,
+        terminal::terminal_execute,
+        terminal::terminal_runtime_install,
+        memory::memory_add,
+        memory::memory_update,
+        memory::memory_delete,
+        memory::memory_list,
+        memory::memory_touch,
+        fsx::fs_list,
+        fsx::fs_read,
+        fsx::fs_write,
+        research::research_fetch,
+        sandbox::sandbox_execute,
+        providers::provider_chat,
+        providers::provider_chat_stream,
+        providers::provider_chat_cancel,
+        providers::provider_fetch
+    ]
+}
+
+/// Comandos da edição MANAGED: as quatro portas de saída direta ao provedor
+/// (provider_chat, provider_chat_stream, provider_chat_cancel, provider_fetch)
+/// e o runtime local NÃO EXISTEM no binário — esconder botão não segura nada;
+/// compilar fora, sim. Todo tráfego de modelo passa pelo gateway, que aplica a
+/// política e registra usage_events.
+#[cfg(feature = "managed")]
+fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        app_shutdown,
+        credential_store,
+        credential_exists,
+        credential_delete,
+        auth::oidc_login,
+        auth::oidc_restore,
+        auth::oidc_logout,
+        policy::bootstrap_sync,
+        policy::bootstrap_cached,
+        extensions::extension_inspect,
+        extensions::extension_import,
+        extensions::extension_list,
+        terminal::terminal_catalog,
+        terminal::terminal_execute,
+        terminal::terminal_runtime_install,
+        memory::memory_add,
+        memory::memory_update,
+        memory::memory_delete,
+        memory::memory_list,
+        memory::memory_touch,
+        fsx::fs_list,
+        fsx::fs_read,
+        fsx::fs_write,
+        research::research_fetch,
+        sandbox::sandbox_execute
+    ]
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -58,44 +141,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(RuntimeManager::default())
-        .invoke_handler(tauri::generate_handler![
-            app_shutdown,
-            credential_store,
-            credential_exists,
-            credential_delete,
-            auth::oidc_login,
-            auth::oidc_restore,
-            auth::oidc_logout,
-            extensions::extension_inspect,
-            extensions::extension_import,
-            extensions::extension_list,
-            runtime::runtime_status,
-            runtime::runtime_install,
-            runtime::runtime_start,
-            runtime::runtime_stop,
-            runtime::runtime_chat,
-            runtime::runtime_chat_stream,
-            runtime::runtime_list_models,
-            runtime::runtime_download_model,
-            runtime::runtime_remove_model,
-            terminal::terminal_catalog,
-            terminal::terminal_execute,
-            terminal::terminal_runtime_install,
-            memory::memory_add,
-            memory::memory_update,
-            memory::memory_delete,
-            memory::memory_list,
-            memory::memory_touch,
-            fsx::fs_list,
-            fsx::fs_read,
-            fsx::fs_write,
-            research::research_fetch,
-            sandbox::sandbox_execute,
-            providers::provider_chat,
-            providers::provider_chat_stream,
-            providers::provider_chat_cancel,
-            providers::provider_fetch
-        ])
+        // Edição FULL: tudo registrado, inclusive as portas de saída direta
+        // ao provedor (BYOK). A lista managed abaixo é a MESMA sem elas —
+        // manter as duas em sincronia é intencional e explícito: um comando
+        // novo obriga a decidir em qual edição ele existe.
+        .invoke_handler(handlers())
         .run(tauri::generate_context!())
         .expect("failed to run AI Orchestrator");
 }
