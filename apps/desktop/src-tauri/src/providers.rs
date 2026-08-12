@@ -110,6 +110,20 @@ fn parse_sse_reasoning(data: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// true quando o chunk traz `finish_reason` — sinal terminal de provedores que
+/// não mandam `[DONE]`.
+fn has_finish_reason(data: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<Value>(data) else {
+        return false;
+    };
+    parsed
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("finish_reason"))
+        .map(|reason| !reason.is_null())
+        .unwrap_or(false)
+}
+
 /// Consome um corpo SSE de chat/completions emitindo cada delta pelo Channel.
 /// Trata chunk que parte caractere UTF-8 no meio (decodifica só o prefixo
 /// válido) e encerra cedo quando o stream é cancelado pelo botão Parar.
@@ -122,6 +136,7 @@ pub async fn pump_sse_cancellable(
     let mut buffer = String::new();
     let mut full = String::new();
     let mut raw: Vec<u8> = Vec::new();
+    let mut saw_terminal = false;
     while let Some(chunk) = stream.next().await {
         if is_cancelled(stream_id) {
             clear_cancelled(stream_id);
@@ -151,7 +166,11 @@ pub async fn pump_sse_cancellable(
                 let data = line.strip_prefix("data:").map(str::trim);
                 let Some(data) = data else { continue };
                 if data == "[DONE]" {
+                    saw_terminal = true;
                     continue;
+                }
+                if has_finish_reason(data) {
+                    saw_terminal = true;
                 }
                 if let Some(reasoning) = parse_sse_reasoning(data) {
                     if !reasoning.is_empty() {
@@ -170,6 +189,11 @@ pub async fn pump_sse_cancellable(
                 }
             }
         }
+    }
+    if !saw_terminal {
+        // EOF sem [DONE] nem finish_reason = conexão cortada no meio. Entregar
+        // como sucesso mostraria resposta truncada como se estivesse completa.
+        return Err("a resposta foi interrompida antes de terminar — o provedor cortou o stream".to_string());
     }
     Ok(full)
 }
@@ -274,6 +298,23 @@ mod tests {
     fn extracts_delta_content() {
         let data = r#"{"choices":[{"delta":{"content":"olá"}}]}"#;
         assert_eq!(parse_sse_delta(data).as_deref(), Some("olá"));
+    }
+
+    #[test]
+    fn detects_finish_reason_as_terminal() {
+        use super::has_finish_reason;
+        assert!(has_finish_reason(
+            r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#
+        ));
+        assert!(has_finish_reason(
+            r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#
+        ));
+        // Sem sinal terminal: chunk normal de conteúdo e finish_reason nulo.
+        assert!(!has_finish_reason(
+            r#"{"choices":[{"delta":{"content":"oi"},"finish_reason":null}]}"#
+        ));
+        assert!(!has_finish_reason(r#"{"choices":[{"delta":{"content":"oi"}}]}"#));
+        assert!(!has_finish_reason("{quebrado"));
     }
 
     #[test]

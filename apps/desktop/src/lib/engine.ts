@@ -389,6 +389,14 @@ async function fusionTurn(
   const question = messages.at(-1)?.content ?? "";
   const policy = fusionRolePolicy(mode);
   const roleTag = policy.policy === "safeguard" ? "salvaguarda" : policy.policy === "cost" ? "custo" : "capacidade";
+  /**
+   * Contexto da conversa (system com memória/instruções + histórico), SEM a
+   * última pergunta — os builders do fusion já a incluem. Prefixar isto em cada
+   * sub-chamada evita que o fusion "esqueça" a conversa: sem ele, cada etapa via
+   * só a pergunta isolada e trocar de modelo parecia recomeçar do zero.
+   */
+  const context = messages.slice(0, -1);
+  const withContext = (built: ChatMessage[]): ChatMessage[] => [...context, ...built];
 
   if (preset.strategy === "race") {
     events.onStage?.("Fusion · race — primeiro executor a responder vence");
@@ -424,7 +432,7 @@ async function fusionTurn(
     const decomposition = await quietTurn(
       preset.orchestrator,
       mode,
-      buildDecomposeRequest(mode, question, preset.executors.length),
+      withContext(buildDecomposeRequest(mode, question, preset.executors.length)),
       ctx,
       signal
     );
@@ -441,7 +449,7 @@ async function fusionTurn(
     events.onStage?.(`Fusion (${roleTag}) · ${preset.executors.length} executores em focos exclusivos`);
     const results = await Promise.allSettled(
       preset.executors.map((executor, index) =>
-        quietTurn(executor, mode, buildSubtaskRequest(mode, question, subtasks[index], index, preset.executors.length), ctx, signal)
+        quietTurn(executor, mode, withContext(buildSubtaskRequest(mode, question, subtasks[index], index, preset.executors.length)), ctx, signal)
       )
     );
     const parts = results
@@ -457,7 +465,7 @@ async function fusionTurn(
     const integrated = await streamingTurn(
       preset.orchestrator,
       mode,
-      buildIntegrateRequest(mode, question, parts),
+      withContext(buildIntegrateRequest(mode, question, parts)),
       ctx,
       events,
       signal
@@ -480,7 +488,7 @@ async function fusionTurn(
   }
 
   events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} especificando`);
-  const brief = await quietTurn(preset.orchestrator, mode, buildBriefRequest(mode, question), ctx, signal);
+  const brief = await quietTurn(preset.orchestrator, mode, withContext(buildBriefRequest(mode, question)), ctx, signal);
   const executor = soloExecutor;
   events.onStage?.(`Fusion (${roleTag}) · ${executor.model} executando a spec`);
   const draft = await quietTurn(executor, mode, buildExecuteFusionRequest(mode, brief, messages), ctx, signal);
@@ -489,7 +497,7 @@ async function fusionTurn(
   const final = await streamingTurn(
     preset.orchestrator,
     mode,
-    buildReviewRequest(mode, question, draft),
+    withContext(buildReviewRequest(mode, question, draft)),
     ctx,
     events,
     signal

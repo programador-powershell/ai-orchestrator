@@ -307,9 +307,10 @@ export function ChatView() {
                   {renderMessage(message, index)}
                 </Fragment>
               ))}
-              {/* Progresso INLINE no fim da conversa (não popup sobreposto):
-                  o usuário vê a etapa atual no fluxo, como no Studio. */}
-              {sending && <ThinkingRow stage={stage} />}
+              {/* Progresso INLINE no fim da conversa (não popup sobreposto).
+                  Some assim que o primeiro token chega — senão duplicaria com
+                  a bolha do assistente que já está crescendo. */}
+              {sending && !messages.at(-1)?.content && <ThinkingRow stage={stage} />}
             </div>
           )}
         </VCenter>
