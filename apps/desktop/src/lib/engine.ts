@@ -146,26 +146,42 @@ async function providerChat(
     // Streaming real: os deltas chegam pelo Channel conforme o provedor envia,
     // em vez de esperar a resposta inteira. A chave nunca sai do keyring (Rust).
     const channel = new Channel<StreamEvent>();
+    const streamId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
     let streamed = "";
+    let aborted = false;
     channel.onmessage = (event) => {
-      if (event.kind === "delta") {
-        streamed += event.data;
-        events.onDelta(event.data);
-      }
+      // Após o Parar, deltas em trânsito não entram mais na conversa.
+      if (aborted || event.kind !== "delta") return;
+      streamed += event.data;
+      events.onDelta(event.data);
     };
-    const full = await invoke<string>("provider_chat_stream", {
-      request: {
-        baseUrl,
-        account: `provider:${target.providerId}`,
-        model: target.model,
-        messages
-      },
-      onEvent: channel
-    });
-    // O retorno é a fonte da verdade; se o Channel não entregou nada (build
-    // antiga), emite de uma vez para não deixar a bolha vazia.
-    if (!streamed && full) events.onDelta(full);
-    return full;
+    // Botão Parar: manda o Rust encerrar o consumo do provedor (para de gastar
+    // tokens) e libera o turno imediatamente no front.
+    const onAbort = () => {
+      aborted = true;
+      void invoke("provider_chat_cancel", { streamId }).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      if (signal?.aborted) throw new DOMException("cancelado", "AbortError");
+      const full = await invoke<string>("provider_chat_stream", {
+        request: {
+          baseUrl,
+          account: `provider:${target.providerId}`,
+          model: target.model,
+          messages,
+          streamId
+        },
+        onEvent: channel
+      });
+      if (aborted) return streamed;
+      // O retorno é a fonte da verdade; se o Channel não entregou nada (build
+      // antiga), emite de uma vez para não deixar a bolha vazia.
+      if (!streamed && full) events.onDelta(full);
+      return full;
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
+    }
   }
 
   // Navegador: chamada direta com a chave do armazenamento local (BYOK web).

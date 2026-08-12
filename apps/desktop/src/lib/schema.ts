@@ -510,6 +510,28 @@ function mapType(type: string, dialect: SqlDialect): string {
   return TYPE_MAP[dialect][key] ?? type;
 }
 
+/** Base inteira "referenciável" por dialeto — para colunas de FK apontando serial. */
+const REFERENCEABLE_INT: Record<SqlDialect, { serial: string; bigserial: string }> = {
+  postgres: { serial: "integer", bigserial: "bigint" },
+  mysql: { serial: "INT", bigserial: "BIGINT" },
+  ansi: { serial: "INTEGER", bigserial: "BIGINT" },
+  sqlite: { serial: "INTEGER", bigserial: "INTEGER" },
+  mssql: { serial: "INT", bigserial: "BIGINT" }
+};
+
+/**
+ * Tipo de uma coluna que REFERENCIA a PK dada. Colunas de FK nunca podem herdar
+ * o auto-incremento (serial → INT IDENTITY/AUTO_INCREMENT): isso gera DDL
+ * inválido (dois auto-incremento na mesma tabela em mssql/mysql). Mapeia
+ * serial/bigserial para o inteiro simples e mantém os demais tipos.
+ */
+function referenceableType(type: string, dialect: SqlDialect): string {
+  const key = type.trim().toLowerCase();
+  if (key === "serial") return REFERENCEABLE_INT[dialect].serial;
+  if (key === "bigserial") return REFERENCEABLE_INT[dialect].bigserial;
+  return mapType(type, dialect);
+}
+
 function mapDefault(value: string, dialect: SqlDialect): string {
   if (dialect === "postgres" || value.toLowerCase() !== "now()") return value;
   return dialect === "mssql" ? "SYSUTCDATETIME()" : "CURRENT_TIMESTAMP";
@@ -567,7 +589,7 @@ function renderAddFk(
 
 /** Chave estável de uma relação por seus endpoints (from → to). */
 function relKey(fromTable: string, fromField: string, toTable: string, toField: string): string {
-  return `${fromTable} ${fromField} ${toTable} ${toField}`;
+  return `${fromTable}\u0000${fromField}\u0000${toTable}\u0000${toField}`;
 }
 
 /** Índice das relações por endpoints — usado para ações de FK e junções n-n. */
@@ -607,8 +629,8 @@ function renderJunctionTables(doc: SchemaDocExt, dialect: SqlDialect): { creates
     let colB = `${b.name}_${pkB.name}`;
     if (colA === colB) colB = `${colB}_2`;
     const lines = [
-      `  ${q(colA)} ${mapType(pkA.type, dialect)} NOT NULL`,
-      `  ${q(colB)} ${mapType(pkB.type, dialect)} NOT NULL`,
+      `  ${q(colA)} ${referenceableType(pkA.type, dialect)} NOT NULL`,
+      `  ${q(colB)} ${referenceableType(pkB.type, dialect)} NOT NULL`,
       `  PRIMARY KEY (${q(colA)}, ${q(colB)})`
     ];
     const tail = dialect === "mysql" ? ") ENGINE=InnoDB;" : ");";

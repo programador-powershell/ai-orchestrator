@@ -9,12 +9,19 @@ export interface DiagnosticResult {
   output: string;
 }
 
-const quote = (path: string) => `"${path.replace(/"/g, '')}"`;
+/**
+ * O terminal roda via `cmd /S /C`, que engole aspas: caminho citado chega com
+ * as aspas LITERAIS no nome do arquivo e o check falha sempre. Por isso o
+ * caminho vai sem aspas — e caminhos com espaço ou metacaractere de shell não
+ * ganham diagnóstico (evita comando quebrado e injeção pelo nome do arquivo).
+ */
+const SHELL_SAFE_PATH = /^[A-Za-z0-9_./\\-]+$/;
 
 /** Comando de verificação para o arquivo, ou null quando não há diagnóstico. */
 export function diagnosticCommand(path: string): string | null {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   if (path.lastIndexOf(".") < 0) return null;
+  const fileScoped = SHELL_SAFE_PATH.test(path);
   switch (ext) {
     case "ts":
     case "tsx":
@@ -23,12 +30,12 @@ export function diagnosticCommand(path: string): string | null {
     case "rs":
       return "cargo check --manifest-path services/gateway/Cargo.toml";
     case "py":
-      return `python -m py_compile ${quote(path)}`;
+      return fileScoped ? `python -m py_compile ${path}` : null;
     case "js":
     case "jsx":
     case "mjs":
     case "cjs":
-      return `node --check ${quote(path)}`;
+      return fileScoped ? `node --check ${path}` : null;
     default:
       return null;
   }

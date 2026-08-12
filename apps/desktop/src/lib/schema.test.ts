@@ -497,6 +497,19 @@ describe("exportSql n-n (tabela de junção)", () => {
     // O n-n vira junção, não FK simples espúria na tabela de origem.
     expect(sql).not.toContain('CONSTRAINT "fk_students_id"');
   });
+
+  it("coluna de junção com PK serial usa inteiro simples, não auto-incremento", () => {
+    const doc = applyOps(emptyDoc("NN"), [
+      { op: "add_table", name: "students", fields: [{ name: "id", type: "serial", primaryKey: true }] },
+      { op: "add_table", name: "courses", fields: [{ name: "id", type: "serial", primaryKey: true }] },
+      { op: "add_relation", fromTable: "students", fromField: "id", toTable: "courses", toField: "id", cardinality: "n-n" }
+    ]);
+    const mssql = exportSql(doc, "mssql");
+    expect(mssql).toContain("[students_id] INT NOT NULL");
+    expect(mssql).not.toMatch(/students_id\][^\n]*IDENTITY/);
+    const mysql = exportSql(doc, "mysql");
+    expect(mysql).not.toMatch(/students_id`[^\n]*AUTO_INCREMENT/i);
+  });
 });
 
 /* Item 2 — novos dialetos sqlite e mssql. */

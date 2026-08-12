@@ -134,4 +134,22 @@ describe("runAgentLoop", () => {
     });
     expect(final).toContain("Limite");
   });
+
+  it("para entre iterações quando o signal é abortado (botão Parar)", async () => {
+    const controller = new AbortController();
+    let turns = 0;
+    const final = await runAgentLoop([{ role: "user", content: "loop" }], {
+      runTurn: () => {
+        turns += 1;
+        controller.abort();
+        return Promise.resolve('```tool\n{"tool":"fs_list","args":{"sub":"."}}\n```');
+      },
+      runTool: () => Promise.resolve({ ok: true, output: "x" }),
+      requestApproval: () => Promise.resolve(true),
+      signal: controller.signal
+    });
+    // Uma volta ao modelo, aborta durante ela, não executa a ferramenta nem repete.
+    expect(turns).toBe(1);
+    expect(final).toBe("");
+  });
 });

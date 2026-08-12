@@ -13,6 +13,17 @@ describe("diagnosticCommand", () => {
     expect(diagnosticCommand("a.mjs")).toContain("node --check");
   });
 
+  it("não cita o caminho — cmd /S /C deixaria as aspas literais no nome", () => {
+    expect(diagnosticCommand("scripts/x.py")).toBe("python -m py_compile scripts/x.py");
+    expect(diagnosticCommand("a.mjs")).toBe("node --check a.mjs");
+  });
+
+  it("dispensa o diagnóstico quando o caminho tem espaço ou metacaractere de shell", () => {
+    expect(diagnosticCommand("meus scripts/x.py")).toBeNull();
+    expect(diagnosticCommand("a.js & calc.exe")).toBeNull();
+    expect(diagnosticCommand('x";rm -rf .".js')).toBeNull();
+  });
+
   it("retorna null para extensões sem diagnóstico", () => {
     expect(diagnosticCommand("README.md")).toBeNull();
     expect(diagnosticCommand("data.json")).toBeNull();

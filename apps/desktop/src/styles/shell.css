@@ -167,12 +167,14 @@ button { -webkit-tap-highlight-color: transparent; }
 
 /* Navegação de modos na sidebar — linhas em pílula, superfície por tom
    (sem sombra), accent reservado ao item ativo. Padrão Studio. */
-.rail-nav {
+/* Especificidade 0-1-1 para vencer `.rail nav { flex:1; overflow:auto }` — sem
+   isto a lista de modos e o rail-panel dividiam o espaço e cortavam modos. */
+.rail nav.rail-nav {
   flex: none;
+  overflow: visible;
   margin-bottom: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
-  overflow: visible;
 }
 .rail nav > .rail-nav-item {
   border-radius: 999px;
