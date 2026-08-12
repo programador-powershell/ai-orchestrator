@@ -86,8 +86,9 @@ describe("buildPlanRequest", () => {
   });
 
   it("usa objetivo genérico para modo fora do mapa", () => {
-    const messages = buildPlanRequest("game", "monte a cena");
-    expect(messages[0].content).toContain("produzir a cena e os assets");
+    // Modo inexistente de proposito: e o fallback que esta sob teste.
+    const messages = buildPlanRequest("inexistente" as UiMode, "monte a cena");
+    expect(messages[0].content).toContain("executar a tarefa");
   });
 });
 

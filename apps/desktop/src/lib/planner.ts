@@ -13,7 +13,6 @@ const modeGoal: Record<string, string> = {
   work: "transformar o objetivo em entregas rastreáveis",
   security: "revisar riscos e propor correções verificáveis",
   agent: "orquestrar os agentes e ferramentas",
-  game: "produzir a cena e os assets",
   tune: "preparar o dataset e o treino de fine-tuning"
 };
 

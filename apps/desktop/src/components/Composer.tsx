@@ -55,7 +55,6 @@ const modePlaceholders: Record<string, string> = {
   work: "Descreva o objetivo ou a automação…",
   security: "Peça uma revisão, simulação ou correção…",
   agent: "Descreva o fluxo de agentes…",
-  game: "Descreva a cena, o asset ou a lógica de gameplay…",
   office: "Diga o que quer alterar no arquivo…",
   tune: "Peça exemplos de dataset, config de treino ou avaliação…"
 };

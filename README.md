@@ -12,7 +12,7 @@
 
 - Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
 - **Shell estilo Unsloth Studio**: navegação de modos na sidebar (pílulas, colapsável), topbar slim, Settings em modal (Ctrl+,).
-- **10 abas** — Chat, Code, **Office**, Design, Data, Work, Security, Agent, Game e Tuning — com comandos de barra (`/review`, `/explain`, `/testgen`), `@`-menção de arquivo e busca global do histórico no composer.
+- **9 abas** — Chat, Code, **Office**, Design, Data, Work, Security, Agent e Tuning — com comandos de barra (`/review`, `/explain`, `/testgen`), `@`-menção de arquivo e busca global do histórico no composer.
 - **Aba Office**: o documento é objeto vivo do workspace — você pede a alteração no chat, o **Office Command Engine** valida a operação estruturada e o arquivo muda na tela (a IA nunca grava direto).
 - **Build & deploy** nas abas Code e Agent: carrega repositório GitHub, pasta local ou artefato pré-compilado, **identifica a stack** (Node, Python, Go, Rust, PHP, Ruby, Java, .NET, Docker) pelo arquivo-âncora e executa o pipeline com controle de versão.
 - **Resposta em streaming** (token a token) em todos os caminhos: gateway, modelo direto (BYOK) e runtime local.

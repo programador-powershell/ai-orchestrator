@@ -184,7 +184,6 @@ const defaultEngines: Record<UiMode, EngineSelection> = {
   work: { kind: "workspace" },
   security: { kind: "fusion", presetId: "deep-audit" },
   agent: { kind: "workspace" },
-  game: { kind: "workspace" },
   office: { kind: "workspace" },
   tune: { kind: "workspace" }
 };
@@ -291,7 +290,6 @@ export const useApp = create<AppState>()(
         work: emptyThread(),
         security: emptyThread(),
         agent: emptyThread(),
-        game: emptyThread(),
         office: emptyThread(),
         tune: emptyThread()
       },
@@ -304,7 +302,6 @@ export const useApp = create<AppState>()(
         work: newId(),
         security: newId(),
         agent: newId(),
-        game: newId(),
         office: newId(),
         tune: newId()
       },
@@ -583,7 +580,6 @@ export const modeAccent: Record<UiMode, string> = {
   work: "214",
   security: "348",
   agent: "312",
-  game: "24",
   office: "212",
   tune: "96"
 };

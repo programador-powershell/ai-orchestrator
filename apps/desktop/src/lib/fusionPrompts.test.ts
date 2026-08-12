@@ -32,7 +32,7 @@ describe("fusionRolePolicy — políticas por aba", () => {
   });
 
   it("demais abas: capacidade (planeja/integra vs produz)", () => {
-    for (const mode of ["chat", "design", "data", "work", "agent", "game", "tune"] as const) {
+    for (const mode of ["chat", "design", "data", "work", "agent", "tune"] as const) {
       expect(fusionRolePolicy(mode).policy).toBe("capability");
     }
   });
