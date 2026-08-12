@@ -2,7 +2,7 @@
  * Renderização Markdown segura (tokens → elementos React; nunca innerHTML).
  * Blocos de código têm rótulo de linguagem e botão copiar — paridade ChatGPT.
  */
-import { useState, type ReactNode } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { parseMarkdown, type BlockToken, type InlineToken } from "../lib/markdown";
 
@@ -113,6 +113,12 @@ function renderBlock(block: BlockToken, index: number): ReactNode {
   }
 }
 
-export function Markdown({ source }: { source: string }) {
-  return <div className="md-root">{parseMarkdown(source).map(renderBlock)}</div>;
-}
+/**
+ * Memoizado por `source`: durante o streaming, só a mensagem que está crescendo
+ * re-parseia. Sem isto, cada token re-parseava o markdown de TODAS as mensagens
+ * da conversa — o que trava a digitação em conversas longas.
+ */
+export const Markdown = memo(function Markdown({ source }: { source: string }) {
+  const blocks = useMemo(() => parseMarkdown(source), [source]);
+  return <div className="md-root">{blocks.map(renderBlock)}</div>;
+});

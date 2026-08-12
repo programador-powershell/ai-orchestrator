@@ -175,9 +175,20 @@ export function ChatView() {
   const sendStartRef = useRef<number | null>(null);
   const prevSendingRef = useRef(false);
 
+  /**
+   * Auto-scroll fluido: agenda no próximo frame (evita reflow síncrono a cada
+   * token) e só arrasta se o usuário está perto do fim — quem rolou para cima
+   * para ler continua lendo, como no ChatGPT/Claude.
+   */
   useEffect(() => {
     const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    if (distanceFromBottom > 120) return;
+    const frame = requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [messages, sending]);
 
   useEffect(() => {
