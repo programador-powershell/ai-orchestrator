@@ -467,9 +467,21 @@ async function fusionTurn(
   }
 
   // orchestrate: especifica → produz → revisa por conformidade.
+  // Orquestrador == executor (mesmo modelo) não ganha nada com 3 idas: responde
+  // direto, transmitindo desde o primeiro token.
+  const soloExecutor = preset.executors[0] ?? preset.orchestrator;
+  const sameModel =
+    preset.executors.length <= 1 &&
+    soloExecutor.providerId === preset.orchestrator.providerId &&
+    soloExecutor.model === preset.orchestrator.model;
+  if (sameModel) {
+    events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model}`);
+    return streamingTurn(preset.orchestrator, mode, messages, ctx, events, signal);
+  }
+
   events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} especificando`);
   const brief = await quietTurn(preset.orchestrator, mode, buildBriefRequest(mode, question), ctx, signal);
-  const executor = preset.executors[0] ?? preset.orchestrator;
+  const executor = soloExecutor;
   events.onStage?.(`Fusion (${roleTag}) · ${executor.model} executando a spec`);
   const draft = await quietTurn(executor, mode, buildExecuteFusionRequest(mode, brief, messages), ctx, signal);
   // Revisão final TRANSMITIDA — é o texto que o usuário lê aparecendo ao vivo.
