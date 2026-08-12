@@ -24,7 +24,6 @@ import {
 } from "lucide-react";
 import { EmptyHero, PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
-import { Markdown } from "../components/Markdown";
 import { collectFiles, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
 import { opsBus } from "../lib/ops";
 import { useApp } from "../lib/store";
@@ -236,13 +235,18 @@ export function OfficeView() {
                 />
               ) : (
                 <div className="offx-readonly">
+                  {/* Não há extração de OOXML/PDF no app: o arquivo é lido como
+                      UTF-8 bruto, então num binário isto é lixo. Dizer "texto
+                      extraído" seria mentira — melhor avisar e não exibir. */}
                   <p className="offx-note">
-                    <strong>{format.toUpperCase()}</strong> ainda não tem editor embutido — o conteúdo é exibido como
-                    texto extraído e o agente pode comentar, mas não editar.
+                    <strong>{format.toUpperCase()}</strong> ainda não é suportado. Este formato é binário e o app ainda
+                    não extrai o conteúdo dele — nem para leitura, nem para edição.
                   </p>
-                  <PanelScroll>
-                    <Markdown source={content.slice(0, 20_000)} />
-                  </PanelScroll>
+                  <p className="offx-note">
+                    Hoje a aba edita <strong>HTML, Markdown, CSV e TXT</strong>. O suporte a DOCX, XLSX, PPTX e PDF
+                    depende do motor de edição descrito em <code>docs/adr-office-motor-wopi.md</code>, ainda não
+                    implementado.
+                  </p>
                 </div>
               )}
             </div>

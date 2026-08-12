@@ -10,29 +10,41 @@
 
 ## :heavy_check_mark: Features
 
+> **Estado do produto.** O objetivo é ser a suíte corporativa de IA que substitui ChatGPT, Cursor, drawDB, OpenCut, Canva, OpenCode e Unsloth. **Ainda não substitui.** A tabela de maturidade abaixo diz, por capacidade, o que já funciona ponta a ponta e o que é plano — auditado contra o código, não contra a intenção.
+
 - Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
 - **Shell**: abas de módulo no topo com **cor própria por aba**, barra lateral servindo o módulo ativo, badge de ambiente no rodapé e Configurações em modal (Ctrl+,).
-- **9 abas** — Chat, Code, **Office**, Design, Data, Work, Security, Agent e Tuning — com comandos de barra (`/review`, `/explain`, `/testgen`), `@`-menção de arquivo e busca global do histórico no composer.
-- **Aba Office**: o documento é objeto vivo do workspace — você pede a alteração no chat, o **Office Command Engine** valida a operação estruturada e o arquivo muda na tela (a IA nunca grava direto).
-- **Build & deploy** nas abas Code e Agent: carrega repositório GitHub, pasta local ou artefato pré-compilado, **identifica a stack** (Node, Python, Go, Rust, PHP, Ruby, Java, .NET, Docker) pelo arquivo-âncora e executa o pipeline com controle de versão.
-- **Resposta em streaming** (token a token) em todos os caminhos: gateway, modelo direto (BYOK) e runtime local.
+- **9 abas** — Chat, Code, Office, Design, Data, Work, Security, Agent e Tuning — com comandos de barra (`/review`, `/explain`, `/testgen`), `@`-menção de arquivo e busca global do histórico no composer.
+- **Resposta em streaming** (token a token) nos três caminhos: gateway, modelo direto (BYOK) e runtime local.
 - **Modo agente**: o modelo executa ferramentas (ler/buscar/editar/rodar) com aprovação, diagnostics pós-edição e auto-compact de contexto; **MCP** externo e interno.
-- **Modelos fusion** com preset por estratégia **e modelos específicos por tipo de atividade** (Chat, Code, Data…).
-- **Fine-Tuning 100% em nuvem**: harness no gateway (jobs persistidos, eventos SSE, catálogo, reconciliador) + aba Train (Configurar/Execução/Histórico, SFT/DPO, hiperparâmetros, custo estimado); nada instalado, nenhum código de terceiros embutido.
-- **Memória persistente** independente de fornecedor (SQLite/IndexedDB), com import de histórico Claude/OpenAI.
-- **BYOK** (traga sua própria chave) armazenado no keyring do sistema operacional.
-- **Editor ERD** na aba Data com export SQL (PostgreSQL, MySQL, ANSI, SQLite e MSSQL), migração up/down e export SVG.
-- **Editor de vídeo** estilo OpenCut na aba Design.
-- **Sandbox** estilo ai-jail na aba Security.
-- **Edição gerenciada**: política (módulos por grupo do AD, motores, aprovação, prompt master) definida pelo admin no servidor, assinada e verificada no cliente; a interface apenas reflete.
+- **Modelos fusion** com preset por estratégia e modelos específicos por tipo de atividade.
+- **Edição gerenciada**: política (módulos por grupo do AD, motores, aprovação, prompt master) definida pelo admin no servidor, assinada em Ed25519 e verificada no Rust do cliente; a interface apenas reflete. Na edição `managed`, os caminhos diretos ao provedor são compilados fora do binário.
 - **Janela Conectar Apps** (galeria MCP) com seletor de ambiente — Local, WSL, VPS ou Nuvem.
-- **Import de plugins/skills**, **cadastro de servidor VPS** (sem campo de senha ou chave privada — agente SSH ou keyring do sistema) e **atualização manual** verificável.
-- **Regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`) injetadas no prompt, acima das preferências gerais.
+- **Memória persistente** local (SQLite/IndexedDB) independente de fornecedor, com import de histórico Claude/OpenAI.
+- **BYOK** armazenado no keyring do sistema operacional; cadastro de servidor VPS sem campo de senha ou chave privada.
+- **Regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`) injetadas no prompt.
 - Gateway próprio (Rust/Axum, PostgreSQL e Redis) e runtime local opcional.
-- Instalador `AI-Orchestrator-Setup.exe` com download HTTPS retomável e validação Ed25519, SHA-256 e Authenticode.
-- **Clean-room**: referências externas (Unsloth Studio, drawdb, opencode, soup) documentadas em `docs/creditos-inspiracao.md` — zero código de terceiros no repositório.
+- **Clean-room**: referências externas documentadas em `docs/creditos-inspiracao.md` — zero código de terceiros no repositório.
 
-![App Screenshot](https://placehold.co/960x540?text=AI+Orchestrator+V2)
+### :bar_chart: Maturidade por capacidade
+
+Auditoria de 2026-08-12, cada veredito verificado contra o código por um segundo revisor.
+
+| Capacidade | Alvo | Estado | O que já funciona | O que falta |
+| --- | --- | --- | --- | --- |
+| Chat | ChatGPT | 🟡 Parcial | Streaming real nos 3 caminhos, memória persistente, anexos de texto, cartões de ferramenta | Motor de busca real (as fontes são palpite do modelo), leitura de PDF/áudio/vídeo, busca semântica na memória |
+| Code | Cursor + OpenCode | 🟡 Parcial | CodeMirror real, loop agêntico com aprovação, diff por hunk, diagnostics, terminal | Autocomplete por modelo (hoje é heurística do buffer, **não** é o Tab do Cursor), LSP, índice semântico do repo |
+| Data / ERD | drawDB | 🟡 Parcial | Desenhar tabelas, export SQL (5 dialetos), migrações up/down, SVG, persistência | Criar FK arrastando, export de imagem fiel ao layout, parser SQL real no import |
+| Agent | LangGraph/Flowise (client-side) | 🟡 Parcial | DAG real executando nós, fusion com orquestrador/executores, gate humano | Paralelismo intra-onda, execução server-side, persistência de runs e resume |
+| Work | Butler/Zapier | 🟡 Parcial | Regras gatilho→ação com motor, log e toggle | Ações com efeito **externo** (e-mail, webhook, MCP); hoje tudo fica dentro do kanban. Agendador só roda com a aba aberta |
+| Design | Canva / clone de sites | 🟡 Parcial | Canvas editável com formas e export SVG/PNG; extração de paleta e fontes de uma URL | Reconstruir o **layout** do site (hoje só semeia tokens), captura com renderização para SPA |
+| Vídeo | OpenCut | 🟡 Parcial | Timeline de corte, preview | **O export não renderiza arquivo** e o projeto não persiste entre sessões |
+| Security / Sandbox | Snyk + execução isolada | 🟡 Parcial | Varredura de segredos, `sandbox_execute` no backend | Sem UI que acione o sandbox; `isolated: true` é rótulo — não há isolamento de SO real |
+| **Office** | Word/Excel/PowerPoint | 🔴 Ausente | Edita HTML, Markdown, CSV e TXT com operações validadas | **DOCX, XLSX, PPTX e PDF não abrem** — não há extração nem editor. Ver `docs/adr-office-motor-wopi.md` |
+| **Tuning** | Unsloth | 🔴 Ausente | Orquestra fine-tuning **em nuvem** (OpenAI), com validação de dataset e acompanhamento | Unsloth é **treino local em GPU própria** — não existe treinador local, nem modelos abertos, nem export de pesos. É outra categoria de produto |
+| **Deploy na VPS + backup** | SSH + rotina da TI | 🔴 Ausente | Cadastro do servidor e pipeline de build **local** com detecção de stack | Sem cliente SSH no binário: **nada executa na VPS**. Backup e redundância não existem no código |
+
+**Leitura honesta:** o app hoje é um **cliente agêntico corporativo com governança** — política do admin, SSO, gating por grupo, streaming, ferramentas com aprovação. Nessa função ele está sólido. Como substituto das sete ferramentas, **ainda não está**: Office, Tuning e execução remota são as três frentes que exigem trabalho de núcleo, não de acabamento.
 
 ## :new: Releases Notes
 
@@ -47,9 +59,9 @@
 - **Janela "Conectar Apps"** no indicador da barra superior: galeria de conectores MCP com categorias e busca, mais o **seletor de ambiente** — Local, WSL, VPS (servidor da TI) ou Nuvem. O usuário conecta os apps dele; a TI configura os ambientes.
 - **Badge de ambiente no rodapé**, estilo barra de status: mostra onde o trabalho roda e troca por lista suspensa.
 - **Cor por módulo de volta**: cada aba tem sua matiz e o app inteiro acompanha — acento, foco, orbes do ambiente e botão de envio derivam da mesma variável, com transição suave na troca.
-- **Build & deploy** (Code e Agent) em janela própria na barra superior: carrega **repositório GitHub, pasta local ou artefato pré-compilado**, identifica a stack pelo arquivo-âncora e roda o pipeline etapa a etapa.
+- **Build & deploy** (Code e Agent) em janela própria na barra superior: carrega **repositório GitHub, pasta local ou artefato pré-compilado**, identifica a stack pelo arquivo-âncora e roda o pipeline etapa a etapa — **na máquina local**. A execução na VPS depende de um cliente SSH que ainda não existe no binário.
 - **Cadastro de servidor VPS** sem campo de senha e sem campo de chave privada: o padrão é agente SSH (o app não vê segredo nenhum) e o campo de caminho **recusa** material de chave colado, apontando o cofre corporativo.
-- **Aba Office**, **regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`), **busca global do histórico** em todas as abas, **custo em tokens por mensagem** e **atualização manual** verificável.
+- **Aba Office** (edita HTML/Markdown/CSV/TXT; formatos binários ainda não abrem), **regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`), **busca global do histórico** em todas as abas, **custo em tokens por mensagem** e **atualização manual** verificável.
 
 ### :pushpin: Fixes
 
@@ -62,9 +74,13 @@
 - **O modo agente resetava a cada reinício** (não estava no `partialize`); virou configuração persistida da administração.
 - **Chave BYOK podia trafegar sem TLS**: `provider_fetch` aceitava `http://` para qualquer host. Agora só HTTPS ou loopback.
 
+- **Anexo de imagem chegava vazio ou derrubava a requisição.** No desktop, o Rust desserializava `content` como texto e o serde rejeitava a mensagem multimodal inteira; no gateway, as rotas Anthropic e Gemini transformavam conteúdo multimodal em string vazia — a pergunta sumia em silêncio.
+- **A aba Office dizia "conteúdo exibido como texto extraído" para DOCX/PDF** — não há extração nenhuma no app, então o usuário via lixo binário rotulado como texto. Agora ela avisa que o formato não é suportado.
+
 ### :construction_worker: Refactors
 
 - Módulo `policy` nos três lados: resolução por grupo no gateway (Rust), verificação de assinatura no Rust do desktop — **nunca no JavaScript**, que é justamente a superfície não confiável — e derivação de interface no cliente.
+- **Auditoria de capacidades** (2026-08-12): cada promessa do produto verificada contra o código por um revisor e desafiada por um segundo, adversarial. Resultado na tabela de maturidade acima — nenhuma das sete ferramentas-alvo é substituída hoje.
 - Novos módulos puros e testados: `lib/connectors`, `lib/connections`, `lib/policy`, `lib/ship` (stack, fontes, pipeline, servidor), `lib/office` (command engine, adapter, change log, WOPI), `lib/projectRules` — **756 testes** no desktop, 28 no gateway e 15 no Rust do cliente.
 - Módulo **Game removido** do produto.
 - ADRs em `docs/`: [edição gerenciada](docs/adr-edicao-gerenciada.md) (a política do admin e os furos que ela fecha) e [motor do Office](docs/adr-office-motor-wopi.md) (WOPI como contrato de armazenamento, Collabora como motor — o caminho Microsoft está fechado por licenciamento e por descontinuação).
