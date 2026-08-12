@@ -12,6 +12,7 @@
  * mesmo store zustand de módulo. Sem motor, respostas em modo demo rotulado.
  */
 import "../styles/modes/agent.css";
+import "../styles/modes/ship.css";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { create } from "zustand";
 import {
@@ -61,6 +62,7 @@ import { validateOrchestration, type ChatMessage } from "../lib/gateway";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
+import { ShipPanel } from "../components/ShipPanel";
 import {
   FloatingPulse,
   PanelScroll,
@@ -714,6 +716,9 @@ export function AgentRail() {
         </button>
         <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={onImportFile} />
       </div>
+
+      <span className="eyebrow">BUILD & DEPLOY</span>
+      <ShipPanel root={window.localStorage.getItem("code.root") ?? "."} />
 
       <span className="eyebrow">CONVERSAS</span>
       <RailConversations mode="agent" />
