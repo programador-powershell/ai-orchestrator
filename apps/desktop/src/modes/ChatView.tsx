@@ -31,6 +31,7 @@ import { buildEditPayload, buildRegeneratePayload, charCount, formatDuration, wo
 import { describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
 import { useApp, type ThreadMessage } from "../lib/store";
+import { ToolGroup } from "../components/ToolGroup";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -221,17 +222,21 @@ export function ChatView() {
           </span>
         )}
         <div className="chatx-col">
-          <div className={`chatx-balloon ${message.role}`}>
-            {isAssistant ? (
-              message.content ? (
-                <Markdown source={message.content} />
+          {message.meta?.kind === "tools" ? (
+            <ToolGroup cards={message.meta.tools ?? []} />
+          ) : (
+            <div className={`chatx-balloon ${message.role}`}>
+              {isAssistant ? (
+                message.content ? (
+                  <Markdown source={message.content} />
+                ) : (
+                  <span className="chatx-pending">…</span>
+                )
               ) : (
-                <span className="chatx-pending">…</span>
-              )
-            ) : (
-              <p>{message.content || "…"}</p>
-            )}
-          </div>
+                <p>{message.content || "…"}</p>
+              )}
+            </div>
+          )}
           <footer className="chatx-msg-foot">
             {isAssistant && message.content.length > 0 && (
               <span className="chatx-meta">

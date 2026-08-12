@@ -27,6 +27,67 @@
 /* Refração líquida desativada (visual plano). */
 .refract { filter: none; }
 
+/* ---------------- Grupo de ferramentas na conversa (estilo Studio) -------- */
+.toolgroup {
+  margin: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.toolgroup-head {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.toolgroup-head:hover { background: var(--hover); color: var(--ink); }
+.toolgroup.running .toolgroup-head { color: var(--accent-strong); }
+.toolgroup-body { padding: 2px 10px 8px; display: grid; gap: 7px; }
+.toolcall { display: grid; gap: 5px; }
+.toolcall-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-micro); color: var(--ink); }
+.toolcall.error .toolcall-head { color: var(--danger); }
+.toolcall.ok .toolcall-head svg { color: var(--accent-strong); }
+.toolcall-label em { font-style: normal; color: var(--faint); }
+.toolcall-output {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 190px;
+  overflow: auto;
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.toolcall-sources { display: flex; flex-wrap: wrap; gap: 5px; }
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  text-decoration: none;
+}
+.source-chip:hover { background: var(--hover); }
+.source-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-chip small { color: var(--faint); flex: none; }
+
 /* Studio flat — nenhuma superfície usa blur (todas viraram sólidas). Mata os
    backdrop-filter espalhados sem caçar cada regra, e esconde os orbes ambiente. */
 .app-shell *,
