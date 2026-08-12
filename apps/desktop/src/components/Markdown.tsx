@@ -2,9 +2,10 @@
  * Renderização Markdown segura (tokens → elementos React; nunca innerHTML).
  * Blocos de código têm rótulo de linguagem e botão copiar — paridade ChatGPT.
  */
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { parseMarkdown, type BlockToken, type InlineToken } from "../lib/markdown";
+import { type BlockToken, type InlineToken } from "../lib/markdown";
+import { createIncrementalMarkdown } from "../lib/markdownStream";
 
 function renderInline(tokens: InlineToken[], keyPrefix = ""): ReactNode[] {
   return tokens.map((token, index) => {
@@ -114,11 +115,12 @@ function renderBlock(block: BlockToken, index: number): ReactNode {
 }
 
 /**
- * Memoizado por `source`: durante o streaming, só a mensagem que está crescendo
- * re-parseia. Sem isto, cada token re-parseava o markdown de TODAS as mensagens
- * da conversa — o que trava a digitação em conversas longas.
+ * Memoizado por `source` (só a mensagem que cresce re-renderiza) E incremental:
+ * os blocos já fechados ficam em cache e apenas a CAUDA é re-parseada a cada
+ * delta. Sem as duas coisas, streaming de resposta longa vira O(n²) e trava.
  */
 export const Markdown = memo(function Markdown({ source }: { source: string }) {
-  const blocks = useMemo(() => parseMarkdown(source), [source]);
+  const incremental = useRef(createIncrementalMarkdown());
+  const blocks = useMemo(() => incremental.current.parse(source), [source]);
   return <div className="md-root">{blocks.map(renderBlock)}</div>;
 });
