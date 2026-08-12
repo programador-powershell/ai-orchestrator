@@ -7,6 +7,7 @@
  * Rail e view compartilham estado via store zustand de módulo (useCode).
  */
 import "../styles/modes/code.css";
+import "../styles/modes/ship.css";
 import {
   useEffect,
   useMemo,
@@ -40,6 +41,7 @@ import type { FsEntry, OrchestrationGraph } from "@ai-orchestrator/contracts";
 import { CodeEditor, type CodeEditorApi, type InlineSuggestionContext } from "../components/CodeEditor";
 import { FloatingPulse, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
+import { ShipPanel } from "../components/ShipPanel";
 import { computeDiff, diffStats, toHunks, type DiffLine } from "../lib/diff";
 import { applySelectedHunks, splitIntoHunks, type Hunk } from "../lib/hunks";
 import { suggestIdentifier } from "../lib/inlineSuggest";
@@ -290,6 +292,7 @@ async function applyContent(path: string, next: string): Promise<void> {
 
 /** Rail dinâmico da aba Code: raiz do projeto, árvore de arquivos e sessões. */
 export function CodeRail() {
+  const root = useCode((state) => state.root);
   const rootDraft = useCode((state) => state.rootDraft);
   const tree = useCode((state) => state.tree);
   const expanded = useCode((state) => state.expanded);
@@ -367,6 +370,8 @@ export function CodeRail() {
         </button>
       </div>
       <div className="codex-rail-tree">{renderEntries("", 0)}</div>
+      <span className="eyebrow">BUILD & DEPLOY</span>
+      <ShipPanel root={root} />
       <span className="eyebrow">SESSÕES</span>
       <RailConversations mode="code" />
     </>
