@@ -38,7 +38,9 @@ fn verifying_key() -> Result<Option<VerifyingKey>, String> {
     let bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| "POLICY_PUBLIC_KEY deve ter exatamente 32 bytes".to_string())?;
-    VerifyingKey::from_bytes(&bytes).map(Some).map_err(|error| error.to_string())
+    VerifyingKey::from_bytes(&bytes)
+        .map(Some)
+        .map_err(|error| error.to_string())
 }
 
 /// Reconstrói os MESMOS bytes que o gateway assinou: JSON com chaves
@@ -67,10 +69,12 @@ fn verify_body(body: &Value) -> Result<bool, String> {
             let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(signature)
                 .map_err(|error| format!("assinatura ilegível: {error}"))?;
-            let signature =
-                Signature::from_slice(&bytes).map_err(|error| error.to_string())?;
+            let signature = Signature::from_slice(&bytes).map_err(|error| error.to_string())?;
             key.verify_strict(canonical_message(body).as_bytes(), &signature)
-                .map_err(|_| "assinatura da política inválida — documento adulterado ou chave errada".to_string())?;
+                .map_err(|_| {
+                    "assinatura da política inválida — documento adulterado ou chave errada"
+                        .to_string()
+                })?;
             Ok(true)
         }
         None if MANAGED => Err(
@@ -120,13 +124,19 @@ pub async fn bootstrap_sync(base_url: String, token: String) -> Result<Value, St
         .await
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("bootstrap falhou: HTTP {}", response.status().as_u16()));
+        return Err(format!(
+            "bootstrap falhou: HTTP {}",
+            response.status().as_u16()
+        ));
     }
     let body: Value = response.json().await.map_err(|error| error.to_string())?;
     let verified = verify_body(&body)?;
     let path = policy_path()?;
-    fs::write(&path, serde_json::to_vec(&body).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+    fs::write(
+        &path,
+        serde_json::to_vec(&body).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(annotate(body, verified))
 }
 
@@ -199,10 +209,10 @@ mod tests {
 
         // adultera a política: os bytes canônicos mudam e a assinatura cai
         let mut tampered = body.clone();
-        tampered
-            .as_object_mut()
-            .unwrap()
-            .insert("policy".into(), serde_json::json!({"allowedModes": ["chat","code"]}));
+        tampered.as_object_mut().unwrap().insert(
+            "policy".into(),
+            serde_json::json!({"allowedModes": ["chat","code"]}),
+        );
         assert!(key
             .verify_strict(canonical_message(&tampered).as_bytes(), &signature)
             .is_err());

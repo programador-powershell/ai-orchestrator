@@ -55,11 +55,9 @@ impl Config {
                 .is_ok_and(|v| v.eq_ignore_ascii_case("true")),
             policy_signing_seed: match env::var("POLICY_SIGNING_KEY") {
                 Ok(value) if !value.is_empty() => {
-                    let bytes = base64::Engine::decode(
-                        &base64::engine::general_purpose::STANDARD,
-                        value,
-                    )
-                    .context("POLICY_SIGNING_KEY must be base64")?;
+                    let bytes =
+                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, value)
+                            .context("POLICY_SIGNING_KEY must be base64")?;
                     if bytes.len() != 32 {
                         bail!("POLICY_SIGNING_KEY must decode to exactly 32 bytes");
                     }

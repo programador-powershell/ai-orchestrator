@@ -513,8 +513,7 @@ async fn authorized_user(
     require_role(state, user, workspace, minimum).await?;
     // Fine-tuning é o módulo Tune: fora da política, 404 em todos os
     // endpoints — o harness inteiro não existe para o usuário.
-    crate::policy::ensure_mode_allowed(state, workspace, user, &caller.groups, &Mode::Tune)
-        .await?;
+    crate::policy::ensure_mode_allowed(state, workspace, user, &caller.groups, &Mode::Tune).await?;
     Ok(user)
 }
 
@@ -1175,7 +1174,7 @@ mod tests {
 
     #[test]
     fn flags_invalid_chat_lines_with_line_numbers() {
-        let lines = vec![
+        let lines = [
             chat_line("oi", "olá"),
             "isto não é json".to_string(),
             json!({"messages":[{"role":"user","content":"sem resposta"}]}).to_string(),
@@ -1235,7 +1234,7 @@ mod tests {
 
     #[test]
     fn flags_invalid_dpo_lines() {
-        let lines = vec![
+        let lines = [
             dpo_line("ok"),
             json!({"input":{"messages":[]},"preferred_output":[{"a":1}],"non_preferred_output":[{"a":1}]})
                 .to_string(),

@@ -25,7 +25,8 @@ fn credential_store(account: String, token: String) -> Result<(), String> {
 /// chave está configurada; ler o valor levaria o segredo para o heap do webview.
 #[tauri::command]
 fn credential_exists(account: String) -> Result<bool, String> {
-    let entry = keyring::Entry::new("AI Orchestrator", &account).map_err(|error| error.to_string())?;
+    let entry =
+        keyring::Entry::new("AI Orchestrator", &account).map_err(|error| error.to_string())?;
     Ok(entry.get_password().is_ok())
 }
 

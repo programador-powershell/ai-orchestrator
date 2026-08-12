@@ -195,7 +195,8 @@ pub async fn bootstrap(
         "workspaceName": membership.get::<String, _>("name"),
         "role": membership.get::<String, _>("role"),
     });
-    let policy_value = serde_json::to_value(&policy).map_err(|error| ApiError::Internal(error.into()))?;
+    let policy_value =
+        serde_json::to_value(&policy).map_err(|error| ApiError::Internal(error.into()))?;
     // Assinatura Ed25519 sobre a mensagem canônica — o cliente managed RECUSA
     // política sem assinatura; sem a seed configurada (dev) segue nula.
     let signature = match &state.config.policy_signing_seed {

@@ -105,7 +105,10 @@ fn validate_base_url(base_url: &str) -> Result<String, String> {
         return Ok(trimmed);
     }
     if trimmed.starts_with("http://") {
-        return Err("baseUrl sem TLS: a chave do provedor não trafega em http:// fora da própria máquina".into());
+        return Err(
+            "baseUrl sem TLS: a chave do provedor não trafega em http:// fora da própria máquina"
+                .into(),
+        );
     }
     Err("baseUrl do provedor deve usar http(s)".into())
 }
@@ -216,7 +219,10 @@ pub async fn pump_sse_cancellable(
     if !saw_terminal {
         // EOF sem [DONE] nem finish_reason = conexão cortada no meio. Entregar
         // como sucesso mostraria resposta truncada como se estivesse completa.
-        return Err("a resposta foi interrompida antes de terminar — o provedor cortou o stream".to_string());
+        return Err(
+            "a resposta foi interrompida antes de terminar — o provedor cortou o stream"
+                .to_string(),
+        );
     }
     Ok(full)
 }
@@ -336,7 +342,9 @@ mod tests {
         assert!(!has_finish_reason(
             r#"{"choices":[{"delta":{"content":"oi"},"finish_reason":null}]}"#
         ));
-        assert!(!has_finish_reason(r#"{"choices":[{"delta":{"content":"oi"}}]}"#));
+        assert!(!has_finish_reason(
+            r#"{"choices":[{"delta":{"content":"oi"}}]}"#
+        ));
         assert!(!has_finish_reason("{quebrado"));
     }
 
@@ -366,7 +374,10 @@ mod tests {
         assert!(validate_base_url("http://api.exemplo.com/v1").is_err());
         assert!(validate_base_url("http://192.168.0.10/v1").is_err());
         // loopback continua valendo — é o runtime local (llama.cpp).
-        assert_eq!(validate_base_url("http://127.0.0.1:8080/v1").unwrap(), "http://127.0.0.1:8080/v1");
+        assert_eq!(
+            validate_base_url("http://127.0.0.1:8080/v1").unwrap(),
+            "http://127.0.0.1:8080/v1"
+        );
         assert!(validate_base_url("http://localhost:1234").is_ok());
         assert_eq!(
             validate_base_url("https://api.openai.com/v1/").unwrap(),

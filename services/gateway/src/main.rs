@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod config;
 mod crypto;
@@ -48,6 +49,18 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/refresh", post(routes::oidc_refresh))
         .route("/me", get(routes::me))
         .route("/bootstrap", get(routes::bootstrap))
+        .route(
+            "/workspaces/{workspace}/admin/groups",
+            get(admin::groups_list).post(admin::groups_create),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/groups/{group}",
+            patch(admin::groups_update).delete(admin::groups_delete),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/prompt-master",
+            get(admin::prompt_master_get).put(admin::prompt_master_put),
+        )
         .route("/workspaces", get(routes::workspaces))
         .route(
             "/workspaces/{workspace}/routing",

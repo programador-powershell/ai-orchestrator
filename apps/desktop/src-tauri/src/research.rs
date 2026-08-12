@@ -133,7 +133,9 @@ fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
                     // 100.64.0.0/10 (CGNAT) e 169.254.0.0/16 (metadados)
                     || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
             }
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.segments()[0] & 0xfe00 == 0xfc00,
+            IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.is_unspecified() || v6.segments()[0] & 0xfe00 == 0xfc00
+            }
         };
         if blocked {
             return Err(format!("host {ip} pertence à rede interna — bloqueado"));
