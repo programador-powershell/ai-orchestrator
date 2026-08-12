@@ -11,6 +11,7 @@ import {
 } from "@ai-orchestrator/contracts";
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
+import type { ApprovalPolicy } from "./approval";
 
 export interface ThreadMessage extends ChatMessage {
   /** Anexos estruturados produzidos pelo motor (plano, pesquisa, ops, tools). */
@@ -65,6 +66,8 @@ export interface AppSettings {
   /** Catálogo de modelos gerenciado pelo admin — alimenta o seletor e o fusion. */
   modelCatalog: CatalogModel[];
   memoryEnabled: boolean;
+  /** Política de aprovação de ferramentas do agente (definida pela TI). */
+  approvalPolicy: ApprovalPolicy;
   memoryRecallK: number;
   /** Nível de esforço 0–4 (Baixo…Máximo) — injeta diretiva real no motor. */
   effort: number;
@@ -271,6 +274,7 @@ export const useApp = create<AppState>()(
         fusionPresets: defaultFusionPresets,
         modelCatalog: defaultModelCatalog,
         memoryEnabled: true,
+        approvalPolicy: "ask",
         memoryRecallK: 6,
         effort: 1,
         providerBaseOverrides: {},

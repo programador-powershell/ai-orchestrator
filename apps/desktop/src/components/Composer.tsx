@@ -11,6 +11,7 @@ import {
   Paperclip,
   Send,
   Sparkles,
+  ShieldCheck,
   Telescope,
   Wrench,
   X
@@ -26,6 +27,7 @@ import {
 } from "../lib/agent";
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
+import { APPROVAL_POLICIES, requiresPrompt, type ApprovalPolicy } from "../lib/approval";
 import { fsRead } from "../lib/fsx";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { createStreamBuffer } from "../lib/streamBuffer";
@@ -77,6 +79,7 @@ export function Composer() {
   const setAttachments = useApp((state) => state.setAttachments);
   const { appendMessage, patchLastAssistant, patchLastReasoning, replaceLastAssistant, setSending, updateToolGroup } =
     useApp.getState();
+  const updateSettings = useApp((state) => state.updateSettings);
 
   const [executingPlan, setExecutingPlan] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
@@ -294,6 +297,8 @@ export function Composer() {
       requestApproval: (call) =>
         new Promise<boolean>((resolve) => {
           if (signal.aborted) return resolve(false);
+          // Política da TI decide se para e pergunta ou segue direto.
+          if (!requiresPrompt(call, settings.approvalPolicy ?? "ask")) return resolve(true);
           // Parar durante a aprovação resolve como recusa: sem isso a promise
           // ficaria pendurada e a aba travaria em "enviando".
           const onAbort = () => {
@@ -565,6 +570,22 @@ export function Composer() {
             <Wrench size={12} />
             Ferramentas
           </button>
+          {toolsMode && (
+            <label className="approve-select" title="Quando o agente deve parar e pedir sua aprovação">
+              <ShieldCheck size={12} />
+              <select
+                value={settings.approvalPolicy ?? "ask"}
+                onChange={(event) => updateSettings({ approvalPolicy: event.target.value as ApprovalPolicy })}
+                aria-label="Política de aprovação"
+              >
+                {APPROVAL_POLICIES.map((policy) => (
+                  <option key={policy.id} value={policy.id} title={policy.hint}>
+                    {policy.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {mode === "chat" && (
             <button
               className={`lg-toggle ${researchMode ? "on" : ""}`}
