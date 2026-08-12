@@ -26,6 +26,7 @@ import {
 } from "../lib/agent";
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
+import { createStreamBuffer } from "../lib/streamBuffer";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
 import { McpHttpClient, mcpToolsToSpecs, parseNamespaced } from "../lib/mcp";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
@@ -154,11 +155,20 @@ export function Composer() {
 
   async function runAssistantTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
     appendMessage(mode, { role: "assistant", content: "" });
-    const final = await chatOnce(selection, mode, request, ctx, {
-      onDelta: (delta) => patchLastAssistant(mode, delta),
-      onStage: (stage) => setStage(stage)
-    }, signal);
-    return final;
+    // Coalescing por frame: os tokens chegam na taxa do provedor, mas a
+    // repintura é 1×/frame — sem isso o React congela em respostas rápidas.
+    const buffer = createStreamBuffer((chunk) => patchLastAssistant(mode, chunk));
+    try {
+      const final = await chatOnce(selection, mode, request, ctx, {
+        onDelta: (delta) => buffer.push(delta),
+        onStage: (stage) => setStage(stage)
+      }, signal);
+      buffer.flush();
+      return final;
+    } catch (cause) {
+      buffer.dispose();
+      throw cause;
+    }
   }
 
   /** Turno agêntico: o modelo executa ferramentas (com aprovação) até concluir. */
@@ -183,16 +193,24 @@ export function Composer() {
       : agentSystemInstruction();
     const messages: ChatMessage[] = [{ role: "system", content: instruction }, ...request];
     return runAgentLoop(messages, {
-      runTurn: (msgs) => {
+      runTurn: async (msgs) => {
         appendMessage(mode, { role: "assistant", content: "" });
-        return chatOnce(
-          selection,
-          mode,
-          msgs,
-          ctx,
-          { onDelta: (delta) => patchLastAssistant(mode, delta), onStage: (stage) => setStage(stage) },
-          signal
-        );
+        const buffer = createStreamBuffer((chunk) => patchLastAssistant(mode, chunk));
+        try {
+          const raw = await chatOnce(
+            selection,
+            mode,
+            msgs,
+            ctx,
+            { onDelta: (delta) => buffer.push(delta), onStage: (stage) => setStage(stage) },
+            signal
+          );
+          buffer.flush();
+          return raw;
+        } catch (cause) {
+          buffer.dispose();
+          throw cause;
+        }
       },
       signal,
       runTool: async (call) => {
