@@ -80,9 +80,13 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
     setSelected(null);
   }
 
-  // Portal para o body: a janela nasce dentro da topbar, que vive em
-  // `.workspace` (z-index 2) — e o rail é z-index 6. Nenhum z-index interno
-  // vence isso, porque o contexto de empilhamento do pai já perdeu.
+  // Portal para o `.app-shell`, NÃO para o body: a janela nasce dentro da
+  // topbar, que vive em `.workspace` (z-index 2) — e o rail é z-index 6, então
+  // nenhum z-index interno vence. Como filha direta do shell ela é IRMÃ do
+  // rail e o z-index passa a valer. E precisa ser o shell, não o body, porque
+  // é lá que os tokens de tema (--glass-strong, --panel…) são declarados —
+  // fora dele a janela fica transparente.
+  const host = document.querySelector(".app-shell") ?? document.body;
   return createPortal(
     <div className="connx-backdrop" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="connx glass-strong" role="dialog" aria-label="Conectar aplicativos">
@@ -207,6 +211,6 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
         </footer>
       </section>
     </div>,
-    document.body
+    host
   );
 }
