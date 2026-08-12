@@ -52,6 +52,7 @@ import {
   Rocket,
   Search,
   Server,
+  UsersRound,
 
   ServerCog,
   Settings2,
@@ -74,6 +75,7 @@ import { McpHttpClient, type McpServerConfig } from "../lib/mcp";
 import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport } from "../lib/memory";
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
+import { AdminSection } from "./settings/AdminSection";
 import { OpenshipSection, ShipSection } from "./settings/ShipSections";
 import { useApp, type CatalogModel } from "../lib/store";
 
@@ -89,6 +91,7 @@ type SectionId =
   | "runtime"
   | "ship"
   | "openship"
+  | "administracao"
   | "aparencia";
 
 type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
@@ -103,6 +106,7 @@ const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
   { id: "runtime", label: "Runtime local", icon: Cpu },
   { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
   { id: "openship", label: "Servidor Openship", icon: ServerCog },
+  { id: "administracao", label: "Administração", icon: UsersRound },
   { id: "aparencia", label: "Aparência", icon: Palette }
 ];
 
@@ -2239,7 +2243,12 @@ function AppearanceSection() {
 
 export function SettingsPanel() {
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
+  const profile = useApp((state) => state.profile);
   const [section, setSection] = useState<SectionId>("conexao");
+  // Administração só aparece para admin/owner — mas esconder é cosmético:
+  // o portão real é a autorização dos endpoints /v1/admin no servidor.
+  const isAdmin = profile ? profile.role === "admin" || profile.role === "owner" : true;
+  const nav = NAV.filter((item) => item.id !== "administracao" || isAdmin);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -2275,7 +2284,7 @@ export function SettingsPanel() {
         </header>
         <div className="setx-layout">
           <nav className="setx-nav" aria-label="Seções de configuração">
-            {NAV.map((item) => {
+            {nav.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -2300,6 +2309,7 @@ export function SettingsPanel() {
             {section === "runtime" && <RuntimeSection />}
             {section === "ship" && <ShipSection />}
             {section === "openship" && <OpenshipSection />}
+            {section === "administracao" && <AdminSection />}
             {section === "aparencia" && <AppearanceSection />}
           </div>
         </div>

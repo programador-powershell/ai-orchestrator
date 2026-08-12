@@ -381,3 +381,12 @@
 .ship-server__name { display: grid; gap: 1px; flex: 1; min-width: 0; }
 .ship-server__name strong { font-size: var(--fs-micro); font-weight: 500; }
 .ship-server__name small { color: var(--muted); font-size: 10px; }
+
+/* Administração: linha de grupo com os chips de módulo. */
+.admx-group { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.admx-group:last-of-type { border-bottom: 0; }
+.admx-group__name { display: grid; gap: 1px; min-width: 140px; }
+.admx-group__name strong { font-size: var(--fs-micro); font-weight: 500; }
+.admx-group__name small { color: var(--muted); font-size: 10px; }
+.admx-group__modes { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+.admx-group__modes .chip, .admx-draft-modes .chip { cursor: pointer; }

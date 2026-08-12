@@ -55,7 +55,10 @@ pub struct PromptMaster {
 /// padrão conservadora só na aprovação.
 fn open_policy() -> EffectivePolicy {
     EffectivePolicy {
-        allowed_modes: Mode::ALL.iter().map(|mode| mode.as_str().to_string()).collect(),
+        allowed_modes: Mode::ALL
+            .iter()
+            .map(|mode| mode.as_str().to_string())
+            .collect(),
         agent_tools: true,
         approval_policy: "ask".into(),
         byok_allowed: true,
@@ -99,7 +102,11 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
                 Some(merged.local_runtime_allowed.unwrap_or(true) && value);
         }
         if let Some(value) = doc.effort_max {
-            merged.effort_max = Some(merged.effort_max.map_or(value, |current| current.min(value)));
+            merged.effort_max = Some(
+                merged
+                    .effort_max
+                    .map_or(value, |current| current.min(value)),
+            );
         }
     }
     merged
@@ -133,10 +140,7 @@ async fn match_groups(
     .bind(token_groups)
     .fetch_all(&state.pool)
     .await?;
-    Ok(rows
-        .iter()
-        .map(|row| row.get::<Uuid, _>("id"))
-        .collect())
+    Ok(rows.iter().map(|row| row.get::<Uuid, _>("id")).collect())
 }
 
 /// Quantos grupos o workspace tem cadastrados — zero significa que o admin
@@ -201,10 +205,11 @@ pub async fn resolve(
         });
     }
 
-    let module_rows = sqlx::query("SELECT group_id, mode FROM group_modules WHERE group_id = ANY($1)")
-        .bind(&group_ids)
-        .fetch_all(&state.pool)
-        .await?;
+    let module_rows =
+        sqlx::query("SELECT group_id, mode FROM group_modules WHERE group_id = ANY($1)")
+            .bind(&group_ids)
+            .fetch_all(&state.pool)
+            .await?;
     let sets: Vec<Vec<String>> = group_ids
         .iter()
         .map(|group| {
@@ -222,9 +227,7 @@ pub async fn resolve(
         .await?;
     let docs: Vec<GroupPolicyDoc> = policy_rows
         .iter()
-        .map(|row| {
-            serde_json::from_value(row.get::<Value, _>("document")).unwrap_or_default()
-        })
+        .map(|row| serde_json::from_value(row.get::<Value, _>("document")).unwrap_or_default())
         .collect();
     let merged = merge_policies(&docs);
 
@@ -255,18 +258,17 @@ async fn prompt_master_for(
     .bind(group_ids)
     .fetch_optional(&state.pool)
     .await?;
-    let row = match row {
-        Some(row) => Some(row),
-        None => {
-            sqlx::query(
+    let row =
+        match row {
+            Some(row) => Some(row),
+            None => sqlx::query(
                 "SELECT content, allow_local_append, local_max_chars, version FROM prompt_masters \
                  WHERE workspace_id=$1 AND group_id IS NULL",
             )
             .bind(workspace)
             .fetch_optional(&state.pool)
-            .await?
-        }
-    };
+            .await?,
+        };
     Ok(row.map(|row| PromptMaster {
         content: row.get("content"),
         allow_local_append: row.get("allow_local_append"),
@@ -288,7 +290,11 @@ pub async fn ensure_mode_allowed(
         return Ok(());
     }
     let policy = resolve(state, workspace, user, token_groups).await?;
-    if policy.allowed_modes.iter().any(|allowed| allowed == mode.as_str()) {
+    if policy
+        .allowed_modes
+        .iter()
+        .any(|allowed| allowed == mode.as_str())
+    {
         Ok(())
     } else {
         Err(ApiError::NotFound)
@@ -369,7 +375,10 @@ mod tests {
 
     #[test]
     fn teto_de_esforco_mais_baixo_vence() {
-        let merged = merge_policies(&[doc(|d| d.effort_max = Some(4)), doc(|d| d.effort_max = Some(2))]);
+        let merged = merge_policies(&[
+            doc(|d| d.effort_max = Some(4)),
+            doc(|d| d.effort_max = Some(2)),
+        ]);
         assert_eq!(merged.effort_max, Some(2));
     }
 
@@ -394,14 +403,18 @@ mod tests {
 /// PKCS#8 v1 para Ed25519: prefixo DER fixo + seed de 32 bytes. Permite usar
 /// o jsonwebtoken (que já está no projeto) sem dependência nova de assinatura.
 const ED25519_PKCS8_PREFIX: [u8; 16] = [
-    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04,
-    0x20,
+    0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
 ];
 
 /// Mensagem canônica assinada: JSON com chaves ordenadas (serde_json usa
 /// BTreeMap por padrão) contendo APENAS issuedAt/expiresAt/profile/policy.
 /// O cliente reconstrói os mesmos bytes a partir do corpo recebido.
-pub fn signing_message(issued_at: &str, expires_at: &str, profile: &Value, policy: &Value) -> String {
+pub fn signing_message(
+    issued_at: &str,
+    expires_at: &str,
+    profile: &Value,
+    policy: &Value,
+) -> String {
     serde_json::json!({
         "issuedAt": issued_at,
         "expiresAt": expires_at,
@@ -429,7 +442,12 @@ mod signing_tests {
     #[test]
     fn assinatura_e_deterministica_e_muda_com_a_mensagem() {
         let seed = [7u8; 32];
-        let message = signing_message("2026-01-01T00:00:00Z", "2026-01-01T06:00:00Z", &serde_json::json!({"a":1}), &serde_json::json!({"b":2}));
+        let message = signing_message(
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T06:00:00Z",
+            &serde_json::json!({"a":1}),
+            &serde_json::json!({"b":2}),
+        );
         let first = sign_bootstrap(&seed, &message).unwrap();
         let second = sign_bootstrap(&seed, &message).unwrap();
         assert_eq!(first, second);
@@ -441,7 +459,12 @@ mod signing_tests {
     fn mensagem_canonica_ordena_chaves() {
         // BTreeMap do serde_json: a ordem de inserção não importa — o cliente
         // reconstrói os mesmos bytes independente da ordem do wire.
-        let a = signing_message("i", "e", &serde_json::json!({"z":1,"a":2}), &serde_json::json!({}));
+        let a = signing_message(
+            "i",
+            "e",
+            &serde_json::json!({"z":1,"a":2}),
+            &serde_json::json!({}),
+        );
         assert!(a.find("\"a\":2").unwrap() < a.find("\"z\":1").unwrap());
     }
 }

@@ -145,6 +145,19 @@ jobs:
         run: pnpm check
       - name: Build desktop executable
         run: pnpm --filter @ai-orchestrator/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc
+      # Edição MANAGED: as portas de saída direta ao provedor (provider_*) e o
+      # runtime local são compilados FORA (feature do Cargo); a chave pública
+      # da política é embarcada e o cliente RECUSA bootstrap sem assinatura.
+      # Sem POLICY_PUBLIC_KEY o passo falha — managed sem chave é build inválido.
+      - name: Build managed desktop executable
+        env:
+          POLICY_PUBLIC_KEY: ${{ secrets.POLICY_PUBLIC_KEY }}
+          NEXT_PUBLIC_APP_EDITION: managed
+        shell: pwsh
+        run: |
+          if (-not $env:POLICY_PUBLIC_KEY) { throw "POLICY_PUBLIC_KEY ausente: edicao managed exige a chave publica da politica" }
+          pnpm --filter @ai-orchestrator/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc -- --features managed
+          Copy-Item apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop.exe apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop-managed.exe
       - name: Authenticode sign desktop executable
         if: env.IS_STABLE == 'true'
         shell: pwsh
