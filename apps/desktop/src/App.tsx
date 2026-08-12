@@ -45,6 +45,7 @@ import { Composer } from "./components/Composer";
 import { ConnectionsPopover } from "./components/ConnectionsPopover";
 import { ShipModal } from "./components/ShipModal";
 import { ContextMeter } from "./components/ContextMeter";
+import { EnvironmentBadge } from "./components/EnvironmentBadge";
 
 /**
  * Views carregadas sob demanda (code-split) e pré-aquecidas em idle:
@@ -431,7 +432,12 @@ function App() {
         </div>
 
         {activeMode ? <Composer /> : null}
-        <footer className="statusbar v-status" id="statusbar-slot" />
+        {/* Rodapé fixo estilo status bar: o badge de ambiente sempre visível,
+            e o slot que as views alimentam por portal ao lado. */}
+        <footer className="statusbar">
+          <EnvironmentBadge />
+          <div className="statusbar__slot v-status" id="statusbar-slot" />
+        </footer>
       </section>
 
       {settingsOpen && (

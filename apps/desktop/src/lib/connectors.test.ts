@@ -69,6 +69,7 @@ describe("filterConnectors", () => {
 describe("environmentLabel", () => {
   it("rotula cada ambiente e cai em Local no desconhecido", () => {
     expect(environmentLabel("local")).toBe("Local");
+    expect(environmentLabel("wsl")).toBe("WSL");
     expect(environmentLabel("vps")).toBe("VPS");
     expect(environmentLabel("cloud")).toBe("Nuvem");
   });

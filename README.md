@@ -11,7 +11,7 @@
 ## :heavy_check_mark: Features
 
 - Interface **liquid glass**: app desktop Tauri 2 + **Next.js 16.3** (React 19, export estático).
-- **Shell estilo Unsloth Studio**: navegação de modos na sidebar (pílulas, colapsável), topbar slim, Settings em modal (Ctrl+,).
+- **Shell**: abas de módulo no topo com **cor própria por aba**, barra lateral servindo o módulo ativo, badge de ambiente no rodapé e Configurações em modal (Ctrl+,).
 - **9 abas** — Chat, Code, **Office**, Design, Data, Work, Security, Agent e Tuning — com comandos de barra (`/review`, `/explain`, `/testgen`), `@`-menção de arquivo e busca global do histórico no composer.
 - **Aba Office**: o documento é objeto vivo do workspace — você pede a alteração no chat, o **Office Command Engine** valida a operação estruturada e o arquivo muda na tela (a IA nunca grava direto).
 - **Build & deploy** nas abas Code e Agent: carrega repositório GitHub, pasta local ou artefato pré-compilado, **identifica a stack** (Node, Python, Go, Rust, PHP, Ruby, Java, .NET, Docker) pelo arquivo-âncora e executa o pipeline com controle de versão.
@@ -24,7 +24,9 @@
 - **Editor ERD** na aba Data com export SQL (PostgreSQL, MySQL, ANSI, SQLite e MSSQL), migração up/down e export SVG.
 - **Editor de vídeo** estilo OpenCut na aba Design.
 - **Sandbox** estilo ai-jail na aba Security.
-- **Import de plugins/skills** nas Configurações, **cadastro de servidor de deploy** (sem campo de senha ou chave privada — agente SSH ou keyring do sistema) e **atualização manual** verificável.
+- **Edição gerenciada**: política (módulos por grupo do AD, motores, aprovação, prompt master) definida pelo admin no servidor, assinada e verificada no cliente; a interface apenas reflete.
+- **Janela Conectar Apps** (galeria MCP) com seletor de ambiente — Local, WSL, VPS ou Nuvem.
+- **Import de plugins/skills**, **cadastro de servidor VPS** (sem campo de senha ou chave privada — agente SSH ou keyring do sistema) e **atualização manual** verificável.
 - **Regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`) injetadas no prompt, acima das preferências gerais.
 - Gateway próprio (Rust/Axum, PostgreSQL e Redis) e runtime local opcional.
 - Instalador `AI-Orchestrator-Setup.exe` com download HTTPS retomável e validação Ed25519, SHA-256 e Authenticode.
@@ -34,34 +36,38 @@
 
 ## :new: Releases Notes
 
-### :up: V.6
+### :up: V.7
 ### :warning: Latest Changes
 
-- **Abas de módulo no topo**: a barra esquerda passou a servir o módulo ativo (arquivos no Code, documentos no Office, paleta no Agent) em vez de navegar entre abas.
-- **Aba Office**: documento vivo do workspace. O chat emite operações estruturadas validadas por formato (blocos ```office```) — a IA nunca grava o arquivo direto. Poucas operações aplicam na hora; muitas pedem aprovação com prévia do que muda. Histórico da IA com reversão por alteração. Hoje edita HTML/Markdown/CSV/TXT de verdade; DOCX/XLSX/PPTX/PDF abrem somente leitura (ver ADR abaixo).
-- **Build & deploy** (Code e Agent): botão na barra superior abre a janela que carrega **repositório GitHub, pasta local ou artefato pré-compilado**, identifica a stack pelo arquivo-âncora — com o gerenciador vindo do lockfile e os comandos vindos dos scripts realmente declarados — e roda o pipeline etapa a etapa. Versionar só libera quando o pipeline passa inteiro.
-- **Servidor de deploy nas Configurações**: cadastro do VPS **sem campo de senha e sem campo de chave privada**. O padrão é agente SSH (o app não vê segredo nenhum); com arquivo de chave, a passphrase vai ao keyring do sistema e some da interface. O campo de caminho **recusa** material de chave colado e aponta o cofre corporativo.
-- **Painel de conexões**: o indicador da barra superior mostra a QUÊ o app está conectado — gateway, runtime local, VPS, repositório, WSL, MCP — e adiciona o que falta. Cadastrado não conta como conectado.
-- **Seletor de política de aprovação** no composer, com a dica de cada opção, valendo já no turno em andamento.
-- **Custo em tokens por mensagem** no rodapé de cada resposta, somando raciocínio e saída de ferramentas.
-- **Regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `copilot-instructions.md`) entram no prompt acima das preferências gerais.
-- **Busca global do histórico** disponível em todas as abas (antes só no Chat).
-- **Atualização manual** verificável nas Configurações — nunca instalação silenciosa.
-- **`@`-menção de arquivo**, colar imagem/vídeo/arquivo com Ctrl+V, aceite de diff por hunk e autocomplete inline por Tab no editor.
+- **Edição gerenciada: o admin controla a política, o cliente herda.** O servidor passou a ser a autoridade — antes as configurações viviam no `localStorage` da estação e qualquer bloqueio na interface era cosmético. Agora a política nasce no gateway, viaja **assinada (Ed25519)** e é aplicada onde o usuário não alcança.
+- **Módulos por grupo do Active Directory**: o admin mapeia grupo (ObjectId ou app role do Entra) → abas liberadas. O usuário só vê o que o grupo dele permite — e o servidor responde **404**, não 403, para módulo bloqueado: o módulo simplesmente não existe para ele. A resolução é por **união** dos grupos; em conflito de segurança, o **mais restritivo** vence.
+- **Console de administração** nas Configurações: grupos, módulos por clique e **prompt master do workspace**, que entra primeiro no sistema de toda conversa de todo cliente. O prompt local da estação apenas complementa — e só se o admin permitir, dentro do teto de caracteres.
+- **Edição `managed` do cliente**: as quatro portas de saída direta ao provedor (BYOK) e o runtime local são **compilados fora do binário**. Esconder botão não segura nada; compilar fora, sim — todo tráfego de modelo passa pelo gateway, que aplica a política e registra o uso.
+- **SSO corrigido para o Entra**: o desktop virou *public client* e troca o código **direto com o IdP** (PKCE, sem `client_secret`), com redirect `localhost/callback`. O escopo agora vai também no refresh, e um 401 renova a sessão em execução.
+- **Janela "Conectar Apps"** no indicador da barra superior: galeria de conectores MCP com categorias e busca, mais o **seletor de ambiente** — Local, WSL, VPS (servidor da TI) ou Nuvem. O usuário conecta os apps dele; a TI configura os ambientes.
+- **Badge de ambiente no rodapé**, estilo barra de status: mostra onde o trabalho roda e troca por lista suspensa.
+- **Cor por módulo de volta**: cada aba tem sua matiz e o app inteiro acompanha — acento, foco, orbes do ambiente e botão de envio derivam da mesma variável, com transição suave na troca.
+- **Build & deploy** (Code e Agent) em janela própria na barra superior: carrega **repositório GitHub, pasta local ou artefato pré-compilado**, identifica a stack pelo arquivo-âncora e roda o pipeline etapa a etapa.
+- **Cadastro de servidor VPS** sem campo de senha e sem campo de chave privada: o padrão é agente SSH (o app não vê segredo nenhum) e o campo de caminho **recusa** material de chave colado, apontando o cofre corporativo.
+- **Aba Office**, **regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`), **busca global do histórico** em todas as abas, **custo em tokens por mensagem** e **atualização manual** verificável.
 
 ### :pushpin: Fixes
 
-- **Barra do composer estourava o painel e o botão enviar ficava inalcançável.** `.composer` é grid e a linha de chips é flex `nowrap` com `min-width: auto`: o track era dimensionado pelo min-content da linha, então a barra crescia a cada chip montado e o enviar saía do balão — em janela estreita, cortado pelo `overflow: hidden` do workspace.
-- **O chip "Ferramentas" parecia abrir as Configurações.** Não abria: ele montava o chip de aprovação colado nele, e era esse que abria o modal. Com a aprovação virando seletor, nenhum controle da barra abre mais Configurações.
-- **O modo agente resetava a cada reinício** — não estava no `partialize`. Virou configuração persistida, definida pela TI.
-- **Chave BYOK podia trafegar sem TLS**: `provider_fetch` duplicava a validação de `baseUrl` e aceitava `http://` para qualquer host. Agora só HTTPS ou loopback.
-- **Conversa anterior era sobrescrita** no primeiro envio após reiniciar o app.
-- Aba Office ocupava só parte da tela: a coluna direita saiu e o documento passou a usar a largura toda.
+- **O cliente reescrevia `office` e `tune` para `chat`** antes de chamar o gateway — o servidor nunca via o módulo real e não tinha como bloqueá-lo. O modo agora vai intacto, com os dois no contrato de wire e no enum do servidor.
+- **Barra do composer estourava o painel e o botão enviar ficava inalcançável** em janela estreita. `.composer` é grid e a linha de chips é flex `nowrap`: o track era dimensionado pelo min-content da linha, então a barra crescia a cada chip montado.
+- **O chip "Ferramentas" parecia abrir as Configurações.** Não abria: ele montava o chip de aprovação colado nele, e era esse que abria o modal.
+- **A janela de apps abria atrás da barra lateral** — ela nascia dentro do workspace, cujo contexto de empilhamento já perde para o rail. Passou a ser renderizada por portal no `body`.
+- **A troca de aba não recolorava nada** porque as variáveis derivadas eram resolvidas no `:root`, antes da matiz do módulo existir.
+- **Refresh revogado deixava credencial zumbi** no cofre, retentada a cada reinício; agora é apagada. E o 401 só renovava por expiração de relógio — revogação e rotação de chave passavam batido.
+- **O modo agente resetava a cada reinício** (não estava no `partialize`); virou configuração persistida da administração.
+- **Chave BYOK podia trafegar sem TLS**: `provider_fetch` aceitava `http://` para qualquer host. Agora só HTTPS ou loopback.
 
 ### :construction_worker: Refactors
 
-- Novos módulos puros e testados: `lib/ship` (detecção de stack, fontes, pipeline, servidor), `lib/office` (command engine, adapter, change log, WOPI), `lib/connections`, `lib/projectRules`, `lib/mentions`, `lib/markdownStream`, `lib/streamBuffer` — **728 testes** no desktop, mais os do gateway e do Rust.
-- **ADR do motor Office** (`docs/adr-office-motor-wopi.md`): WOPI como contrato de armazenamento e **Collabora Online** como motor. O caminho Microsoft está fechado — o Cloud Storage Partner Program não é aberto a clientes M365 e o Office Online Server é descontinuado em 01/01/2027 — e a PostMessage API deles não toca no conteúdo, então não entrega edição ao vivo.
+- Módulo `policy` nos três lados: resolução por grupo no gateway (Rust), verificação de assinatura no Rust do desktop — **nunca no JavaScript**, que é justamente a superfície não confiável — e derivação de interface no cliente.
+- Novos módulos puros e testados: `lib/connectors`, `lib/connections`, `lib/policy`, `lib/ship` (stack, fontes, pipeline, servidor), `lib/office` (command engine, adapter, change log, WOPI), `lib/projectRules` — **756 testes** no desktop, 28 no gateway e 15 no Rust do cliente.
+- Módulo **Game removido** do produto.
+- ADRs em `docs/`: [edição gerenciada](docs/adr-edicao-gerenciada.md) (a política do admin e os furos que ela fecha) e [motor do Office](docs/adr-office-motor-wopi.md) (WOPI como contrato de armazenamento, Collabora como motor — o caminho Microsoft está fechado por licenciamento e por descontinuação).
 
 
 ## :wrench: Instalação

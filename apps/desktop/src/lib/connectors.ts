@@ -206,10 +206,11 @@ export function filterConnectors(catalog: Connector[], filter: ConnectorFilter):
  * - vps: o servidor configurado pelo admin;
  * - cloud: um host git (GitHub, GitLab, Gitea…).
  */
-export type Environment = "local" | "vps" | "cloud";
+export type Environment = "local" | "wsl" | "vps" | "cloud";
 
 export const ENVIRONMENTS: Array<{ id: Environment; label: string; detail: string }> = [
   { id: "local", label: "Local", detail: "No seu computador" },
+  { id: "wsl", label: "WSL", detail: "Subsistema Linux no Windows" },
   { id: "vps", label: "VPS", detail: "Servidor configurado pela TI" },
   { id: "cloud", label: "Nuvem", detail: "GitHub, GitLab, Gitea…" }
 ];

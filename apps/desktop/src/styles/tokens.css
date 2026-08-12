@@ -172,3 +172,45 @@
   --tone-blue: #5f8fd8;
   --tone-rose: #d06b79;
 }
+
+/* ------------------------------------------------------------------ */
+/* Matiz por MÓDULO — o app inteiro (acento, orbes do ambiente, foco,
+   botão enviar) deriva de --accent-h, então trocar a matiz recolore tudo.
+
+   As derivadas PRECISAM ser redeclaradas aqui: var() é substituído no
+   elemento onde a propriedade é DECLARADA. Como --accent nasce no :root,
+   ele já resolveu com o --accent-h do :root — mudar a matiz só no
+   .app-shell não recomputaria nada. É o mesmo motivo pelo qual o tema
+   escuro redeclara o bloco inteiro. */
+.app-shell[data-mode=chat]     { --accent-h: 158; }  /* verde    */
+.app-shell[data-mode=code]     { --accent-h: 210; }  /* azul     */
+.app-shell[data-mode=office]   { --accent-h: 26;  }  /* âmbar    */
+.app-shell[data-mode=design]   { --accent-h: 282; }  /* violeta  */
+.app-shell[data-mode=data]     { --accent-h: 190; }  /* ciano    */
+.app-shell[data-mode=work]     { --accent-h: 340; }  /* rosa     */
+.app-shell[data-mode=security] { --accent-h: 4;   }  /* vermelho */
+.app-shell[data-mode=agent]    { --accent-h: 258; }  /* índigo   */
+.app-shell[data-mode=tune]     { --accent-h: 96;  }  /* lima     */
+
+/* Claro: as derivadas resolvem com o --accent-h DESTE elemento. */
+.app-shell[data-mode] {
+  --accent: hsl(var(--accent-h) var(--accent-s) 40%);
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) 42% / 0.12);
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) 34%);
+  --accent-glow: hsl(var(--accent-h) var(--accent-s) 45% / 0.25);
+  /* --accent-h é @property <number>: o navegador interpola e todos os
+     hsl() derivados acompanham. Sem isto a troca de aba seria corte seco. */
+  transition: --accent-h var(--t-slow) ease;
+}
+
+/* Escuro mantém a luminosidade própria do tema. */
+.app-shell[data-theme=dark][data-mode] {
+  --accent: hsl(var(--accent-h) var(--accent-s) 52%);
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) 52% / 0.16);
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) 60%);
+  --accent-glow: hsl(var(--accent-h) var(--accent-s) 52% / 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell[data-mode] { transition: none; }
+}
