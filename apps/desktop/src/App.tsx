@@ -16,6 +16,7 @@ import {
   Boxes,
   Braces,
   ChartNoAxesCombined,
+  FileText,
   FlaskConical,
   Gamepad2,
   LoaderCircle,
@@ -54,6 +55,7 @@ const viewLoaders: Record<UiMode, () => Promise<{ [key: string]: unknown }>> = {
   security: () => import("./modes/SecurityView"),
   agent: () => import("./modes/AgentView"),
   game: () => import("./modes/GameView"),
+  office: () => import("./modes/OfficeView"),
   tune: () => import("./modes/TuneView")
 };
 const ChatView = lazy(() => import("./modes/ChatView").then((m) => ({ default: m.ChatView })));
@@ -64,6 +66,7 @@ const WorkView = lazy(() => import("./modes/WorkView").then((m) => ({ default: m
 const SecurityView = lazy(() => import("./modes/SecurityView").then((m) => ({ default: m.SecurityView })));
 const AgentView = lazy(() => import("./modes/AgentView").then((m) => ({ default: m.AgentView })));
 const GameView = lazy(() => import("./modes/GameView").then((m) => ({ default: m.GameView })));
+const OfficeView = lazy(() => import("./modes/OfficeView").then((m) => ({ default: m.OfficeView })));
 const TuneView = lazy(() => import("./modes/TuneView").then((m) => ({ default: m.TuneView })));
 const SettingsPanel = lazy(() => import("./components/Settings").then((m) => ({ default: m.SettingsPanel })));
 
@@ -79,6 +82,7 @@ const modeMeta: Record<UiMode, { label: string; icon: typeof MessageCircle }> = 
   security: { label: "Security", icon: ShieldCheck },
   agent: { label: "Agent", icon: Bot },
   game: { label: "Game", icon: Gamepad2 },
+  office: { label: "Office", icon: FileText },
   tune: { label: "Tuning", icon: FlaskConical }
 };
 
@@ -91,6 +95,7 @@ const railAction: Record<UiMode, string> = {
   security: "Nova revisão",
   agent: "Novo fluxo",
   game: "Nova cena",
+  office: "Nova sessão",
   tune: "Novo treino"
 };
 
@@ -129,6 +134,11 @@ const railViews: Record<UiMode, ReturnType<typeof lazy>> = {
   game: lazy(() =>
     import("./modes/GameView").then((m) => ({ default: (m as { GameRail?: () => ReactNode }).GameRail ?? (() => null) }))
   ),
+  office: lazy(() =>
+    import("./modes/OfficeView").then((m) => ({
+      default: (m as { OfficeRail?: () => ReactNode }).OfficeRail ?? (() => null)
+    }))
+  ),
   tune: lazy(() =>
     import("./modes/TuneView").then((m) => ({ default: (m as { TuneRail?: () => ReactNode }).TuneRail ?? (() => null) }))
   )
@@ -143,6 +153,7 @@ const modeViews: Record<UiMode, () => ReactNode> = {
   security: () => <SecurityView />,
   agent: () => <AgentView />,
   game: () => <GameView />,
+  office: () => <OfficeView />,
   tune: () => <TuneView />
 };
 
