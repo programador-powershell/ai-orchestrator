@@ -236,3 +236,33 @@
 .chatx-balloon.user p { margin: 0; font-size: var(--fs-body); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .chatx-balloon .md-root { font-size: var(--fs-body); }
 .chatx-row .chatx-msg-foot { padding: 0 4px; }
+
+/* Progresso INLINE (substitui o popup flutuante) — mesma superfície do balão
+   do assistente, para não destoar dos demais elementos. */
+.thinking-row { animation: float-in var(--t-base) var(--spring-soft) both; }
+.thinking-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px 18px 18px 18px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.thinking-label { letter-spacing: -0.1px; }
+.thinking-dots { display: inline-flex; gap: 3px; }
+.thinking-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thinking-bounce 1.15s ease-in-out infinite;
+}
+.thinking-dots i:nth-child(2) { animation-delay: 0.16s; }
+.thinking-dots i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes thinking-bounce {
+  0%, 70%, 100% { opacity: 0.32; transform: translateY(0); }
+  35% { opacity: 1; transform: translateY(-3px); }
+}
