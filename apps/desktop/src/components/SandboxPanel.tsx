@@ -4,9 +4,13 @@
  * Painel do Sandbox — a UI que faltava para o `sandbox_execute` do backend.
  *
  * O comando roda num diretório efêmero, com o ambiente LIMPO (`env_clear`),
- * PATH mínimo e `kill_on_drop` no timeout. Isso NÃO é um jail de SO — o
- * processo ainda roda com os direitos do usuário — mas é contenção real, e a
- * UI diz exatamente o que é, sem prometer isolamento que não existe.
+ * PATH mínimo e dentro de um **Job Object** do Windows (ver src-tauri/jail.rs):
+ * teto de processos e de memória, restrições de UI e — o principal — a árvore
+ * INTEIRA morre no fim, inclusive netos órfãos.
+ *
+ * O que continua não sendo: redução de privilégio. Não é AppContainer nem
+ * contêiner; o processo ainda carrega o token do usuário e alcança a rede. A
+ * UI diz exatamente isso, sem prometer isolamento que não existe.
  */
 
 import { useState } from "react";
@@ -44,8 +48,9 @@ export function SandboxPanel() {
   return (
     <div className="secx-sandbox">
       <p className="secx-sandbox__intro">
-        Roda o comando num diretório temporário, com ambiente limpo e PATH mínimo — descartado ao fim. Contenção real,
-        mas <strong>não é um jail de SO</strong>: o processo ainda tem os seus direitos.
+        Roda num diretório temporário com ambiente limpo, dentro de um <strong>Job Object</strong>: teto de processos e
+        memória, sem clipboard e a árvore inteira é encerrada no fim — inclusive netos órfãos. Não reduz privilégio: o
+        processo continua com os <strong>seus</strong> direitos e alcança a rede.
       </p>
       <textarea
         className="secx-sandbox__cmd"
@@ -72,6 +77,9 @@ export function SandboxPanel() {
             <span className={`chip ${result.exitCode === 0 ? "ok" : "danger"}`}>saída {result.exitCode ?? "?"}</span>
             <span className="chip">
               <FlaskConical size={11} /> {result.isolated ? "ambiente limpo" : "sem isolamento"}
+            </span>
+            <span className="chip" title="Job Object do Windows: a árvore de processos morre junto">
+              {result.jailed ? "job object" : "sem job object"}
             </span>
             <span className="chip">{Math.round(result.durationMs)}ms</span>
           </div>

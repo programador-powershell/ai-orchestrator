@@ -2,6 +2,7 @@ mod auth;
 mod extensions;
 mod fsx;
 mod memory;
+mod jail;
 mod office;
 mod policy;
 mod providers;

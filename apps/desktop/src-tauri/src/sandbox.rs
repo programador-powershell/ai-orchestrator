@@ -1,3 +1,4 @@
+use crate::jail::{Jail, CREATION_FLAGS};
 use serde::Serialize;
 use std::{path::PathBuf, process::Stdio, time::Instant};
 use tokio::{
@@ -16,6 +17,9 @@ pub struct SandboxResult {
     stderr: String,
     duration_ms: u64,
     isolated: bool,
+    /// O processo rodou dentro de um Job Object (árvore inteira contida)?
+    /// Falso = caiu no caminho degradado; a UI precisa dizer isso ao usuário.
+    jailed: bool,
 }
 
 fn truncated(bytes: &[u8]) -> String {
@@ -67,12 +71,32 @@ pub async fn sandbox_execute(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // CREATE_SUSPENDED: o processo nasce parado para ser preso ao Job Object
+    // ANTES de rodar. Sem isso o filho poderia criar netos fora do job.
     #[cfg(windows)]
-    child_command.creation_flags(0x08000000);
+    child_command.creation_flags(CREATION_FLAGS);
     let start = Instant::now();
-    // kill_on_drop garante que, no timeout, o descarte do futuro mata o processo.
+    // O Jail vive até o fim desta função: quando cai (timeout, erro ou sucesso)
+    // o KILL_ON_JOB_CLOSE encerra a ÁRVORE inteira — não só o cmd.exe.
+    //
+    // Falhar aqui é ERRO, não degradação silenciosa: rodar sem job enquanto a
+    // UI diz "sandbox" seria mentir sobre a garantia. E, como o processo nasce
+    // suspenso, sem job ele também nunca sairia do lugar.
+    let jail = Jail::new().map_err(|error| {
+        if let Some(directory) = ephemeral.as_ref() {
+            let _ = std::fs::remove_dir_all(directory);
+        }
+        format!("não foi possível criar o isolamento da sandbox: {error}")
+    })?;
     let result = async {
-        let child = child_command.spawn().map_err(|error| error.to_string())?;
+        let mut child = child_command.spawn().map_err(|error| error.to_string())?;
+        let pid = child
+            .id()
+            .ok_or_else(|| "processo da sandbox terminou antes de ser isolado".to_string())?;
+        jail.capture_and_resume(pid).map_err(|error| {
+            let _ = child.start_kill();
+            format!("não foi possível isolar a sandbox: {error}")
+        })?;
         timeout(limit, child.wait_with_output())
             .await
             .map_err(|_| format!("a sandbox excedeu o limite de {} ms", limit.as_millis()))?
@@ -90,5 +114,6 @@ pub async fn sandbox_execute(
         stderr: truncated(&output.stderr),
         duration_ms: start.elapsed().as_millis() as u64,
         isolated: true,
+        jailed: cfg!(windows),
     })
 }
