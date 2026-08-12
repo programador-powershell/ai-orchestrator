@@ -147,6 +147,71 @@ pub async fn me(
     ))
 }
 
+/// Bootstrap do cliente gerenciado: perfil + política efetiva, com etag para
+/// revalidação barata (If-None-Match → 304). O workspace vem da associação do
+/// usuário, não de um campo digitado; a assinatura entra na S3.
+pub async fn bootstrap(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let identity = identity(&state, &headers).await?;
+    let user = user_id(&state, &identity).await?;
+
+    // O primeiro workspace do usuário (ordem estável por nome). Sem
+    // associação não há política a herdar — 404, como qualquer recurso
+    // que não existe para ele.
+    let membership = sqlx::query(
+        "SELECT w.id, w.name, m.role::text AS role FROM workspaces w \
+         JOIN workspace_members m ON m.workspace_id = w.id \
+         WHERE m.user_id = $1 ORDER BY w.name LIMIT 1",
+    )
+    .bind(user)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let workspace: Uuid = membership.get("id");
+
+    let policy = crate::policy::resolve(&state, workspace, user, &identity.groups).await?;
+    let etag = crate::policy::policy_etag(&policy);
+
+    if headers
+        .get(axum::http::header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim_matches('"'))
+        == Some(etag.as_str())
+    {
+        return Ok(axum::http::StatusCode::NOT_MODIFIED.into_response());
+    }
+
+    let issued_at = chrono::Utc::now();
+    let body = json!({
+        "schemaVersion": 1,
+        "issuedAt": issued_at.to_rfc3339(),
+        "expiresAt": (issued_at + chrono::Duration::hours(6)).to_rfc3339(),
+        "etag": etag,
+        // Assinatura Ed25519 entra na S3; ausente = cliente managed recusa.
+        "signature": Value::Null,
+        "profile": {
+            "userId": user,
+            "subject": identity.subject,
+            "email": identity.email,
+            "name": identity.name,
+            "groups": identity.groups,
+            "workspaceId": workspace,
+            "workspaceName": membership.get::<String, _>("name"),
+            "role": membership.get::<String, _>("role"),
+        },
+        "policy": policy,
+    });
+    let mut response = Json(body).into_response();
+    response.headers_mut().insert(
+        axum::http::header::ETAG,
+        axum::http::HeaderValue::from_str(&format!("\"{etag}\""))
+            .map_err(|error| ApiError::Internal(error.into()))?,
+    );
+    Ok(response)
+}
+
 pub async fn workspaces(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -530,8 +595,12 @@ pub async fn chat(
     Json(request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
     state.metrics.request();
-    let user = user_id(&state, &identity(&state, &headers).await?).await?;
+    let caller = identity(&state, &headers).await?;
+    let user = user_id(&state, &caller).await?;
     require_role(&state, user, workspace, 1).await?;
+    // Módulo fora da política do grupo: 404 — para o usuário ele não existe.
+    crate::policy::ensure_mode_allowed(&state, workspace, user, &caller.groups, &request.mode)
+        .await?;
     rate_limit(&state, workspace).await?;
     let route = route(&state, workspace, &request.mode, Capability::Chat).await?;
     let timeout = route.timeout_ms.unwrap_or(90_000).clamp(1_000, 180_000);
@@ -592,8 +661,11 @@ async fn generic(
     capability: Capability,
 ) -> Result<Response, ApiError> {
     state.metrics.request();
-    let user = user_id(&state, &identity(&state, &headers).await?).await?;
+    let caller = identity(&state, &headers).await?;
+    let user = user_id(&state, &caller).await?;
     require_role(&state, user, workspace, 1).await?;
+    crate::policy::ensure_mode_allowed(&state, workspace, user, &caller.groups, &request.mode)
+        .await?;
     rate_limit(&state, workspace).await?;
     let route = route(&state, workspace, &request.mode, capability.clone()).await?;
     let timeout = route.timeout_ms.unwrap_or(90_000).clamp(1_000, 180_000);
@@ -662,8 +734,12 @@ pub async fn design_replication(
     Json(request): Json<DesignReplicationRequest>,
 ) -> Result<Json<Value>, ApiError> {
     state.metrics.request();
-    let user = user_id(&state, &identity(&state, &headers).await?).await?;
+    let caller = identity(&state, &headers).await?;
+    let user = user_id(&state, &caller).await?;
     require_role(&state, user, workspace, 1).await?;
+    // Replicação de design pertence ao módulo Design.
+    crate::policy::ensure_mode_allowed(&state, workspace, user, &caller.groups, &Mode::Design)
+        .await?;
     rate_limit(&state, workspace).await?;
 
     if request.mode != "static" && request.mode != "ultra" {

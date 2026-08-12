@@ -4,6 +4,7 @@ mod crypto;
 mod error;
 mod finetune;
 mod models;
+mod policy;
 mod providers;
 mod routes;
 mod state;
@@ -46,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/auth/token", post(routes::oidc_token))
         .route("/auth/refresh", post(routes::oidc_refresh))
         .route("/me", get(routes::me))
+        .route("/bootstrap", get(routes::bootstrap))
         .route("/workspaces", get(routes::workspaces))
         .route(
             "/workspaces/{workspace}/routing",
