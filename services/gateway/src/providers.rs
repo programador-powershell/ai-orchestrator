@@ -28,6 +28,25 @@ struct Provider {
     api_key: String,
 }
 
+/// Texto de uma mensagem que pode ser multimodal.
+///
+/// Com imagem anexada, `content` é um ARRAY de partes no formato da OpenAI.
+/// Os provedores que não falam esse formato recebiam `as_str().unwrap_or("")`
+/// — ou seja, a mensagem inteira virava string vazia e sumia em silêncio.
+/// Aqui pelo menos o texto sobrevive; a imagem é ignorada porque a tradução
+/// para o formato nativo de cada provedor ainda não existe.
+fn message_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
 impl ProviderClient {
     async fn provider(&self, workspace_id: Uuid, id: Uuid) -> Result<Provider, ApiError> {
         let row = sqlx::query("SELECT id, kind, base_url, encrypted_api_key FROM providers WHERE workspace_id=$1 AND id=$2 AND enabled=true")
@@ -166,7 +185,7 @@ impl ProviderClient {
             .messages
             .iter()
             .filter(|m| m.role == "system")
-            .map(|m| m.content.as_str().unwrap_or(""))
+            .map(|m| message_text(&m.content))
             .collect::<Vec<_>>()
             .join("\n");
         let messages: Vec<_> = request
@@ -215,7 +234,7 @@ impl ProviderClient {
             .base_url
             .clone()
             .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into());
-        let contents: Vec<_> = request.messages.iter().filter(|m| m.role != "system").map(|m| json!({"role":if m.role=="assistant"{"model"}else{"user"},"parts":[{"text":m.content.as_str().unwrap_or("")}]})).collect();
+        let contents: Vec<_> = request.messages.iter().filter(|m| m.role != "system").map(|m| json!({"role":if m.role=="assistant"{"model"}else{"user"},"parts":[{"text":message_text(&m.content)}]})).collect();
         let url = format!(
             "{}/models/{}:generateContent?key={}",
             base.trim_end_matches('/'),
@@ -480,4 +499,37 @@ fn json_response(value: Value) -> Result<Response, ApiError> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(value.to_string()))
         .map_err(|error| ApiError::Internal(error.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texto_simples_passa_intacto() {
+        assert_eq!(message_text(&json!("olá")), "olá");
+    }
+
+    #[test]
+    fn conteudo_multimodal_preserva_o_texto_em_vez_de_sumir() {
+        // Era exatamente isto que virava "" e descartava a mensagem inteira.
+        let content = json!([
+            {"type": "text", "text": "descreva esta imagem"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        ]);
+        assert_eq!(message_text(&content), "descreva esta imagem");
+    }
+
+    #[test]
+    fn junta_varias_partes_de_texto() {
+        let content = json!([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]);
+        assert_eq!(message_text(&content), "a\nb");
+    }
+
+    #[test]
+    fn formato_inesperado_nao_derruba() {
+        assert_eq!(message_text(&json!(null)), "");
+        assert_eq!(message_text(&json!({"foo": 1})), "");
+        assert_eq!(message_text(&json!([{"type": "image_url"}])), "");
+    }
 }

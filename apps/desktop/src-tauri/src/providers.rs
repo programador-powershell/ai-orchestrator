@@ -6,11 +6,15 @@ use std::sync::{Mutex, OnceLock};
 use tauri::ipc::Channel;
 use tokio::time::Duration;
 
+/// `content` é `Value`, não `String`: com imagem anexada o front envia o
+/// formato multimodal da OpenAI — um ARRAY de partes
+/// (`[{type:"text"...},{type:"image_url"...}]`). Tipado como String, o serde
+/// rejeitava a requisição inteira e o anexo de imagem nunca chegava ao modelo.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     role: String,
-    content: String,
+    content: serde_json::Value,
 }
 
 #[derive(Deserialize)]
