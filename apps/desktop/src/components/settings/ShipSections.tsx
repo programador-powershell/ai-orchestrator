@@ -12,7 +12,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CircleCheck, LoaderCircle, Rocket, ServerCog, ShieldAlert, Trash2, Wrench } from "lucide-react";
+import { CircleCheck, Download, LoaderCircle, Rocket, ServerCog, ShieldAlert, Trash2, Wrench } from "lucide-react";
 import { APPROVAL_POLICIES, type ApprovalPolicy } from "../../lib/approval";
 import {
   REMOTE_ACTIONS,
@@ -25,6 +25,7 @@ import {
   type DeployServer,
   type ServerDraft
 } from "../../lib/ship/server";
+import { applyUpdate, checkForUpdate, type UpdateCheck } from "../../lib/updater";
 import { useApp } from "../../lib/store";
 
 type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
@@ -57,6 +58,14 @@ export function ShipSection() {
   const updateSettings = useApp((state) => state.updateSettings);
   const [version, setVersion] = useState(() => window.localStorage.getItem("ship.version") ?? "V.1");
   const [root, setRoot] = useState(() => window.localStorage.getItem("code.root") ?? ".");
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onCheck() {
+    setBusy(true);
+    setCheck(await checkForUpdate());
+    setBusy(false);
+  }
 
   return (
     <Section
@@ -146,6 +155,37 @@ export function ShipSection() {
             />
           </label>
         </div>
+      </div>
+
+      <div className="setx-card">
+        <div className="setx-card-title">
+          <Download size={13} />
+          Atualizações do aplicativo
+          <span className="chip">{check?.status ?? "não verificado"}</span>
+        </div>
+        <p className="setx-hint">
+          A verificação é manual e nunca instala sozinha. A instalação só é liberada quando a chave pública de
+          assinatura está configurada no build — sem ela não há como verificar a origem do binário, e instalar assim
+          seria pior do que não atualizar.
+        </p>
+        <div className="setx-actions">
+          <button className="lg-button" disabled={busy || !isTauriHost} onClick={() => void onCheck()}>
+            {busy ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}
+            Buscar atualizações
+          </button>
+          {check?.status === "disponivel" ? (
+            <button className="lg-button primary" onClick={() => void applyUpdate().catch(() => undefined)}>
+              Instalar {check.info.version} e reiniciar
+            </button>
+          ) : null}
+        </div>
+        {check?.status === "atualizado" ? <p className="setx-notice ok">Você já está na versão mais recente.</p> : null}
+        {check?.status === "erro" ? (
+          <p className="setx-notice warn">
+            Não foi possível verificar: {check.reason}. Em desenvolvimento isso é esperado — o endpoint e a chave de
+            assinatura são preenchidos na pipeline de release.
+          </p>
+        ) : null}
       </div>
     </Section>
   );
