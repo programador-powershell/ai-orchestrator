@@ -567,7 +567,6 @@ export function ModeView(props: ModeViewProps) {
     case "agent": return <AgentView onPrompt={props.onPrompt} onValidateGraph={props.onValidateGraph} sending={props.sending} processingLabel={props.processingLabel} />;
     case "code": return <CodeView onPrompt={props.onPrompt} onValidateGraph={props.onValidateGraph} onTerminalRun={props.onTerminalRun} sending={props.sending} processingLabel={props.processingLabel} />;
     case "security": return <SecurityView messages={props.messages} sending={props.sending} processingLabel={props.processingLabel} onPrompt={props.onPrompt} onOpenExternal={props.onOpenExternal} />;
-    case "game": return <GameStudioView onPrompt={props.onPrompt} onTerminalRun={props.onTerminalRun} sending={props.sending} processingLabel={props.processingLabel} />;
     default: return <ChatView messages={props.messages} sending={props.sending} processingLabel={props.processingLabel} onPrompt={props.onPrompt} />;
   }
 }

@@ -77,7 +77,7 @@ const demoFiles: Record<string, string> = {
     "# AI Orchestrator\n\nConteúdo de demonstração — no aplicativo desktop o explorer lê os arquivos reais\n" +
     "através dos comandos nativos fs_list / fs_read / fs_write.\n",
   "packages/contracts/src/index.ts":
-    'export const MODES = ["chat", "work", "design", "data", "agent", "code", "security", "game"] as const;\n' +
+    'export const MODES = ["chat", "work", "design", "data", "agent", "code", "security"] as const;\n' +
     "export type Mode = (typeof MODES)[number];\n\n" +
     "export interface FsEntry {\n  name: string;\n  path: string;\n  isDir: boolean;\n  size: number;\n}\n",
   "apps/desktop/src/lib/fsx.ts":

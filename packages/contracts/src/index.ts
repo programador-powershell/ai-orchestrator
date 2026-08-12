@@ -1,4 +1,4 @@
-export const MODES = ["chat", "work", "design", "data", "agent", "code", "security", "game"] as const;
+export const MODES = ["chat", "work", "design", "data", "agent", "code", "security",] as const;
 export type Mode = (typeof MODES)[number];
 
 /** Abas expostas na UI — produto completo + Office e Fine-Tuning. */
@@ -11,7 +11,6 @@ export const UI_MODES = [
   "work",
   "security",
   "agent",
-  "game",
   "tune"
 ] as const;
 export type UiMode = (typeof UI_MODES)[number];

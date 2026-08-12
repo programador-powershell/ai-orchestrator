@@ -12,7 +12,6 @@ pub enum Mode {
     Agent,
     Code,
     Security,
-    Game,
 }
 impl Mode {
     pub fn as_str(&self) -> &'static str {
@@ -24,7 +23,6 @@ impl Mode {
             Self::Agent => "agent",
             Self::Code => "code",
             Self::Security => "security",
-            Self::Game => "game",
         }
     }
 }
