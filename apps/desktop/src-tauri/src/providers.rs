@@ -97,45 +97,21 @@ fn parse_sse_delta(data: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Chat com STREAMING: a chave sai só do keyring; os deltas chegam ao front
-/// pelo Channel conforme o provedor os envia (SSE `stream: true`), em vez de
-/// esperar a resposta inteira. Retorna o texto completo ao final.
-#[tauri::command]
-pub async fn provider_chat_stream(
-    request: ProviderChatRequest,
-    on_event: Channel<StreamEvent>,
+/// Consome um corpo SSE de chat/completions emitindo cada delta pelo Channel.
+/// Trata chunk que parte caractere UTF-8 no meio (decodifica só o prefixo
+/// válido) e encerra cedo quando o stream é cancelado pelo botão Parar.
+pub async fn pump_sse_cancellable(
+    response: reqwest::Response,
+    on_event: &Channel<StreamEvent>,
+    stream_id: &Option<String>,
 ) -> Result<String, String> {
-    let base_url = validate_base_url(&request.base_url)?;
-    let api_key = read_key(&request.account)?;
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()
-        .map_err(|error| error.to_string())?
-        .post(format!("{base_url}/chat/completions"))
-        .bearer_auth(api_key)
-        .json(&serde_json::json!({
-            "model": request.model,
-            "messages": request.messages,
-            "stream": true
-        }))
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
-
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut full = String::new();
-    // Bytes crus acumulados: um chunk pode partir um caractere UTF-8 no meio,
-    // então só decodifica o prefixo válido e guarda a sobra para o próximo.
     let mut raw: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
-        if is_cancelled(&request.stream_id) {
-            clear_cancelled(&request.stream_id);
-            on_event
-                .send(StreamEvent::Done(full.clone()))
-                .map_err(|error| error.to_string())?;
+        if is_cancelled(stream_id) {
+            clear_cancelled(stream_id);
             return Ok(full);
         }
         let bytes = chunk.map_err(|error| error.to_string())?;
@@ -175,6 +151,45 @@ pub async fn provider_chat_stream(
             }
         }
     }
+    Ok(full)
+}
+
+/// Variante sem cancelamento (runtime local).
+pub async fn pump_sse(
+    response: reqwest::Response,
+    on_event: &Channel<StreamEvent>,
+) -> Result<String, String> {
+    pump_sse_cancellable(response, on_event, &None).await
+}
+
+/// Chat com STREAMING: a chave sai só do keyring; os deltas chegam ao front
+/// pelo Channel conforme o provedor os envia (SSE `stream: true`), em vez de
+/// esperar a resposta inteira. Retorna o texto completo ao final.
+#[tauri::command]
+pub async fn provider_chat_stream(
+    request: ProviderChatRequest,
+    on_event: Channel<StreamEvent>,
+) -> Result<String, String> {
+    let base_url = validate_base_url(&request.base_url)?;
+    let api_key = read_key(&request.account)?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|error| error.to_string())?
+        .post(format!("{base_url}/chat/completions"))
+        .bearer_auth(api_key)
+        .json(&serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "stream": true
+        }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+
+    let full = pump_sse_cancellable(response, &on_event, &request.stream_id).await?;
     clear_cancelled(&request.stream_id);
     on_event
         .send(StreamEvent::Done(full.clone()))
