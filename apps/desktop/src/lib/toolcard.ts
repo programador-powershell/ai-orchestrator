@@ -22,6 +22,18 @@ export interface ToolCard {
   sources?: ToolSource[];
   /** URLs/data-URLs de imagens geradas — exibidas no cartão. */
   images?: string[];
+  /** Diff da edição (fs_write): linhas somadas/removidas + o patch. */
+  edit?: ToolEdit;
+}
+
+export interface ToolEdit {
+  path: string;
+  added: number;
+  removed: number;
+  /** Trecho unificado já formatado (com contexto), pronto para exibir. */
+  patch: string;
+  /** true quando o arquivo não existia antes (criação). */
+  created: boolean;
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -62,7 +74,7 @@ export function toolLabel(card: ToolCard): string {
 export function applyResult(
   cards: ToolCard[],
   tool: string,
-  patch: { status: ToolStatus; output?: string; sources?: ToolSource[]; images?: string[] }
+  patch: { status: ToolStatus; output?: string; sources?: ToolSource[]; images?: string[]; edit?: ToolEdit }
 ): ToolCard[] {
   const index = [...cards].reverse().findIndex((card) => card.tool === tool && card.status === "running");
   if (index < 0) return cards;

@@ -5,7 +5,8 @@
  */
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Circle, Globe, LoaderCircle, TriangleAlert, Check } from "lucide-react";
-import { runningCount, toolLabel, type ToolCard } from "../lib/toolcard";
+import { runningCount, toolLabel, type ToolCard, type ToolEdit } from "../lib/toolcard";
+import { editLabel } from "../lib/toolEdit";
 
 function StatusIcon({ status }: { status: ToolCard["status"] }) {
   if (status === "running") return <LoaderCircle size={11} className="spin" />;
@@ -28,6 +29,31 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
   const open = openOverride ?? running > 0;
 
   if (!cards.length) return null;
+
+  /** Diff da edição, recolhível: cabeçalho "Criado x.ts +44 −0" + linhas. */
+  function EditDiff({ edit }: { edit: ToolEdit }) {
+    const [expanded, setExpanded] = useState(false);
+    return (
+      <div className="tooledit">
+        <button className="tooledit-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          <span className="tooledit-label">{editLabel(edit)}</span>
+        </button>
+        {expanded && (
+          <pre className="tooledit-patch">
+            {edit.patch.split("\n").map((line, index) => (
+              <span
+                key={index}
+                className={line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("…") ? "skip" : ""}
+              >
+                {line}
+              </span>
+            ))}
+          </pre>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={`toolgroup ${running ? "running" : ""}`}>
@@ -73,7 +99,8 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
                   ))}
                 </div>
               )}
-              {card.output && <pre className="toolcall-output">{card.output}</pre>}
+              {card.edit && <EditDiff edit={card.edit} />}
+              {card.output && !card.edit && <pre className="toolcall-output">{card.output}</pre>}
             </div>
           ))}
         </div>

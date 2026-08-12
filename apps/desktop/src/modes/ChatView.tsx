@@ -32,6 +32,7 @@ import { describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
 import { useApp, type ThreadMessage } from "../lib/store";
 import { ToolGroup } from "../components/ToolGroup";
+import { ReasoningBlock } from "../components/ReasoningBlock";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -233,6 +234,9 @@ export function ChatView() {
           </span>
         )}
         <div className="chatx-col">
+          {isAssistant && message.meta?.reasoning && (
+            <ReasoningBlock text={message.meta.reasoning} active={streamingThis && !message.content} />
+          )}
           {message.meta?.kind === "tools" ? (
             <ToolGroup cards={message.meta.tools ?? []} />
           ) : (

@@ -19,6 +19,8 @@ export interface ThreadMessage extends ChatMessage {
     planTitle?: string;
     /** Grupo de ferramentas executadas (cartão recolhível estilo Studio). */
     tools?: ToolCard[];
+    /** Raciocínio do modelo — bloco "Pensando" recolhível, antes da resposta. */
+    reasoning?: string;
   };
 }
 
@@ -198,6 +200,7 @@ interface AppState {
 
   appendMessage: (mode: UiMode, message: ThreadMessage) => void;
   patchLastAssistant: (mode: UiMode, delta: string) => void;
+  patchLastReasoning: (mode: UiMode, delta: string) => void;
   updateToolGroup: (mode: UiMode, update: (cards: ToolCard[]) => ToolCard[]) => void;
   replaceLastAssistant: (mode: UiMode, message: ThreadMessage) => void;
   setSending: (mode: UiMode, sending: boolean) => void;
@@ -318,6 +321,20 @@ export const useApp = create<AppState>()(
           const last = messages.at(-1);
           if (last?.role === "assistant") {
             messages[messages.length - 1] = { ...last, content: last.content + delta };
+          }
+          return { threads: { ...state.threads, [mode]: { ...thread, messages } } };
+        }),
+      /** Acumula o raciocínio na mensagem corrente (bloco "Pensando"). */
+      patchLastReasoning: (mode, delta) =>
+        set((state) => {
+          const thread = state.threads[mode];
+          const messages = [...thread.messages];
+          const last = messages.at(-1);
+          if (last?.role === "assistant") {
+            messages[messages.length - 1] = {
+              ...last,
+              meta: { ...last.meta, reasoning: (last.meta?.reasoning ?? "") + delta }
+            };
           }
           return { threads: { ...state.threads, [mode]: { ...thread, messages } } };
         }),

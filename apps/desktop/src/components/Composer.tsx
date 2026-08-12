@@ -25,6 +25,8 @@ import {
   type ToolCall
 } from "../lib/agent";
 import { applyResult, toolDetail } from "../lib/toolcard";
+import { buildToolEdit } from "../lib/toolEdit";
+import { fsRead } from "../lib/fsx";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { createStreamBuffer } from "../lib/streamBuffer";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
@@ -73,7 +75,8 @@ export function Composer() {
   const setResearchReport = useApp((state) => state.setResearchReport);
   const attachments = useApp((state) => state.attachments);
   const setAttachments = useApp((state) => state.setAttachments);
-  const { appendMessage, patchLastAssistant, replaceLastAssistant, setSending, updateToolGroup } = useApp.getState();
+  const { appendMessage, patchLastAssistant, patchLastReasoning, replaceLastAssistant, setSending, updateToolGroup } =
+    useApp.getState();
 
   const [executingPlan, setExecutingPlan] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
@@ -158,15 +161,19 @@ export function Composer() {
     // Coalescing por frame: os tokens chegam na taxa do provedor, mas a
     // repintura é 1×/frame — sem isso o React congela em respostas rápidas.
     const buffer = createStreamBuffer((chunk) => patchLastAssistant(mode, chunk));
+    const reasoningBuffer = createStreamBuffer((chunk) => patchLastReasoning(mode, chunk));
     try {
       const final = await chatOnce(selection, mode, request, ctx, {
         onDelta: (delta) => buffer.push(delta),
+        onReasoning: (delta) => reasoningBuffer.push(delta),
         onStage: (stage) => setStage(stage)
       }, signal);
       buffer.flush();
+      reasoningBuffer.flush();
       return final;
     } catch (cause) {
       buffer.dispose();
+      reasoningBuffer.dispose();
       throw cause;
     }
   }
@@ -258,10 +265,21 @@ export function Composer() {
           if (!client) return { ok: false, output: `servidor MCP "${external.server}" indisponível` };
           return client.callTool(external.tool, call.args);
         }
+        // Edição: lê o conteúdo ANTES para montar o diff exibido no cartão.
+        let previousContent: string | null = null;
+        if (call.tool === "fs_write") {
+          previousContent = await fsRead(root, String(call.args.path ?? "")).catch(() => null);
+        }
         const result = await dispatchTool(call, root);
         // Diagnostics pós-edição: após gravar código, roda o check e realimenta.
         if (call.tool === "fs_write" && result.ok) {
           const path = String(call.args.path ?? "");
+          updateToolGroup(mode, (cards) =>
+            applyResult(cards, "fs_write", {
+              status: "ok",
+              edit: buildToolEdit(path, previousContent, String(call.args.content ?? ""))
+            })
+          );
           const command = diagnosticCommand(path);
           if (command) {
             setStage(`Diagnóstico: ${path}`);
