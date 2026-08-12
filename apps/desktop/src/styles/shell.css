@@ -354,6 +354,30 @@ button { -webkit-tap-highlight-color: transparent; }
   .status-pill .pill-label { display: none; }
 }
 
+/* Seletor de política de aprovação no composer ("Approve for me"). */
+.approve-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.approve-select:hover { color: var(--ink); border-color: var(--line-strong); }
+.approve-select select {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
 /* Medidor de contexto (topo) — "1.4k / 131.1k" com barra fina. */
 .ctx-meter {
   display: flex;
