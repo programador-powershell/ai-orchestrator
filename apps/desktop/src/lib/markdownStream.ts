@@ -2,61 +2,73 @@
  * Parse incremental de markdown para streaming.
  *
  * O problema: re-parsear a resposta inteira a cada token é O(n²) — visível já
- * em ~2k tokens. A solução (mesma ideia do streamdown): o texto que chegou é
- * dividido num PREFIXO ESTÁVEL (blocos já fechados, que não mudam mais) e numa
- * CAUDA (o bloco que ainda está sendo escrito). Só a cauda é re-parseada; os
- * blocos do prefixo ficam em cache e são reaproveitados a cada delta.
+ * em ~2k tokens. A solução: manter um PREFIXO ESTÁVEL (blocos já fechados) que
+ * é parseado UMA vez cada, e re-parsear apenas a CAUDA (o bloco em construção).
+ *
+ * Detalhe que faz a diferença: a varredura também é incremental. Cada caractere
+ * do stream é inspecionado uma única vez na vida — nada de reescanear o texto
+ * inteiro em busca de cercas de código ou linhas em branco a cada delta.
  */
 import { parseMarkdown, type BlockToken } from "./markdown";
 
-/**
- * Último ponto do texto a partir do qual tudo é "bloco fechado".
- *
- * Um bloco fecha numa linha em branco (\n\n). A cauda depois do último \n\n
- * ainda pode mudar de forma com o próximo token (ex.: `- --` vira lista, uma
- * cerca ``` ainda pode abrir/fechar), então nunca entra no prefixo estável.
- *
- * Cercas de código são a exceção: enquanto houver um número ÍMPAR de ``` no
- * texto, o bloco de código está aberto e engole linhas em branco — o prefixo
- * estável precisa parar antes da cerca aberta.
- */
-export function stableBoundary(source: string): number {
-  const fenceCount = (source.match(/^```/gm) ?? []).length;
-  const searchLimit =
-    fenceCount % 2 === 1 ? source.lastIndexOf("\n```") + 1 || source.indexOf("```") : source.length;
-  const slice = source.slice(0, Math.max(0, searchLimit));
-  const lastBreak = slice.lastIndexOf("\n\n");
-  return lastBreak < 0 ? 0 : lastBreak + 2;
-}
-
 export interface IncrementalMarkdown {
-  /** Blocos do texto completo, reusando o prefixo já parseado. */
+  /** Blocos do texto completo, reusando os blocos já fechados. */
   parse: (source: string) => BlockToken[];
 }
 
 /**
- * Cria um parser com memória de prefixo. Uma instância por mensagem em
- * streaming (o cache só é válido enquanto o texto CRESCE no mesmo prefixo).
+ * Cria um parser com memória. Uma instância por mensagem em streaming — o
+ * cache só vale enquanto o texto CRESCE sobre o mesmo prefixo; se o texto for
+ * substituído (regenerar, trocar de conversa), tudo é recalculado.
  */
 export function createIncrementalMarkdown(): IncrementalMarkdown {
-  let cachedPrefix = "";
-  let cachedBlocks: BlockToken[] = [];
+  /** Fim do trecho já parseado e congelado em `blocks`. */
+  let stableEnd = 0;
+  /** Até onde o texto já foi varrido (nunca varremos duas vezes). */
+  let scanned = 0;
+  /** Estamos dentro de uma cerca ``` aberta? */
+  let openFence = false;
+  /** Texto da chamada anterior — detecta troca de conteúdo. */
+  let previous = "";
+  let blocks: BlockToken[] = [];
+
+  function reset() {
+    stableEnd = 0;
+    scanned = 0;
+    openFence = false;
+    blocks = [];
+  }
 
   return {
     parse(source: string): BlockToken[] {
-      // Texto encolheu ou trocou (nova mensagem/regenerar): invalida o cache.
-      if (!source.startsWith(cachedPrefix)) {
-        cachedPrefix = "";
-        cachedBlocks = [];
+      if (!source.startsWith(previous)) reset();
+      previous = source;
+
+      // Varre APENAS o que chegou desde a última vez, linha a linha completa.
+      // Uma linha em branco fora de cerca fecha um bloco: dali para trás o
+      // conteúdo não muda mais, mesmo que cheguem mais tokens.
+      let candidate = stableEnd;
+      let cursor = scanned;
+      for (;;) {
+        const newline = source.indexOf("\n", cursor);
+        if (newline < 0) break; // linha ainda incompleta: espera mais tokens
+        const line = source.slice(cursor, newline);
+        if (line.startsWith("```")) openFence = !openFence;
+        else if (!openFence && line.trim() === "") candidate = newline + 1;
+        cursor = newline + 1;
       }
-      const boundary = stableBoundary(source);
-      if (boundary > cachedPrefix.length) {
-        cachedPrefix = source.slice(0, boundary);
-        cachedBlocks = parseMarkdown(cachedPrefix);
+      scanned = cursor;
+
+      // Congela os blocos recém-fechados: cada trecho é parseado UMA vez.
+      if (candidate > stableEnd) {
+        const segment = source.slice(stableEnd, candidate);
+        if (segment.trim()) blocks = [...blocks, ...parseMarkdown(segment)];
+        stableEnd = candidate;
       }
-      const tail = source.slice(cachedPrefix.length);
-      if (!tail.trim()) return cachedBlocks;
-      return [...cachedBlocks, ...parseMarkdown(tail)];
+
+      const tail = source.slice(stableEnd);
+      if (!tail.trim()) return blocks;
+      return [...blocks, ...parseMarkdown(tail)];
     }
   };
 }

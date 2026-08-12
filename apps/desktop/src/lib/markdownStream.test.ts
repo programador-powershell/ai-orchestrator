@@ -1,27 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { parseMarkdown } from "./markdown";
-import { createIncrementalMarkdown, stableBoundary } from "./markdownStream";
+import { createIncrementalMarkdown } from "./markdownStream";
 
-describe("stableBoundary", () => {
-  it("para depois do último parágrafo fechado", () => {
-    const source = "Um parágrafo.\n\nOutro em construção";
-    expect(source.slice(0, stableBoundary(source))).toBe("Um parágrafo.\n\n");
+/** Equivalência: qualquer sequência de chunks tem de dar o mesmo que o parse completo. */
+function streamEquals(text: string, chunkSize: number): boolean {
+  const incremental = createIncrementalMarkdown();
+  let out = incremental.parse("");
+  for (let end = chunkSize; end < text.length; end += chunkSize) out = incremental.parse(text.slice(0, end));
+  out = incremental.parse(text);
+  return JSON.stringify(out) === JSON.stringify(parseMarkdown(text));
+}
+
+describe("cerca de código durante o stream", () => {
+  it("linha em branco DENTRO de ``` não fecha bloco", () => {
+    const text = "Texto.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nfim";
+    expect(streamEquals(text, 7)).toBe(true);
   });
 
-  it("não considera nada estável sem quebra dupla", () => {
-    expect(stableBoundary("ainda escrevendo a primeira linha")).toBe(0);
-  });
-
-  it("não congela dentro de cerca de código aberta", () => {
-    const source = "Texto.\n\n```ts\nconst a = 1;\n\nconst b = 2;";
-    // A cerca está aberta: o estável tem de parar ANTES dela, senão a linha em
-    // branco de dentro do código seria tratada como fim de bloco.
-    expect(source.slice(0, stableBoundary(source))).toBe("Texto.\n\n");
-  });
-
-  it("volta a avançar quando a cerca fecha", () => {
-    const source = "Texto.\n\n```ts\nconst a = 1;\n```\n\ndepois";
-    expect(source.slice(0, stableBoundary(source))).toContain("```ts");
+  it("cerca aberta no fim do stream não quebra", () => {
+    const incremental = createIncrementalMarkdown();
+    const partial = "Texto.\n\n```ts\nconst a = 1;";
+    expect(JSON.stringify(incremental.parse(partial))).toBe(JSON.stringify(parseMarkdown(partial)));
   });
 });
 
