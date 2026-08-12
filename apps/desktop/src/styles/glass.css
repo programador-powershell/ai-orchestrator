@@ -70,6 +70,14 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.toolcall-images { display: flex; flex-wrap: wrap; gap: 6px; }
+.toolcall-images img {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  object-fit: cover;
+}
 .toolcall-sources { display: flex; flex-wrap: wrap; gap: 5px; }
 .source-chip {
   display: inline-flex;

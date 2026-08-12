@@ -242,6 +242,22 @@ export function Composer() {
             return { ok: false, output: cause instanceof Error ? cause.message : String(cause) };
           }
         }
+        // Geração de imagem: usa a rota do gateway (Imagen/Flux/OpenAI Images).
+        if (call.tool === "generate_image") {
+          const prompt = String(call.args.prompt ?? "").trim();
+          if (!prompt) return { ok: false, output: "generate_image exige args.prompt" };
+          if (!session?.accessToken || !session.workspaceId) {
+            return { ok: false, output: "conecte o gateway em Configurações para gerar imagens" };
+          }
+          try {
+            const { generateImage } = await import("../lib/gateway");
+            const images = await generateImage(session, prompt, signal);
+            if (!images.length) return { ok: false, output: "o provedor não retornou imagem" };
+            return { ok: true, output: `${images.length} imagem(ns) gerada(s)`, images };
+          } catch (cause) {
+            return { ok: false, output: cause instanceof Error ? cause.message : String(cause) };
+          }
+        }
         // Ferramenta MCP externa (mcp:<servidor>:<tool>) roteia ao cliente.
         const external = parseNamespaced(call.tool);
         if (external) {
@@ -299,7 +315,8 @@ export function Composer() {
           applyResult(cards, call.tool, {
             status: result.ok ? "ok" : "error",
             output: result.output.slice(0, 1500),
-            sources: result.sources
+            sources: result.sources,
+            images: result.images
           })
         )
     });
