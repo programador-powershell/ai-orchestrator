@@ -20,12 +20,12 @@ fn credential_store(account: String, token: String) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Existência da credencial SEM devolver o segredo. A UI só precisa saber se a
+/// chave está configurada; ler o valor levaria o segredo para o heap do webview.
 #[tauri::command]
-fn credential_read(account: String) -> Result<String, String> {
-    keyring::Entry::new("AI Orchestrator", &account)
-        .map_err(|error| error.to_string())?
-        .get_password()
-        .map_err(|error| error.to_string())
+fn credential_exists(account: String) -> Result<bool, String> {
+    let entry = keyring::Entry::new("AI Orchestrator", &account).map_err(|error| error.to_string())?;
+    Ok(entry.get_password().is_ok())
 }
 
 #[tauri::command]
@@ -61,7 +61,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_shutdown,
             credential_store,
-            credential_read,
+            credential_exists,
             credential_delete,
             auth::oidc_login,
             auth::oidc_restore,

@@ -16,7 +16,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import type { ExecutionPlan } from "@ai-orchestrator/contracts";
+import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
 import type { ChatMessage } from "../lib/gateway";
 import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
 import {
@@ -206,6 +206,19 @@ export function Composer() {
   async function runAgentTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
     const root = window.localStorage.getItem("code.root") ?? ".";
     toolGroupOpenRef.current = false;
+    /**
+     * O fusion reescreve as mensagens de sistema nos seus builders, então a
+     * instrução de ferramentas se perdia e o modo agente ficava INERTE em
+     * silêncio. No modo Ferramentas, o loop fala direto com o orquestrador do
+     * preset — quem coordena as ferramentas é o loop, não o fusion.
+     */
+    const agentSelection: EngineSelection =
+      selection.kind === "fusion"
+        ? (() => {
+            const preset = settings.fusionPresets.find((item) => item.id === selection.presetId);
+            return preset ? { kind: "model", target: preset.orchestrator } : selection;
+          })()
+        : selection;
     // Servidores MCP configurados entram no catálogo do agente (namespaced).
     const mcpClients = new Map<string, McpHttpClient>();
     const mcpSpecs: string[] = [];
@@ -229,7 +242,7 @@ export function Composer() {
         const buffer = createStreamBuffer((chunk) => patchLastAssistant(mode, chunk));
         try {
           const raw = await chatOnce(
-            selection,
+            agentSelection,
             mode,
             msgs,
             ctx,
@@ -254,7 +267,7 @@ export function Composer() {
             const research = await import("../lib/research");
             const report = await research.runResearch(
               query,
-              (msgs) => chatOnce(selection, mode, msgs, ctx, { onDelta: () => undefined }, signal),
+              (msgs) => chatOnce(agentSelection, mode, msgs, ctx, { onDelta: () => undefined }, signal),
               { onStage: (stage) => setStage(stage) }
             );
             return {

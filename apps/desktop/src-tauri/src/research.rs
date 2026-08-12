@@ -102,11 +102,55 @@ fn extract_links(html: &str) -> Vec<String> {
 }
 
 #[tauri::command]
+/// Recusa hosts que não são internet pública: loopback, rede privada,
+/// link-local (inclui o 169.254.169.254 de metadados de nuvem) e nomes internos.
+fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
+    use std::net::{IpAddr, ToSocketAddrs};
+    let host = url.host_str().ok_or_else(|| "URL sem host".to_string())?;
+    let lowered = host.to_ascii_lowercase();
+    if lowered == "localhost" || lowered.ends_with(".local") || lowered.ends_with(".internal") {
+        return Err("host interno não é permitido".into());
+    }
+    let port = url.port_or_known_default().unwrap_or(80);
+    // Resolve o nome: só assim um domínio apontando para IP interno é barrado.
+    let resolved: Vec<IpAddr> = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| "não foi possível resolver o host".to_string())?
+        .map(|addr| addr.ip())
+        .collect();
+    if resolved.is_empty() {
+        return Err("host não resolvido".into());
+    }
+    for ip in resolved {
+        let blocked = match ip {
+            IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_unspecified()
+                    || v4.octets()[0] == 0
+                    // 100.64.0.0/10 (CGNAT) e 169.254.0.0/16 (metadados)
+                    || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+            }
+            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.segments()[0] & 0xfe00 == 0xfc00,
+        };
+        if blocked {
+            return Err(format!("host {ip} pertence à rede interna — bloqueado"));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "URL inválida".to_string())?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("apenas URLs http(s) são aceitas".into());
     }
+    // SSRF: a URL vem do MODELO. Sem esta guarda, uma resposta poderia fazer o
+    // app buscar serviços internos (metadados de nuvem, admin em localhost).
+    guard_public_host(&parsed)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()

@@ -757,12 +757,13 @@ async function testProviderConnection(
   overrides: Record<string, string>
 ): Promise<{ ok: boolean; text: string }> {
   if (isTauriHost) {
-    try {
-      await invoke<string>("credential_read", { account: `provider:${providerId}` });
-      return { ok: true, text: `Chave presente no keyring para ${providerId}. A validação online ocorre na primeira chamada.` };
-    } catch {
-      return { ok: false, text: `Nenhuma chave salva para ${providerId}.` };
-    }
+    // A chave NUNCA é lida pelo JS: o Rust responde só se ela existe.
+    const exists = await invoke<boolean>("credential_exists", {
+      account: `provider:${providerId}`
+    }).catch(() => false);
+    return exists
+      ? { ok: true, text: `Chave presente no keyring para ${providerId}. A validação online ocorre na primeira chamada.` }
+      : { ok: false, text: `Nenhuma chave salva para ${providerId}.` };
   }
   const key = await byok.readForWebCall(providerId);
   if (!key) return { ok: false, text: `Nenhuma chave salva para ${providerId} neste navegador.` };
