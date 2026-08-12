@@ -178,6 +178,14 @@ pub struct OidcClaims {
     pub exp: usize,
     pub iss: String,
     pub aud: Value,
+    /// Claim `groups` do Entra (ObjectIds). Acima de ~150 grupos vira
+    /// overage e chega vazio — por isso o caminho recomendado são app roles.
+    #[serde(default)]
+    pub groups: Vec<String>,
+    /// App roles do registro do aplicativo — o canal recomendado pela
+    /// Microsoft para autorização (sem limite de overage).
+    #[serde(default)]
+    pub roles: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,4 +193,7 @@ pub struct Identity {
     pub subject: String,
     pub email: Option<String>,
     pub name: Option<String>,
+    /// groups ∪ roles do token — a política casa contra ad_groups por
+    /// ObjectId OU nome, então os dois canais funcionam.
+    pub groups: Vec<String>,
 }

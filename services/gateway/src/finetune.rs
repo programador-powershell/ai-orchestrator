@@ -1,5 +1,6 @@
 use crate::{
     error::ApiError,
+    models::Mode,
     routes::{identity, rate_limit, require_role, user_id},
     state::AppState,
 };
@@ -507,8 +508,13 @@ async fn authorized_user(
     workspace: Uuid,
     minimum: i16,
 ) -> Result<Uuid, ApiError> {
-    let user = user_id(state, &identity(state, headers).await?).await?;
+    let caller = identity(state, headers).await?;
+    let user = user_id(state, &caller).await?;
     require_role(state, user, workspace, minimum).await?;
+    // Fine-tuning é o módulo Tune: fora da política, 404 em todos os
+    // endpoints — o harness inteiro não existe para o usuário.
+    crate::policy::ensure_mode_allowed(state, workspace, user, &caller.groups, &Mode::Tune)
+        .await?;
     Ok(user)
 }
 

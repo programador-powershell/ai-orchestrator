@@ -352,3 +352,47 @@ export interface FsEntry {
   isDir: boolean;
   size: number;
 }
+
+/* ------------------- Bootstrap do cliente gerenciado -------------------- */
+/* Ver docs/adr-edicao-gerenciada.md: a política nasce no servidor, viaja    */
+/* assinada e a UI apenas reflete.                                           */
+
+export interface BootstrapProfile {
+  userId: string;
+  subject: string;
+  email?: string | null;
+  name?: string | null;
+  groups: string[];
+  workspaceId: string;
+  workspaceName: string;
+  role: "owner" | "admin" | "member";
+}
+
+export interface BootstrapPromptMaster {
+  content: string;
+  allowLocalAppend: boolean;
+  localMaxChars: number;
+  version: number;
+}
+
+export interface BootstrapPolicy {
+  allowedModes: UiMode[];
+  agentTools: boolean;
+  approvalPolicy: "ask" | "edits" | "all";
+  byokAllowed: boolean;
+  localRuntimeAllowed: boolean;
+  effortMax: number;
+  promptMaster: BootstrapPromptMaster | null;
+  offlineGraceHours: number;
+}
+
+export interface BootstrapResponse {
+  schemaVersion: 1;
+  issuedAt: string;
+  expiresAt: string;
+  etag: string;
+  /** Ed25519 sobre o corpo — obrigatória na edição managed (S3). */
+  signature: string | null;
+  profile: BootstrapProfile;
+  policy: BootstrapPolicy;
+}

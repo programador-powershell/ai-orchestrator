@@ -158,11 +158,25 @@ impl AuthService {
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(ApiError::Unauthorized)?;
         if self.config.allow_dev_auth && token.starts_with("dev:") {
-            let subject = token.trim_start_matches("dev:").to_string();
+            // Grupos sintéticos para testar o gating sem AD:
+            // "dev:daniel@grupo-ti,grupo-dev". Sem "@", segue sem grupos.
+            let raw = token.trim_start_matches("dev:");
+            let (subject, groups) = match raw.split_once('@') {
+                Some((subject, list)) => (
+                    subject.to_string(),
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                ),
+                None => (raw.to_string(), Vec::new()),
+            };
             return Ok(Identity {
                 subject: subject.clone(),
                 email: Some(format!("{subject}@localhost")),
                 name: Some(subject),
+                groups,
             });
         }
         let header = decode_header(token).map_err(|_| ApiError::Unauthorized)?;
@@ -198,10 +212,17 @@ impl AuthService {
         let claims = decode::<OidcClaims>(token, &decoding, &validation)
             .map_err(|_| ApiError::Unauthorized)?
             .claims;
+        // groups ∪ roles: a política casa por ObjectId ou por nome, então
+        // tanto o claim de grupos quanto app roles alimentam o gating.
+        let mut groups = claims.groups;
+        groups.extend(claims.roles);
+        groups.sort();
+        groups.dedup();
         Ok(Identity {
             subject: claims.sub,
             email: claims.email,
             name: claims.name,
+            groups,
         })
     }
 }
