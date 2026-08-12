@@ -42,17 +42,21 @@ import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
 import {
   FINETUNABLE_MODELS,
+  validateJsonlForFineTune,
+  type FineTuneMethod,
+  type FineTuneJob,
+  type JobOptions
+} from "../lib/finetune";
+// Roteado: gateway corporativo quando conectado, direto ao provedor sem ele.
+import {
   cancelFineTuneJob,
   createFineTuneJob,
   getFineTuneJob,
   listFineTuneJobs,
   listJobEvents,
   uploadTrainingFile,
-  validateJsonlForFineTune,
-  type FineTuneMethod,
-  type FineTuneJob,
-  type JobOptions
-} from "../lib/finetune";
+  usesGateway
+} from "../lib/finetuneRoute";
 import { estimateTrainingCost } from "../lib/tunelab";
 import { fsWrite, isTauriFs } from "../lib/fsx";
 import { useApp } from "../lib/store";
@@ -188,7 +192,12 @@ async function startCloudTraining(model: string, suffix: string, hyperparams: Hy
     return;
   }
   useTune.setState({ cloudBusy: true });
-  feed(`**Treino na nuvem** — enviando ${validation.examples} exemplos para a OpenAI…`);
+  // Diz por onde o dataset vai: gateway corporativo (governança, chave do
+  // workspace) ou direto ao provedor com a chave do usuário.
+  const via = usesGateway()
+    ? "pelo **gateway corporativo** (dado auditado, chave do workspace)"
+    : "**direto ao provedor** com a sua chave (sem gateway conectado)";
+  feed(`**Treino na nuvem** — enviando ${validation.examples} exemplos ${via}…`);
   try {
     const fileId = await uploadTrainingFile(jsonl);
     feed(`Upload ok (\`${fileId}\`) — criando job de fine-tuning em \`${model}\` (${hyperparams.method}, ${hyperparams.epochs} época(s))…`);
