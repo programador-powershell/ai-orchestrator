@@ -8,6 +8,7 @@ import {
   CircleStop,
   Globe2,
   ListChecks,
+  FileCode2,
   Paperclip,
   Send,
   Sparkles,
@@ -28,7 +29,8 @@ import {
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
 import { policyLabel, requiresPrompt } from "../lib/approval";
-import { fsRead } from "../lib/fsx";
+import { collectFiles, fsRead } from "../lib/fsx";
+import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
 import { filesFromClipboard } from "../lib/paste";
 import { fileToDataUrl, toAttachmentDataUrl } from "../lib/imageAttach";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
@@ -83,6 +85,9 @@ export function Composer() {
     useApp.getState();
 
   const [executingPlan, setExecutingPlan] = useState(false);
+  /** @-mentions: arquivos do projeto indexados sob demanda + sugestões abertas. */
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  const [mention, setMention] = useState<{ term: string; start: number } | null>(null);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
   /** Um grupo de tool calls por turno agêntico (cartão recolhível). */
@@ -409,6 +414,19 @@ export function Composer() {
     abortRef.current = abort;
     try {
       const system = await buildSystemMessages(text);
+      // @-mentions: carrega o conteúdo dos arquivos citados na pergunta.
+      const mentioned = extractMentionedPaths(text);
+      if (mentioned.length) {
+        const root = window.localStorage.getItem("code.root") ?? ".";
+        const loaded = await Promise.all(
+          mentioned.slice(0, 5).map(async (path) => ({
+            path,
+            content: await fsRead(root, path).catch(() => "")
+          }))
+        );
+        const withContent = loaded.filter((file) => file.content);
+        if (withContent.length) system.push({ role: "system", content: mentionContext(withContent) });
+      }
       for (const attachment of currentAttachments) {
         // Imagem vai como conteúdo de VISÃO (image_url); texto vai como system.
         if (attachment.dataUrl && attachment.mime?.startsWith("image/")) continue;
@@ -578,6 +596,27 @@ export function Composer() {
           </div>
         </div>
       )}
+      {mention && rankMentions(projectFiles, mention.term).length > 0 && (
+        <div className="mention-list glass-strong" role="listbox" aria-label="Arquivos do projeto">
+          {rankMentions(projectFiles, mention.term).map((path) => (
+            <button
+              key={path}
+              className="mention-item"
+              role="option"
+              onClick={() => {
+                const applied = applyMention(input, mention, path);
+                setInput(applied.text);
+                setMention(null);
+                textareaRef.current?.focus();
+              }}
+            >
+              <FileCode2 size={12} />
+              <span className="mention-name">{path.split("/").pop()}</span>
+              <small>{path}</small>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="composer glass-strong">
         {attachments.length > 0 && (
           <div className="composer-attachments">
@@ -604,8 +643,25 @@ export function Composer() {
           ref={textareaRef}
           value={input}
           rows={1}
-          onChange={(event) => setInput(event.target.value)}
+          onChange={(event) => {
+            setInput(event.target.value);
+            const found = detectMention(event.target.value, event.target.selectionStart ?? 0);
+            setMention(found);
+            // Indexa os arquivos do projeto na primeira menção da sessão.
+            if (found && !projectFiles.length) {
+              const root = window.localStorage.getItem("code.root") ?? ".";
+              void collectFiles(root, { maxEntries: 400 })
+                .then((entries) => setProjectFiles(entries.map((entry) => entry.path)))
+                .catch(() => undefined);
+            }
+          }}
           onKeyDown={(event) => {
+            // Esc fecha a lista de menções sem enviar.
+            if (event.key === "Escape" && mention) {
+              event.preventDefault();
+              setMention(null);
+              return;
+            }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               void send();
