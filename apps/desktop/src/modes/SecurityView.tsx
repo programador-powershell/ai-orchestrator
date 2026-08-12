@@ -4,8 +4,8 @@
  * de segredos (lib/scan.ts, puro) sobre pasta do projeto (desktop), código
  * colado ou arquivos enviados (funciona no navegador). Nada é simulado.
  * Layout: centro = achados/diff/audit · direita = escopo · rail = rota
- * ativa, atalhos e revisões. O comando sandbox_execute permanece no backend;
- * a UI não o expõe.
+ * ativa, atalhos e revisões. O sandbox_execute do backend é exposto pelo
+ * SandboxPanel na coluna direita (execução isolada real).
  */
 import "../styles/modes/security.css";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -28,6 +28,7 @@ import {
   Radar,
   ScanLine,
   ShieldCheck,
+  FlaskConical,
   Upload,
   UserCheck,
   X
@@ -46,6 +47,7 @@ import {
   VRight,
   VStatus
 } from "../components/Primitives";
+import { SandboxPanel } from "../components/SandboxPanel";
 import { RailConversations } from "../components/RailConversations";
 import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
 import {
@@ -916,6 +918,9 @@ export function SecurityView() {
               );
             })}
           </PanelScroll>
+
+          <PanelTitle icon={<FlaskConical size={13} />} label="Sandbox" meta="execução isolada" />
+          <SandboxPanel />
         </VRight>
       </VBody>
 

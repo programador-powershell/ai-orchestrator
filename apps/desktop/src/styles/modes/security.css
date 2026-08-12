@@ -347,3 +347,36 @@
 .secx-cascade-step.on { border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
 .secx-cascade-step.on span { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 .secx-cascade-step.on i { background: var(--ok); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 60%, transparent); }
+
+/* Painel do Sandbox na coluna direita da Security. */
+.secx-sandbox { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+.secx-sandbox__intro { margin: 0; color: var(--muted); font-size: var(--fs-micro); line-height: 1.5; }
+.secx-sandbox__cmd {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--terminal-bg, var(--panel));
+  color: var(--terminal-ink, var(--ink));
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  resize: vertical;
+}
+.secx-sandbox__cmd:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.secx-sandbox__note, .secx-sandbox__err { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--fs-micro); }
+.secx-sandbox__note { color: var(--muted); }
+.secx-sandbox__err { color: var(--danger); }
+.secx-sandbox__result { display: grid; gap: 6px; }
+.secx-sandbox__meta { display: flex; flex-wrap: wrap; gap: 5px; }
+.secx-sandbox__out {
+  max-height: 200px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--terminal-bg, var(--panel-2));
+  color: var(--terminal-ink, var(--ink));
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+.secx-sandbox__out--err { color: var(--danger); }
