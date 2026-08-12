@@ -338,6 +338,36 @@ pub async fn runtime_chat(
         .map_err(|e| e.to_string())
 }
 
+/// Chat do runtime local COM STREAMING: os tokens chegam ao front pelo Channel
+/// conforme o llama.cpp os gera, em vez de esperar a resposta inteira.
+#[tauri::command]
+pub async fn runtime_chat_stream(
+    state: State<'_, RuntimeManager>,
+    messages: Value,
+    on_event: tauri::ipc::Channel<crate::providers::StreamEvent>,
+) -> Result<String, String> {
+    let (port, token) = state
+        .connection
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "runtime local não está ativo".to_string())?;
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({"model":"local","messages":messages,"stream":true}))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?;
+    let full = crate::providers::pump_sse(response, &on_event).await?;
+    on_event
+        .send(crate::providers::StreamEvent::Done(full.clone()))
+        .map_err(|e| e.to_string())?;
+    Ok(full)
+}
+
 #[tauri::command]
 pub async fn runtime_stop(state: State<'_, RuntimeManager>) -> Result<RuntimeStatus, String> {
     shutdown(&state).await;
