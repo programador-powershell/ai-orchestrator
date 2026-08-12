@@ -27,8 +27,7 @@ export const byok = {
   async has(providerId: string): Promise<boolean> {
     if (isTauriHost) {
       try {
-        await invoke<string>("credential_read", { account: `provider:${providerId}` });
-        return true;
+        return await invoke<boolean>("credential_exists", { account: `provider:${providerId}` });
       } catch {
         return false;
       }

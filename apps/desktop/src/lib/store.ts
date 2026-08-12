@@ -473,12 +473,30 @@ export const useApp = create<AppState>()(
             engines: { ...saved.settings.engines, code: { kind: "fusion", presetId: "code-pair" } }
           };
         }
+        const conversations = mergedByMode(saved.conversations, current.conversations);
+        const activeConversation = mergedByMode(saved.activeConversation, current.activeConversation);
+        /**
+         * `threads` não é persistido, mas `activeConversation` é. Sem restaurar
+         * as mensagens da conversa ativa, o primeiro envio após reiniciar o app
+         * gravava a conversa antiga com APENAS a mensagem nova — perda de dados.
+         * Reidrata o thread a partir da conversa salva.
+         */
+        const restoredThreads = { ...mergedByMode(saved.threads, current.threads) };
+        for (const mode of UI_MODES) {
+          const thread = restoredThreads[mode];
+          if (thread?.messages?.length) continue;
+          const activeId = activeConversation[mode];
+          const stored = conversations[mode]?.find((item) => item.id === activeId);
+          if (stored?.messages?.length) {
+            restoredThreads[mode] = { messages: stored.messages, sending: false };
+          }
+        }
         return {
           ...current,
           ...saved,
-          threads: mergedByMode(saved.threads, current.threads),
-          conversations: mergedByMode(saved.conversations, current.conversations),
-          activeConversation: mergedByMode(saved.activeConversation, current.activeConversation),
+          threads: restoredThreads,
+          conversations,
+          activeConversation,
           settings: {
             ...current.settings,
             ...(saved.settings ?? {}),
