@@ -958,3 +958,120 @@ button { -webkit-tap-highlight-color: transparent; }
   0%, 100% { box-shadow: var(--shadow-float), 0 0 0 4px var(--accent-soft); }
   50% { box-shadow: var(--shadow-float), 0 0 0 7px hsl(var(--accent-h) var(--accent-s) 55% / 0.08), 0 0 24px var(--accent-glow); }
 }
+
+/* ---------------- Conexões (pill da barra superior) ---------------- */
+.conn { position: relative; display: inline-flex; }
+.conn-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 70;
+  width: 300px;
+  padding: 6px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+}
+.conn-list { display: grid; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
+.conn-empty { margin: 6px 8px 10px; color: var(--muted); font-size: var(--fs-micro); }
+.conn-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); }
+.conn-row__icon { display: grid; place-items: center; color: var(--muted); }
+.conn-row__text { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.conn-row__text strong { font-size: var(--fs-micro); font-weight: 500; }
+.conn-row__text small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.conn-row__state { color: var(--muted); font-size: 10px; }
+.conn-row.is-online .conn-row__icon,
+.conn-row.is-online .conn-row__state { color: var(--accent); }
+.conn-row.is-error .conn-row__icon,
+.conn-row.is-error .conn-row__state { color: var(--danger); }
+
+.conn-add { display: grid; gap: 1px; padding-top: 6px; border-top: 1px solid var(--line); }
+.conn-add__title {
+  padding: 2px 8px 4px;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.conn-add__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.conn-add__item:hover { background: var(--hover); }
+.conn-add__plus { margin-left: auto; color: var(--muted); }
+
+/* ------------- Botão e janela de Build & deploy ------------- */
+.topbar-ship {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.topbar-ship:hover { color: var(--ink); background: var(--hover); }
+
+.shipmodal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+  backdrop-filter: blur(3px);
+}
+.shipmodal {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: min(680px, 100%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+}
+.shipmodal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.shipmodal__head h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: var(--fs-body); font-weight: 600; }
+.shipmodal__body { display: grid; grid-template-columns: 1fr 300px; gap: 0; overflow: hidden; }
+.shipmodal__col { overflow: auto; padding: 12px; }
+.shipmodal__col--targets { display: grid; gap: 8px; align-content: start; border-left: 1px solid var(--line); }
+.shipmodal__title { margin: 0; color: var(--faint); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.shipmodal__target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.shipmodal__target.is-active { border-color: var(--accent); }
+.shipmodal__target-icon { display: grid; place-items: center; color: var(--muted); }
+.shipmodal__target-text { display: grid; gap: 1px; min-width: 0; }
+.shipmodal__target-text strong { font-size: var(--fs-micro); font-weight: 500; }
+.shipmodal__target-text small { color: var(--muted); font-size: 10px; }
+.shipmodal__caveat { border-top: 1px solid var(--line); padding-top: 8px; }
+
+@media (max-width: 820px) {
+  .shipmodal__body { grid-template-columns: 1fr; }
+  .shipmodal__col--targets { border-left: 0; border-top: 1px solid var(--line); }
+}

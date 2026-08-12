@@ -5,8 +5,9 @@
  * OPERAÇÃO estruturada (bloco ```office```) → o Command Engine valida → o
  * adapter aplica → você vê a alteração acontecer no documento aberto.
  *
- * Layout: árvore de arquivos | canvas do documento | contexto & histórico,
- * com o chat embaixo (mesma geometria das outras abas).
+ * Layout: árvore de arquivos | canvas do documento ocupando a largura toda.
+ * Não há coluna direita — contexto virou faixa no cabeçalho e o histórico da
+ * IA abre sob demanda, porque o que importa aqui é ver o arquivo.
  */
 import "../styles/modes/office.css";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +22,7 @@ import {
   Save,
   Undo2
 } from "lucide-react";
-import { EmptyHero, PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VRight, VStatus } from "../components/Primitives";
+import { EmptyHero, PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 import { Markdown } from "../components/Markdown";
 import { collectFiles, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
@@ -122,6 +123,7 @@ export function OfficeView() {
   const root = useOffice((state) => state.root);
   const messages = useApp((state) => state.threads.office.messages);
   const [note, setNote] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const editable = EDITABLE.includes(format);
@@ -198,9 +200,25 @@ export function OfficeView() {
             />
           ) : (
             <div className="offx-canvas v-panel">
+              {/* A coluna direita saiu: o arquivo ocupa a largura toda. O que
+                  era o painel "Contexto" virou esta faixa, e o histórico da IA
+                  abre sob demanda pelo botão. */}
               <header className="offx-canvas-head">
                 <strong>{path.split("/").pop()}</strong>
                 <span className="offx-path">{path}</span>
+                <span className="offx-canvas-meta">
+                  <span className={`chip ${editable ? "ok" : ""}`}>{editable ? "edição" : "somente leitura"}</span>
+                  {selection.text ? <span className="chip">seleção: {selection.text.slice(0, 24)}</span> : null}
+                  <button
+                    className={`chip accent offx-histbtn${historyOpen ? " is-open" : ""}`}
+                    onClick={() => setHistoryOpen((value) => !value)}
+                    aria-expanded={historyOpen}
+                    title="Histórico de alterações da IA"
+                  >
+                    <History size={11} />
+                    {aiChangeCount(log)}
+                  </button>
+                </span>
               </header>
               {editable ? (
                 <textarea
@@ -231,36 +249,7 @@ export function OfficeView() {
           )}
         </VCenter>
 
-        <VRight>
-          <PanelTitle icon={<FileText size={13} />} label="Contexto" meta={path ? format : "—"} />
-          <div className="offx-context">
-            {path ? (
-              <>
-                <div className="offx-ctx-row">
-                  <span>Arquivo</span>
-                  <code className="setx-code">{path.split("/").pop()}</code>
-                </div>
-                {selection.text && (
-                  <div className="offx-ctx-row">
-                    <span>Seleção</span>
-                    <code className="setx-code">{selection.text.slice(0, 40)}</code>
-                  </div>
-                )}
-                <div className="offx-ctx-row">
-                  <span>Edição</span>
-                  <span className={`chip ${editable ? "ok" : ""}`}>{editable ? "habilitada" : "somente leitura"}</span>
-                </div>
-                <div className="offx-ctx-row">
-                  <span>IA</span>
-                  <span className="chip accent">{aiChangeCount(log)} alteração(ões)</span>
-                </div>
-              </>
-            ) : (
-              <p className="offx-note">Abra um arquivo para o chat ganhar contexto.</p>
-            )}
-          </div>
-
-          {pending && (
+        {pending && (
             <div className="offx-approval">
               <strong>Alteração proposta</strong>
               <ul>
@@ -285,6 +274,8 @@ export function OfficeView() {
             </div>
           )}
 
+        {historyOpen && (
+          <aside className="offx-history glass-strong">
           <PanelTitle icon={<History size={13} />} label="Histórico da IA" meta={`${entries.length}`} />
           <PanelScroll>
             <div className="offx-log">
@@ -314,7 +305,8 @@ export function OfficeView() {
               ))}
             </div>
           </PanelScroll>
-        </VRight>
+          </aside>
+        )}
       </VBody>
 
       <VStatus>
