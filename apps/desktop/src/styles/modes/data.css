@@ -97,6 +97,29 @@
   opacity: 1;
 }
 
+/* Fantasma do arrasto de FK: tracejado enquanto não há alvo, sólido e
+   destacado quando a ponta está sobre um campo válido. */
+.datax-links g.datax-ghost path {
+  stroke: var(--muted);
+  stroke-dasharray: 5 4;
+  stroke-width: 1.6;
+  opacity: 0.75;
+  animation: none;
+}
+.datax-links g.datax-ghost circle {
+  fill: var(--muted);
+}
+.datax-links g.datax-ghost.on-target path {
+  stroke: var(--accent);
+  stroke-dasharray: none;
+  stroke-width: 2.2;
+  opacity: 1;
+  filter: drop-shadow(0 0 5px var(--accent-glow));
+}
+.datax-links g.datax-ghost.on-target circle {
+  fill: var(--accent);
+}
+
 /* Card de tabela (drawdb-like) — hover lift + movimentos com transição
    (auto-layout/undo deslizam; durante o arrasto a resposta é 1:1). */
 .datax-table {
@@ -181,6 +204,7 @@
 }
 
 .datax-field {
+  position: relative; /* âncora da porta de FK */
   height: 22px;
   display: flex;
   align-items: center;
@@ -189,6 +213,35 @@
   padding: 0 9px;
   font-size: var(--fs-micro);
   color: var(--ink);
+}
+
+/* Porta de FK: alvo de arrasto na borda direita da linha do campo. Fica
+   discreta e só aparece no hover do card, para não poluir o diagrama. */
+.datax-port {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--datax-tone, var(--accent));
+  background: var(--surface);
+  opacity: 0;
+  cursor: crosshair;
+  touch-action: none; /* senão o navegador rola em vez de arrastar */
+  transition: opacity var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.datax-table:hover .datax-port,
+.datax-table.selected .datax-port {
+  opacity: 0.75;
+}
+.datax-port:hover,
+.datax-port:focus-visible {
+  opacity: 1;
+  transform: translateY(-50%) scale(1.35);
+  background: var(--datax-tone, var(--accent));
 }
 .datax-field span {
   display: inline-flex;
