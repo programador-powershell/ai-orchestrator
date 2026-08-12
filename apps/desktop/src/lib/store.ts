@@ -12,6 +12,14 @@ import {
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";
+import {
+  addProject,
+  assignProject,
+  detachProject,
+  removeProject,
+  renameProject,
+  type Project
+} from "./conversations";
 
 /**
  * Anexo do composer. Texto vai em `content`; imagem/vídeo/PDF vão em `dataUrl`
@@ -49,9 +57,13 @@ export interface Conversation {
   title: string;
   messages: ThreadMessage[];
   updatedAt: number;
+  /** Pasta a que a conversa pertence; ausente = sem projeto. */
+  projectId?: string;
 }
 
-const newConversationId = () =>
+export type { Project } from "./conversations";
+
+const newId = () =>
   crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function conversationTitle(messages: ThreadMessage[]): string {
@@ -186,6 +198,8 @@ interface AppState {
   /** Histórico real de conversas por aba (persistido). */
   conversations: Record<UiMode, Conversation[]>;
   activeConversation: Record<UiMode, string>;
+  /** Pastas de organização — globais, valem para todas as abas (persistido). */
+  projects: Project[];
   activePlan: ExecutionPlan | null;
   settings: AppSettings;
   /** Estado de runtime (não persistido). */
@@ -224,7 +238,15 @@ interface AppState {
   newConversation: (mode: UiMode) => void;
   loadConversation: (mode: UiMode, id: string) => void;
   deleteConversation: (mode: UiMode, id: string) => void;
+
+  createProject: (name: string) => void;
+  renameProject: (id: string, name: string) => void;
+  deleteProject: (id: string) => void;
+  moveConversation: (mode: UiMode, conversationId: string, projectId: string | null) => void;
 }
+
+/** Teto de conversas guardadas por aba — projetos exigem histórico longo. */
+const CONVERSATION_CAP = 500;
 
 /** Espelha o thread ativo na lista de conversas persistidas. */
 function syncConversation(state: {
@@ -238,11 +260,13 @@ function syncConversation(state: {
     id,
     title: conversationTitle(messages),
     messages: messages.slice(-200),
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
+    // Sem isto, cada novo envio jogaria a conversa para fora da pasta.
+    ...(existing?.projectId ? { projectId: existing.projectId } : {})
   };
   const next = existing ? list.map((item) => (item.id === id ? entry : item)) : [entry, ...list];
   next.sort((a, b) => b.updatedAt - a.updatedAt);
-  return { ...state.conversations, [mode]: next.slice(0, 50) };
+  return { ...state.conversations, [mode]: next.slice(0, CONVERSATION_CAP) };
 }
 
 export const useApp = create<AppState>()(
@@ -270,16 +294,17 @@ export const useApp = create<AppState>()(
       },
       conversations: { chat: [], code: [], design: [], data: [], work: [], security: [], agent: [], game: [], tune: [] },
       activeConversation: {
-        chat: newConversationId(),
-        code: newConversationId(),
-        design: newConversationId(),
-        data: newConversationId(),
-        work: newConversationId(),
-        security: newConversationId(),
-        agent: newConversationId(),
-        game: newConversationId(),
-        tune: newConversationId()
+        chat: newId(),
+        code: newId(),
+        design: newId(),
+        data: newId(),
+        work: newId(),
+        security: newId(),
+        agent: newId(),
+        game: newId(),
+        tune: newId()
       },
+      projects: [],
       activePlan: null,
       settings: {
         gateway: { baseUrl: "http://127.0.0.1:8787", workspaceId: "" },
@@ -396,7 +421,7 @@ export const useApp = create<AppState>()(
       newConversation: (mode) =>
         set((state) => ({
           threads: { ...state.threads, [mode]: emptyThread() },
-          activeConversation: { ...state.activeConversation, [mode]: newConversationId() }
+          activeConversation: { ...state.activeConversation, [mode]: newId() }
         })),
       loadConversation: (mode, id) =>
         set((state) => {
@@ -416,11 +441,30 @@ export const useApp = create<AppState>()(
             ...(wasActive
               ? {
                   threads: { ...state.threads, [mode]: emptyThread() },
-                  activeConversation: { ...state.activeConversation, [mode]: newConversationId() }
+                  activeConversation: { ...state.activeConversation, [mode]: newId() }
                 }
               : {})
           };
-        })
+        }),
+
+      createProject: (name) => set((state) => ({ projects: addProject(state.projects, name, newId(), Date.now()) })),
+      renameProject: (id, name) => set((state) => ({ projects: renameProject(state.projects, id, name) })),
+      /** Exclui a pasta; as conversas sobrevivem, apenas ficam sem projeto. */
+      deleteProject: (id) =>
+        set((state) => {
+          const conversations = { ...state.conversations };
+          for (const mode of UI_MODES) {
+            conversations[mode] = detachProject(conversations[mode] ?? [], id);
+          }
+          return { projects: removeProject(state.projects, id), conversations };
+        }),
+      moveConversation: (mode, conversationId, projectId) =>
+        set((state) => ({
+          conversations: {
+            ...state.conversations,
+            [mode]: assignProject(state.conversations[mode] ?? [], conversationId, projectId)
+          }
+        }))
     }),
     {
       name: "orchestrator.v2",
@@ -429,7 +473,8 @@ export const useApp = create<AppState>()(
         railOpen: state.railOpen,
         settings: state.settings,
         conversations: state.conversations,
-        activeConversation: state.activeConversation
+        activeConversation: state.activeConversation,
+        projects: state.projects
       }),
       // Storage antigo pode não ter campos novos — mescla com defaults e
       // aplica o seed do catálogo (soma novos modelos padrão sem ressuscitar
@@ -497,6 +542,7 @@ export const useApp = create<AppState>()(
           threads: restoredThreads,
           conversations,
           activeConversation,
+          projects: Array.isArray(saved.projects) ? saved.projects : current.projects,
           settings: {
             ...current.settings,
             ...(saved.settings ?? {}),
