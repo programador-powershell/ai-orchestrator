@@ -332,6 +332,8 @@ export interface SandboxResult {
   stderr: string;
   durationMs: number;
   isolated: boolean;
+  /** Rodou dentro de um Job Object — a árvore inteira morre junto (Windows). */
+  jailed: boolean;
 }
 
 export interface SecurityFinding {

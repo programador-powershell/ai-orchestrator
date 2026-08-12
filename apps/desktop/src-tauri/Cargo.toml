@@ -43,3 +43,14 @@ tokio = { version = "1", features = ["process", "sync", "time", "fs", "io-util"]
 zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+
+# Job Object da sandbox (isolamento de SO real). windows-sys é o binding
+# oficial da Microsoft e JÁ está na árvore por tokio/keyring/tauri — não
+# acrescenta superfície de terceiros, só torna a dependência explícita.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
+] }
