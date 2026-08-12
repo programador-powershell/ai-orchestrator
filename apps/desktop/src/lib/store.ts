@@ -10,12 +10,15 @@ import {
   type UiMode
 } from "@ai-orchestrator/contracts";
 import type { ChatMessage, GatewaySession } from "./gateway";
+import type { ToolCard } from "./toolcard";
 
 export interface ThreadMessage extends ChatMessage {
-  /** Anexos estruturados produzidos pelo motor (plano, pesquisa, ops). */
+  /** Anexos estruturados produzidos pelo motor (plano, pesquisa, ops, tools). */
   meta?: {
-    kind?: "text" | "plan" | "research" | "ops";
+    kind?: "text" | "plan" | "research" | "ops" | "tools";
     planTitle?: string;
+    /** Grupo de ferramentas executadas (cartão recolhível estilo Studio). */
+    tools?: ToolCard[];
   };
 }
 
@@ -195,6 +198,7 @@ interface AppState {
 
   appendMessage: (mode: UiMode, message: ThreadMessage) => void;
   patchLastAssistant: (mode: UiMode, delta: string) => void;
+  updateToolGroup: (mode: UiMode, update: (cards: ToolCard[]) => ToolCard[]) => void;
   replaceLastAssistant: (mode: UiMode, message: ThreadMessage) => void;
   setSending: (mode: UiMode, sending: boolean) => void;
   clearThread: (mode: UiMode) => void;
@@ -315,6 +319,18 @@ export const useApp = create<AppState>()(
           if (last?.role === "assistant") {
             messages[messages.length - 1] = { ...last, content: last.content + delta };
           }
+          return { threads: { ...state.threads, [mode]: { ...thread, messages } } };
+        }),
+      /** Atualiza o grupo de ferramentas da mensagem corrente (cartão Studio). */
+      updateToolGroup: (mode, update) =>
+        set((state) => {
+          const thread = state.threads[mode];
+          const messages = [...thread.messages];
+          const index = messages.map((m) => m.meta?.kind).lastIndexOf("tools");
+          if (index < 0) return {};
+          const current = messages[index];
+          const tools = update(current.meta?.tools ?? []);
+          messages[index] = { ...current, meta: { ...current.meta, kind: "tools", tools } };
           return { threads: { ...state.threads, [mode]: { ...thread, messages } } };
         }),
       replaceLastAssistant: (mode, message) =>
