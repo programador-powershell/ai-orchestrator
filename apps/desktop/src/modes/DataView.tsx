@@ -59,6 +59,7 @@ import {
   diffSchemasDown,
   emptyDoc,
   exportSql,
+  hitTestField,
   importSql,
   indexName,
   parseDocJson,
@@ -239,6 +240,15 @@ function relationShapes(doc: SchemaDocExt, selectedName: string | null): Relatio
     });
   }
   return shapes;
+}
+
+/** Bezier da linha fantasma — mesmo `bend` de relationShapes. */
+function ghostPath(drag: { x1: number; y1: number; x2: number; y2: number }): string {
+  const leftToRight = drag.x1 <= drag.x2;
+  const bend = Math.max(46, Math.abs(drag.x2 - drag.x1) * 0.45);
+  const c1 = leftToRight ? drag.x1 + bend : drag.x1 - bend;
+  const c2 = leftToRight ? drag.x2 - bend : drag.x2 + bend;
+  return `M ${drag.x1} ${drag.y1} C ${c1} ${drag.y1} ${c2} ${drag.y2} ${drag.x2} ${drag.y2}`;
 }
 
 function relationLabel(relation: SchemaRelation): string {
@@ -604,6 +614,11 @@ export function DataView() {
 
   /** Pan por arrasto do fundo — resposta 1:1 (a classe .panning desliga a transição). */
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+  /** Arrasto de FK em andamento: origem fixa, ponta seguindo o ponteiro. */
+  const fkRef = useRef<{ pointerId: number; tableId: string; fieldIndex: number } | null>(null);
+  const [fkDrag, setFkDrag] = useState<{ x1: number; y1: number; x2: number; y2: number; target: string | null } | null>(
+    null
+  );
 
   function clampPan(x: number, y: number, scale: number): { x: number; y: number } {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -638,8 +653,75 @@ export function DataView() {
     setPanning(false);
   }
 
+  /* ------------------------- FK por arrasto ------------------------- */
+
+  /**
+   * Ponto do palco (sem pan/zoom) a partir do ponteiro. Mesma matemática do
+   * `clampPan`: o palco é transformado por translate+scale com origem 0 0.
+   */
+  function stagePoint(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    return { x: (clientX - rect.left - pan.x) / zoom, y: (clientY - rect.top - pan.y) / zoom };
+  }
+
+  function startFkDrag(event: ReactPointerEvent<HTMLElement>, table: SchemaTable, index: number) {
+    // Sem stopPropagation o arrasto da tabela também começaria (o handler
+    // está na <article>, e o evento borbulha da porta).
+    event.stopPropagation();
+    event.preventDefault();
+    const point = stagePoint(event.clientX, event.clientY);
+    if (!point) return;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // toque encerrado antes da captura: o arrasto simplesmente não começa
+    }
+    fkRef.current = { pointerId: event.pointerId, tableId: table.id, fieldIndex: index };
+    setFkDrag({ x1: table.x + TABLE_W, y1: table.y + HEADER_H + index * ROW_H + ROW_H / 2, x2: point.x, y2: point.y, target: null });
+  }
+
+  function moveFkDrag(event: ReactPointerEvent<HTMLElement>) {
+    const drag = fkRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const point = stagePoint(event.clientX, event.clientY);
+    if (!point) return;
+    const hit = hitTestField(doc, point.x, point.y);
+    setFkDrag((current) =>
+      current
+        ? {
+            ...current,
+            x2: point.x,
+            y2: point.y,
+            target: hit && hit.table.id !== drag.tableId ? `${hit.table.name}.${hit.table.fields[hit.fieldIndex].name}` : null
+          }
+        : current
+    );
+  }
+
+  /** Soltou: se caiu num campo de OUTRA tabela, cria a FK (uma entrada de undo). */
+  function endFkDrag(event: ReactPointerEvent<HTMLElement>) {
+    const drag = fkRef.current;
+    fkRef.current = null;
+    setFkDrag(null);
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const point = stagePoint(event.clientX, event.clientY);
+    if (!point) return;
+    const hit = hitTestField(doc, point.x, point.y);
+    if (!hit || hit.table.id === drag.tableId) return; // auto-referência de tabela não vira FK aqui
+    const source = doc.tables.find((t) => t.id === drag.tableId);
+    const target = hit.table.fields[hit.fieldIndex];
+    if (!source || !target) return;
+    setFieldReference(source, drag.fieldIndex, `${hit.table.name}.${target.name}`);
+  }
+
   function startDrag(event: ReactPointerEvent<HTMLElement>, table: SchemaTable) {
-    event.currentTarget.setPointerCapture(event.pointerId);
+    if ((event.target as HTMLElement).closest(".datax-port")) return; // é arrasto de FK
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // pointer já finalizado (toque rápido): o arrasto segue sem captura
+    }
     dragRef.current = {
       id: table.id,
       pointerId: event.pointerId,
@@ -783,6 +865,14 @@ export function DataView() {
                       </text>
                     </g>
                   ))}
+                  {fkDrag && (
+                    // Fantasma do arrasto — mesma curva das relações reais, para
+                    // o traço não "pular" quando a FK é criada.
+                    <g className={`datax-ghost ${fkDrag.target ? "on-target" : ""}`}>
+                      <path d={ghostPath(fkDrag)} />
+                      <circle cx={fkDrag.x2} cy={fkDrag.y2} r={4} />
+                    </g>
+                  )}
                 </svg>
                 {doc.tables.map((table) => (
                   <article
@@ -811,6 +901,20 @@ export function DataView() {
                           {field.name}
                         </span>
                         <small>{field.type}</small>
+                        <button
+                          type="button"
+                          className="datax-port"
+                          title={`Arraste até um campo de outra tabela para criar a FK de ${table.name}.${field.name}`}
+                          aria-label={`Criar chave estrangeira a partir de ${table.name}.${field.name}`}
+                          onPointerDown={(event) => startFkDrag(event, table, index)}
+                          onPointerMove={moveFkDrag}
+                          onPointerUp={endFkDrag}
+                          onPointerCancel={() => {
+                            fkRef.current = null;
+                            setFkDrag(null);
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                        />
                       </div>
                     ))}
                   </article>
