@@ -40,6 +40,9 @@ pub struct RuntimeStatus {
     variant: Option<String>,
     version: Option<String>,
     port: Option<u16>,
+    /// Token do servidor local — permite apontar agentes externos (Claude Code,
+    /// Codex) para o runtime. Fica em 127.0.0.1 e só existe enquanto ele roda.
+    api_key: Option<String>,
     models: Vec<LocalModel>,
 }
 
@@ -131,6 +134,7 @@ async fn status(manager: &RuntimeManager) -> Result<RuntimeStatus, String> {
         variant,
         version: None,
         port: connection.as_ref().map(|v| v.0),
+        api_key: connection.as_ref().map(|v| v.1.clone()),
         models: models().await?,
     })
 }
