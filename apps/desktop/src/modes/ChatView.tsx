@@ -25,7 +25,7 @@ import {
   Telescope
 } from "lucide-react";
 import { Markdown } from "../components/Markdown";
-import { EmptyHero, FloatingPulse, PromptCards, Surface, VBody, VCenter, VStatus } from "../components/Primitives";
+import { EmptyHero, PromptCards, Surface, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 import { buildEditPayload, buildRegeneratePayload, charCount, formatDuration, wordCount } from "../lib/chatUtils";
 import { describeSelection } from "../lib/engine";
@@ -33,6 +33,7 @@ import { composerBus } from "../lib/ops";
 import { useApp, type ThreadMessage } from "../lib/store";
 import { ToolGroup } from "../components/ToolGroup";
 import { ReasoningBlock } from "../components/ReasoningBlock";
+import { ThinkingRow } from "../components/ThinkingRow";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -289,9 +290,6 @@ export function ChatView() {
     <Surface className="chatx">
       <VBody>
         <VCenter>
-          {sending && (
-            <FloatingPulse label={stage || "Processando"} detail="coletando, avaliando e escrevendo com o motor ativo" />
-          )}
           {messages.length === 0 ? (
             <EmptyHero
               icon={<MessageCircle size={26} />}
@@ -309,6 +307,9 @@ export function ChatView() {
                   {renderMessage(message, index)}
                 </Fragment>
               ))}
+              {/* Progresso INLINE no fim da conversa (não popup sobreposto):
+                  o usuário vê a etapa atual no fluxo, como no Studio. */}
+              {sending && <ThinkingRow stage={stage} />}
             </div>
           )}
         </VCenter>

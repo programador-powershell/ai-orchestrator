@@ -3,7 +3,7 @@
  * Input de chat, modo planejamento, seleção de motor (workspace/local/modelo/fusion)
  * e pesquisa profunda no Chat. Injeta memória persistente em qualquer motor.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 import {
   CircleStop,
   Globe2,
@@ -27,8 +27,10 @@ import {
 } from "../lib/agent";
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
-import { APPROVAL_POLICIES, requiresPrompt, type ApprovalPolicy } from "../lib/approval";
+import { policyLabel, requiresPrompt } from "../lib/approval";
 import { fsRead } from "../lib/fsx";
+import { filesFromClipboard } from "../lib/paste";
+import { fileToDataUrl, toAttachmentDataUrl } from "../lib/imageAttach";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { createStreamBuffer } from "../lib/streamBuffer";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
@@ -38,7 +40,7 @@ import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from ".
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
-import { effortDirective, useApp } from "../lib/store";
+import { effortDirective, useApp, type Attachment } from "../lib/store";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
 
@@ -79,7 +81,6 @@ export function Composer() {
   const setAttachments = useApp((state) => state.setAttachments);
   const { appendMessage, patchLastAssistant, patchLastReasoning, replaceLastAssistant, setSending, updateToolGroup } =
     useApp.getState();
-  const updateSettings = useApp((state) => state.updateSettings);
 
   const [executingPlan, setExecutingPlan] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
@@ -105,15 +106,35 @@ export function Composer() {
     [mode, planMode, researchMode, toolsMode, settings, session, runtimeStatus]
   );
 
+  /** Carrega arquivos como anexo: binário vira data URL, texto vira conteúdo. */
+  async function loadAttachments(files: File[]): Promise<Attachment[]> {
+    return Promise.all(
+      files.slice(0, 5).map(async (file) => {
+        if (file.type.startsWith("image/")) {
+          return { name: file.name, content: "", dataUrl: await toAttachmentDataUrl(file), mime: file.type };
+        }
+        if (file.type.startsWith("text/") || file.type === "application/json" || !file.type) {
+          return { name: file.name, content: (await file.text()).slice(0, 60_000), mime: file.type };
+        }
+        // Vídeo/áudio/PDF: guarda o binário; o modelo recebe pelo menos o nome.
+        return { name: file.name, content: "", dataUrl: await fileToDataUrl(file), mime: file.type };
+      })
+    );
+  }
+
   async function attachFiles(files: FileList | null) {
     if (!files?.length) return;
-    const loaded = await Promise.all(
-      [...files].slice(0, 5).map(async (file) => ({
-        name: file.name,
-        content: (await file.text()).slice(0, 60_000)
-      }))
-    );
+    const loaded = await loadAttachments([...files]);
     setAttachments([...attachments, ...loaded].slice(0, 5));
+  }
+
+  /** Ctrl+V com imagem/vídeo/arquivo: vira anexo em vez de ser ignorado. */
+  async function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = filesFromClipboard(event.clipboardData);
+    if (!pasted.length) return; // texto puro segue o caminho normal
+    event.preventDefault();
+    const loaded = await loadAttachments(pasted.map((item) => new File([item.file], item.name, { type: item.type })));
+    setAttachments([...useApp.getState().attachments, ...loaded].slice(0, 5));
   }
 
   const ctx: EngineContext = {
@@ -354,11 +375,18 @@ export function Composer() {
     try {
       const system = await buildSystemMessages(text);
       for (const attachment of currentAttachments) {
+        // Imagem vai como conteúdo de VISÃO (image_url); texto vai como system.
+        if (attachment.dataUrl && attachment.mime?.startsWith("image/")) continue;
         system.push({
           role: "system",
-          content: `Arquivo anexado pelo usuário — ${attachment.name}:\n\n${attachment.content}`
+          content: attachment.content
+            ? `Arquivo anexado pelo usuário — ${attachment.name}:\n\n${attachment.content}`
+            : `O usuário anexou o arquivo "${attachment.name}" (${attachment.mime || "binário"}).`
         });
       }
+      const visionParts = currentAttachments
+        .filter((attachment) => attachment.dataUrl && attachment.mime?.startsWith("image/"))
+        .map((attachment) => ({ type: "image_url" as const, image_url: { url: attachment.dataUrl as string } }));
 
       if (planMode) {
         planSourceRef.current = text;
@@ -401,7 +429,13 @@ export function Composer() {
         .slice(0, options?.echoUser === false ? undefined : -1)
         .map(({ role, content }) => ({ role, content }));
       const history = await compactHistory(fullHistory, abort.signal);
-      request.push(...history, { role: "user", content: text });
+      // Com imagem colada/anexada, a mensagem do usuário vira multimodal.
+      request.push(
+        ...history,
+        visionParts.length
+          ? ({ role: "user", content: [{ type: "text", text }, ...visionParts] } as unknown as ChatMessage)
+          : { role: "user", content: text }
+      );
       const final = toolsMode
         ? await runAgentTurn(request, abort.signal)
         : await runAssistantTurn(request, abort.signal);
@@ -494,8 +528,12 @@ export function Composer() {
         {attachments.length > 0 && (
           <div className="composer-attachments">
             {attachments.map((attachment) => (
-              <span className="chip accent" key={attachment.name}>
-                <Paperclip size={10} />
+              <span className="chip accent attach-chip" key={attachment.name}>
+                {attachment.dataUrl && attachment.mime?.startsWith("image/") ? (
+                  <img className="attach-thumb" src={attachment.dataUrl} alt="" />
+                ) : (
+                  <Paperclip size={10} />
+                )}
                 {attachment.name}
                 <i
                   role="button"
@@ -519,6 +557,7 @@ export function Composer() {
               void send();
             }
           }}
+          onPaste={(event) => void handlePaste(event)}
           placeholder={modePlaceholders[mode]}
           aria-label="Mensagem"
         />
@@ -571,20 +610,15 @@ export function Composer() {
             Ferramentas
           </button>
           {toolsMode && (
-            <label className="approve-select" title="Quando o agente deve parar e pedir sua aprovação">
+            // Somente informativo: a política é definida pela TI nas Configurações.
+            <button
+              className="approve-chip"
+              onClick={() => setSettingsOpen(true)}
+              title="Política definida nas Configurações (administração)"
+            >
               <ShieldCheck size={12} />
-              <select
-                value={settings.approvalPolicy ?? "ask"}
-                onChange={(event) => updateSettings({ approvalPolicy: event.target.value as ApprovalPolicy })}
-                aria-label="Política de aprovação"
-              >
-                {APPROVAL_POLICIES.map((policy) => (
-                  <option key={policy.id} value={policy.id} title={policy.hint}>
-                    {policy.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+              {policyLabel(settings.approvalPolicy ?? "ask")}
+            </button>
           )}
           {mode === "chat" && (
             <button
