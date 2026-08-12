@@ -414,11 +414,30 @@ export function Composer() {
       if (researchMode && mode === "chat") {
         setStage("Pesquisa profunda: coletando fontes…");
         const research = await import("../lib/research");
+        // A pesquisa vira um GRUPO DE FERRAMENTA na conversa: o usuário vê as
+        // etapas acontecendo em vez de encarar silêncio até a resposta.
+        appendMessage(mode, {
+          role: "assistant",
+          content: "",
+          meta: { kind: "tools", tools: [{ tool: "web_search", detail: text.slice(0, 80), status: "running" }] }
+        });
         const report = await research.runResearch(
           text,
           (messages) =>
             chatOnce(selection, mode, messages, ctx, { onDelta: () => undefined }, abort.signal),
-          { onStage: (stage) => setStage(stage) }
+          {
+            onStage: (stage) => {
+              setStage(stage);
+              updateToolGroup(mode, (cards) => applyResult(cards, "web_search", { status: "running", output: stage }));
+            }
+          }
+        );
+        updateToolGroup(mode, (cards) =>
+          applyResult(cards, "web_search", {
+            status: "ok",
+            output: `${report.sources.length} fonte(s) · confiança ${Math.round(report.confidence * 100)}%`,
+            sources: report.sources.map((source) => ({ title: source.title, url: source.url, kind: source.kind }))
+          })
         );
         setResearchReport(report);
         request.push({ role: "system", content: research.researchSystemContext(report) });
