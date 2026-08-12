@@ -68,7 +68,13 @@ describe("fusion — conversa natural (streaming na etapa final)", () => {
   it("merge entrega a integração final em vários deltas", async () => {
     callIndex = 0;
     deltasByCall.length = 0;
-    deltasByCall.push(["1. foco A\n2. foco B"], ["parte A"], ["parte B"], ["Int", "egrado"]);
+    // 1ª chamada: PLANO adaptativo do orquestrador (complexidade + executores).
+    deltasByCall.push(
+      ['```json\n{"complexity":0.8,"executors":[{"role":"Núcleo","focus":"a"},{"role":"Riscos","focus":"b"}]}\n```'],
+      ["parte A"],
+      ["parte B"],
+      ["Int", "egrado"]
+    );
     const received: string[] = [];
     const preset = {
       id: "p2",
@@ -89,5 +95,40 @@ describe("fusion — conversa natural (streaming na etapa final)", () => {
     );
     expect(received.length).toBeGreaterThan(1);
     expect(received.join("")).toContain("Integrado");
+  });
+
+  it("adaptativo: plano com 1 executor responde direto, sem integração", async () => {
+    callIndex = 0;
+    deltasByCall.length = 0;
+    // Orquestrador julga simples → 1 executor. Não deve haver etapa de integração.
+    deltasByCall.push(
+      ['```json\n{"complexity":0.15,"executors":[{"role":"Núcleo","focus":"responder"}]}\n```'],
+      ["Res", "posta ", "direta"]
+    );
+    const received: string[] = [];
+    const planos: Array<{ complexity: number; executors: unknown[] }> = [];
+    const preset = {
+      id: "p3",
+      name: "Adaptativo",
+      strategy: "merge" as const,
+      orchestrator: { providerId: "openai", model: "a" },
+      executors: [
+        { providerId: "openai", model: "b" },
+        { providerId: "openai", model: "c" }
+      ]
+    };
+    const answer = await chatOnce(
+      { kind: "fusion", presetId: "p3" },
+      "chat",
+      [{ role: "user", content: "oi" }],
+      { session, runtimeRunning: false, fusionPresets: [preset] },
+      { onDelta: (delta) => received.push(delta), onFusionPlan: (plan) => planos.push(plan) }
+    );
+    expect(planos).toHaveLength(1);
+    expect(planos[0].executors).toHaveLength(1);
+    expect(answer).toBe("Resposta direta");
+    // Só 2 chamadas: plano + resposta (sem decompor nem integrar).
+    expect(callIndex).toBe(2);
+    expect(received.length).toBeGreaterThan(1);
   });
 });
