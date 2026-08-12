@@ -1,8 +1,19 @@
 export const MODES = ["chat", "work", "design", "data", "agent", "code", "security", "game"] as const;
 export type Mode = (typeof MODES)[number];
 
-/** Abas expostas na UI — produto completo + Fine-Tuning (treino na nuvem). */
-export const UI_MODES = ["chat", "code", "design", "data", "work", "security", "agent", "game", "tune"] as const;
+/** Abas expostas na UI — produto completo + Office e Fine-Tuning. */
+export const UI_MODES = [
+  "chat",
+  "code",
+  "office",
+  "design",
+  "data",
+  "work",
+  "security",
+  "agent",
+  "game",
+  "tune"
+] as const;
 export type UiMode = (typeof UI_MODES)[number];
 
 export const CAPABILITIES = ["chat", "image", "embedding", "rerank"] as const;
