@@ -34,6 +34,11 @@ pub struct PublicOidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub authorization_endpoint: String,
+    /// O desktop (public client) troca o code DIRETO com o IdP — o gateway
+    /// nao intermedia com client_secret (no Entra, loopback e segredo sao
+    /// plataformas mutuamente exclusivas).
+    pub token_endpoint: String,
+    pub scope: String,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +109,8 @@ impl AuthService {
             issuer: self.config.oidc_issuer.clone(),
             client_id: self.config.oidc_client_id.clone(),
             authorization_endpoint: discovery.authorization_endpoint,
+            token_endpoint: discovery.token_endpoint,
+            scope: self.config.oidc_scope.clone(),
         })
     }
 
@@ -115,6 +122,7 @@ impl AuthService {
             ("code", request.code),
             ("code_verifier", request.code_verifier),
             ("redirect_uri", request.redirect_uri),
+            ("scope", self.config.oidc_scope.clone()),
         ];
         if let Some(secret) = &self.config.oidc_client_secret {
             form.push(("client_secret", secret.clone()));
@@ -136,6 +144,9 @@ impl AuthService {
             ("grant_type", "refresh_token".to_string()),
             ("client_id", self.config.oidc_client_id.clone()),
             ("refresh_token", request.refresh_token),
+            // Sem scope o refresh multi-recurso do Entra devolve token com aud
+            // imprevisivel — quebrava na primeira renovacao.
+            ("scope", self.config.oidc_scope.clone()),
         ];
         if let Some(secret) = &self.config.oidc_client_secret {
             form.push(("client_secret", secret.clone()));

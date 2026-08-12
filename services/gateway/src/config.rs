@@ -10,6 +10,10 @@ pub struct Config {
     pub oidc_client_id: String,
     pub oidc_client_secret: Option<String>,
     pub oidc_audience: String,
+    /// Escopo pedido na autorizacao E no refresh — o refresh token do Entra e
+    /// multi-recurso; sem scope explicito o aud do token renovado nao e
+    /// garantido e a validacao cai na primeira renovacao.
+    pub oidc_scope: String,
     pub provider_master_key: [u8; 32],
     pub allow_dev_auth: bool,
     /// Seed Ed25519 (base64, 32 bytes) que assina a politica do bootstrap.
@@ -42,6 +46,10 @@ impl Config {
                 .ok()
                 .filter(|v| !v.is_empty()),
             oidc_audience: required("OIDC_AUDIENCE")?,
+            oidc_scope: env::var("OIDC_SCOPE")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "openid profile email offline_access".into()),
             provider_master_key,
             allow_dev_auth: env::var("ALLOW_DEV_AUTH")
                 .is_ok_and(|v| v.eq_ignore_ascii_case("true")),

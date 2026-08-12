@@ -13,10 +13,42 @@ export interface ChatMessage {
 
 const ensureUrl = (value: string) => value.replace(/\/$/, "");
 
+const isTauriHost = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/**
+ * fetch autenticado com renovação: um 401 dispara o refresh no Rust
+ * (`oidc_restore`, que renova quando o token venceu) UMA vez e repete a
+ * chamada. Antes disso o app nunca renovava em execução — o token vencia no
+ * meio do uso e toda chamada seguinte morria em 401 até reiniciar.
+ */
+async function authorizedFetch(
+  session: { baseUrl: string; accessToken: string },
+  input: string,
+  init: RequestInit = {},
+  extraHeaders: Record<string, string> = {}
+): Promise<Response> {
+  const attempt = (token: string) =>
+    fetch(input, { ...init, headers: { ...extraHeaders, Authorization: `Bearer ${token}` } });
+  const response = await attempt(session.accessToken);
+  if (response.status !== 401 || !isTauriHost) return response;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const renewed = await invoke<{ accessToken: string } | null>("oidc_restore", {
+      gatewayBaseUrl: session.baseUrl
+    });
+    if (!renewed || renewed.accessToken === session.accessToken) return response;
+    // Atualiza a sessão viva para as chamadas seguintes não repetirem o 401.
+    const { useApp } = await import("./store");
+    const current = useApp.getState().session;
+    if (current) useApp.getState().setSession({ ...current, accessToken: renewed.accessToken });
+    return attempt(renewed.accessToken);
+  } catch {
+    return response;
+  }
+}
+
 export async function listWorkspaces(session: Omit<GatewaySession, "workspaceId">) {
-  const response = await fetch(`${ensureUrl(session.baseUrl)}/v1/workspaces`, {
-    headers: { Authorization: `Bearer ${session.accessToken}` }
-  });
+  const response = await authorizedFetch(session, `${ensureUrl(session.baseUrl)}/v1/workspaces`);
   if (!response.ok) throw new Error(`Gateway respondeu ${response.status}`);
   return (await response.json()) as WorkspaceSummary[];
 }
@@ -28,18 +60,11 @@ export async function streamChat(
   onDelta: (delta: string) => void,
   signal?: AbortSignal
 ) {
-  const response = await fetch(
+  const response = await authorizedFetch(
+    session,
     `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/chat/completions`,
-    {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${session.accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream"
-      },
-      body: JSON.stringify({ mode, stream: true, messages })
-    }
+    { method: "POST", signal, body: JSON.stringify({ mode, stream: true, messages }) },
+    { "Content-Type": "application/json", Accept: "text/event-stream" }
   );
 
   if (!response.ok || !response.body) {
@@ -77,17 +102,11 @@ export async function generateImage(
   prompt: string,
   signal?: AbortSignal
 ): Promise<string[]> {
-  const response = await fetch(
+  const response = await authorizedFetch(
+    session,
     `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/images/generations`,
-    {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${session.accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ payload: { prompt } })
-    }
+    { method: "POST", signal, body: JSON.stringify({ payload: { prompt } }) },
+    { "Content-Type": "application/json" }
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -106,17 +125,11 @@ export async function replicateDesign(
   request: DesignReplicationRequest,
   signal?: AbortSignal
 ) {
-  const response = await fetch(
+  const response = await authorizedFetch(
+    session,
     `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/design/replications`,
-    {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${session.accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(request)
-    }
+    { method: "POST", signal, body: JSON.stringify(request) },
+    { "Content-Type": "application/json" }
   );
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
@@ -130,17 +143,11 @@ export async function validateOrchestration(
   graph: OrchestrationGraph,
   signal?: AbortSignal
 ) {
-  const response = await fetch(
+  const response = await authorizedFetch(
+    session,
     `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/orchestrations/validate`,
-    {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${session.accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(graph)
-    }
+    { method: "POST", signal, body: JSON.stringify(graph) },
+    { "Content-Type": "application/json" }
   );
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
