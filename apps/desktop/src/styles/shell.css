@@ -354,28 +354,34 @@ button { -webkit-tap-highlight-color: transparent; }
   .status-pill .pill-label { display: none; }
 }
 
-/* Seletor de política de aprovação no composer ("Approve for me"). */
-.approve-select {
+/* Chip informativo da política de aprovação — mesma linguagem do model-select
+   (a edição vive nas Configurações, com a TI). */
+.approve-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--glass-border);
   border-radius: 999px;
-  background: var(--panel-2);
+  background: var(--glass);
   color: var(--muted);
   font-size: var(--fs-micro);
+  white-space: nowrap;
   cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
 }
-.approve-select:hover { color: var(--ink); border-color: var(--line-strong); }
-.approve-select select {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-  outline: none;
-  cursor: pointer;
+.approve-chip:hover { color: var(--ink); background: var(--hover); }
+
+/* Anexo com miniatura da imagem colada (Ctrl+V). */
+.attach-chip { gap: 6px; }
+.attach-thumb {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid var(--glass-border);
 }
 
 /* Medidor de contexto (topo) — "1.4k / 131.1k" com barra fina. */

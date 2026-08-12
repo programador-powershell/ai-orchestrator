@@ -13,6 +13,19 @@ import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";
 
+/**
+ * Anexo do composer. Texto vai em `content`; imagem/vídeo/PDF vão em `dataUrl`
+ * (base64) para seguir como conteúdo de visão ao modelo.
+ */
+export interface Attachment {
+  name: string;
+  content: string;
+  /** data URL do binário — presente quando o anexo não é texto. */
+  dataUrl?: string;
+  /** MIME original (define se vira image_url no payload). */
+  mime?: string;
+}
+
 export interface ThreadMessage extends ChatMessage {
   /** Anexos estruturados produzidos pelo motor (plano, pesquisa, ops, tools). */
   meta?: {
@@ -181,13 +194,13 @@ interface AppState {
   stage: string;
   researchReport: ResearchReport | null;
   /** Anexos reais aguardando o próximo envio (nome + conteúdo lido do arquivo). */
-  attachments: Array<{ name: string; content: string }>;
+  attachments: Attachment[];
 
   setSession: (session: GatewaySession | null) => void;
   setRuntimeStatus: (status: RuntimeStatus) => void;
   setStage: (stage: string) => void;
   setResearchReport: (report: ResearchReport | null) => void;
-  setAttachments: (attachments: Array<{ name: string; content: string }>) => void;
+  setAttachments: (attachments: Attachment[]) => void;
   setMode: (mode: UiMode) => void;
   setTheme: (theme: "light" | "dark") => void;
   setRailOpen: (open: boolean) => void;

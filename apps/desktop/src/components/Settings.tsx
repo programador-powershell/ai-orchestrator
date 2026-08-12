@@ -60,6 +60,7 @@ import {
   Upload,
   X
 } from "lucide-react";
+import { APPROVAL_POLICIES, type ApprovalPolicy } from "../lib/approval";
 import { bridgeConfig, bridgeEnvLines, bridgeStatus } from "../lib/bridge";
 import { byok, byokBackend, providerExtraHeaders } from "../lib/byok";
 import { providerBaseUrls, resolveBaseUrl } from "../lib/engine";
@@ -338,6 +339,31 @@ function EnginesSection() {
       title="Motores & Fusion"
       detail="Defina qual motor responde em cada aba — rota do workspace, runtime local, um preset de fusion ou um modelo direto (BYOK)."
     >
+      <div className="setx-card">
+        <div className="setx-card-title">
+          <ShieldCheck size={13} />
+          Aprovação de ferramentas
+        </div>
+        <p className="setx-hint">
+          Quando o agente deve parar e pedir confirmação antes de alterar o projeto. Leitura de arquivo nunca pergunta.
+        </p>
+        <div className="setx-row">
+          <label className="lg-field" style={{ flex: 1, minWidth: 240 }}>
+            Política
+            <select
+              value={settings.approvalPolicy ?? "ask"}
+              onChange={(event) => updateSettings({ approvalPolicy: event.target.value as ApprovalPolicy })}
+            >
+              {APPROVAL_POLICIES.map((policy) => (
+                <option key={policy.id} value={policy.id}>
+                  {policy.label} — {policy.hint}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
       <div className="setx-card">
         <div className="setx-card-title">
           <Server size={13} />
