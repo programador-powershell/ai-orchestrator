@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
   UI_MODES,
+  type BootstrapPolicy,
+  type BootstrapProfile,
   type EngineSelection,
   type ExecutionPlan,
   type FusionPreset,
@@ -109,6 +111,8 @@ export interface AppSettings {
   visibleModes: UiMode[];
   /** Abas que este perfil já conheceu — permite exibir abas NOVAS sem ressuscitar ocultadas. */
   modesSeen: UiMode[];
+  /** Prompt master LOCAL da sessão — complementa (nunca sobrepõe) o do servidor. */
+  localPrompt: string;
   /** Servidores MCP externos (nome + URL JSON-RPC + token opcional). */
   mcpServers: Array<{ name: string; url: string; token?: string }>;
 }
@@ -193,6 +197,11 @@ interface AppState {
   theme: "light" | "dark";
   railOpen: boolean;
   settingsOpen: boolean;
+  /** Politica herdada do servidor — NAO persistida: o cache assinado vive no
+   * Rust e e reverificado a cada leitura. null = sem gating (comportamento atual). */
+  policy: BootstrapPolicy | null;
+  profile: BootstrapProfile | null;
+  policyVerified: boolean;
   planMode: boolean;
   researchMode: boolean;
   input: string;
@@ -278,6 +287,9 @@ export const useApp = create<AppState>()(
       theme: "light",
       railOpen: true,
       settingsOpen: false,
+      policy: null,
+      profile: null,
+      policyVerified: false,
       planMode: false,
       researchMode: false,
       input: "",
@@ -316,6 +328,7 @@ export const useApp = create<AppState>()(
         approvalPolicy: "ask",
       agentTools: true,
       deployServers: [],
+      localPrompt: "",
         memoryRecallK: 6,
         effort: 1,
         providerBaseOverrides: {},

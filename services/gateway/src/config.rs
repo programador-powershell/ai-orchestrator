@@ -12,6 +12,10 @@ pub struct Config {
     pub oidc_audience: String,
     pub provider_master_key: [u8; 32],
     pub allow_dev_auth: bool,
+    /// Seed Ed25519 (base64, 32 bytes) que assina a politica do bootstrap.
+    /// Ausente = bootstrap sem assinatura (dev); a edicao managed do cliente
+    /// RECUSA politica sem assinatura.
+    pub policy_signing_seed: Option<[u8; 32]>,
 }
 
 impl Config {
@@ -41,6 +45,22 @@ impl Config {
             provider_master_key,
             allow_dev_auth: env::var("ALLOW_DEV_AUTH")
                 .is_ok_and(|v| v.eq_ignore_ascii_case("true")),
+            policy_signing_seed: match env::var("POLICY_SIGNING_KEY") {
+                Ok(value) if !value.is_empty() => {
+                    let bytes = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        value,
+                    )
+                    .context("POLICY_SIGNING_KEY must be base64")?;
+                    if bytes.len() != 32 {
+                        bail!("POLICY_SIGNING_KEY must decode to exactly 32 bytes");
+                    }
+                    let mut seed = [0u8; 32];
+                    seed.copy_from_slice(&bytes);
+                    Some(seed)
+                }
+                _ => None,
+            },
         })
     }
 }

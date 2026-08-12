@@ -386,6 +386,27 @@ function EnginesSection() {
 
       <div className="setx-card">
         <div className="setx-card-title">
+          <Brain size={13} />
+          Prompt master local
+        </div>
+        <p className="setx-hint">
+          Instruções desta estação, injetadas em toda conversa. Quando o servidor define um prompt master, o dele entra
+          primeiro e este complementa — em conflito, o do servidor prevalece (e ele pode desligar o complemento).
+        </p>
+        <label className="lg-field">
+          Instruções locais
+          <textarea
+            value={settings.localPrompt ?? ""}
+            onChange={(event) => updateSettings({ localPrompt: event.target.value })}
+            placeholder="Ex.: responda sempre em português; prefira exemplos com nossos produtos…"
+            rows={4}
+            spellCheck={false}
+          />
+        </label>
+      </div>
+
+      <div className="setx-card">
+        <div className="setx-card-title">
           <Server size={13} />
           Motor por aba
         </div>

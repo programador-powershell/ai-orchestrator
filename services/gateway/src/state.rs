@@ -28,6 +28,7 @@ impl Metrics {
 
 #[derive(Clone)]
 pub struct AppState {
+    pub config: Config,
     pub pool: PgPool,
     pub redis: redis::Client,
     pub auth: AuthService,
@@ -40,6 +41,7 @@ impl AppState {
         let secrets = SecretBox::new(&config.provider_master_key);
         Self {
             auth: AuthService::new(config.clone()),
+            config,
             providers: ProviderClient {
                 http: reqwest::Client::new(),
                 pool: pool.clone(),
