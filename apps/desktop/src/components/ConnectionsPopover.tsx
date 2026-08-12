@@ -18,6 +18,7 @@ import {
   type Connection,
   type ConnectionKind
 } from "../lib/connections";
+import { runtime } from "../lib/runtime";
 import { useApp } from "../lib/store";
 
 const ICONS: Record<ConnectionKind, typeof Plug> = {
@@ -44,6 +45,24 @@ export function ConnectionsPopover() {
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // O status do runtime só era lido uma vez no boot — o pill mostraria um
+  // estado frio para sempre. Enquanto o painel está aberto, revalida.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const refresh = () =>
+      void runtime
+        .status()
+        .then((status) => alive && useApp.setState({ runtimeStatus: status }))
+        .catch(() => undefined);
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
