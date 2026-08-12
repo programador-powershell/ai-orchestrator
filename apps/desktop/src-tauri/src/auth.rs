@@ -14,6 +14,12 @@ use tokio::{
 struct OidcConfig {
     client_id: String,
     authorization_endpoint: String,
+    /// Presente nos gateways novos: o desktop (public client) troca o code
+    /// DIRETO com o IdP. Ausente = gateway antigo → cai no proxy legado.
+    #[serde(default)]
+    token_endpoint: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -22,6 +28,15 @@ pub struct OidcSession {
     access_token: String,
     refresh_token: Option<String>,
     expires_at: i64,
+    /// Guardados na sessão para o refresh direto com o IdP funcionar sem
+    /// refazer a descoberta — e com o MESMO scope (refresh multi-recurso do
+    /// Entra sem scope devolve token com aud imprevisível).
+    #[serde(default)]
+    token_endpoint: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 fn account(base_url: &str) -> String {
@@ -41,6 +56,34 @@ async fn refresh(base_url: &str, session: &OidcSession) -> Result<OidcSession, S
         .refresh_token
         .as_ref()
         .ok_or_else(|| "sessão expirada; autentique novamente".to_string())?;
+    // Public client: renova DIRETO no IdP, com o mesmo scope da autorização.
+    if let (Some(endpoint), Some(client_id)) = (&session.token_endpoint, &session.client_id) {
+        let mut form = vec![
+            ("grant_type", "refresh_token".to_string()),
+            ("client_id", client_id.clone()),
+            ("refresh_token", refresh_token.clone()),
+        ];
+        if let Some(scope) = &session.scope {
+            form.push(("scope", scope.clone()));
+        }
+        let value: Value = reqwest::Client::new()
+            .post(endpoint)
+            .form(&form)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut renewed = token_session(value, session.refresh_token.clone())?;
+        renewed.token_endpoint = session.token_endpoint.clone();
+        renewed.client_id = session.client_id.clone();
+        renewed.scope = session.scope.clone();
+        return Ok(renewed);
+    }
+    // Gateway antigo: proxy legado.
     let value: Value = reqwest::Client::new()
         .post(format!(
             "{}/v1/auth/refresh",
@@ -77,6 +120,9 @@ fn token_session(value: Value, previous_refresh: Option<String>) -> Result<OidcS
         access_token,
         refresh_token,
         expires_at: chrono::Utc::now().timestamp() + expires_in - 30,
+        token_endpoint: None,
+        client_id: None,
+        scope: None,
     })
 }
 
@@ -124,7 +170,11 @@ pub async fn oidc_login(gateway_base_url: String) -> Result<OidcSession, String>
         .await
         .map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+    // "localhost", não "127.0.0.1": o Entra casa host e path do redirect
+    // exatamente e só ignora a PORTA no loopback quando o host é localhost.
+    // Registrar no portal: http://localhost/callback (plataforma
+    // "Mobile and desktop applications" — public client, sem client_secret).
+    let redirect_uri = format!("http://localhost:{port}/callback");
     let mut verifier_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut verifier_bytes);
     let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
@@ -132,12 +182,16 @@ pub async fn oidc_login(gateway_base_url: String) -> Result<OidcSession, String>
     let state = uuid::Uuid::new_v4().to_string();
     let mut authorization =
         url::Url::parse(&config.authorization_endpoint).map_err(|e| e.to_string())?;
+    let scope = config
+        .scope
+        .clone()
+        .unwrap_or_else(|| "openid profile email offline_access".into());
     authorization
         .query_pairs_mut()
         .append_pair("client_id", &config.client_id)
         .append_pair("response_type", "code")
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("scope", "openid profile email offline_access")
+        .append_pair("scope", &scope)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", &state);
@@ -174,18 +228,45 @@ pub async fn oidc_login(gateway_base_url: String) -> Result<OidcSession, String>
         .await
         .map_err(|e| e.to_string())?;
 
-    let token: Value = reqwest::Client::new()
-        .post(format!("{base}/v1/auth/token"))
-        .json(&serde_json::json!({"code":code,"codeVerifier":verifier,"redirectUri":redirect_uri}))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-    let session = token_session(token, None)?;
+    // Public client: a troca do code acontece DIRETO com o IdP, sem
+    // client_secret e sem o gateway no meio — o gateway só VALIDA o token
+    // (JWKS) nas chamadas seguintes. Gateway antigo (sem tokenEndpoint na
+    // config pública) cai no proxy legado.
+    let token: Value = match &config.token_endpoint {
+        Some(endpoint) => reqwest::Client::new()
+            .post(endpoint)
+            .form(&[
+                ("grant_type", "authorization_code".to_string()),
+                ("client_id", config.client_id.clone()),
+                ("code", code.clone()),
+                ("code_verifier", verifier.clone()),
+                ("redirect_uri", redirect_uri.clone()),
+                ("scope", scope.clone()),
+            ])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?,
+        None => reqwest::Client::new()
+            .post(format!("{base}/v1/auth/token"))
+            .json(&serde_json::json!({"code":code,"codeVerifier":verifier,"redirectUri":redirect_uri}))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+    let mut session = token_session(token, None)?;
+    session.token_endpoint = config.token_endpoint.clone();
+    session.client_id = Some(config.client_id.clone());
+    session.scope = Some(scope);
     store(&gateway_base_url, &session)?;
     Ok(session)
 }
