@@ -156,6 +156,8 @@ export interface AgentLoopHooks {
   onToolResult?: (call: ToolCall, result: ToolResult) => void;
   /** Limite de idas ao modelo (backstop anti-loop). Padrão 8. */
   maxIterations?: number;
+  /** Botão Parar: interrompe o loop entre passos, sem nova ida ao modelo. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -165,15 +167,18 @@ export interface AgentLoopHooks {
 export async function runAgentLoop(initial: AgentMessage[], hooks: AgentLoopHooks): Promise<string> {
   const messages = [...initial];
   const maxIterations = hooks.maxIterations ?? 8;
+  const stopped = () => hooks.signal?.aborted === true;
   let lastText = "";
   for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    if (stopped()) return lastText;
     const raw = await hooks.runTurn(messages);
     lastText = stripToolCalls(raw);
     const calls = parseToolCalls(raw);
-    if (!calls.length) return lastText;
+    if (!calls.length || stopped()) return lastText;
     messages.push({ role: "assistant", content: raw });
 
     for (const call of calls) {
+      if (stopped()) return lastText;
       hooks.onToolStart?.(call);
       if (needsApproval(call) && !(await hooks.requestApproval(call))) {
         const denied: ToolResult = { ok: false, output: "usuário recusou a execução desta ferramenta." };

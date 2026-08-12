@@ -92,6 +92,7 @@ pub fn run() {
             sandbox::sandbox_execute,
             providers::provider_chat,
             providers::provider_chat_stream,
+            providers::provider_chat_cancel,
             providers::provider_fetch
         ])
         .run(tauri::generate_context!())

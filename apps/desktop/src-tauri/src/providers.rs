@@ -1,6 +1,8 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use tauri::ipc::Channel;
 use tokio::time::Duration;
 
@@ -18,6 +20,41 @@ pub struct ProviderChatRequest {
     account: String,
     model: String,
     messages: Vec<ChatMessage>,
+    /// Id do turno — permite ao front cancelar este stream (botão Parar).
+    stream_id: Option<String>,
+}
+
+/// Ids de streams que o front pediu para cancelar. O loop de leitura consulta
+/// a cada chunk e encerra o consumo do provedor (para de gastar tokens).
+fn cancelled_streams() -> &'static Mutex<HashSet<String>> {
+    static CANCELLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn is_cancelled(stream_id: &Option<String>) -> bool {
+    let Some(id) = stream_id else { return false };
+    cancelled_streams()
+        .lock()
+        .map(|set| set.contains(id))
+        .unwrap_or(false)
+}
+
+fn clear_cancelled(stream_id: &Option<String>) {
+    if let Some(id) = stream_id {
+        if let Ok(mut set) = cancelled_streams().lock() {
+            set.remove(id);
+        }
+    }
+}
+
+/// Cancela um stream em andamento (chamado pelo botão Parar do composer).
+#[tauri::command]
+pub fn provider_chat_cancel(stream_id: String) -> Result<(), String> {
+    cancelled_streams()
+        .lock()
+        .map_err(|_| "estado de cancelamento indisponível".to_string())?
+        .insert(stream_id);
+    Ok(())
 }
 
 /// Eventos de streaming enviados ao front conforme os tokens chegam.
@@ -90,9 +127,33 @@ pub async fn provider_chat_stream(
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut full = String::new();
+    // Bytes crus acumulados: um chunk pode partir um caractere UTF-8 no meio,
+    // então só decodifica o prefixo válido e guarda a sobra para o próximo.
+    let mut raw: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
+        if is_cancelled(&request.stream_id) {
+            clear_cancelled(&request.stream_id);
+            on_event
+                .send(StreamEvent::Done(full.clone()))
+                .map_err(|error| error.to_string())?;
+            return Ok(full);
+        }
         let bytes = chunk.map_err(|error| error.to_string())?;
-        buffer.push_str(&String::from_utf8_lossy(&bytes));
+        raw.extend_from_slice(&bytes);
+        let decoded = match std::str::from_utf8(&raw) {
+            Ok(text) => {
+                let owned = text.to_owned();
+                raw.clear();
+                owned
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                let owned = String::from_utf8_lossy(&raw[..valid]).into_owned();
+                raw.drain(..valid);
+                owned
+            }
+        };
+        buffer.push_str(&decoded);
         // Eventos SSE são separados por linha em branco; processa os completos.
         while let Some(boundary) = buffer.find("\n\n") {
             let event = buffer[..boundary].to_owned();
@@ -114,6 +175,7 @@ pub async fn provider_chat_stream(
             }
         }
     }
+    clear_cancelled(&request.stream_id);
     on_event
         .send(StreamEvent::Done(full.clone()))
         .map_err(|error| error.to_string())?;
