@@ -522,3 +522,7 @@
 }
 .desx-editar:hover:not(:disabled) { transform: translateY(-2px) scale(1.03); box-shadow: 0 10px 24px var(--accent-glow); }
 .desx-editar:disabled { opacity: 0.55; cursor: default; }
+
+/* Painel de export de vídeo — pasta, saída, áudio e render. */
+.desx-export .lg-field { margin-bottom: 8px; }
+.desx-export-actions { display: flex; gap: 8px; margin: 6px 0; }

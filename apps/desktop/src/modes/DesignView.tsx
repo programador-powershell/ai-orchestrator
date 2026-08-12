@@ -19,7 +19,6 @@ import {
   ChevronUp,
   Circle,
   Clapperboard,
-  Copy,
   Download,
   FileText,
   FileVideo,
@@ -47,6 +46,7 @@ import {
 import type { DesignReplicationResult } from "@ai-orchestrator/contracts";
 import { replicateDesign } from "../lib/gateway";
 import { terminal } from "../lib/terminal";
+import { buildFfmpegExport } from "../lib/videoExport";
 import { useApp } from "../lib/store";
 import { composerBus } from "../lib/ops";
 import {
@@ -115,7 +115,7 @@ interface TimelineClip {
 }
 
 interface FfmpegState {
-  status: "idle" | "checking" | "ok" | "missing";
+  status: "idle" | "checking" | "ok" | "missing" | "rendering";
   note: string;
 }
 
@@ -375,6 +375,42 @@ useDesign.subscribe((state, previous) => {
     // storage cheio/indisponível — o doc segue em memória
   }
 });
+
+/* Projeto de vídeo: persiste as DECISÕES (mídia por nome + cortes), não os
+   blob URLs — eles morrem entre sessões. Ao reabrir, a timeline e o export
+   voltam; só o preview pede reimportar o arquivo. Antes nada persistia. */
+const VIDEO_STORAGE_KEY = "design.video";
+useDesign.subscribe((state, previous) => {
+  if (state.media === previous.media && state.clips === previous.clips) return;
+  try {
+    window.localStorage.setItem(
+      VIDEO_STORAGE_KEY,
+      JSON.stringify({
+        media: state.media.map(({ id, name, duration }) => ({ id, name, duration })),
+        clips: state.clips
+      })
+    );
+  } catch {
+    // storage indisponível — o projeto segue em memória
+  }
+});
+
+// Carga inicial do projeto de vídeo (fora do create para não competir com o
+// probe de duração do addMediaFile).
+try {
+  const raw = window.localStorage.getItem(VIDEO_STORAGE_KEY);
+  if (raw) {
+    const saved = JSON.parse(raw) as { media?: Array<{ id: string; name: string; duration: number }>; clips?: TimelineClip[] };
+    if (saved.clips?.length) {
+      useDesign.setState({
+        media: (saved.media ?? []).map((item) => ({ ...item, url: "" })),
+        clips: saved.clips
+      });
+    }
+  }
+} catch {
+  // projeto corrompido — começa vazio
+}
 
 /* -------------------------------- Rail ------------------------------ */
 
@@ -851,7 +887,9 @@ export function DesignView() {
   const playbackEpoch = useDesign((state) => state.playbackEpoch);
   const [playing, setPlaying] = useState(false);
   const [ffmpeg, setFfmpeg] = useState<FfmpegState>({ status: "idle", note: "" });
-  const [copiedExport, setCopiedExport] = useState(false);
+  const [mediaFolder, setMediaFolder] = useState(() => window.localStorage.getItem("design.mediaFolder") ?? "");
+  const [outputName, setOutputName] = useState("corte-final.mp4");
+  const [withAudio, setWithAudio] = useState(true);
   const exportTimerRef = useRef(0);
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1078,41 +1116,41 @@ export function DesignView() {
     }
   }
 
-  function buildExportCommand(): string {
-    const list = clipsRef.current;
-    const inputs: string[] = [];
-    const inputIndex = new Map<string, number>();
-    for (const clip of list) {
-      const source = mediaRef.current.find((item) => item.id === clip.mediaId);
-      const name = source?.name ?? "video.mp4";
-      if (!inputIndex.has(clip.mediaId)) {
-        inputIndex.set(clip.mediaId, inputs.length);
-        inputs.push(name);
-      }
-    }
-    const filters = list.map((clip, i) => {
-      const index = inputIndex.get(clip.mediaId) ?? 0;
-      const start = clip.start.toFixed(2);
-      const end = clip.end.toFixed(2);
-      return (
-        `[${index}:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${i}];` +
-        `[${index}:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${i}]`
-      );
+  /**
+   * Renderiza o corte DE VERDADE: monta o comando (puro/validado) e roda o
+   * ffmpeg com o cwd na pasta da mídia — os nomes dos arquivos resolvem ali e
+   * o arquivo de saída é gravado na mesma pasta. Antes isto só copiava o texto.
+   */
+  async function runExport() {
+    const plan = buildFfmpegExport(clipsRef.current, mediaRef.current, {
+      output: outputName.trim() || "corte-final.mp4",
+      withAudio
     });
-    const concat =
-      list.map((_, i) => `[v${i}][a${i}]`).join("") + `concat=n=${list.length}:v=1:a=1[vout][aout]`;
-    const inputArgs = inputs.map((name) => `-i "${name}"`).join(" ");
-    return `ffmpeg ${inputArgs} -filter_complex "${[...filters, concat].join(";")}" -map "[vout]" -map "[aout]" "export-cortado.mp4"`;
-  }
-
-  async function copyExportCommand() {
+    if (!plan.ok) {
+      setFfmpeg((previous) => ({ ...previous, note: plan.reason ?? "não foi possível montar o export" }));
+      return;
+    }
+    if (!isTauriHost) {
+      // No navegador não há terminal; entrega o comando para rodar à mão.
+      await navigator.clipboard.writeText(plan.command).catch(() => undefined);
+      setFfmpeg((previous) => ({ ...previous, note: "Sem app desktop: comando copiado para você rodar na máquina." }));
+      return;
+    }
+    const folder = mediaFolder.trim();
+    if (!folder) {
+      setFfmpeg((previous) => ({ ...previous, note: "Informe a pasta onde estão os vídeos importados." }));
+      return;
+    }
+    setFfmpeg({ status: "rendering", note: `Renderizando ${plan.output}…` });
     try {
-      await navigator.clipboard.writeText(buildExportCommand());
-      setCopiedExport(true);
-      window.clearTimeout(exportTimerRef.current);
-      exportTimerRef.current = window.setTimeout(() => setCopiedExport(false), 2000);
-    } catch {
-      setFfmpeg((previous) => ({ ...previous, note: "Não foi possível copiar para o clipboard." }));
+      const result = await terminal.execute(plan.command, folder);
+      if ((result.exitCode ?? 0) === 0) {
+        setFfmpeg({ status: "ok", note: `Pronto: ${plan.output} gravado em ${folder}` });
+      } else {
+        setFfmpeg({ status: "ok", note: `ffmpeg falhou (código ${result.exitCode}): ${(result.stderr || result.stdout).slice(-600)}` });
+      }
+    } catch (cause) {
+      setFfmpeg({ status: "ok", note: cause instanceof Error ? cause.message : String(cause) });
     }
   }
 
@@ -1729,30 +1767,50 @@ export function DesignView() {
             />
             <div className="desx-export">
               <p>
-                O corte final é renderizado pelo ffmpeg instalado na sua máquina — nada sobe para a nuvem. Detecte o
-                binário e gere o comando com os cortes atuais.
+                O corte é renderizado pelo <strong>ffmpeg da sua máquina</strong> — nada sobe para a nuvem. Coloque os
+                vídeos importados numa pasta, aponte-a abaixo e renderize; o arquivo final é gravado lá.
               </p>
+              <label className="lg-field">
+                Pasta dos vídeos (e da saída)
+                <input
+                  value={mediaFolder}
+                  onChange={(event) => {
+                    setMediaFolder(event.target.value);
+                    window.localStorage.setItem("design.mediaFolder", event.target.value);
+                  }}
+                  placeholder="C:\\Users\\voce\\Videos\\projeto"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="lg-field">
+                Arquivo de saída
+                <input value={outputName} onChange={(event) => setOutputName(event.target.value)} spellCheck={false} />
+              </label>
               <button
-                className="lg-button"
-                onClick={() => void detectFfmpeg()}
-                disabled={ffmpeg.status === "checking"}
+                className={`lg-toggle ${withAudio ? "on" : ""}`}
+                onClick={() => setWithAudio((value) => !value)}
+                title="Desligue para clipes sem faixa de áudio"
               >
-                <TerminalIcon size={13} />
-                {ffmpeg.status === "checking" ? "Detectando…" : "Detectar ffmpeg"}
+                <i />
+                Incluir áudio
               </button>
+              <div className="desx-export-actions">
+                <button className="lg-button" onClick={() => void detectFfmpeg()} disabled={ffmpeg.status === "checking"}>
+                  <TerminalIcon size={13} />
+                  {ffmpeg.status === "checking" ? "Detectando…" : "Detectar ffmpeg"}
+                </button>
+                <button
+                  className="lg-button primary"
+                  disabled={!clips.length || ffmpeg.status === "rendering"}
+                  onClick={() => void runExport()}
+                >
+                  <FileVideo size={13} />
+                  {ffmpeg.status === "rendering" ? "Renderizando…" : "Renderizar corte"}
+                </button>
+              </div>
               {ffmpeg.note && <div className="desx-term">{ffmpeg.note}</div>}
               {ffmpeg.status === "missing" && (
                 <span className="chip danger">{isTauriHost ? "ffmpeg não detectado" : "requer o app desktop"}</span>
-              )}
-              {ffmpeg.status === "ok" && (
-                <button
-                  className="lg-button primary"
-                  disabled={!clips.length}
-                  onClick={() => void copyExportCommand()}
-                >
-                  {copiedExport ? <Check size={13} /> : <Copy size={13} />}
-                  {copiedExport ? "Comando copiado" : "Gerar comando de export"}
-                </button>
               )}
             </div>
           </VRight>
