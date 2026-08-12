@@ -623,3 +623,48 @@ describe("diffSchemasDown (rollback)", () => {
     expect(diffSchemasDown(doc, doc, "postgres")).toEqual([]);
   });
 });
+
+describe("importSql — SQL do mundo real", () => {
+  it("nome qualificado por schema não é mais ignorado em silêncio", () => {
+    const doc = importSql(`
+      CREATE TABLE public.clientes ( id bigint PRIMARY KEY, nome text );
+      CREATE TABLE public.pedidos (
+        id bigint PRIMARY KEY,
+        cliente_id bigint NOT NULL REFERENCES public.clientes(id)
+      );
+    `);
+    expect(doc.tables.map((table) => table.name)).toEqual(["clientes", "pedidos"]);
+    // a FK guarda a TABELA, não o schema
+    expect(doc.relations.map((r) => `${r.fromTable}.${r.fromField}->${r.toTable}.${r.toField}`)).toEqual([
+      "pedidos.cliente_id->clientes.id"
+    ]);
+  });
+
+  it("comentário de bloco no cabeçalho não engole o CREATE seguinte", () => {
+    const doc = importSql(`
+      /* Dump gerado em 2026
+         por alguma ferramenta */
+      CREATE TABLE t ( id int PRIMARY KEY );
+    `);
+    expect(doc.tables.map((table) => table.name)).toEqual(["t"]);
+  });
+
+  it("preserva o tipo com precisão", () => {
+    const doc = importSql(`CREATE TABLE t ( total numeric(12,2) NOT NULL );`);
+    expect(doc.tables[0].fields[0].type).toBe("numeric(12,2)");
+  });
+
+  it("crase do MySQL com schema qualificado", () => {
+    const doc = importSql("CREATE TABLE `loja`.`itens` ( `id` int PRIMARY KEY );");
+    expect(doc.tables.map((table) => table.name)).toEqual(["itens"]);
+  });
+
+  it("ALTER TABLE com nome qualificado cria a relação", () => {
+    const doc = importSql(`
+      CREATE TABLE a ( id int PRIMARY KEY );
+      CREATE TABLE b ( id int PRIMARY KEY, a_id int );
+      ALTER TABLE public.b ADD CONSTRAINT fk FOREIGN KEY (a_id) REFERENCES public.a(id);
+    `);
+    expect(doc.relations.some((r) => r.fromTable === "b" && r.toTable === "a")).toBe(true);
+  });
+});
