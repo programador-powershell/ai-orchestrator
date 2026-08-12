@@ -26,8 +26,10 @@ import {
   type WorkspaceSummary
 } from "@ai-orchestrator/contracts";
 import {
+  Bot,
   Brain,
   Check,
+  Copy,
   Cpu,
   Download,
   FileText,
@@ -58,6 +60,7 @@ import {
   Upload,
   X
 } from "lucide-react";
+import { bridgeConfig, bridgeEnvLines, bridgeStatus } from "../lib/bridge";
 import { byok, byokBackend, providerExtraHeaders } from "../lib/byok";
 import { providerBaseUrls, resolveBaseUrl } from "../lib/engine";
 import { extensions } from "../lib/extensions";
@@ -1542,6 +1545,60 @@ function ExtensionsSection() {
   );
 }
 
+/**
+ * Bridge de agente local: mostra a URL/chave do runtime para apontar agentes
+ * externos (Claude Code, Codex) ao modelo local — o "model swapping".
+ */
+function LocalAgentBridge() {
+  const runtimeStatus = useApp((state) => state.runtimeStatus);
+  const [copied, setCopied] = useState("");
+  const bridge = bridgeStatus(runtimeStatus);
+
+  async function copy(label: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      window.setTimeout(() => setCopied(""), 1600);
+    } catch {
+      // clipboard indisponível: o valor continua visível para cópia manual
+    }
+  }
+
+  return (
+    <div className="setx-card">
+      <div className="setx-card-title">
+        <Bot size={13} />
+        Agente local (Claude Code, Codex)
+      </div>
+      <p className="setx-hint">
+        Aponte um agente externo para o modelo que roda aqui. O servidor escuta apenas em 127.0.0.1 e a chave só
+        existe enquanto o runtime está ligado.
+      </p>
+      {!bridge.online ? (
+        <span className="chip warn">runtime parado — inicie o servidor abaixo para liberar a conexão</span>
+      ) : (
+        <>
+          <div className="setx-row">
+            <span className="chip ok">online</span>
+            <code className="setx-code">{bridge.baseUrl}</code>
+            {bridge.model && <span className="chip">{bridge.model}</span>}
+          </div>
+          <div className="setx-actions">
+            <button className="lg-button ghost" onClick={() => void copy("env", bridgeEnvLines(bridge).join("\n"))}>
+              {copied === "env" ? <Check size={13} /> : <Copy size={13} />}
+              Copiar variáveis de ambiente
+            </button>
+            <button className="lg-button ghost" onClick={() => void copy("json", bridgeConfig(bridge))}>
+              {copied === "json" ? <Check size={13} /> : <Copy size={13} />}
+              Copiar config JSON
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* --------------------------- 6. Runtime local --------------------------- */
 
 function RuntimeSection() {
@@ -1595,6 +1652,7 @@ function RuntimeSection() {
           {runtimeStatus.version && <span className="chip">v{runtimeStatus.version}</span>}
           {!isTauriHost && <span className="chip warn">navegador — somente leitura</span>}
         </div>
+        <LocalAgentBridge />
         <div className="setx-actions">
           <button className="lg-button ghost" onClick={() => void run("install-cpu", () => runtime.install("cpu"))} disabled={Boolean(busy)}>
             {busy === "install-cpu" ? <LoaderCircle className="spin" size={13} /> : <HardDriveDownload size={13} />}
