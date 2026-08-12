@@ -72,6 +72,8 @@ export interface RuntimeStatus {
   variant?: "cpu" | "vulkan";
   version?: string;
   port?: number;
+  /** Token do servidor local (127.0.0.1) para conectar agentes externos. */
+  apiKey?: string;
   models: Array<{ id: string; fileName: string; size: number }>;
 }
 
