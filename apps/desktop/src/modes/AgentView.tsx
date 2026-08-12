@@ -25,6 +25,7 @@ import {
   Merge,
   Network,
   Play,
+  RotateCw,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -59,6 +60,20 @@ import {
 } from "../lib/dag";
 import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
 import { validateOrchestration, type ChatMessage } from "../lib/gateway";
+import {
+  RUN_STORAGE_KEY,
+  docFingerprint,
+  isRefusal,
+  makeRun,
+  parseRun,
+  planResume,
+  serializeRun,
+  type NodeRun,
+  type PersistedRun,
+  type ResumePlan,
+  type RunState,
+  type RunStatus
+} from "../lib/agentRun";
 import { runWithLimit } from "../lib/pool";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
@@ -79,14 +94,8 @@ import {
 
 type PaletteKind = Extract<DagNodeKind, "agent" | "tool" | "gate" | "human">;
 
-type RunStatus = "queued" | "running" | "waiting" | "done" | "failed" | "skipped";
-
-interface NodeRun {
-  status: RunStatus;
-  output: string;
-  note?: string;
-  durationMs?: number;
-}
+// RunStatus/NodeRun vivem em lib/agentRun.ts — o formato é o mesmo que vai
+// para o disco, e duplicar aqui deixaria os dois divergirem.
 
 interface RunSummary {
   durationMs: number;
@@ -366,7 +375,44 @@ function stopRun() {
   approvals.clear();
 }
 
-async function runGraph() {
+/* ------------------------ persistência de runs ----------------------- */
+
+/** Execução salva no disco do navegador — sobrevive a reload e a crash da aba. */
+function saveRun(doc: DagDoc, state: RunState, startedAt: number) {
+  if (typeof window === "undefined") return;
+  const runs = useFlow.getState().runs;
+  const record: PersistedRun = {
+    ...makeRun(doc, startedAt),
+    state,
+    ...(state === "running" ? {} : { finishedAt: Date.now() }),
+    runs
+  };
+  try {
+    window.localStorage.setItem(RUN_STORAGE_KEY, serializeRun(record));
+  } catch {
+    // Cota estourada não pode derrubar a execução — persistência é acessório.
+  }
+}
+
+function loadRun(): PersistedRun | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(RUN_STORAGE_KEY);
+  return raw ? parseRun(raw) : null;
+}
+
+/** Retoma a última execução reaproveitando só os nós que terminaram bem. */
+function resumeGraph() {
+  const { doc, running } = useFlow.getState();
+  if (running) return;
+  const plan = planResume(doc, loadRun());
+  if (isRefusal(plan)) {
+    useFlow.setState({ notice: plan.message });
+    return;
+  }
+  void runGraph(plan);
+}
+
+async function runGraph(resume?: ResumePlan) {
   const { doc, running } = useFlow.getState();
   if (running) return;
   const cycle = detectCycle(doc);
@@ -389,8 +435,14 @@ async function runGraph() {
   const nodeMap = new Map(doc.nodes.map((node) => [node.id, node]));
   const abort = new AbortController();
   abortController = abort;
+  const skip = new Set(resume?.reuse ?? []);
   const initial: Record<string, NodeRun> = {};
-  for (const node of doc.nodes) initial[node.id] = { status: "queued", output: "" };
+  for (const node of doc.nodes) {
+    initial[node.id] = skip.has(node.id)
+      ? { status: "done", output: resume?.outputs.get(node.id) ?? "", note: "reaproveitado da execução anterior" }
+      : { status: "queued", output: "" };
+  }
+  const startedAt = Date.now();
   useFlow.setState({ running: true, connectFrom: null, runs: initial });
 
   const ctx: EngineContext = {
@@ -416,9 +468,11 @@ async function runGraph() {
     liveNodes.delete(id);
     publishLabel();
   };
-  const outputs = new Map<string, string>();
+  // Saídas reaproveitadas entram já preenchidas: os nós seguintes recebem o
+  // mesmo contexto que receberiam se tudo tivesse rodado agora.
+  const outputs = new Map<string, string>(resume?.outputs ?? []);
   const blocked = new Set<string>();
-  let ok = 0;
+  let ok = skip.size;
   let failed = 0;
   const t0 = performance.now();
 
@@ -433,6 +487,7 @@ async function runGraph() {
     try {
       const node = nodeMap.get(id);
       if (!node) return;
+      if (skip.has(id)) return; // já concluído na execução retomada
       if (abort.signal.aborted) {
         patchRun(id, { status: "skipped", note: "execução interrompida" });
         blocked.add(id);
@@ -554,6 +609,9 @@ async function runGraph() {
       }
     } finally {
       clearRunningLabel(id);
+      // Salva por nó (não por token): se a aba morrer no meio, o que já
+      // terminou continua disponível para retomar.
+      saveRun(doc, "running", startedAt);
     }
   }
 
@@ -568,14 +626,16 @@ async function runGraph() {
 
   const durationMs = Math.round(performance.now() - t0);
   abortController = null;
+  const resumed = skip.size ? ` · ${skip.size} reaproveitado(s)` : "";
   useFlow.setState({
     lastRun: { durationMs, ok, failed, total: doc.nodes.length },
     running: false,
     runningNode: "",
     notice: abort.signal.aborted
       ? `Execução interrompida após ${seconds(durationMs)} · ${ok} nó(s) ok`
-      : `Execução: ${ok}/${doc.nodes.length} nós ok em ${seconds(durationMs)}${failed ? ` · ${failed} falha(s)` : ""}`
+      : `Execução: ${ok}/${doc.nodes.length} nós ok em ${seconds(durationMs)}${failed ? ` · ${failed} falha(s)` : ""}${resumed}`
   });
+  saveRun(doc, abort.signal.aborted ? "aborted" : "done", startedAt);
 }
 
 /* ---------------------------- subcomponentes ------------------------- */
@@ -781,6 +841,8 @@ export function AgentView() {
 
   const [zoom, setZoom] = useState(1);
   const [validating, setValidating] = useState(false);
+  /** Execução salva no disco — só existe depois que algum nó terminou. */
+  const [saved, setSaved] = useState<PersistedRun | null>(null);
 
   const nodeMap = useMemo(() => new Map(doc.nodes.map((node) => [node.id, node])), [doc]);
   const cycle = useMemo(() => detectCycle(doc), [doc]);
@@ -837,6 +899,27 @@ export function AgentView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [connectFrom]);
 
+  // Relê o disco ao montar e ao fim de cada execução: é o que decide se
+  // "Retomar" aparece e o que ele vai reaproveitar.
+  useEffect(() => {
+    if (running) return;
+    setSaved(loadRun());
+  }, [running]);
+
+  // Ao voltar para a aba com uma execução parada pela metade, mostra os
+  // resultados que já existiam em vez de um canvas em branco.
+  useEffect(() => {
+    const stored = loadRun();
+    if (stored && stored.fingerprint === docFingerprint(doc) && Object.keys(stored.runs).length) {
+      useFlow.setState({ runs: stored.runs });
+    }
+    // Deps vazias de propósito: só na montagem. Durante a edição do fluxo o
+    // usuário não quer o passado voltando por cima do que está fazendo.
+  }, []);
+
+  const resume = useMemo(() => planResume(doc, saved), [doc, saved]);
+  const resumable = !isRefusal(resume);
+
   async function validate() {
     if (validating) return;
     setValidating(true);
@@ -883,10 +966,23 @@ export function AgentView() {
             Parar
           </button>
         ) : (
-          <button className="lg-button primary" onClick={() => void runGraph()} disabled={Boolean(cycle)}>
-            <Play size={13} />
-            Executar
-          </button>
+          <>
+            {resumable && (
+              <button
+                className="lg-button"
+                onClick={resumeGraph}
+                disabled={Boolean(cycle)}
+                title="Reexecuta só o que falhou, ficou pendente ou foi interrompido"
+              >
+                <RotateCw size={13} />
+                Retomar
+              </button>
+            )}
+            <button className="lg-button primary" onClick={() => void runGraph()} disabled={Boolean(cycle)}>
+              <Play size={13} />
+              Executar
+            </button>
+          </>
         )}
       </TopbarActions>
 
