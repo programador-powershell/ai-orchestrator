@@ -26,9 +26,9 @@ import {
   agentSystemInstruction,
   dispatchTool,
   runAgentLoop,
-  type ToolCall,
-  type ToolResult
+  type ToolCall
 } from "../lib/agent";
+import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
 import { McpHttpClient, mcpToolsToSpecs, parseNamespaced } from "../lib/mcp";
@@ -40,19 +40,6 @@ import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner
 import { effortDirective, useApp } from "../lib/store";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
-
-/** Cartão de "vou executar a ferramenta X" na conversa. */
-function toolStartCard(call: ToolCall): string {
-  const detail = call.args.path ?? call.args.command ?? call.args.sub ?? call.args.query ?? "";
-  return `🛠️ **${call.tool}** ${detail ? `\`${String(detail).slice(0, 120)}\`` : ""}`.trim();
-}
-
-/** Cartão do resultado da ferramenta (código com rótulo console). */
-function toolResultCard(call: ToolCall, result: ToolResult): string {
-  const status = result.ok ? "✓" : "✗";
-  const body = result.output.length > 1200 ? `${result.output.slice(0, 1200)}\n… (truncado)` : result.output;
-  return `${status} \`${call.tool}\`\n\`\`\`console\n${body}\n\`\`\``;
-}
 
 const modePlaceholders: Record<string, string> = {
   chat: "Pergunte, pesquise ou pense junto…",
@@ -89,12 +76,14 @@ export function Composer() {
   const setResearchReport = useApp((state) => state.setResearchReport);
   const attachments = useApp((state) => state.attachments);
   const setAttachments = useApp((state) => state.setAttachments);
-  const { appendMessage, patchLastAssistant, replaceLastAssistant, setSending } = useApp.getState();
+  const { appendMessage, patchLastAssistant, replaceLastAssistant, setSending, updateToolGroup } = useApp.getState();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [executingPlan, setExecutingPlan] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
+  /** Um grupo de tool calls por turno agêntico (cartão recolhível). */
+  const toolGroupOpenRef = useRef(false);
   const planSourceRef = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -200,6 +189,7 @@ export function Composer() {
   /** Turno agêntico: o modelo executa ferramentas (com aprovação) até concluir. */
   async function runAgentTurn(request: ChatMessage[], signal: AbortSignal): Promise<string> {
     const root = window.localStorage.getItem("code.root") ?? ".";
+    toolGroupOpenRef.current = false;
     // Servidores MCP configurados entram no catálogo do agente (namespaced).
     const mcpClients = new Map<string, McpHttpClient>();
     const mcpSpecs: string[] = [];
@@ -231,6 +221,27 @@ export function Composer() {
       },
       signal,
       runTool: async (call) => {
+        // web_search precisa do motor (planeja consultas) — resolvido aqui, onde
+        // a seleção de modelo existe; devolve fontes que viram chips no cartão.
+        if (call.tool === "web_search") {
+          const query = String(call.args.query ?? "").trim();
+          if (!query) return { ok: false, output: "web_search exige args.query" };
+          try {
+            const research = await import("../lib/research");
+            const report = await research.runResearch(
+              query,
+              (msgs) => chatOnce(selection, mode, msgs, ctx, { onDelta: () => undefined }, signal),
+              { onStage: (stage) => setStage(stage) }
+            );
+            return {
+              ok: true,
+              output: research.researchSystemContext(report),
+              sources: report.sources.map((source) => ({ title: source.title, url: source.url, kind: source.kind }))
+            };
+          } catch (cause) {
+            return { ok: false, output: cause instanceof Error ? cause.message : String(cause) };
+          }
+        }
         // Ferramenta MCP externa (mcp:<servidor>:<tool>) roteia ao cliente.
         const external = parseNamespaced(call.tool);
         if (external) {
@@ -273,10 +284,24 @@ export function Composer() {
         }),
       onToolStart: (call) => {
         setStage(`Ferramenta: ${call.tool}`);
-        appendMessage(mode, { role: "assistant", content: toolStartCard(call), meta: { kind: "ops" } });
+        // Cartão estilo Studio: agrupa as chamadas da rodada num bloco recolhível.
+        if (!toolGroupOpenRef.current) {
+          appendMessage(mode, { role: "assistant", content: "", meta: { kind: "tools", tools: [] } });
+          toolGroupOpenRef.current = true;
+        }
+        updateToolGroup(mode, (cards) => [
+          ...cards,
+          { tool: call.tool, detail: toolDetail(call), status: "running" as const }
+        ]);
       },
       onToolResult: (call, result) =>
-        appendMessage(mode, { role: "assistant", content: toolResultCard(call, result), meta: { kind: "ops" } })
+        updateToolGroup(mode, (cards) =>
+          applyResult(cards, call.tool, {
+            status: result.ok ? "ok" : "error",
+            output: result.output.slice(0, 1500),
+            sources: result.sources
+          })
+        )
     });
   }
 

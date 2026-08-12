@@ -29,6 +29,7 @@ export const TOOL_SPECS: ToolSpec[] = [
   { name: "fs_read", description: "Lê um arquivo do projeto", mutating: false, args: '{"path":"caminho/relativo"}' },
   { name: "fs_list", description: "Lista uma pasta do projeto", mutating: false, args: '{"sub":"caminho/da/pasta"}' },
   { name: "search", description: "Busca um termo nos arquivos do projeto", mutating: false, args: '{"query":"termo"}' },
+  { name: "web_search", description: "Pesquisa na web e retorna fontes citáveis", mutating: false, args: '{"query":"o que buscar"}' },
   { name: "fs_write", description: "Grava/altera um arquivo do projeto", mutating: true, args: '{"path":"caminho","content":"…"}' },
   { name: "terminal", description: "Executa um comando no terminal do projeto", mutating: true, args: '{"command":"pnpm test"}' }
 ];
@@ -94,6 +95,8 @@ export function agentSystemInstruction(): string {
 export interface ToolResult {
   ok: boolean;
   output: string;
+  /** Fontes citadas (busca web) — viram chips no cartão da conversa. */
+  sources?: Array<{ title: string; url: string; kind?: string }>;
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
