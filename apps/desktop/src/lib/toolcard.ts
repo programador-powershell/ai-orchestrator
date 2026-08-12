@@ -56,6 +56,7 @@ const VERBS: Record<string, string> = {
   search: "Searched",
   web_search: "Searched the web",
   generate_image: "Generated image",
+  fusion_executor: "Executor",
   terminal: "Ran"
 };
 

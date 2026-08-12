@@ -190,7 +190,29 @@ export function Composer() {
       const final = await chatOnce(selection, mode, request, ctx, {
         onDelta: (delta) => buffer.push(delta),
         onReasoning: (delta) => reasoningBuffer.push(delta),
-        onStage: (stage) => setStage(stage)
+        onStage: (stage) => setStage(stage),
+        // Plano do orquestrador vira cartão: complexidade + executores listados.
+        onFusionPlan: (plan) => {
+          appendMessage(mode, {
+            role: "assistant",
+            content: "",
+            meta: {
+              kind: "tools",
+              tools: plan.executors.map((executor) => ({
+                tool: "fusion_executor",
+                detail: `${executor.role} · ${executor.model} — ${executor.focus}`,
+                status: "running" as const
+              }))
+            }
+          });
+          setStage(`Fusion · complexidade ${Math.round(plan.complexity * 100)}% · ${plan.executors.length} executor(es)`);
+        },
+        onFusionExecutor: (role, status) =>
+          updateToolGroup(mode, (cards) =>
+            cards.map((card) =>
+              card.tool === "fusion_executor" && card.detail.startsWith(role) ? { ...card, status } : card
+            )
+          )
       }, signal);
       buffer.flush();
       reasoningBuffer.flush();
