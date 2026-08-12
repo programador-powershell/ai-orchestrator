@@ -1,18 +1,25 @@
 /**
  * Export de imagem do ERD como SVG puro (string building, sem DOM nem
- * dependência externa). Layout em grade determinística de 3 colunas: um
- * retângulo por tabela (cabeçalho com o nome + lista de campos) e uma linha
- * ligando as tabelas de cada relação/FK. Coberto por erdSvg.test.ts.
+ * dependência externa).
+ *
+ * O layout é o DESENHADO pelo usuário: usa `table.x`/`table.y` e a mesma
+ * geometria do canvas (TABLE_GEOMETRY), então a imagem sai igual à tela.
+ * Antes havia uma grade própria de 3 colunas que descartava as posições — o
+ * usuário arrastava as tabelas e o export ignorava. A grade sobrou só como
+ * fallback para documento sem posições (tudo em 0,0).
+ *
+ * Coberto por erdSvg.test.ts.
  */
-import type { SchemaDocExt } from "./schema";
+import { TABLE_GEOMETRY, tableHeight, type SchemaDocExt } from "./schema";
 
 const COLS = 3;
 const MARGIN = 24;
-const CARD_W = 210;
+/** Mesma geometria do canvas — a imagem tem de bater com o desenho. */
+const CARD_W = TABLE_GEOMETRY.width;
 const GAP_X = 46;
 const GAP_Y = 40;
-const HEADER_H = 26;
-const ROW_H = 20;
+const HEADER_H = TABLE_GEOMETRY.headerHeight;
+const ROW_H = TABLE_GEOMETRY.rowHeight;
 
 /** Escapa os caracteres reservados de XML no conteúdo textual. */
 function escapeXml(value: string): string {
@@ -37,8 +44,23 @@ function cardHeight(fieldCount: number): number {
   return HEADER_H + fieldCount * ROW_H;
 }
 
-/** Posiciona as tabelas numa grade de 3 colunas; cada linha usa a altura do card mais alto. */
-function placeTables(doc: SchemaDocExt): Placed[] {
+const place = (name: string, x: number, y: number, h: number): Placed => ({
+  name,
+  x,
+  y,
+  w: CARD_W,
+  h,
+  cx: x + CARD_W / 2,
+  cy: y + h / 2
+});
+
+/** Documento sem nenhuma posição (todas em 0,0) — nunca foi desenhado. */
+function hasLayout(doc: SchemaDocExt): boolean {
+  return doc.tables.some((table) => table.x !== 0 || table.y !== 0);
+}
+
+/** Fallback para documento sem layout: grade determinística de 3 colunas. */
+function gridFallback(doc: SchemaDocExt): Placed[] {
   const placed: Placed[] = [];
   let rowTop = MARGIN;
   for (let start = 0; start < doc.tables.length; start += COLS) {
@@ -46,8 +68,7 @@ function placeTables(doc: SchemaDocExt): Placed[] {
     let rowHeight = 0;
     row.forEach((table, col) => {
       const h = cardHeight(table.fields.length);
-      const x = MARGIN + col * (CARD_W + GAP_X);
-      placed.push({ name: table.name, x, y: rowTop, w: CARD_W, h, cx: x + CARD_W / 2, cy: rowTop + h / 2 });
+      placed.push(place(table.name, MARGIN + col * (CARD_W + GAP_X), rowTop, h));
       rowHeight = Math.max(rowHeight, h);
     });
     rowTop += rowHeight + GAP_Y;
@@ -55,13 +76,28 @@ function placeTables(doc: SchemaDocExt): Placed[] {
   return placed;
 }
 
+/**
+ * Posições REAIS do canvas, normalizadas para a origem: o usuário pode ter
+ * arrastado tabelas para coordenadas negativas ou distantes, e o SVG precisa
+ * de um viewBox que comece em 0 com margem.
+ */
+function placeTables(doc: SchemaDocExt): Placed[] {
+  if (!hasLayout(doc)) return gridFallback(doc);
+  const minX = Math.min(...doc.tables.map((table) => table.x));
+  const minY = Math.min(...doc.tables.map((table) => table.y));
+  return doc.tables.map((table) =>
+    place(table.name, table.x - minX + MARGIN, table.y - minY + MARGIN, tableHeight(table))
+  );
+}
+
 /** Renderiza o documento de schema como um SVG string autocontido. */
 export function renderErdSvg(doc: SchemaDocExt): string {
   const placed = placeTables(doc);
   const byName = new Map(placed.map((p) => [p.name, p]));
 
-  const usedCols = Math.min(COLS, Math.max(1, doc.tables.length));
-  const width = MARGIN * 2 + usedCols * CARD_W + (usedCols - 1) * GAP_X;
+  // Dimensão pela extensão real do que foi colocado (o layout do usuário não
+  // cabe numa fórmula de grade).
+  const width = placed.length ? Math.max(...placed.map((p) => p.x + p.w)) + MARGIN : MARGIN * 2;
   const height = placed.length ? Math.max(...placed.map((p) => p.y + p.h)) + MARGIN : MARGIN * 2;
 
   const parts: string[] = [];

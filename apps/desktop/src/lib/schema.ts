@@ -710,6 +710,12 @@ function splitNames(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** `public.pedidos` / `` `db`.`t` `` → `pedidos` / `t`. O ERD é por tabela. */
+function unqualify(raw: string): string {
+  const parts = raw.split(".").map((piece) => piece.trim().replace(/^[`"]|[`"]$/g, ""));
+  return parts[parts.length - 1];
+}
+
 function parseColumn(part: string): SchemaField | undefined {
   const head = part.match(/^[`"]?(\w+)[`"]?\s+([\s\S]+)$/);
   if (!head) return undefined;
@@ -725,8 +731,9 @@ function parseColumn(part: string): SchemaField | undefined {
   if (/\bunique\b/i.test(tail)) field.unique = true;
   const def = tail.match(/default\s+((?:'[^']*')|(?:\w+\s*\([^)]*\))|[^\s,]+)/i);
   if (def) field.defaultValue = def[1];
-  const ref = tail.match(/references\s+[`"]?(\w+)[`"]?\s*\(\s*[`"]?(\w+)[`"]?\s*\)/i);
-  if (ref) field.references = { table: ref[1], field: ref[2] };
+  // REFERENCES pode vir qualificado (public.clientes) — o ERD guarda só a tabela.
+  const ref = tail.match(/references\s+((?:[`"]?\w+[`"]?\s*\.\s*)?[`"]?\w+[`"]?)\s*\(\s*[`"]?(\w+)[`"]?\s*\)/i);
+  if (ref) field.references = { table: unqualify(ref[1]), field: ref[2] };
   return field;
 }
 
@@ -736,7 +743,9 @@ function parseColumn(part: string): SchemaField | undefined {
  * suficiente para round-trip dos próprios exports de exportSql nos três dialetos.
  */
 export function importSql(sql: string): SchemaDocExt {
-  const clean = sql.replace(/--[^\n]*/g, " ");
+  // Comentário de linha E de bloco: um dump real vem com cabeçalho /* … */,
+  // e sem tirar isso o CREATE TABLE seguinte nem era reconhecido.
+  const clean = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
   const dialect: SqlDialect = /`|engine\s*=\s*innodb/i.test(clean)
     ? "mysql"
     : /\b(timestamptz|jsonb|serial)\b/i.test(clean)
@@ -745,9 +754,12 @@ export function importSql(sql: string): SchemaDocExt {
 
   let doc: SchemaDocExt = { name: "Schema importado", dialect, tables: [], relations: [] };
 
-  const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?[`"]?(\w+)[`"]?\s*\(([\s\S]*?)\)\s*(?:engine\s*=\s*\w+)?\s*;/gi;
+  // Nome pode vir qualificado por schema (public.pedidos, `db`.`t`) — sem
+  // isto o dump inteiro era ignorado em silêncio.
+  const createRe =
+    /create\s+table\s+(?:if\s+not\s+exists\s+)?((?:[`"]?\w+[`"]?\s*\.\s*)?[`"]?\w+[`"]?)\s*\(([\s\S]*?)\)\s*(?:engine\s*=\s*\w+)?\s*;/gi;
   for (const match of clean.matchAll(createRe)) {
-    const tableName = match[1];
+    const tableName = unqualify(match[1]);
     const fields: SchemaField[] = [];
     const foreignKeys: Array<{ fromField: string; toTable: string; toField: string }> = [];
     const pkNames = new Set<string>();
@@ -768,7 +780,7 @@ export function importSql(sql: string): SchemaDocExt {
         /^(?:constraint\s+\S+\s+)?foreign\s+key\s*\(\s*[`"]?(\w+)[`"]?\s*\)\s*references\s+[`"]?(\w+)[`"]?\s*\(\s*[`"]?(\w+)[`"]?\s*\)/i
       );
       if (fk) {
-        foreignKeys.push({ fromField: fk[1], toTable: fk[2], toField: fk[3] });
+        foreignKeys.push({ fromField: fk[1], toTable: unqualify(fk[2]), toField: fk[3] });
         continue;
       }
       const field = parseColumn(part);
@@ -786,17 +798,19 @@ export function importSql(sql: string): SchemaDocExt {
     doc = withFieldRelations({ ...doc, tables: [...doc.tables, table] }, tableName, fields);
   }
 
+  // Nomes qualificados nos dois lados (ALTER TABLE public.b … REFERENCES public.a).
   const alterRe =
-    /alter\s+table\s+[`"]?(\w+)[`"]?\s+add\s+(?:constraint\s+[`"]?\w+[`"]?\s+)?foreign\s+key\s*\(\s*[`"]?(\w+)[`"]?\s*\)\s*references\s+[`"]?(\w+)[`"]?\s*\(\s*[`"]?(\w+)[`"]?\s*\)/gi;
+    /alter\s+table\s+((?:[`"]?\w+[`"]?\s*\.\s*)?[`"]?\w+[`"]?)\s+add\s+(?:constraint\s+[`"]?\w+[`"]?\s+)?foreign\s+key\s*\(\s*[`"]?(\w+)[`"]?\s*\)\s*references\s+((?:[`"]?\w+[`"]?\s*\.\s*)?[`"]?\w+[`"]?)\s*\(\s*[`"]?(\w+)[`"]?\s*\)/gi;
   for (const match of clean.matchAll(alterRe)) {
     doc = applyOps(doc, [
-      { op: "add_relation", fromTable: match[1], fromField: match[2], toTable: match[3], toField: match[4], cardinality: "1-n" }
+      { op: "add_relation", fromTable: unqualify(match[1]), fromField: match[2], toTable: unqualify(match[3]), toField: match[4], cardinality: "1-n" }
     ]);
   }
 
-  const indexRe = /create\s+(unique\s+)?index\s+[`"]?\w+[`"]?\s+on\s+[`"]?(\w+)[`"]?\s*\(([^)]*)\)\s*;/gi;
+  const indexRe =
+    /create\s+(unique\s+)?index\s+[`"]?\w+[`"]?\s+on\s+((?:[`"]?\w+[`"]?\s*\.\s*)?[`"]?\w+[`"]?)\s*\(([^)]*)\)\s*;/gi;
   for (const match of clean.matchAll(indexRe)) {
-    doc = applyOps(doc, [{ op: "add_index", table: match[2], fields: splitNames(match[3]), unique: Boolean(match[1]) }]);
+    doc = applyOps(doc, [{ op: "add_index", table: unqualify(match[2]), fields: splitNames(match[3]), unique: Boolean(match[1]) }]);
   }
   return doc;
 }
