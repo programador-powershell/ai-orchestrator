@@ -41,7 +41,6 @@ import type { FsEntry, OrchestrationGraph } from "@ai-orchestrator/contracts";
 import { CodeEditor, type CodeEditorApi, type InlineSuggestionContext } from "../components/CodeEditor";
 import { FloatingPulse, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
-import { ShipPanel } from "../components/ShipPanel";
 import { computeDiff, diffStats, toHunks, type DiffLine } from "../lib/diff";
 import { applySelectedHunks, splitIntoHunks, type Hunk } from "../lib/hunks";
 import { suggestIdentifier } from "../lib/inlineSuggest";
@@ -370,8 +369,6 @@ export function CodeRail() {
         </button>
       </div>
       <div className="codex-rail-tree">{renderEntries("", 0)}</div>
-      <span className="eyebrow">BUILD & DEPLOY</span>
-      <ShipPanel root={root} />
       <span className="eyebrow">SESSÕES</span>
       <RailConversations mode="code" />
     </>

@@ -79,3 +79,21 @@
 .offx-log-item.reverted { opacity: 0.5; text-decoration: line-through; }
 .offx-log-author { flex: none; color: var(--muted); }
 .offx-log-label { flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Sem coluna direita: contexto na faixa do cabeçalho, histórico sob demanda. */
+.offx-canvas-meta { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.offx-histbtn { border: 0; cursor: pointer; }
+.offx-histbtn.is-open { outline: 1px solid var(--accent); }
+.offx-history {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+}
