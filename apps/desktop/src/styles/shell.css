@@ -373,6 +373,41 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .approve-chip:hover { color: var(--ink); background: var(--hover); }
 
+/* Lista de @-mentions de arquivo (aparece acima do composer). */
+.mention-list {
+  width: var(--composer-w);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  display: grid;
+  gap: 1px;
+  border-radius: var(--radius-md);
+  animation: float-in var(--t-fast) var(--spring-soft) both;
+}
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+.mention-item:hover { background: var(--hover); }
+.mention-name { font-weight: 560; white-space: nowrap; }
+.mention-item small {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Anexo com miniatura da imagem colada (Ctrl+V). */
 .attach-chip { gap: 6px; }
 .attach-thumb {
