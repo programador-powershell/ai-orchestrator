@@ -15,7 +15,7 @@ import {
 
 const draft = (patch: Partial<ServerDraft> = {}): ServerDraft => ({
   ...emptyDraft(),
-  name: "VPS Openship",
+  name: "VPS produção",
   host: "deploy.exemplo.com",
   user: "deploy",
   ...patch
@@ -88,9 +88,9 @@ describe("validateDraft", () => {
     expect(fieldsOf(validateDraft(draft({ remoteWorkdir: "opt/app" })))).toContain("remoteWorkdir");
   });
 
-  it("painel do Openship só por https", () => {
-    expect(fieldsOf(validateDraft(draft({ openshipUrl: "http://painel.exemplo.com" })))).toContain("openshipUrl");
-    expect(validateDraft(draft({ openshipUrl: "https://painel.exemplo.com" }))).toEqual([]);
+  it("painel de administração só por https", () => {
+    expect(fieldsOf(validateDraft(draft({ panelUrl: "http://painel.exemplo.com" })))).toContain("panelUrl");
+    expect(validateDraft(draft({ panelUrl: "https://painel.exemplo.com" }))).toEqual([]);
   });
 });
 

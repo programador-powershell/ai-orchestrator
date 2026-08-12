@@ -15,6 +15,7 @@ import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";
 import type { DeployServer } from "./ship/server";
+import type { Environment } from "./connectors";
 import {
   addProject,
   assignProject,
@@ -98,7 +99,7 @@ export interface AppSettings {
   approvalPolicy: ApprovalPolicy;
   /** Loop agentico ligado por padrao — decisao da TI, nao do usuario. */
   agentTools: boolean;
-  /** Servidores de deploy cadastrados (o "VPS do Openship"). Sem segredo. */
+  /** Servidores de deploy cadastrados (o VPS do admin). Sem segredo. */
   deployServers: DeployServer[];
   memoryRecallK: number;
   /** Nível de esforço 0–4 (Baixo…Máximo) — injeta diretiva real no motor. */
@@ -113,6 +114,8 @@ export interface AppSettings {
   modesSeen: UiMode[];
   /** Prompt master LOCAL da sessão — complementa (nunca sobrepõe) o do servidor. */
   localPrompt: string;
+  /** Ambiente onde o trabalho roda — o usuário escolhe, o admin configura. */
+  environment: Environment;
   /** Servidores MCP externos (nome + URL JSON-RPC + token opcional). */
   mcpServers: Array<{ name: string; url: string; token?: string }>;
 }
@@ -305,7 +308,7 @@ export const useApp = create<AppState>()(
         office: emptyThread(),
         tune: emptyThread()
       },
-      conversations: { chat: [], code: [], design: [], data: [], work: [], security: [], agent: [], game: [], office: [], tune: [] },
+      conversations: { chat: [], code: [], design: [], data: [], work: [], security: [], agent: [], office: [], tune: [] },
       activeConversation: {
         chat: newId(),
         code: newId(),
@@ -329,6 +332,7 @@ export const useApp = create<AppState>()(
       agentTools: true,
       deployServers: [],
       localPrompt: "",
+      environment: "local",
         memoryRecallK: 6,
         effort: 1,
         providerBaseOverrides: {},

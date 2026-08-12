@@ -76,7 +76,7 @@ import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport } from "../l
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
 import { AdminSection } from "./settings/AdminSection";
-import { OpenshipSection, ShipSection } from "./settings/ShipSections";
+import { ShipSection, VpsServerSection } from "./settings/ShipSections";
 import { useApp, type CatalogModel } from "../lib/store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
@@ -90,7 +90,7 @@ type SectionId =
   | "conectores"
   | "runtime"
   | "ship"
-  | "openship"
+  | "vps"
   | "administracao"
   | "aparencia";
 
@@ -105,7 +105,7 @@ const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
   { id: "conectores", label: "Conectores (MCP)", icon: Cable },
   { id: "runtime", label: "Runtime local", icon: Cpu },
   { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
-  { id: "openship", label: "Servidor Openship", icon: ServerCog },
+  { id: "vps", label: "Servidor VPS", icon: ServerCog },
   { id: "administracao", label: "Administração", icon: UsersRound },
   { id: "aparencia", label: "Aparência", icon: Palette }
 ];
@@ -2308,7 +2308,7 @@ export function SettingsPanel() {
             {section === "conectores" && <McpSection />}
             {section === "runtime" && <RuntimeSection />}
             {section === "ship" && <ShipSection />}
-            {section === "openship" && <OpenshipSection />}
+            {section === "vps" && <VpsServerSection />}
             {section === "administracao" && <AdminSection />}
             {section === "aparencia" && <AppearanceSection />}
           </div>
