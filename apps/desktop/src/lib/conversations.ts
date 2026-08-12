@@ -1,0 +1,189 @@
+/**
+ * Lógica pura de conversas: projetos (pastas), exportação (.md/.json) e
+ * busca global entre todas as abas. Sem React e sem store — 100% testável.
+ */
+import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
+import { normalizeSearchText, searchSnippet, type ChatLikeMessage } from "./chatUtils";
+
+/** Pasta de organização — global, compartilhada por todas as abas. */
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: number;
+}
+
+export type ExportMessage = ChatLikeMessage;
+
+/** Forma mínima usada pelas funções puras (a Conversation do store a satisfaz). */
+export interface ExportConversation {
+  id: string;
+  title: string;
+  messages: ExportMessage[];
+  updatedAt: number;
+  projectId?: string;
+}
+
+/* ------------------------------- exportar ------------------------------ */
+
+const roleLabels: Record<ExportMessage["role"], string> = {
+  user: "Você",
+  assistant: "Assistente",
+  system: "Sistema"
+};
+
+/**
+ * Markdown legível: título, papel de cada mensagem e conteúdo verbatim —
+ * emitir o conteúdo sem reencaixar preserva as cercas de código originais.
+ */
+export function toMarkdown(conversation: ExportConversation): string {
+  const title = conversation.title.trim() || "Conversa sem título";
+  const lines = [`# ${title}`];
+  if (Number.isFinite(conversation.updatedAt)) {
+    lines.push("", `_Exportado do AI Orchestrator — atualizado em ${new Date(conversation.updatedAt).toISOString()}_`);
+  }
+  for (const message of conversation.messages) {
+    const content = message.content.trim();
+    if (!content) continue;
+    lines.push("", `## ${roleLabels[message.role] ?? message.role}`, "", content);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** JSON fiel (inclui metadados das mensagens) para reimportar sem perda. */
+export function toJson(conversation: ExportConversation): string {
+  return JSON.stringify(conversation, null, 2);
+}
+
+const SLUG_MAX = 48;
+
+/** Nome de arquivo seguro derivado do título. */
+export function exportFileName(conversation: ExportConversation, extension: "md" | "json"): string {
+  const slug = normalizeSearchText(conversation.title)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, SLUG_MAX)
+    .replace(/-+$/g, "");
+  return `${slug || "conversa"}.${extension}`;
+}
+
+/* -------------------------------- busca -------------------------------- */
+
+export interface ConversationSearchResult {
+  /** Aba de origem — o resultado global precisa dizer de onde veio. */
+  mode: UiMode;
+  conversationId: string;
+  title: string;
+  snippet: string;
+  matchCount: number;
+}
+
+/** Ocorrências não sobrepostas de `needle` em `haystack` (ambos já dobrados). */
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let index = haystack.indexOf(needle);
+  while (index >= 0) {
+    count += 1;
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return count;
+}
+
+/**
+ * Busca em TODAS as abas, ignorando caixa e acentos. Ordena por relevância
+ * (mais ocorrências primeiro) e desempata pela conversa mais recente.
+ */
+export function searchConversations(
+  all: Partial<Record<UiMode, ExportConversation[]>>,
+  query: string
+): ConversationSearchResult[] {
+  const needle = normalizeSearchText(query.trim());
+  if (!needle) return [];
+  const results: Array<ConversationSearchResult & { updatedAt: number }> = [];
+  for (const mode of UI_MODES) {
+    for (const conversation of all[mode] ?? []) {
+      const titleMatches = countOccurrences(normalizeSearchText(conversation.title), needle);
+      const bodyMatches = conversation.messages.reduce(
+        (total, message) => total + countOccurrences(normalizeSearchText(message.content), needle),
+        0
+      );
+      const matchCount = titleMatches + bodyMatches;
+      if (!matchCount) continue;
+      results.push({
+        mode,
+        conversationId: conversation.id,
+        title: conversation.title,
+        snippet: searchSnippet(conversation.messages, query) || conversation.title,
+        matchCount,
+        updatedAt: conversation.updatedAt
+      });
+    }
+  }
+  results.sort((a, b) => b.matchCount - a.matchCount || b.updatedAt - a.updatedAt);
+  return results.map(({ updatedAt: _updatedAt, ...result }) => result);
+}
+
+/* ------------------------------- projetos ------------------------------ */
+
+export interface ConversationGroup<C> {
+  /** null = conversas sem projeto (sempre o último grupo). */
+  project: Project | null;
+  conversations: C[];
+}
+
+/**
+ * Agrupa na ordem dos projetos; sem-projeto (inclusive vínculos órfãos)
+ * fecha a lista. Projeto vazio continua visível — foi criado de propósito.
+ */
+export function groupByProject<C extends { projectId?: string }>(
+  list: C[],
+  projects: Project[]
+): Array<ConversationGroup<C>> {
+  const known = new Set(projects.map((project) => project.id));
+  const groups: Array<ConversationGroup<C>> = projects.map((project) => ({
+    project,
+    conversations: list.filter((item) => item.projectId === project.id)
+  }));
+  const loose = list.filter((item) => !item.projectId || !known.has(item.projectId));
+  if (loose.length) groups.push({ project: null, conversations: loose });
+  return groups;
+}
+
+export function addProject(projects: Project[], name: string, id: string, createdAt: number): Project[] {
+  const clean = name.trim();
+  if (!clean) return projects;
+  return [...projects, { id, name: clean, createdAt }];
+}
+
+export function renameProject(projects: Project[], id: string, name: string): Project[] {
+  const clean = name.trim();
+  if (!clean) return projects;
+  return projects.map((project) => (project.id === id ? { ...project, name: clean } : project));
+}
+
+export function removeProject(projects: Project[], id: string): Project[] {
+  return projects.filter((project) => project.id !== id);
+}
+
+/** Move uma conversa para um projeto (ou para fora, com null). */
+export function assignProject<C extends { id: string; projectId?: string }>(
+  list: C[],
+  conversationId: string,
+  projectId: string | null
+): C[] {
+  if (!list.some((item) => item.id === conversationId)) return list;
+  return list.map((item) => {
+    if (item.id !== conversationId) return item;
+    if (projectId) return { ...item, projectId };
+    const { projectId: _dropped, ...rest } = item;
+    return rest as C;
+  });
+}
+
+/** Solta todas as conversas de um projeto — usado ao excluir a pasta. */
+export function detachProject<C extends { projectId?: string }>(list: C[], projectId: string): C[] {
+  return list.map((item) => {
+    if (item.projectId !== projectId) return item;
+    const { projectId: _dropped, ...rest } = item;
+    return rest as C;
+  });
+}

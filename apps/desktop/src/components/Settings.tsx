@@ -1,7 +1,7 @@
 /**
  * Painel de Configurações V2 — modal com navegação lateral interna.
  * Seções: Conexão, Motores & Fusion, Provedores (BYOK), Memória,
- * Extensões, Runtime local e Aparência.
+ * Extensões, Conectores (MCP), Runtime local e Aparência.
  *
  * Segurança: chaves de provedor vão direto ao keyring nativo via comando
  * Rust (`credential_store`) e nunca são gravadas em arquivo/localStorage,
@@ -28,6 +28,7 @@ import {
 import {
   Bot,
   Brain,
+  Cable,
   Check,
   Copy,
   Cpu,
@@ -66,6 +67,7 @@ import { byok, byokBackend, providerExtraHeaders } from "../lib/byok";
 import { providerBaseUrls, resolveBaseUrl } from "../lib/engine";
 import { extensions } from "../lib/extensions";
 import { listWorkspaces } from "../lib/gateway";
+import { McpHttpClient, type McpServerConfig } from "../lib/mcp";
 import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport } from "../lib/memory";
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
@@ -73,7 +75,15 @@ import { useApp, type CatalogModel } from "../lib/store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
-type SectionId = "conexao" | "motores" | "provedores" | "memoria" | "extensoes" | "runtime" | "aparencia";
+type SectionId =
+  | "conexao"
+  | "motores"
+  | "provedores"
+  | "memoria"
+  | "extensoes"
+  | "conectores"
+  | "runtime"
+  | "aparencia";
 
 type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
 
@@ -83,6 +93,7 @@ const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
   { id: "provedores", label: "Provedores (BYOK)", icon: KeyRound },
   { id: "memoria", label: "Memória", icon: Brain },
   { id: "extensoes", label: "Extensões", icon: Puzzle },
+  { id: "conectores", label: "Conectores (MCP)", icon: Cable },
   { id: "runtime", label: "Runtime local", icon: Cpu },
   { id: "aparencia", label: "Aparência", icon: Palette }
 ];
@@ -1626,6 +1637,182 @@ function LocalAgentBridge() {
   );
 }
 
+/* -------------------------- 5b. Conectores (MCP) ------------------------ */
+
+/** Nome obrigatório e único (case-insensitive) + URL http(s) válida. */
+function validateMcpDraft(name: string, url: string, existing: McpServerConfig[]): string | null {
+  if (!name) return "Informe um nome para o conector.";
+  if (existing.some((server) => server.name.toLowerCase() === name.toLowerCase())) {
+    return `Já existe um conector chamado "${name}".`;
+  }
+  if (!url) return "Informe a URL do servidor MCP.";
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "URL inválida — informe o endereço completo, ex.: https://host/mcp.";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "A URL deve usar http:// ou https://.";
+  }
+  return null;
+}
+
+const emptyMcpForm = { name: "", url: "", token: "" };
+
+function McpSection() {
+  const settings = useApp((state) => state.settings);
+  const updateSettings = useApp((state) => state.updateSettings);
+  const [form, setForm] = useState(emptyMcpForm);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [testing, setTesting] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, Notice>>({});
+
+  const servers = settings.mcpServers;
+
+  function addServer() {
+    const name = form.name.trim();
+    const url = form.url.trim();
+    const token = form.token.trim();
+    const problem = validateMcpDraft(name, url, servers);
+    if (problem) {
+      setNotice({ text: problem, tone: "warn" });
+      return;
+    }
+    updateSettings({ mcpServers: [...servers, token ? { name, url, token } : { name, url }] });
+    setForm(emptyMcpForm);
+    setNotice({ text: `Conector "${name}" cadastrado. Use "Testar" para confirmar as ferramentas.`, tone: "ok" });
+  }
+
+  function removeServer(name: string) {
+    updateSettings({ mcpServers: servers.filter((server) => server.name !== name) });
+    setResults((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+    setNotice({ text: `Conector "${name}" removido.`, tone: "ok" });
+  }
+
+  // Servidor fora do ar vira aviso no card; a seção nunca quebra.
+  async function testServer(server: McpServerConfig) {
+    setTesting(server.name);
+    setResults((prev) => ({ ...prev, [server.name]: null }));
+    try {
+      const tools = await new McpHttpClient(server).listTools();
+      const preview = tools
+        .slice(0, 4)
+        .map((tool) => tool.name)
+        .join(", ");
+      setResults((prev) => ({
+        ...prev,
+        [server.name]: tools.length
+          ? { text: `${tools.length} ferramenta(s): ${preview}${tools.length > 4 ? "…" : ""}`, tone: "ok" }
+          : { text: "Servidor respondeu, mas não expôs nenhuma ferramenta.", tone: "warn" }
+      }));
+    } catch (cause) {
+      setResults((prev) => ({ ...prev, [server.name]: { text: `Falha ao contatar: ${errorText(cause)}`, tone: "danger" } }));
+    } finally {
+      setTesting(null);
+    }
+  }
+
+  return (
+    <Section
+      title="Conectores (MCP)"
+      detail="Servidores MCP externos (JSON-RPC sobre HTTP). As ferramentas de cada servidor entram no catálogo do agente com o nome mcp:<conector>:<ferramenta> e passam pelo mesmo diálogo de aprovação. Política Multiplike: use apenas conectores homologados pela TI/SI e guarde o token no cofre corporativo."
+    >
+      <div className="setx-card">
+        <div className="setx-card-title">
+          <Cable size={13} />
+          Servidores cadastrados
+          <small>{servers.length} conector(es)</small>
+        </div>
+        {servers.length === 0 && <p className="setx-empty">Nenhum conector MCP cadastrado.</p>}
+        {servers.map((server) => (
+          <div className="setx-item" key={server.name}>
+            <div className="setx-item-head">
+              <span className="grow">{server.name}</span>
+              <span className={`chip ${server.token ? "ok" : ""}`}>{server.token ? "com token" : "sem token"}</span>
+              <button
+                className="lg-button ghost"
+                disabled={testing === server.name}
+                onClick={() => void testServer(server)}
+              >
+                {testing === server.name ? <LoaderCircle className="spin" size={13} /> : <ShieldCheck size={13} />}
+                Testar
+              </button>
+              <button
+                className="icon-button"
+                onClick={() => removeServer(server.name)}
+                aria-label={`Remover conector ${server.name}`}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+            <div className="setx-row">
+              <code className="setx-code">{server.url}</code>
+            </div>
+            <NoticeLine notice={results[server.name] ?? null} />
+          </div>
+        ))}
+      </div>
+
+      <div className="setx-card">
+        <div className="setx-card-title">
+          <Plus size={13} />
+          Adicionar conector
+        </div>
+        <p className="setx-hint">
+          A URL é o endpoint JSON-RPC do servidor (o mesmo que responde tools/list e tools/call). O token, quando o
+          servidor exigir, é enviado como Bearer no cabeçalho Authorization.
+        </p>
+        <div className="setx-grid">
+          <label className="lg-field">
+            Nome
+            <input
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+              placeholder="ex.: jira"
+              spellCheck={false}
+            />
+          </label>
+          <label className="lg-field">
+            URL base
+            <input
+              value={form.url}
+              onChange={(event) => setForm({ ...form, url: event.target.value })}
+              placeholder="https://host/mcp"
+              spellCheck={false}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") addServer();
+              }}
+            />
+          </label>
+          <label className="lg-field">
+            Token (opcional)
+            <input
+              type="password"
+              value={form.token}
+              onChange={(event) => setForm({ ...form, token: event.target.value })}
+              placeholder="Bearer token do servidor"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+        <div className="setx-actions">
+          <button className="lg-button primary" disabled={!form.name.trim() || !form.url.trim()} onClick={addServer}>
+            <Plus size={13} />
+            Adicionar
+          </button>
+        </div>
+        <NoticeLine notice={notice} />
+      </div>
+    </Section>
+  );
+}
+
 /* --------------------------- 6. Runtime local --------------------------- */
 
 function RuntimeSection() {
@@ -2078,6 +2265,7 @@ export function SettingsPanel() {
             {section === "provedores" && <ProvidersSection />}
             {section === "memoria" && <MemorySection />}
             {section === "extensoes" && <ExtensionsSection />}
+            {section === "conectores" && <McpSection />}
             {section === "runtime" && <RuntimeSection />}
             {section === "aparencia" && <AppearanceSection />}
           </div>

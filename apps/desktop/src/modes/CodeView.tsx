@@ -37,10 +37,12 @@ import {
   X
 } from "lucide-react";
 import type { FsEntry, OrchestrationGraph } from "@ai-orchestrator/contracts";
-import { CodeEditor, type CodeEditorApi } from "../components/CodeEditor";
+import { CodeEditor, type CodeEditorApi, type InlineSuggestionContext } from "../components/CodeEditor";
 import { FloatingPulse, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 import { computeDiff, diffStats, toHunks, type DiffLine } from "../lib/diff";
+import { applySelectedHunks, splitIntoHunks, type Hunk } from "../lib/hunks";
+import { suggestIdentifier } from "../lib/inlineSuggest";
 import { describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
 import { collectFiles, fsList, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
@@ -77,8 +79,34 @@ interface DiffModal {
   title: string;
   lines: DiffLine[];
   note?: string;
-  apply?: () => void;
+  /** Presente só quando o diff é aplicável (base + blocos escolhíveis). */
+  patch?: {
+    before: string;
+    after: string;
+    hunks: Hunk[];
+    apply: (next: string) => void;
+  };
 }
+
+/** Sugestão inline do editor: identificador já usado no buffer, aceito com Tab. */
+const inlineSuggestion = (context: InlineSuggestionContext) => suggestIdentifier(context.text, context.cursor);
+
+/* Cabeçalho de hunk selecionável — superfícies planas, só tokens do tema. */
+const HUNK_BLOCK: CSSProperties = { marginBottom: 10 };
+const HUNK_HEAD: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "6px 10px",
+  background: "var(--panel-2)",
+  borderBottom: "1px solid var(--line)",
+  color: "var(--muted)",
+  cursor: "pointer"
+};
+const HUNK_HEAD_ON: CSSProperties = { background: "var(--hover)", color: "var(--ink)" };
+const HUNK_CHECK: CSSProperties = { accentColor: "var(--accent)", cursor: "pointer" };
+const HUNK_HEADER_TEXT: CSSProperties = { flex: 1, minWidth: 0, fontSize: "var(--fs-micro)" };
+const HUNK_COUNTER: CSSProperties = { marginRight: "auto" };
 
 /** Extensões tratadas como texto na busca literal do projeto. */
 const TEXT_EXTENSIONS = new Set([
@@ -483,6 +511,21 @@ export function CodeView() {
 
   /* --------------------- Diff + aplicar código da IA ---------------- */
   const [diffView, setDiffView] = useState<DiffModal | null>(null);
+  /** Hunks marcados no modal — aceitar o diff é por bloco, não tudo ou nada. */
+  const [pickedHunks, setPickedHunks] = useState<ReadonlySet<string>>(new Set());
+
+  function openDiff(modal: DiffModal) {
+    setDiffView(modal);
+    setPickedHunks(new Set(modal.patch?.hunks.map((hunk) => hunk.id) ?? []));
+  }
+
+  function toggleHunk(id: string) {
+    setPickedHunks((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
 
   /** Blocos de código da última resposta de assistente do thread code. */
   const aiBlocks = useMemo(() => {
@@ -496,7 +539,7 @@ export function CodeView() {
   function showLocalDiff() {
     const file = activeFile();
     if (!file || file.loading) return;
-    setDiffView({
+    openDiff({
       title: `Alterações não salvas — ${file.name}`,
       lines: computeDiff(file.savedContent, file.content)
     });
@@ -513,18 +556,24 @@ export function CodeView() {
       hasSelection && selection
         ? file.content.slice(0, selection.from) + code + file.content.slice(selection.to)
         : code;
-    setDiffView({
+    openDiff({
       title: `Aplicar código da IA — ${file.name} (${hasSelection ? "seleção" : "arquivo inteiro"})`,
       lines: computeDiff(file.content, next),
       note: isTauriHost
         ? "Ao aplicar, o arquivo é gravado no disco via fs_write."
         : "Navegador: aplica apenas no buffer aberto — a persistência em disco requer o app desktop.",
-      apply: () => {
-        setDiffView(null);
-        void applyContent(file.path, next);
+      patch: {
+        before: file.content,
+        after: next,
+        hunks: splitIntoHunks(file.content, next),
+        apply: (result) => {
+          setDiffView(null);
+          void applyContent(file.path, result);
+        }
       }
     });
   }
+
 
   /* --------------------------- Atalhos globais ---------------------- */
   useEffect(() => {
@@ -774,6 +823,13 @@ export function CodeView() {
   const rootLabel = root === "." ? "ai-orchestrator" : root.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? root;
   const diffChanges = diffView ? diffStats(diffView.lines) : null;
   const diffHasChanges = !!diffChanges && diffChanges.added + diffChanges.removed > 0;
+  const patch = diffView?.patch;
+  const pickedCount = patch ? patch.hunks.filter((hunk) => pickedHunks.has(hunk.id)).length : 0;
+
+  function applyPicked() {
+    if (!patch) return;
+    patch.apply(applySelectedHunks(patch.before, patch.hunks, pickedHunks));
+  }
 
   return (
     <Surface className="codex-surface">
@@ -965,7 +1021,13 @@ export function CodeView() {
 
           {active && (
             <div className="codex-editor">
-              <CodeEditor value={active.content} fileName={active.name} onChange={changeActive} apiRef={editorApiRef} />
+              <CodeEditor
+                value={active.content}
+                fileName={active.name}
+                onChange={changeActive}
+                apiRef={editorApiRef}
+                inlineSuggestion={inlineSuggestion}
+              />
               {active.loading && <div className="codex-editor-loading">lendo {active.path}…</div>}
             </div>
           )}
@@ -1142,35 +1204,88 @@ export function CodeView() {
                   </button>
                 </header>
                 <div className="codex-diff-scroll">
-                  <div className="diff-block">
-                    {toHunks(diffView.lines, 2).map((part, index) =>
-                      part.type === "skip" ? (
-                        <div className="diff-line codex-diff-skip" key={index}>
-                          <span>···</span>
-                          <code>{part.count} linha(s) sem alteração</code>
+                  {patch && patch.hunks.length > 0 ? (
+                    patch.hunks.map((hunk) => {
+                      const picked = pickedHunks.has(hunk.id);
+                      return (
+                        <div className="diff-block" style={HUNK_BLOCK} key={hunk.id}>
+                          <label style={{ ...HUNK_HEAD, ...(picked ? HUNK_HEAD_ON : null) }}>
+                            <input
+                              type="checkbox"
+                              checked={picked}
+                              onChange={() => toggleHunk(hunk.id)}
+                              style={HUNK_CHECK}
+                              aria-label={`Selecionar bloco ${hunk.header}`}
+                            />
+                            <code style={HUNK_HEADER_TEXT}>{hunk.header}</code>
+                            <span className="chip">
+                              +{hunk.added} −{hunk.removed}
+                            </span>
+                          </label>
+                          {hunk.lines.map((line, index) => (
+                            <div
+                              className={`diff-line ${line.type === "add" ? "add" : line.type === "remove" ? "remove" : ""}`}
+                              key={index}
+                            >
+                              <span>{line.type === "add" ? line.bLine : line.aLine}</span>
+                              <code>{line.text || " "}</code>
+                            </div>
+                          ))}
                         </div>
-                      ) : (
-                        <div
-                          className={`diff-line ${part.type === "add" ? "add" : part.type === "remove" ? "remove" : ""}`}
-                          key={index}
-                        >
-                          <span>{part.type === "add" ? part.bLine : part.aLine}</span>
-                          <code>{part.text || " "}</code>
-                        </div>
-                      )
-                    )}
-                  </div>
+                      );
+                    })
+                  ) : (
+                    <div className="diff-block">
+                      {toHunks(diffView.lines, 2).map((part, index) =>
+                        part.type === "skip" ? (
+                          <div className="diff-line codex-diff-skip" key={index}>
+                            <span>···</span>
+                            <code>{part.count} linha(s) sem alteração</code>
+                          </div>
+                        ) : (
+                          <div
+                            className={`diff-line ${part.type === "add" ? "add" : part.type === "remove" ? "remove" : ""}`}
+                            key={index}
+                          >
+                            <span>{part.type === "add" ? part.bLine : part.aLine}</span>
+                            <code>{part.text || " "}</code>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
                 </div>
                 {diffView.note && <p className="codex-modal-note">{diffView.note}</p>}
                 <footer className="codex-modal-actions">
+                  {patch && patch.hunks.length > 0 && (
+                    <span className="chip" style={HUNK_COUNTER}>
+                      {pickedCount} de {patch.hunks.length} bloco(s)
+                    </span>
+                  )}
                   <button className="lg-button ghost" onClick={() => setDiffView(null)}>
                     Fechar
                   </button>
-                  {diffView.apply && (
-                    <button className="lg-button primary" onClick={diffView.apply} disabled={!diffHasChanges}>
-                      <Check size={13} />
-                      Aplicar
-                    </button>
+                  {patch && (
+                    <>
+                      <button
+                        className="lg-button"
+                        onClick={applyPicked}
+                        disabled={pickedCount === 0}
+                        title="Grava só os blocos marcados — o resto do arquivo fica como está"
+                      >
+                        <Check size={13} />
+                        Aplicar selecionados
+                      </button>
+                      <button
+                        className="lg-button primary"
+                        onClick={() => patch.apply(patch.after)}
+                        disabled={!diffHasChanges}
+                        title="Grava o arquivo inteiro como a IA propôs"
+                      >
+                        <Check size={13} />
+                        Aplicar tudo
+                      </button>
+                    </>
                   )}
                 </footer>
               </div>
