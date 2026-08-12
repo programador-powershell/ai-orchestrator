@@ -229,6 +229,7 @@ export function Composer() {
           signal
         );
       },
+      signal,
       runTool: async (call) => {
         // Ferramenta MCP externa (mcp:<servidor>:<tool>) roteia ao cliente.
         const external = parseNamespaced(call.tool);
@@ -253,7 +254,23 @@ export function Composer() {
         return result;
       },
       requestApproval: (call) =>
-        new Promise<boolean>((resolve) => setPendingApproval({ call, resolve })),
+        new Promise<boolean>((resolve) => {
+          if (signal.aborted) return resolve(false);
+          // Parar durante a aprovação resolve como recusa: sem isso a promise
+          // ficaria pendurada e a aba travaria em "enviando".
+          const onAbort = () => {
+            setPendingApproval(null);
+            resolve(false);
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          setPendingApproval({
+            call,
+            resolve: (approved) => {
+              signal.removeEventListener("abort", onAbort);
+              resolve(approved);
+            }
+          });
+        }),
       onToolStart: (call) => {
         setStage(`Ferramenta: ${call.tool}`);
         appendMessage(mode, { role: "assistant", content: toolStartCard(call), meta: { kind: "ops" } });
