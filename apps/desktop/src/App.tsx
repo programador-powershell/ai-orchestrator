@@ -27,6 +27,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Rocket,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -40,6 +41,8 @@ import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
 import { GlassFilters } from "./components/GlassFilters";
 import { Composer } from "./components/Composer";
+import { ConnectionsPopover } from "./components/ConnectionsPopover";
+import { ShipModal } from "./components/ShipModal";
 import { ContextMeter } from "./components/ContextMeter";
 
 /**
@@ -216,6 +219,7 @@ function App() {
   const settings = useApp((state) => state.settings);
   const newConversation = useApp((state) => state.newConversation);
   const [closing, setClosing] = useState(false);
+  const [shipOpen, setShipOpen] = useState(false);
 
   const visibleModes = settings.visibleModes.length ? settings.visibleModes : [...UI_MODES];
   const RailPanel = railViews[mode];
@@ -373,13 +377,16 @@ function App() {
           </nav>
           <div className="topbar-actions" id="topbar-actions" />
           <div className="topbar-right">
+            {/* Build & deploy vale para Code e Agent; vive aqui e não no rail,
+                que já estava apertado com árvore de arquivos e sessões. */}
+            {(mode === "code" || mode === "agent") && (
+              <button className="topbar-ship" onClick={() => setShipOpen(true)} title="Build e deploy">
+                <Rocket size={13} />
+                <span className="topbar-ship__label">Build &amp; deploy</span>
+              </button>
+            )}
             <ContextMeter />
-            <button className="status-pill" onClick={() => setSettingsOpen(true)}>
-              <span className={`dot ${connected ? "online" : ""}`} />
-              <span className="pill-label">
-                {gatewayConnected ? "Gateway conectado" : runtimeStatus.running ? "Runtime local" : "Desconectado"}
-              </span>
-            </button>
+            <ConnectionsPopover />
             <div className="window-controls">
               <button onClick={() => void appWindow?.minimize()} aria-label="Minimizar">
                 <Minus size={15} />
@@ -410,6 +417,10 @@ function App() {
         <Suspense fallback={null}>
           <SettingsPanel />
         </Suspense>
+      )}
+
+      {shipOpen && (
+        <ShipModal root={window.localStorage.getItem("code.root") ?? "."} onClose={() => setShipOpen(false)} />
       )}
     </main>
   );
