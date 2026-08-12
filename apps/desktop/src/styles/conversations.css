@@ -1,0 +1,278 @@
+/* ------------------------------------------------------------------ */
+/* Rail de conversas — projetos (pastas), exportação e busca global.    */
+/* Estilo Studio plano: superfícies sólidas separadas por tom.          */
+/* ------------------------------------------------------------------ */
+
+.rail-projects-bar {
+  margin: 2px 2px 5px;
+  display: flex;
+}
+.rail-projects-bar button,
+.rail-projects-bar input {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-micro);
+  text-align: left;
+  outline: none;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rail-projects-bar button:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.rail-projects-bar input {
+  color: var(--ink);
+  cursor: text;
+}
+.rail-projects-bar input:focus {
+  border-color: var(--accent);
+}
+
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rail-group-head {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.rail-group-head > button {
+  min-width: 0;
+  min-height: 30px;
+  flex: 1;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rail-group-head > button svg {
+  flex: none;
+}
+.rail-group-head > button span {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rail-group-head > button small {
+  flex: none;
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+.rail-group-head:hover > button {
+  color: var(--ink);
+  background: var(--hover);
+}
+.rail-group-head i {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--faint);
+  cursor: pointer;
+}
+.rail-group-head:hover i {
+  display: grid;
+}
+.rail-group-head i:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.rail-group-head i[aria-label="Excluir projeto"]:hover {
+  color: var(--danger);
+}
+
+.rail-group-rename {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-small);
+  outline: none;
+}
+
+/* Linha de conversa: fora do seletor `.rail nav > button`, precisa da base. */
+.rail-conv {
+  display: flex;
+  flex-direction: column;
+}
+.rail .rail-conversation {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-small);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.rail .rail-conversation svg {
+  flex: none;
+}
+.rail .rail-conversation span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail .rail-conversation:hover,
+.rail .rail-conversation.active {
+  color: var(--ink);
+  background: var(--hover);
+}
+.rail-conversation.menu-open i {
+  display: grid;
+}
+.rail-conversation i.conv-menu-trigger:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.conv-menu {
+  margin: 2px 4px 5px 26px;
+  padding: 3px;
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.conv-menu button,
+.conv-menu label {
+  min-height: 26px;
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.conv-menu button svg,
+.conv-menu label svg {
+  flex: none;
+}
+.conv-menu button:hover,
+.conv-menu label:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.conv-menu select {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-micro);
+  outline: none;
+  cursor: pointer;
+}
+
+/* Resultado da busca global — precisa vencer `.rail nav > button`. */
+.rail nav .rail-result {
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 2px;
+  padding: 6px 9px;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.rail nav .rail-result:hover {
+  background: var(--hover);
+  border-left-color: var(--accent);
+}
+.rail-result-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rail-result-head > span:first-child {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+.rail-result-mode {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  line-height: 15px;
+}
+.rail-result-count {
+  min-width: 16px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-eyebrow);
+  line-height: 15px;
+  text-align: center;
+}
+.rail-result small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+}
