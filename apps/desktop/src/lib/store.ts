@@ -12,6 +12,7 @@ import {
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";
+import type { DeployServer } from "./ship/server";
 import {
   addProject,
   assignProject,
@@ -93,6 +94,10 @@ export interface AppSettings {
   memoryEnabled: boolean;
   /** Política de aprovação de ferramentas do agente (definida pela TI). */
   approvalPolicy: ApprovalPolicy;
+  /** Loop agentico ligado por padrao — decisao da TI, nao do usuario. */
+  agentTools: boolean;
+  /** Servidores de deploy cadastrados (o "VPS do Openship"). Sem segredo. */
+  deployServers: DeployServer[];
   memoryRecallK: number;
   /** Nível de esforço 0–4 (Baixo…Máximo) — injeta diretiva real no motor. */
   effort: number;
@@ -191,8 +196,6 @@ interface AppState {
   settingsOpen: boolean;
   planMode: boolean;
   researchMode: boolean;
-  /** Modo agente: o modelo executa ferramentas (fs/terminal) com aprovação. */
-  toolsMode: boolean;
   input: string;
   error: string;
   threads: Record<UiMode, ThreadState>;
@@ -222,7 +225,6 @@ interface AppState {
   setSettingsOpen: (open: boolean) => void;
   setPlanMode: (on: boolean) => void;
   setResearchMode: (on: boolean) => void;
-  setToolsMode: (on: boolean) => void;
   setInput: (value: string) => void;
   setError: (message: string) => void;
   setActivePlan: (plan: ExecutionPlan | null) => void;
@@ -279,7 +281,6 @@ export const useApp = create<AppState>()(
       settingsOpen: false,
       planMode: false,
       researchMode: false,
-      toolsMode: false,
       input: "",
       error: "",
       threads: {
@@ -316,6 +317,8 @@ export const useApp = create<AppState>()(
         modelCatalog: defaultModelCatalog,
         memoryEnabled: true,
         approvalPolicy: "ask",
+      agentTools: true,
+      deployServers: [],
         memoryRecallK: 6,
         effort: 1,
         providerBaseOverrides: {},
@@ -341,7 +344,6 @@ export const useApp = create<AppState>()(
       setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
       setPlanMode: (planMode) => set({ planMode }),
       setResearchMode: (researchMode) => set({ researchMode }),
-      setToolsMode: (toolsMode) => set({ toolsMode }),
       setInput: (input) => set({ input }),
       setError: (error) => set({ error }),
       setActivePlan: (activePlan) => set({ activePlan }),
@@ -553,6 +555,7 @@ export const useApp = create<AppState>()(
             modelCatalog,
             catalogSeed: CATALOG_SEED,
             providerBaseOverrides: saved.settings?.providerBaseOverrides ?? {},
+            deployServers: Array.isArray(saved.settings?.deployServers) ? saved.settings.deployServers : [],
             effort: saved.settings?.effort ?? current.settings.effort,
             // Abas novas (que este perfil nunca viu) entram visíveis; ocultadas
             // pelo usuário permanecem ocultas.

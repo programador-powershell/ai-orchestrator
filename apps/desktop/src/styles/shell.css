@@ -372,6 +372,48 @@ button { -webkit-tap-highlight-color: transparent; }
   transition: background var(--t-fast) ease, color var(--t-fast) ease;
 }
 .approve-chip:hover { color: var(--ink); background: var(--hover); }
+.approve-chip:disabled { opacity: 0.55; cursor: default; }
+
+/* Seletor de política: o menu é ancorado no chip e ABRE PARA CIMA, fora do
+   fluxo — se ficasse no fluxo do flex empurraria os irmãos, que é exatamente
+   o defeito que estamos consertando na barra. */
+.approve-select { position: relative; display: inline-flex; flex: none; }
+.approve-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+  width: 268px;
+  padding: 5px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+}
+.approve-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.approve-option:hover { background: var(--hover); }
+.approve-option.is-active { background: var(--accent-soft); }
+.approve-option__mark {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 16px;
+  color: var(--accent);
+}
+.approve-option__text { display: grid; gap: 1px; }
+.approve-option__text strong { font-size: var(--fs-micro); font-weight: 500; }
+.approve-option__text small { color: var(--muted); font-size: 10px; line-height: 1.35; }
 
 /* Lista de @-mentions de arquivo (aparece acima do composer). */
 .mention-list {
@@ -579,12 +621,33 @@ button { -webkit-tap-highlight-color: transparent; }
   outline: none;
 }
 .composer textarea::placeholder { color: var(--faint); }
+/* `min-width: 0` é o que impede a barra de estourar o balão de vidro.
+   `.composer` é grid: sem isto o track é dimensionado pelo min-content da
+   linha (chips com white-space: nowrap não encolhem), a linha fica MAIS LARGA
+   que o composer e o botão enviar sai para fora — em viewport estreito ele era
+   cortado por `.workspace { overflow: hidden }` e ficava inalcançável. */
+.composer,
+.composer-row {
+  min-width: 0;
+}
 .composer-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .composer-row .spacer { flex: 1; }
+/* O grupo de chips é quem cede espaço; enviar e o slider ficam intactos. */
+.composer-row .lg-toggle,
+.composer-row .model-select {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-row .send-button,
+.composer-row .icon-button,
+.composer-row .effort-slider {
+  flex: none;
+}
 
 .model-select {
   height: 28px;
