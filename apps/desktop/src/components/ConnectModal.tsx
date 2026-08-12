@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Search, ServerCog, ShieldCheck, X } from "lucide-react";
 import {
   CATEGORY_LABELS,
@@ -79,7 +80,10 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
     setSelected(null);
   }
 
-  return (
+  // Portal para o body: a janela nasce dentro da topbar, que vive em
+  // `.workspace` (z-index 2) — e o rail é z-index 6. Nenhum z-index interno
+  // vence isso, porque o contexto de empilhamento do pai já perdeu.
+  return createPortal(
     <div className="connx-backdrop" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="connx glass-strong" role="dialog" aria-label="Conectar aplicativos">
         <header className="connx__head">
@@ -202,6 +206,7 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
           </span>
         </footer>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
