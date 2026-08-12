@@ -27,6 +27,67 @@
 /* Refração líquida desativada (visual plano). */
 .refract { filter: none; }
 
+/* ---------- Bloco de raciocínio ("Pensando…") — estilo Studio ------------- */
+.reasoning {
+  margin: 2px 0 4px;
+  border-left: 2px solid var(--line-strong);
+  padding-left: 8px;
+}
+.reasoning.active { border-left-color: var(--accent); }
+.reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.reasoning-head:hover { color: var(--ink); }
+.reasoning.active .reasoning-head { color: var(--accent-strong); }
+.reasoning-body {
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.reasoning-body .md-root { font-size: var(--fs-small); }
+
+/* -------- Diff da edição dentro do cartão de ferramenta (estilo Studio) --- */
+.tooledit { display: grid; gap: 4px; }
+.tooledit-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  text-align: left;
+}
+.tooledit-head:hover { color: var(--accent-strong); }
+.tooledit-patch {
+  margin: 0;
+  padding: 6px 8px;
+  display: grid;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  white-space: pre;
+}
+.tooledit-patch .add { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ink); }
+.tooledit-patch .remove { background: color-mix(in srgb, var(--danger) 13%, transparent); color: var(--ink); }
+.tooledit-patch .skip { color: var(--faint); font-style: italic; }
+
 /* ---------------- Grupo de ferramentas na conversa (estilo Studio) -------- */
 .toolgroup {
   margin: 4px 0;
