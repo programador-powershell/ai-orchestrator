@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextUsage, contextWindowFor, formatTokens } from "./contextMeter";
+import { contextUsage, contextWindowFor, formatTokens, messageTokens } from "./contextMeter";
 
 describe("contextWindowFor", () => {
   it("reconhece as famílias conhecidas", () => {
@@ -42,5 +42,27 @@ describe("formatTokens", () => {
     expect(formatTokens(131_100)).toBe("131.1k");
     expect(formatTokens(1_047_576)).toBe("1.0M");
     expect(formatTokens(950)).toBe("950");
+  });
+});
+
+describe("messageTokens", () => {
+  it("conta o texto da resposta", () => {
+    const tokens = messageTokens({ content: "x".repeat(400) });
+    expect(tokens).toBeGreaterThan(0);
+  });
+
+  it("SOMA raciocínio e saída de ferramentas — subestimar o gasto seria mentir", () => {
+    const so = messageTokens({ content: "resposta" });
+    const completo = messageTokens({
+      content: "resposta",
+      meta: { reasoning: "y".repeat(400), tools: [{ output: "z".repeat(400) }] }
+    });
+    expect(completo).toBeGreaterThan(so);
+  });
+
+  it("mensagem sem meta não quebra", () => {
+    expect(messageTokens({ content: "" })).toBe(0);
+    expect(messageTokens({ content: "a", meta: {} })).toBeGreaterThanOrEqual(0);
+    expect(messageTokens({ content: "a", meta: { tools: [{}] } })).toBeGreaterThanOrEqual(0);
   });
 });
