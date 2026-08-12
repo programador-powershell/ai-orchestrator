@@ -58,7 +58,11 @@ function downloadText(fileName: string, text: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-export function RailConversations({ mode, searchable = false }: { mode: UiMode; searchable?: boolean }) {
+/**
+ * `searchable` agora é o PADRÃO: a busca sempre varreu todas as abas, mas
+ * estava ligada só no Chat — para achar qualquer coisa era preciso ir até lá.
+ */
+export function RailConversations({ mode, searchable = true }: { mode: UiMode; searchable?: boolean }) {
   const conversations = useApp((state) => state.conversations[mode]);
   const allConversations = useApp((state) => state.conversations);
   const projects = useApp((state) => state.projects);

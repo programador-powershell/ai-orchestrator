@@ -28,6 +28,7 @@ import { buildToolEdit } from "../lib/toolEdit";
 import { requiresPrompt } from "../lib/approval";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
+import { loadProjectRules, rulesSystemMessage } from "../lib/projectRules";
 import { officeContextMessage } from "../lib/office/session";
 import { shipContextMessage } from "../lib/ship/session";
 import { filesFromClipboard } from "../lib/paste";
@@ -176,6 +177,12 @@ export function Composer() {
       const shipContext = shipContextMessage();
       if (shipContext) system.push({ role: "system", content: shipContext });
     }
+    // Regras do projeto (AGENTS.md, CLAUDE.md, .cursorrules) — entram por
+    // ÚLTIMO de propósito: a convenção do repositório manda sobre as
+    // preferências gerais quando as duas dizem coisas diferentes.
+    const rulesRoot = window.localStorage.getItem("code.root") ?? ".";
+    const rules = await loadProjectRules(rulesRoot, fsRead).catch(() => null);
+    if (rules) system.push(rulesSystemMessage(rules));
     return system;
   }
 
