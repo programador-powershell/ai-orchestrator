@@ -24,6 +24,7 @@ import {
   fusionRolePolicy,
   parseSubtasks
 } from "./fusionPrompts";
+import { buildAdaptivePlanRequest, fallbackPlan, parseFusionPlan } from "./fusionPlan";
 import { resolvePresetForMode } from "./fusionResolve";
 import { streamChat, type ChatMessage, type GatewaySession } from "./gateway";
 import { runtime } from "./runtime";
@@ -51,6 +52,10 @@ export interface EngineEvents {
   onStage?: (stage: string) => void;
   /** Bloco de raciocínio do modelo (mostrado recolhido, separado da resposta). */
   onReasoning?: (delta: string) => void;
+  /** Plano do orquestrador: complexidade e executores escolhidos (cartão). */
+  onFusionPlan?: (plan: { complexity: number; executors: Array<{ role: string; focus: string; model: string }> }) => void;
+  /** Executor terminou seu recorte (atualiza o cartão em tempo real). */
+  onFusionExecutor?: (role: string, status: "running" | "ok" | "error") => void;
 }
 
 const DEMO_NOTE =
@@ -427,36 +432,65 @@ async function fusionTurn(
   }
 
   if (preset.strategy === "merge") {
-    // 1) Decomposição: focos complementares, um por executor — sem sobreposição.
-    events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} decompondo em ${preset.executors.length} focos`);
-    const decomposition = await quietTurn(
+    // 1) O ORQUESTRADOR decide a complexidade e QUANTOS executores acionar —
+    //    pergunta simples não gasta o painel inteiro.
+    const maxExecutors = Math.max(1, preset.executors.length);
+    events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} planejando`);
+    const planText = await quietTurn(
       preset.orchestrator,
       mode,
-      withContext(buildDecomposeRequest(mode, question, preset.executors.length)),
+      withContext(buildAdaptivePlanRequest(mode, question, maxExecutors)),
       ctx,
       signal
     );
-    let subtasks = parseSubtasks(decomposition, preset.executors.length);
-    if (!subtasks) {
-      events.onStage?.("Fusion · decomposição malformada — usando focos padrão");
-      subtasks = fallbackSubtasks(question, preset.executors.length);
-    }
-    while (subtasks.length < preset.executors.length) {
-      subtasks.push(fallbackSubtasks(question, preset.executors.length)[subtasks.length]);
+    const plan = parseFusionPlan(planText, maxExecutors) ?? fallbackPlan(question, maxExecutors);
+    // Painel efetivo: um modelo por executor planejado (cicla se faltar modelo).
+    const panel = plan.executors.map((spec, index) => ({
+      spec,
+      target: preset.executors[index % preset.executors.length] ?? preset.orchestrator
+    }));
+    events.onFusionPlan?.({
+      complexity: plan.complexity,
+      executors: panel.map((item) => ({ role: item.spec.role, focus: item.spec.focus, model: item.target.model }))
+    });
+
+    // Complexidade baixa com 1 executor: responde direto, em streaming — sem
+    // pagar decomposição + integração para uma pergunta simples.
+    if (panel.length === 1) {
+      events.onStage?.(`Fusion (${roleTag}) · resposta direta (${panel[0].target.model})`);
+      events.onFusionExecutor?.(panel[0].spec.role, "running");
+      const direct = await streamingTurn(panel[0].target, mode, messages, ctx, events, signal);
+      events.onFusionExecutor?.(panel[0].spec.role, direct ? "ok" : "error");
+      return direct;
     }
 
     // 2) Execução paralela: cada executor SOMENTE no seu recorte.
-    events.onStage?.(`Fusion (${roleTag}) · ${preset.executors.length} executores em focos exclusivos`);
+    events.onStage?.(`Fusion (${roleTag}) · ${panel.length} executores em focos exclusivos`);
+    for (const item of panel) events.onFusionExecutor?.(item.spec.role, "running");
     const results = await Promise.allSettled(
-      preset.executors.map((executor, index) =>
-        quietTurn(executor, mode, withContext(buildSubtaskRequest(mode, question, subtasks[index], index, preset.executors.length)), ctx, signal)
+      panel.map((item, index) =>
+        quietTurn(
+          item.target,
+          mode,
+          withContext(buildSubtaskRequest(mode, question, item.spec.focus, index, panel.length)),
+          ctx,
+          signal
+        ).then((value) => {
+          events.onFusionExecutor?.(item.spec.role, value ? "ok" : "error");
+          return value;
+        })
       )
     );
     const parts = results
       .map((result, index) =>
-        result.status === "fulfilled" && result.value ? { focus: subtasks[index], content: result.value } : null
+        result.status === "fulfilled" && result.value
+          ? { focus: `${panel[index].spec.role} — ${panel[index].spec.focus}`, content: result.value }
+          : null
       )
       .filter((part): part is { focus: string; content: string } => part !== null);
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") events.onFusionExecutor?.(panel[index].spec.role, "error");
+    }
     if (!parts.length) return demoStream(messages, events, signal);
 
     // 3) Integração: costura sem reescrever — TRANSMITIDA token a token na UI.
