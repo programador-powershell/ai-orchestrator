@@ -164,40 +164,6 @@ button { -webkit-tap-highlight-color: transparent; }
 .rail nav > button:hover, .rail nav > button.active { color: var(--ink); background: var(--hover); }
 .rail nav > button.active { box-shadow: none; }
 
-/* Navegação de modos na sidebar — linhas em pílula, superfície por tom
-   (sem sombra), accent reservado ao item ativo. Padrão Studio. */
-/* Especificidade 0-1-1 para vencer `.rail nav { flex:1; overflow:auto }` — sem
-   isto a lista de modos e o rail-panel dividiam o espaço e cortavam modos. */
-.rail nav.rail-nav {
-  flex: none;
-  overflow: visible;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
-}
-.rail nav > .rail-nav-item {
-  border-radius: 999px;
-}
-.rail nav > .rail-nav-item .rail-nav-icon {
-  width: 20px;
-  height: 20px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  color: inherit;
-}
-.rail nav > .rail-nav-item.active {
-  color: var(--ink);
-  background: var(--accent-soft);
-  box-shadow: none;
-}
-.rail nav > .rail-nav-item.active .rail-nav-icon { color: var(--accent-strong); }
-.rail-nav-label { overflow: hidden; text-overflow: ellipsis; }
-.rail.collapsed .rail-nav .rail-nav-item {
-  justify-content: center;
-  padding: 0;
-}
-
 .rail-panel {
   animation: float-in var(--t-base) var(--spring) both;
 }
@@ -294,19 +260,44 @@ button { -webkit-tap-highlight-color: transparent; }
   container-name: topbar;
 }
 
-/* Título do modo ativo — a navegação vive na sidebar (padrão Studio) */
-.topbar-mode {
+/* Abas de MÓDULO no topo — pílulas planas; a esquerda serve o módulo ativo. */
+.mode-tabs {
   flex: none;
+  min-width: 0;
   display: flex;
   align-items: center;
-  padding: 0 6px;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.mode-tab {
+  min-height: 28px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 560;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
 }
-.topbar-mode strong {
-  font-size: var(--fs-base);
+.mode-tab:hover { color: var(--ink); }
+.mode-tab.active {
+  color: var(--ink);
+  background: var(--panel-solid);
   font-weight: 640;
-  letter-spacing: -0.4px;
 }
+.mode-tab.active svg { color: var(--accent-strong); }
+.mode-tab-label { overflow: hidden; text-overflow: ellipsis; }
 
 /* Slot de ações da aba ativa — injetado por portal, anima a cada troca */
 .topbar-actions {
@@ -346,8 +337,12 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .topbar-right { flex: none; display: flex; align-items: center; gap: 7px; }
 
-/* Tiers de redimensionamento — medidos na topbar (rail incluída na conta).
-   Sem as abas, sobra espaço: os tiers cuidam só de ações e status. */
+/* Tiers de redimensionamento — medidos na topbar (rail entra na conta).
+   As abas encolhem para ícones antes de qualquer coisa invadir os controles. */
+@container topbar (max-width: 1259px) {
+  .mode-tab-label { display: none; }
+  .mode-tab { padding: 0 9px; }
+}
 @container topbar (max-width: 929px) {
   .topbar-actions .lg-button span.tb-label { display: none; }
   .topbar-actions .segmented > button:not(.active) { display: none; }
