@@ -6,15 +6,12 @@
 import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 import {
   CircleStop,
-  Globe2,
   ListChecks,
   FileCode2,
   Paperclip,
   Send,
   Sparkles,
-  ShieldCheck,
   Telescope,
-  Wrench,
   X
 } from "lucide-react";
 import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
@@ -28,7 +25,7 @@ import {
 } from "../lib/agent";
 import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
-import { policyLabel, requiresPrompt } from "../lib/approval";
+import { requiresPrompt } from "../lib/approval";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
 import { officeContextMessage } from "../lib/office/session";
@@ -45,6 +42,7 @@ import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
 import { effortDirective, useApp, type Attachment } from "../lib/store";
+import { ApprovalSelect } from "./ApprovalSelect";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
 
@@ -69,10 +67,11 @@ export function Composer() {
   const setPlanMode = useApp((state) => state.setPlanMode);
   const researchMode = useApp((state) => state.researchMode);
   const setResearchMode = useApp((state) => state.setResearchMode);
-  const toolsMode = useApp((state) => state.toolsMode);
-  const setToolsMode = useApp((state) => state.setToolsMode);
+  // Loop agentico: decidido pela TI em Configuracoes -> Ship, nao por chip no composer.
+  const toolsMode = useApp((state) => state.settings.agentTools);
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const settings = useApp((state) => state.settings);
+  const updateSettings = useApp((state) => state.updateSettings);
   const session = useApp((state) => state.session);
   const runtimeStatus = useApp((state) => state.runtimeStatus);
   const thread = useApp((state) => state.threads[state.mode]);
@@ -374,7 +373,7 @@ export function Composer() {
         new Promise<boolean>((resolve) => {
           if (signal.aborted) return resolve(false);
           // Política da TI decide se para e pergunta ou segue direto.
-          if (!requiresPrompt(call, settings.approvalPolicy ?? "ask")) return resolve(true);
+          if (!requiresPrompt(call, useApp.getState().settings.approvalPolicy ?? "ask")) return resolve(true);
           // Parar durante a aprovação resolve como recusa: sem isso a promise
           // ficaria pendurada e a aba travaria em "enviando".
           const onAbort = () => {
@@ -725,42 +724,26 @@ export function Composer() {
             <ListChecks size={12} />
             Planejar
           </button>
-          <button
-            className={`lg-toggle ${toolsMode ? "on" : ""}`}
-            onClick={() => setToolsMode(!toolsMode)}
-            title="Modo agente: o modelo lê arquivos, roda comandos e edita — com aprovação para ações que alteram o projeto"
-          >
-            <i />
-            <Wrench size={12} />
-            Ferramentas
-          </button>
+          {/* O toggle "Ferramentas" saiu do composer: quem decide se o módulo
+              roda o loop agêntico é a TI, em Configurações → Ship. Aqui fica só
+              o controle que o usuário de fato precisa durante a conversa. */}
           {toolsMode && (
-            // Somente informativo: a política é definida pela TI nas Configurações.
-            <button
-              className="approve-chip"
-              onClick={() => setSettingsOpen(true)}
-              title="Política definida nas Configurações (administração)"
-            >
-              <ShieldCheck size={12} />
-              {policyLabel(settings.approvalPolicy ?? "ask")}
-            </button>
+            <ApprovalSelect
+              policy={settings.approvalPolicy ?? "ask"}
+              onChange={(approvalPolicy) => updateSettings({ approvalPolicy })}
+              disabled={thread.sending}
+            />
           )}
           {mode === "chat" && (
             <button
               className={`lg-toggle ${researchMode ? "on" : ""}`}
               onClick={() => setResearchMode(!researchMode)}
-              title="Pesquisa profunda: coleta e avalia fontes antes de responder"
+              title="Pesquisa profunda: coleta e avalia fontes, sites e vídeos antes de responder"
             >
               <i />
               <Telescope size={12} />
               Pesquisa
             </button>
-          )}
-          {researchMode && mode === "chat" && (
-            <span className="chip accent">
-              <Globe2 size={11} />
-              avalia sites e vídeos
-            </span>
           )}
           <div className="spacer" />
           <EffortSlider />

@@ -375,3 +375,9 @@
 
 /* Abas visíveis */
 .setx-tabs-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 4px; }
+
+/* Linha de servidor cadastrado (Configurações → Servidor Openship). */
+.ship-server { align-items: center; gap: 8px; }
+.ship-server__name { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.ship-server__name strong { font-size: var(--fs-micro); font-weight: 500; }
+.ship-server__name small { color: var(--muted); font-size: 10px; }
