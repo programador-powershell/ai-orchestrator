@@ -31,6 +31,7 @@ import { buildToolEdit } from "../lib/toolEdit";
 import { policyLabel, requiresPrompt } from "../lib/approval";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
+import { officeContextMessage } from "../lib/office/session";
 import { filesFromClipboard } from "../lib/paste";
 import { fileToDataUrl, toAttachmentDataUrl } from "../lib/imageAttach";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
@@ -55,6 +56,7 @@ const modePlaceholders: Record<string, string> = {
   security: "Peça uma revisão, simulação ou correção…",
   agent: "Descreva o fluxo de agentes…",
   game: "Descreva a cena, o asset ou a lógica de gameplay…",
+  office: "Diga o que quer alterar no arquivo…",
   tune: "Peça exemplos de dataset, config de treino ou avaliação…"
 };
 
@@ -162,6 +164,12 @@ export function Composer() {
     }
     const channel = opsChannelForMode[mode];
     if (channel) system.push({ role: "system", content: opsInstruction(channel, opsCatalogs[channel]) });
+    // Office: o chat sabe QUAL arquivo está aberto, a estrutura e a seleção —
+    // "aumente essa tabela em 10%" deixa de ser pergunta abstrata.
+    if (mode === "office") {
+      const officeContext = officeContextMessage();
+      if (officeContext) system.push({ role: "system", content: officeContext });
+    }
     return system;
   }
 

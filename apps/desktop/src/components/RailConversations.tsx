@@ -36,6 +36,8 @@ const modeLabels: Record<UiMode, string> = {
   security: "Security",
   agent: "Agent",
   game: "Game",
+  office: "Office",
+
   tune: "Tuning"
 };
 

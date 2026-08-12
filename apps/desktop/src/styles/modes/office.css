@@ -1,0 +1,81 @@
+/* OFFICE — documento vivo: canvas central, contexto e histórico à direita. */
+
+.offx-canvas {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.offx-canvas-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.offx-canvas-head strong { font-size: var(--fs-small); }
+.offx-path {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offx-editor {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.65;
+}
+
+.offx-readonly { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px; }
+.offx-note { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-micro); line-height: 1.55; }
+
+.offx-context { display: grid; gap: 7px; padding: 6px 4px 10px; }
+.offx-ctx-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* Prévia da alteração — o usuário aprova ANTES de a IA mexer no documento. */
+.offx-approval {
+  margin: 4px 2px 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.offx-approval strong { font-size: var(--fs-small); }
+.offx-approval ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: var(--fs-micro); line-height: 1.7; }
+.offx-approval-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.offx-log { display: grid; gap: 4px; padding: 2px 4px 10px; }
+.offx-log-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-micro);
+}
+.offx-log-item:hover { background: var(--hover); }
+.offx-log-item.reverted { opacity: 0.5; text-decoration: line-through; }
+.offx-log-author { flex: none; color: var(--muted); }
+.offx-log-label { flex: 1; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
