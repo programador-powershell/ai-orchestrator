@@ -76,15 +76,38 @@ fn read_key(account: &str) -> Result<String, String> {
         .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())
 }
 
+/// `http://` só é aceito contra a própria máquina (runtime local). Para
+/// qualquer outro host a chave BYOK cruzaria a rede em texto claro.
+fn is_loopback_url(url: &str) -> bool {
+    let rest = match url.strip_prefix("http://") {
+        Some(rest) => rest,
+        None => return false,
+    };
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or_else(|| rest.split('/').next().unwrap_or(""));
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+}
+
 fn validate_base_url(base_url: &str) -> Result<String, String> {
     let trimmed = base_url.trim().trim_end_matches('/').to_owned();
     if trimmed.is_empty() {
         return Err("baseUrl do provedor não configurada".into());
     }
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
-        return Err("baseUrl do provedor deve usar http(s)".into());
+    if trimmed.starts_with("https://") {
+        return Ok(trimmed);
     }
-    Ok(trimmed)
+    if is_loopback_url(&trimmed) {
+        return Ok(trimmed);
+    }
+    if trimmed.starts_with("http://") {
+        return Err("baseUrl sem TLS: a chave do provedor não trafega em http:// fora da própria máquina".into());
+    }
+    Err("baseUrl do provedor deve usar http(s)".into())
 }
 
 /// Extrai o texto de `choices[0].delta.content` de uma linha `data:` do SSE.
@@ -339,6 +362,12 @@ mod tests {
     fn rejects_non_http_base_url() {
         assert!(validate_base_url("ftp://x").is_err());
         assert!(validate_base_url("  ").is_err());
+        // http:// remoto é recusado: a chave BYOK não trafega sem TLS.
+        assert!(validate_base_url("http://api.exemplo.com/v1").is_err());
+        assert!(validate_base_url("http://192.168.0.10/v1").is_err());
+        // loopback continua valendo — é o runtime local (llama.cpp).
+        assert_eq!(validate_base_url("http://127.0.0.1:8080/v1").unwrap(), "http://127.0.0.1:8080/v1");
+        assert!(validate_base_url("http://localhost:1234").is_ok());
         assert_eq!(
             validate_base_url("https://api.openai.com/v1/").unwrap(),
             "https://api.openai.com/v1"
@@ -350,10 +379,8 @@ mod tests {
 /// a chave continua saindo APENAS do keyring, nunca do JavaScript.
 #[tauri::command]
 pub async fn provider_fetch(request: ProviderFetchRequest) -> Result<Value, String> {
-    let base_url = request.base_url.trim().trim_end_matches('/').to_owned();
-    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
-        return Err("baseUrl do provedor deve usar http(s)".into());
-    }
+    // Mesmo validador do chat: sem TLS a chave do keyring vazaria na rede.
+    let base_url = validate_base_url(&request.base_url)?;
     let path = request.path.trim();
     if !path.starts_with('/') {
         return Err("path deve começar com /".into());
