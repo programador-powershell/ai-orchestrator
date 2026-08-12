@@ -354,6 +354,35 @@ button { -webkit-tap-highlight-color: transparent; }
   .status-pill .pill-label { display: none; }
 }
 
+/* Medidor de contexto (topo) — "1.4k / 131.1k" com barra fina. */
+.ctx-meter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.ctx-meter.warn { color: var(--warn); }
+.ctx-track {
+  width: 54px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.ctx-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--t-base) ease;
+}
+.ctx-meter.warn .ctx-fill { background: var(--warn); }
+
 .status-pill {
   height: 30px;
   max-width: 190px;

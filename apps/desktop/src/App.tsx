@@ -39,6 +39,7 @@ import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
 import { GlassFilters } from "./components/GlassFilters";
 import { Composer } from "./components/Composer";
+import { ContextMeter } from "./components/ContextMeter";
 
 /**
  * Views carregadas sob demanda (code-split) e pré-aquecidas em idle:
@@ -361,6 +362,7 @@ function App() {
           </nav>
           <div className="topbar-actions" id="topbar-actions" />
           <div className="topbar-right">
+            <ContextMeter />
             <button className="status-pill" onClick={() => setSettingsOpen(true)}>
               <span className={`dot ${connected ? "online" : ""}`} />
               <span className="pill-label">
