@@ -40,11 +40,11 @@ Auditoria de 2026-08-12, cada veredito verificado contra o código por um segund
 | Design | Canva / clone de sites | 🟡 Parcial | Canvas editável com formas e export SVG/PNG; extração de paleta e fontes de uma URL | Reconstruir o **layout** do site (hoje só semeia tokens), captura com renderização para SPA |
 | Vídeo | OpenCut | 🟡 Parcial | Timeline de corte, preview | **O export não renderiza arquivo** e o projeto não persiste entre sessões |
 | Security / Sandbox | Snyk + execução isolada | 🟡 Parcial | Varredura de segredos, `sandbox_execute` no backend | Sem UI que acione o sandbox; `isolated: true` é rótulo — não há isolamento de SO real |
-| **Office** | Word/Excel/PowerPoint | 🔴 Ausente | Edita HTML, Markdown, CSV e TXT com operações validadas | **DOCX, XLSX, PPTX e PDF não abrem** — não há extração nem editor. Ver `docs/adr-office-motor-wopi.md` |
+| Office | Word/Excel/PowerPoint | 🟡 Parcial | **Lê DOCX, XLSX e PPTX de verdade** (extração OOXML no Rust) — a IA lê e comenta; edita HTML/MD/CSV/TXT | Edição ao vivo do binário (motor Collabora, ver ADR); PDF (extrator próprio) |
 | **Tuning** | Unsloth | 🔴 Ausente | Orquestra fine-tuning **em nuvem** (OpenAI), com validação de dataset e acompanhamento | Unsloth é **treino local em GPU própria** — não existe treinador local, nem modelos abertos, nem export de pesos. É outra categoria de produto |
 | **Deploy na VPS + backup** | SSH + rotina da TI | 🔴 Ausente | Cadastro do servidor e pipeline de build **local** com detecção de stack | Sem cliente SSH no binário: **nada executa na VPS**. Backup e redundância não existem no código |
 
-**Leitura honesta:** o app hoje é um **cliente agêntico corporativo com governança** — política do admin, SSO, gating por grupo, streaming, ferramentas com aprovação. Nessa função ele está sólido. Como substituto das sete ferramentas, **ainda não está**: Office, Tuning e execução remota são as três frentes que exigem trabalho de núcleo, não de acabamento.
+**Leitura honesta:** o app hoje é um **cliente agêntico corporativo com governança** — política do admin, SSO, gating por grupo, streaming, ferramentas com aprovação. Nessa função ele está sólido. Como substituto das sete ferramentas, **ainda não está**: Tuning (treino local) e execução remota são as frentes que exigem trabalho de núcleo. Office já LÊ os binários; falta a edição ao vivo.
 
 ## :new: Releases Notes
 
@@ -61,7 +61,8 @@ Auditoria de 2026-08-12, cada veredito verificado contra o código por um segund
 - **Cor por módulo de volta**: cada aba tem sua matiz e o app inteiro acompanha — acento, foco, orbes do ambiente e botão de envio derivam da mesma variável, com transição suave na troca.
 - **Build & deploy** (Code e Agent) em janela própria na barra superior: carrega **repositório GitHub, pasta local ou artefato pré-compilado**, identifica a stack pelo arquivo-âncora e roda o pipeline etapa a etapa — **na máquina local**. A execução na VPS depende de um cliente SSH que ainda não existe no binário.
 - **Cadastro de servidor VPS** sem campo de senha e sem campo de chave privada: o padrão é agente SSH (o app não vê segredo nenhum) e o campo de caminho **recusa** material de chave colado, apontando o cofre corporativo.
-- **Aba Office** (edita HTML/Markdown/CSV/TXT; formatos binários ainda não abrem), **regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`), **busca global do histórico** em todas as abas, **custo em tokens por mensagem** e **atualização manual** verificável.
+- **Office lê DOCX/XLSX/PPTX de verdade**: extração de texto do OOXML no Rust (crate zip), então a IA lê e comenta esses binários — antes o app mostrava lixo. Edição ao vivo do binário segue dependendo do motor externo (ADR); PDF, de um extrator próprio. Salvar fica bloqueado em arquivo extraído, para não gravar texto sobre o binário.
+- **Regras por projeto** (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`), **busca global do histórico** em todas as abas, **custo em tokens por mensagem** e **atualização manual** verificável.
 
 ### :pushpin: Fixes
 

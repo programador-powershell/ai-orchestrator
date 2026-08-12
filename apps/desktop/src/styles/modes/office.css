@@ -97,3 +97,19 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
 }
+
+/* Texto extraído de OOXML (docx/xlsx/pptx) — leitura. */
+.offx-extract {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
