@@ -98,17 +98,16 @@ button { -webkit-tap-highlight-color: transparent; }
   white-space: nowrap;
 }
 .brand-mark {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  border-radius: 11px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
-  color: #14232b;
-  background: radial-gradient(circle at 28% 22%, #fff, hsl(var(--accent-h) 70% 88%) 45%, hsl(var(--accent-h) 62% 68% / 0.85));
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 6px 18px var(--accent-glow), inset 0 1px 4px #fff;
-  transition: background 700ms ease, box-shadow 700ms ease;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  box-shadow: none;
 }
 .rail .brand strong { font-size: 13px; letter-spacing: -0.3px; overflow: hidden; }
 .rail-toggle { margin-left: auto; }
@@ -162,8 +161,8 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .rail nav > button svg { flex: none; }
 .rail nav > button span { overflow: hidden; text-overflow: ellipsis; }
-.rail nav > button:hover, .rail nav > button.active { color: var(--ink); background: var(--glass); }
-.rail nav > button.active { box-shadow: inset 0 0 0 1px var(--glass-border); }
+.rail nav > button:hover, .rail nav > button.active { color: var(--ink); background: var(--hover); }
+.rail nav > button.active { box-shadow: none; }
 
 /* Navegação de modos na sidebar — linhas em pílula, superfície por tom
    (sem sombra), accent reservado ao item ativo. Padrão Studio. */
@@ -189,7 +188,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .rail nav > .rail-nav-item.active {
   color: var(--ink);
-  background: var(--glass-strong);
+  background: var(--accent-soft);
   box-shadow: none;
 }
 .rail nav > .rail-nav-item.active .rail-nav-icon { color: var(--accent-strong); }
@@ -266,7 +265,7 @@ button { -webkit-tap-highlight-color: transparent; }
   overflow: hidden;
   cursor: pointer;
 }
-.rail-footer button:hover { color: var(--ink); background: var(--glass); }
+.rail-footer button:hover { color: var(--ink); background: var(--hover); }
 
 /* ---------------------------- Workspace ---------------------------- */
 .workspace {
@@ -392,7 +391,7 @@ button { -webkit-tap-highlight-color: transparent; }
   color: var(--muted);
   cursor: pointer;
 }
-.window-controls button:hover { background: var(--glass); color: var(--ink); }
+.window-controls button:hover { background: var(--hover); color: var(--ink); }
 .window-controls .window-close:hover { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 
 /* ---------------------------- Viewport ----------------------------- */
@@ -579,18 +578,18 @@ button { -webkit-tap-highlight-color: transparent; }
   place-items: center;
   overflow: hidden;
   border: 0;
-  border-radius: 13px;
+  border-radius: 12px;
   color: #fff;
-  background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 54%), hsl(var(--accent-h) var(--accent-s) 40%));
-  box-shadow: 0 8px 22px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background: var(--accent);
+  box-shadow: none;
   cursor: pointer;
-  transition: transform var(--t-fast) var(--spring), box-shadow var(--t-fast) ease, background 600ms ease;
+  transition: background var(--t-fast) ease, transform var(--t-fast) ease;
 }
-.app-shell[data-theme="dark"] .send-button { color: #0a1014; background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 72%), hsl(var(--accent-h) var(--accent-s) 56%)); }
-.send-button:hover { transform: translateY(-1px) scale(1.04); }
-.send-button:active { transform: scale(0.94); }
+.app-shell[data-theme="dark"] .send-button { color: #0a1014; background: var(--accent); }
+.send-button:hover { background: var(--accent-strong); }
+.send-button:active { transform: scale(0.95); }
 .send-button:disabled { opacity: 0.45; transform: none; cursor: default; }
-.send-button.stop { background: linear-gradient(150deg, #5a6772, #38434c); color: #fff; }
+.send-button.stop { background: var(--muted); color: #fff; }
 
 /* Rodapé global — depois do composer, alimentado por portal das views */
 .statusbar {

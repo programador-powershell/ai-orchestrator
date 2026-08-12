@@ -2,70 +2,40 @@
 /* Materiais liquid glass — utilitários compartilhados                 */
 /* ------------------------------------------------------------------ */
 
+/* Estilo Studio: superfícies SÓLIDAS separadas por tom — sem blur, sem brilho. */
 .glass,
 .glass-strong,
 .glass-clear {
   background: var(--glass);
   border: 1px solid var(--glass-border);
   box-shadow: var(--shadow-glass);
-  backdrop-filter: blur(26px) saturate(150%);
-  -webkit-backdrop-filter: blur(26px) saturate(150%);
 }
 .glass-strong { background: var(--glass-strong); }
-.glass-clear { background: var(--glass-clear); box-shadow: var(--shadow-soft); }
+.glass-clear { background: var(--glass-clear); box-shadow: none; }
 
-/* Painel interno (dentro de uma superfície): mais sólido, menos blur */
+/* Painel interno (dentro de uma superfície): tom levemente distinto */
 .v-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(14px) saturate(130%);
-  -webkit-backdrop-filter: blur(14px) saturate(130%);
 }
 
-/* Brilho especular que percorre o vidro */
-.glint {
-  position: relative;
-  overflow: hidden;
-}
-.glint::before {
-  content: "";
-  position: absolute;
-  width: 46%;
-  height: 180%;
-  top: -40%;
-  left: -70%;
-  transform: skewX(-18deg);
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.65),
-    hsl(var(--accent-h) 80% 78% / 0.22),
-    transparent
-  );
-  opacity: 0;
-  pointer-events: none;
-}
-/* Sem 'vulto' em idle: o brilho só percorre UMA vez, no hover */
-.glint:hover::before {
-  opacity: 1;
-  animation: lens-glint 1.4s ease-in-out 1;
-}
-.app-shell[data-theme="dark"] .glint::before {
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.16),
-    hsl(var(--accent-h) 80% 70% / 0.14),
-    transparent
-  );
-}
+/* Sem brilho especular no estilo Studio — .glint vira contêiner neutro. */
+.glint { position: relative; overflow: hidden; }
+.glint::before { content: none; }
 
-/* Refração líquida (SVG displacement em GlassFilters.tsx) */
-.refract { filter: url(#liquid-refraction); }
-@supports not (backdrop-filter: blur(1px)) {
-  .glass, .glass-strong, .glass-clear { background: var(--panel-solid); }
+/* Refração líquida desativada (visual plano). */
+.refract { filter: none; }
+
+/* Studio flat — nenhuma superfície usa blur (todas viraram sólidas). Mata os
+   backdrop-filter espalhados sem caçar cada regra, e esconde os orbes ambiente. */
+.app-shell *,
+.app-shell *::before,
+.app-shell *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
+.ambient { display: none !important; }
 
 /* Botões */
 .lg-button {
@@ -87,19 +57,20 @@
   transition: transform var(--t-fast) var(--spring), box-shadow var(--t-fast) ease,
     background var(--t-fast) ease, border-color var(--t-fast) ease;
 }
-.lg-button:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 9px 22px rgba(24, 42, 54, 0.13), inset 0 1px 0 var(--glass-inner); }
-.lg-button:active { transform: translateY(0) scale(0.985); }
+.lg-button:hover { background: var(--hover); border-color: var(--line-strong); }
+.lg-button:active { transform: scale(0.99); }
 .lg-button:disabled { opacity: 0.55; cursor: default; transform: none; }
 .lg-button.primary {
   color: #fff;
   border-color: transparent;
-  background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 52%), hsl(var(--accent-h) var(--accent-s) 40%));
-  box-shadow: 0 8px 22px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  background: var(--accent);
+  box-shadow: none;
 }
-.app-shell[data-theme="dark"] .lg-button.primary { color: #0a1014; background: linear-gradient(150deg, hsl(var(--accent-h) var(--accent-s) 72%), hsl(var(--accent-h) var(--accent-s) 58%)); }
+.lg-button.primary:hover { background: var(--accent-strong); }
+.app-shell[data-theme="dark"] .lg-button.primary { color: #0a1014; background: var(--accent); }
 .lg-button.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
-.lg-button.ghost:hover { color: var(--ink); background: var(--glass); border-color: var(--glass-border); }
-.lg-button.danger { color: #fff; border-color: transparent; background: linear-gradient(150deg, #d4636f, #b8434f); box-shadow: 0 8px 20px rgba(196, 81, 95, 0.35); }
+.lg-button.ghost:hover { color: var(--ink); background: var(--hover); border-color: transparent; }
+.lg-button.danger { color: #fff; border-color: transparent; background: var(--danger); box-shadow: none; }
 
 .icon-button {
   width: 32px;
@@ -114,8 +85,8 @@
   cursor: pointer;
   transition: background var(--t-fast) ease, color var(--t-fast) ease, transform var(--t-fast) var(--spring);
 }
-.icon-button:hover { color: var(--ink); background: var(--glass); border-color: var(--glass-border); }
-.icon-button:active { transform: scale(0.92); }
+.icon-button:hover { color: var(--ink); background: var(--hover); border-color: transparent; }
+.icon-button:active { transform: scale(0.94); }
 
 /* Campos */
 .lg-field {
@@ -258,21 +229,9 @@
 button { transition: transform var(--t-fast) var(--spring), background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease, box-shadow var(--t-fast) ease; }
 button:active:not(:disabled) { transform: scale(0.96); }
 
-/* Primário com brilho líquido no hover */
-.lg-button.primary { position: relative; overflow: hidden; }
-.lg-button.primary::after {
-  content: "";
-  position: absolute;
-  width: 40%;
-  height: 200%;
-  top: -50%;
-  left: -60%;
-  transform: skewX(-18deg);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
-  opacity: 0;
-  transition: opacity var(--t-fast) ease;
-}
-.lg-button.primary:hover::after { opacity: 1; animation: lens-glint 1.6s ease-in-out; }
+/* Sem brilho especular no primário (estilo Studio plano). */
+.lg-button.primary { position: relative; }
+.lg-button.primary::after { content: none; }
 
 /* Painéis laterais: entrada líquida + redimensionamento animado */
 .v-left, .v-right { animation: float-in var(--t-slow) var(--spring-soft) both; transition: width var(--t-slow) var(--spring-soft); }
@@ -280,23 +239,21 @@ button:active:not(:disabled) { transform: scale(0.96); }
 .v-panel { transition: box-shadow var(--t-base) ease, border-color var(--t-base) ease; }
 .v-panel:hover { border-color: var(--line-strong); }
 
-/* Linhas de lista deslizam levemente no hover */
-.row-item { transition: background var(--t-fast) ease, color var(--t-fast) ease, transform var(--t-fast) var(--spring), padding-left var(--t-fast) ease; }
-.row-item:hover { transform: translateX(3px) scale(1.01); }
+/* Linhas de lista: só realce de tom no hover (sem deslizar). */
+.row-item { transition: background var(--t-fast) ease, color var(--t-fast) ease; }
+.row-item:hover { background: var(--hover); }
 
-/* Chips respiram */
-.chip { transition: transform var(--t-fast) var(--spring), background var(--t-fast) ease, color var(--t-fast) ease; }
-.chip:hover { transform: translateY(-1.5px) scale(1.04); }
+/* Chips estáticos (sem "respirar"). */
+.chip { transition: background var(--t-fast) ease, color var(--t-fast) ease; }
 
-/* Segmentado: o item ativo emerge como lente */
-.segmented button { transition: all var(--t-base) var(--spring); }
-.segmented button.active { transform: translateY(-0.5px); box-shadow: 0 4px 12px rgba(22, 40, 52, 0.14), inset 0 1px 0 var(--glass-inner); }
+/* Segmentado: item ativo por tom, sem lente/sombra. */
+.segmented button { transition: background var(--t-fast) ease, color var(--t-fast) ease; }
+.segmented button.active { background: var(--hover); box-shadow: none; }
 
-/* Popups e menus (qualquer *-menu / *-popover / *-drop) nascem líquidos */
+/* Popups e menus: superfície sólida com leve elevação, sem blur. */
 [class*="-menu"], [class*="-popover"], [class*="-drop"] {
-  animation: float-in var(--t-base) var(--spring) both;
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  animation: float-in var(--t-base) var(--spring-soft) both;
+  box-shadow: var(--shadow-float);
 }
 
 /* Terminal liquid glass — base compartilhada (Code e afins) */
