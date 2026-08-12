@@ -38,5 +38,8 @@ tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["process", "sync", "time", "fs", "io-util"] }
+# Leitura de DOCX/XLSX/PPTX (OOXML = ZIP de XML). Só o reader, sem compressão
+# extra, para manter a superfície mínima.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"

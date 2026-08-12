@@ -2,6 +2,7 @@ mod auth;
 mod extensions;
 mod fsx;
 mod memory;
+mod office;
 mod policy;
 mod providers;
 mod research;
@@ -84,6 +85,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         fsx::fs_list,
         fsx::fs_read,
         fsx::fs_write,
+        office::office_extract,
         research::research_fetch,
         sandbox::sandbox_execute,
         providers::provider_chat,
@@ -124,6 +126,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         fsx::fs_list,
         fsx::fs_read,
         fsx::fs_write,
+        office::office_extract,
         research::research_fetch,
         sandbox::sandbox_execute
     ]

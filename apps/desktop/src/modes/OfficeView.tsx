@@ -31,6 +31,7 @@ import { TextAdapter, formatFromPath } from "../lib/office/adapter";
 import { applyOfficeCommands as applyCommands, useOffice } from "../lib/office/session";
 import { parseCommands, previewChanges, type OfficeCommand, type OfficeFormat } from "../lib/office/commands";
 import { aiChangeCount, emptyChangeLog, revertEntry, timeline, undoLast } from "../lib/office/changeLog";
+import { extractOffice, isExtractable } from "../lib/office/extract";
 
 /** Formatos que o TextAdapter edita de verdade hoje (sem motor externo). */
 const EDITABLE: OfficeFormat[] = ["html", "markdown", "csv", "text"];
@@ -56,15 +57,23 @@ async function indexFiles() {
 
 async function openFile(path: string) {
   const { root } = useOffice.getState();
+  const format = formatFromPath(path);
+  const base = { path, format, selection: {}, log: emptyChangeLog(), pending: null } as const;
+
+  // DOCX/XLSX/PPTX: extrai o TEXTO real do binário (leitura). Antes o app lia
+  // como UTF-8 bruto e mostrava lixo.
+  if (isExtractable(format)) {
+    const extract = await extractOffice(root.trim() || ".", path);
+    useOffice.setState({
+      ...base,
+      content: extract?.text ?? "",
+      extracted: Boolean(extract)
+    });
+    return;
+  }
+
   const content = await fsRead(root.trim() || ".", path).catch(() => "");
-  useOffice.setState({
-    path,
-    content,
-    format: formatFromPath(path),
-    selection: {},
-    log: emptyChangeLog(),
-    pending: null
-  });
+  useOffice.setState({ ...base, content, extracted: false });
 }
 
 
@@ -115,6 +124,7 @@ export function OfficeRail() {
 export function OfficeView() {
   const path = useOffice((state) => state.path);
   const content = useOffice((state) => state.content);
+  const extracted = useOffice((state) => state.extracted);
   const format = useOffice((state) => state.format);
   const selection = useOffice((state) => state.selection);
   const log = useOffice((state) => state.log);
@@ -157,7 +167,9 @@ export function OfficeView() {
   );
 
   async function save() {
-    if (!path || !isTauriFs) return;
+    // Nunca gravar por cima de um binário extraído: escreveria o TEXTO no
+    // lugar do OOXML e corromperia o arquivo. Só formatos realmente editáveis.
+    if (!path || !isTauriFs || !editable) return;
     await fsWrite(root.trim() || ".", path, content).catch(() => undefined);
     setNote("documento salvo");
   }
@@ -182,7 +194,12 @@ export function OfficeView() {
           <Undo2 size={13} />
           Desfazer
         </button>
-        <button className="lg-button primary" disabled={!path || !isTauriFs} onClick={() => void save()}>
+        <button
+          className="lg-button primary"
+          disabled={!path || !isTauriFs || !editable}
+          title={editable ? "Salvar" : "Somente leitura — não sobrescreve o binário"}
+          onClick={() => void save()}
+        >
           <Save size={13} />
           Salvar
         </button>
@@ -235,18 +252,25 @@ export function OfficeView() {
                 />
               ) : (
                 <div className="offx-readonly">
-                  {/* Não há extração de OOXML/PDF no app: o arquivo é lido como
-                      UTF-8 bruto, então num binário isto é lixo. Dizer "texto
-                      extraído" seria mentira — melhor avisar e não exibir. */}
-                  <p className="offx-note">
-                    <strong>{format.toUpperCase()}</strong> ainda não é suportado. Este formato é binário e o app ainda
-                    não extrai o conteúdo dele — nem para leitura, nem para edição.
-                  </p>
-                  <p className="offx-note">
-                    Hoje a aba edita <strong>HTML, Markdown, CSV e TXT</strong>. O suporte a DOCX, XLSX, PPTX e PDF
-                    depende do motor de edição descrito em <code>docs/adr-office-motor-wopi.md</code>, ainda não
-                    implementado.
-                  </p>
+                  {extracted ? (
+                    <>
+                      {/* Texto REAL extraído do OOXML (docx/xlsx/pptx). Leitura:
+                          a IA lê e comenta; a edição ao vivo depende do motor
+                          externo do ADR. */}
+                      <p className="offx-note">
+                        <strong>{format.toUpperCase()}</strong> — texto extraído (somente leitura). O agente lê e
+                        comenta este conteúdo; a edição ao vivo do binário depende do motor descrito em{" "}
+                        <code>docs/adr-office-motor-wopi.md</code>.
+                      </p>
+                      <pre className="offx-extract">{content || "(sem texto extraível)"}</pre>
+                    </>
+                  ) : (
+                    <p className="offx-note">
+                      <strong>{format.toUpperCase()}</strong> ainda não é suportado. PDF depende de um extrator próprio;
+                      a edição de DOCX/XLSX/PPTX depende do motor em <code>docs/adr-office-motor-wopi.md</code>. Hoje a
+                      aba edita HTML, Markdown, CSV e TXT.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

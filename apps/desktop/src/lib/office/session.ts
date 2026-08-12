@@ -15,6 +15,8 @@ export interface OfficeSession {
   files: string[];
   path: string;
   content: string;
+  /** true quando o conteudo veio de extracao OOXML (leitura, nao edicao). */
+  extracted: boolean;
   format: OfficeFormat;
   selection: DocSelection;
   log: ChangeLogState;
@@ -30,6 +32,7 @@ export const useOffice = create<OfficeSession>()((set) => ({
   files: [],
   path: "",
   content: "",
+  extracted: false,
   format: "text",
   selection: {},
   log: emptyChangeLog(),
