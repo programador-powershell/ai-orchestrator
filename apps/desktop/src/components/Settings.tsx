@@ -49,8 +49,11 @@ import {
   Plug,
   Plus,
   Puzzle,
+  Rocket,
   Search,
   Server,
+
+  ServerCog,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -71,6 +74,7 @@ import { McpHttpClient, type McpServerConfig } from "../lib/mcp";
 import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport } from "../lib/memory";
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
+import { OpenshipSection, ShipSection } from "./settings/ShipSections";
 import { useApp, type CatalogModel } from "../lib/store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
@@ -83,6 +87,8 @@ type SectionId =
   | "extensoes"
   | "conectores"
   | "runtime"
+  | "ship"
+  | "openship"
   | "aparencia";
 
 type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
@@ -95,6 +101,8 @@ const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
   { id: "extensoes", label: "Extensões", icon: Puzzle },
   { id: "conectores", label: "Conectores (MCP)", icon: Cable },
   { id: "runtime", label: "Runtime local", icon: Cpu },
+  { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
+  { id: "openship", label: "Servidor Openship", icon: ServerCog },
   { id: "aparencia", label: "Aparência", icon: Palette }
 ];
 
@@ -2271,6 +2279,8 @@ export function SettingsPanel() {
             {section === "extensoes" && <ExtensionsSection />}
             {section === "conectores" && <McpSection />}
             {section === "runtime" && <RuntimeSection />}
+            {section === "ship" && <ShipSection />}
+            {section === "openship" && <OpenshipSection />}
             {section === "aparencia" && <AppearanceSection />}
           </div>
         </div>
