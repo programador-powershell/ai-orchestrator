@@ -59,6 +59,7 @@ import {
 } from "../lib/dag";
 import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
 import { validateOrchestration, type ChatMessage } from "../lib/gateway";
+import { runWithLimit } from "../lib/pool";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
@@ -397,25 +398,50 @@ async function runGraph() {
     runtimeRunning: app.runtimeStatus.running,
     fusionPresets: app.settings.fusionPresets
   };
+  // Com a onda em paralelo um único nome mentiria: mostra a contagem. Chave é
+  // o id do nó (não o rótulo), senão o nó que troca de rótulo ao entrar em
+  // aprovação nunca sairia do mapa e a contagem só cresceria.
+  const liveNodes = new Map<string, string>();
+  const publishLabel = () => {
+    const rest = [...liveNodes.values()];
+    useFlow.setState({
+      runningNode: rest.length > 1 ? `${rest.length} nós em paralelo` : (rest[0] ?? "")
+    });
+  };
+  const setRunningLabel = (id: string, name: string) => {
+    liveNodes.set(id, name);
+    publishLabel();
+  };
+  const clearRunningLabel = (id: string) => {
+    liveNodes.delete(id);
+    publishLabel();
+  };
   const outputs = new Map<string, string>();
   const blocked = new Set<string>();
   let ok = 0;
   let failed = 0;
   const t0 = performance.now();
 
-  for (const wave of plan) {
-    for (const id of wave) {
+  /**
+   * Executa UM nó. Extraído do laço para a onda poder rodar em paralelo:
+   * nós da mesma onda não dependem entre si, então concorrem sem corrida —
+   * `outputs` e `blocked` só são lidos de ondas anteriores.
+   */
+  async function runNode(id: string): Promise<void> {
+    // finally: sem isto o nó nunca sai do rótulo e a contagem de paralelos
+    // ficaria crescendo até o fim da execução.
+    try {
       const node = nodeMap.get(id);
-      if (!node) continue;
+      if (!node) return;
       if (abort.signal.aborted) {
         patchRun(id, { status: "skipped", note: "execução interrompida" });
         blocked.add(id);
-        continue;
+        return;
       }
       if (node.dependsOn.some((dep) => blocked.has(dep))) {
         patchRun(id, { status: "skipped", note: "dependência falhou ou foi pulada" });
         blocked.add(id);
-        continue;
+        return;
       }
       const context = node.dependsOn
         .map((dep) => (outputs.get(dep) ? `### ${nodeMap.get(dep)?.name ?? dep}\n${outputs.get(dep)}` : null))
@@ -434,7 +460,7 @@ async function runGraph() {
           durationMs: elapsed()
         });
         ok += 1;
-        continue;
+        return;
       }
 
       if (node.kind === "tool" || node.kind === "merge") {
@@ -449,18 +475,18 @@ async function runGraph() {
           durationMs: elapsed()
         });
         ok += 1;
-        continue;
+        return;
       }
 
       if (node.kind === "gate" || node.kind === "human") {
         patchRun(id, { status: "waiting", note: "aguardando aprovação humana" });
-        useFlow.setState({ runningNode: `${node.name} (aprovação)` });
+        setRunningLabel(id, `${node.name} (aprovação)`);
         const approved = await new Promise<boolean>((resolve) => approvals.set(id, resolve));
         approvals.delete(id);
         if (abort.signal.aborted) {
           patchRun(id, { status: "skipped", note: "execução interrompida", durationMs: elapsed() });
           blocked.add(id);
-          continue;
+          return;
         }
         if (approved) {
           outputs.set(id, context);
@@ -476,17 +502,17 @@ async function runGraph() {
           blocked.add(id);
           failed += 1;
         }
-        continue;
+        return;
       }
 
       // kind === "agent"
       if (!node.prompt?.trim()) {
         patchRun(id, { status: "skipped", note: "agent sem prompt — edite no inspetor" });
         blocked.add(id);
-        continue;
+        return;
       }
       patchRun(id, { status: "running", output: "" });
-      useFlow.setState({ runningNode: node.name });
+      setRunningLabel(id, node.name);
       const messages: ChatMessage[] = [
         {
           role: "system",
@@ -516,7 +542,7 @@ async function runGraph() {
         if (abort.signal.aborted) {
           patchRun(id, { status: "skipped", note: "execução interrompida", durationMs: elapsed() });
           blocked.add(id);
-          continue;
+          return;
         }
         patchRun(id, {
           status: "failed",
@@ -526,7 +552,18 @@ async function runGraph() {
         blocked.add(id);
         failed += 1;
       }
+    } finally {
+      clearRunningLabel(id);
     }
+  }
+
+  // Nós da mesma onda rodam EM PARALELO, com o teto do documento. Antes o
+  // laço era serial e o maxConcurrency era decorativo.
+  for (const wave of plan) {
+    await runWithLimit(
+      wave.map((id) => () => runNode(id)),
+      doc.maxConcurrency
+    );
   }
 
   const durationMs = Math.round(performance.now() - t0);
