@@ -20,6 +20,8 @@ export interface ToolCard {
   status: ToolStatus;
   output?: string;
   sources?: ToolSource[];
+  /** URLs/data-URLs de imagens geradas — exibidas no cartão. */
+  images?: string[];
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -30,6 +32,7 @@ export function toolDetail(call: ToolCall): string {
     asString(call.args.path) ||
     asString(call.args.command) ||
     asString(call.args.query) ||
+    asString(call.args.prompt) ||
     asString(call.args.sub);
   return raw.length > 120 ? `${raw.slice(0, 117)}…` : raw;
 }
@@ -40,6 +43,7 @@ const VERBS: Record<string, string> = {
   fs_list: "Listed",
   search: "Searched",
   web_search: "Searched the web",
+  generate_image: "Generated image",
   terminal: "Ran"
 };
 
@@ -58,7 +62,7 @@ export function toolLabel(card: ToolCard): string {
 export function applyResult(
   cards: ToolCard[],
   tool: string,
-  patch: { status: ToolStatus; output?: string; sources?: ToolSource[] }
+  patch: { status: ToolStatus; output?: string; sources?: ToolSource[]; images?: string[] }
 ): ToolCard[] {
   const index = [...cards].reverse().findIndex((card) => card.tool === tool && card.status === "running");
   if (index < 0) return cards;

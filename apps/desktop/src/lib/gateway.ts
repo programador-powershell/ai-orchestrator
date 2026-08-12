@@ -68,6 +68,39 @@ export async function streamChat(
   }
 }
 
+/**
+ * Geração de imagem pelo gateway (Imagen / Flux / OpenAI Images, conforme o
+ * provedor configurado no workspace). Retorna URLs ou data-URLs base64.
+ */
+export async function generateImage(
+  session: GatewaySession,
+  prompt: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const response = await fetch(
+    `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/images/generations`,
+    {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${session.accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ payload: { prompt } })
+    }
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(detail || `Gateway respondeu ${response.status}`);
+  }
+  const payload = (await response.json()) as {
+    data?: Array<{ url?: string; b64_json?: string }>;
+  };
+  return (payload.data ?? [])
+    .map((item) => item.url ?? (item.b64_json ? `data:image/png;base64,${item.b64_json}` : ""))
+    .filter(Boolean);
+}
+
 export async function replicateDesign(
   session: GatewaySession,
   request: DesignReplicationRequest,
