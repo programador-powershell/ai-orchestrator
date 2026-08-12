@@ -32,6 +32,7 @@ import { policyLabel, requiresPrompt } from "../lib/approval";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
 import { officeContextMessage } from "../lib/office/session";
+import { shipContextMessage } from "../lib/ship/session";
 import { filesFromClipboard } from "../lib/paste";
 import { fileToDataUrl, toAttachmentDataUrl } from "../lib/imageAttach";
 import { buildSummaryRequest, compactionNotice, planCompaction } from "../lib/compact";
@@ -169,6 +170,12 @@ export function Composer() {
     if (mode === "office") {
       const officeContext = officeContextMessage();
       if (officeContext) system.push({ role: "system", content: officeContext });
+    }
+    // Code/Agent: stack detectada e resultado do último build. Sem isso o
+    // modelo sugere `npm run build` num projeto Go.
+    if (mode === "code" || mode === "agent") {
+      const shipContext = shipContextMessage();
+      if (shipContext) system.push({ role: "system", content: shipContext });
     }
     return system;
   }
