@@ -50,3 +50,17 @@ export function formatTokens(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   return String(value);
 }
+
+/**
+ * Custo em tokens de UMA mensagem, incluindo o que a resposta carregou junto:
+ * raciocínio e saída de ferramentas contam para o provedor, então contá-los é
+ * a diferença entre um número honesto e um que subestima o gasto real.
+ */
+export function messageTokens(message: {
+  content: string;
+  meta?: { reasoning?: string; tools?: ReadonlyArray<{ output?: string }> };
+}): number {
+  const reasoning = message.meta?.reasoning ?? "";
+  const tools = (message.meta?.tools ?? []).map((tool) => tool.output ?? "").join("");
+  return estimateTokens(message.content) + estimateTokens(reasoning) + estimateTokens(tools);
+}
