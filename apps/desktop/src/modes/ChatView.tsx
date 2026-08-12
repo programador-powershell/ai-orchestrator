@@ -30,6 +30,7 @@ import { RailConversations } from "../components/RailConversations";
 import { buildEditPayload, buildRegeneratePayload, charCount, formatDuration, wordCount } from "../lib/chatUtils";
 import { describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
+import { formatTokens, messageTokens } from "../lib/contextMeter";
 import { useApp, type ThreadMessage } from "../lib/store";
 import { ToolGroup } from "../components/ToolGroup";
 import { ReasoningBlock } from "../components/ReasoningBlock";
@@ -255,9 +256,11 @@ export function ChatView() {
           )}
           <footer className="chatx-msg-foot">
             {isAssistant && message.content.length > 0 && (
+              // Custo POR MENSAGEM: o medidor do topo mede a janela do modelo,
+              // que é outra pergunta. Aqui interessa o que ESTA resposta custou.
               <span className="chatx-meta">
-                {wordCount(message.content)} palavras · {charCount(message.content)} caracteres
-                {duration !== undefined && !streamingThis && ` · ${formatDuration(duration)}`}
+                {duration !== undefined && !streamingThis ? `${formatDuration(duration)} · ` : ""}
+                {formatTokens(messageTokens(message))} tokens
               </span>
             )}
             {message.content.length > 0 && (
