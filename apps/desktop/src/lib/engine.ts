@@ -297,8 +297,14 @@ async function singleTurn(
 ): Promise<string> {
   if (backend === "workspace") {
     if (!ctx.session?.accessToken || !ctx.session.workspaceId) return demoStream(messages, events, signal);
-    // Abas novas (ex.: tune) não existem no contrato do gateway — roteia como chat.
-    const wireMode: Mode = (MODES as readonly string[]).includes(mode) ? (mode as Mode) : "chat";
+    // O modo vai INTACTO ao gateway. A reescrita antiga (office/tune viravam
+    // "chat") impedia o servidor de bloquear por módulo: ele nunca via o
+    // módulo real. Se um modo não existir no contrato, o erro do servidor é a
+    // resposta certa — não uma rota disfarçada.
+    const wireMode: Mode = mode as Mode;
+    if (!(MODES as readonly string[]).includes(mode)) {
+      throw new Error(`modo "${mode}" fora do contrato do gateway`);
+    }
     let output = "";
     await streamChat(
       ctx.session,

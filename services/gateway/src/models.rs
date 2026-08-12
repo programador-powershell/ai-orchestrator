@@ -12,6 +12,8 @@ pub enum Mode {
     Agent,
     Code,
     Security,
+    Office,
+    Tune,
 }
 impl Mode {
     pub fn as_str(&self) -> &'static str {
@@ -23,7 +25,26 @@ impl Mode {
             Self::Agent => "agent",
             Self::Code => "code",
             Self::Security => "security",
+            Self::Office => "office",
+            Self::Tune => "tune",
         }
+    }
+
+    /// Todos os modos que o servidor conhece — a política itera por aqui.
+    pub const ALL: [Mode; 9] = [
+        Mode::Chat,
+        Mode::Work,
+        Mode::Design,
+        Mode::Data,
+        Mode::Agent,
+        Mode::Code,
+        Mode::Security,
+        Mode::Office,
+        Mode::Tune,
+    ];
+
+    pub fn parse(value: &str) -> Option<Mode> {
+        Mode::ALL.into_iter().find(|mode| mode.as_str() == value)
     }
 }
 

@@ -1,4 +1,10 @@
-export const MODES = ["chat", "work", "design", "data", "agent", "code", "security",] as const;
+/**
+ * Modos do CONTRATO DE WIRE com o gateway. Igual a UI_MODES de propósito:
+ * quando divergiam, o cliente reescrevia office/tune para "chat" antes de
+ * chamar o servidor — e aí o gateway não tinha como bloquear por módulo,
+ * porque nunca via o módulo real.
+ */
+export const MODES = ["chat", "work", "design", "data", "agent", "code", "security", "office", "tune"] as const;
 export type Mode = (typeof MODES)[number];
 
 /** Abas expostas na UI — produto completo + Office e Fine-Tuning. */
