@@ -66,6 +66,13 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
                   ))}
                 </div>
               )}
+              {card.images && card.images.length > 0 && (
+                <div className="toolcall-images">
+                  {card.images.map((src) => (
+                    <img key={src} src={src} alt="Imagem gerada pelo agente" loading="lazy" />
+                  ))}
+                </div>
+              )}
               {card.output && <pre className="toolcall-output">{card.output}</pre>}
             </div>
           ))}
