@@ -74,6 +74,7 @@ pub fn run() {
             runtime::runtime_start,
             runtime::runtime_stop,
             runtime::runtime_chat,
+            runtime::runtime_chat_stream,
             runtime::runtime_list_models,
             runtime::runtime_download_model,
             runtime::runtime_remove_model,

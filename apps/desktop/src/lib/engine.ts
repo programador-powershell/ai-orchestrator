@@ -278,16 +278,28 @@ async function singleTurn(
   }
   if (backend === "local") {
     if (!ctx.runtimeRunning) return demoStream(messages, events, signal);
-    const response = await runtime.chat(messages);
-    const content = response.choices?.[0]?.message?.content ?? "O runtime não retornou conteúdo.";
-    events.onDelta(content);
-    return content;
+    // Streaming real do llama.cpp local (antes vinha tudo de uma vez).
+    let streamed = "";
+    try {
+      const full = await runtime.chatStream(messages, (delta) => {
+        streamed += delta;
+        events.onDelta(delta);
+      });
+      if (!streamed && full) events.onDelta(full);
+      return full || streamed;
+    } catch {
+      // Build antiga sem o comando de stream: cai no caminho não-streaming.
+      const response = await runtime.chat(messages);
+      const content = response.choices?.[0]?.message?.content ?? "O runtime não retornou conteúdo.";
+      events.onDelta(content);
+      return content;
+    }
   }
   if (!target) throw new Error("Modelo não informado.");
   return providerChat(target, messages, events, ctx.baseOverrides, signal);
 }
 
-/** Chamada silenciosa (sem stream na UI) usada pelo orquestrador do fusion. */
+/** Chamada silenciosa (sem stream na UI) usada nas etapas INTERMEDIÁRIAS do fusion. */
 async function quietTurn(
   target: ModelTarget | "workspace",
   mode: Mode | UiMode,
@@ -302,6 +314,26 @@ async function quietTurn(
   } catch {
     // Sem chave/desktop: usa a rota do workspace como melhor esforço.
     return singleTurn("workspace", null, mode, messages, ctx, sink, signal);
+  }
+}
+
+/**
+ * Turno que TRANSMITE na UI — usado na etapa FINAL do fusion, para a resposta
+ * aparecer token a token (conversa natural) em vez de surgir pronta no fim.
+ */
+async function streamingTurn(
+  target: ModelTarget | "workspace",
+  mode: Mode | UiMode,
+  messages: ChatMessage[],
+  ctx: EngineContext,
+  events: EngineEvents,
+  signal?: AbortSignal
+): Promise<string> {
+  if (target === "workspace") return singleTurn("workspace", null, mode, messages, ctx, events, signal);
+  try {
+    return await providerChat(target, messages, events, ctx.baseOverrides, signal);
+  } catch {
+    return singleTurn("workspace", null, mode, messages, ctx, events, signal);
   }
 }
 
@@ -329,9 +361,29 @@ async function fusionTurn(
 
   if (preset.strategy === "race") {
     events.onStage?.("Fusion · race — primeiro executor a responder vence");
-    const attempts = preset.executors.map((executor) => quietTurn(executor, mode, messages, ctx, signal));
-    const winner = await Promise.any(attempts).catch(() => "");
-    events.onDelta(winner || "Nenhum executor respondeu.");
+    // Vence quem EMITE primeiro: os deltas do vencedor passam direto para a UI
+    // (conversa natural); os demais são descartados sem poluir a bolha.
+    let winnerIndex = -1;
+    const attempts = preset.executors.map((executor, index) =>
+      streamingTurn(
+        executor,
+        mode,
+        messages,
+        ctx,
+        {
+          onDelta: (delta) => {
+            if (winnerIndex === -1) winnerIndex = index;
+            if (winnerIndex === index) events.onDelta(delta);
+          },
+          onStage: events.onStage
+        },
+        signal
+      )
+    );
+    const settled = await Promise.allSettled(attempts);
+    const chosen = winnerIndex >= 0 ? settled[winnerIndex] : settled.find((r) => r.status === "fulfilled");
+    const winner = chosen?.status === "fulfilled" ? chosen.value : "";
+    if (!winner) events.onDelta("Nenhum executor respondeu.");
     return winner;
   }
 
@@ -368,11 +420,19 @@ async function fusionTurn(
       .filter((part): part is { focus: string; content: string } => part !== null);
     if (!parts.length) return demoStream(messages, events, signal);
 
-    // 3) Integração: costura sem reescrever o trabalho dos executores.
+    // 3) Integração: costura sem reescrever — TRANSMITIDA token a token na UI.
     events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} integrando ${parts.length} partes`);
-    const integrated = await quietTurn(preset.orchestrator, mode, buildIntegrateRequest(mode, question, parts), ctx, signal);
-    events.onDelta(integrated || parts.map((part) => part.content).join("\n\n"));
-    return integrated || parts.map((part) => part.content).join("\n\n");
+    const fallback = parts.map((part) => part.content).join("\n\n");
+    const integrated = await streamingTurn(
+      preset.orchestrator,
+      mode,
+      buildIntegrateRequest(mode, question, parts),
+      ctx,
+      events,
+      signal
+    );
+    if (!integrated) events.onDelta(fallback);
+    return integrated || fallback;
   }
 
   // orchestrate: especifica → produz → revisa por conformidade.
@@ -381,11 +441,18 @@ async function fusionTurn(
   const executor = preset.executors[0] ?? preset.orchestrator;
   events.onStage?.(`Fusion (${roleTag}) · ${executor.model} executando a spec`);
   const draft = await quietTurn(executor, mode, buildExecuteFusionRequest(mode, brief, messages), ctx, signal);
+  // Revisão final TRANSMITIDA — é o texto que o usuário lê aparecendo ao vivo.
   events.onStage?.(`Fusion (${roleTag}) · ${preset.orchestrator.model} revisando conformidade`);
-  const final = await quietTurn(preset.orchestrator, mode, buildReviewRequest(mode, question, draft), ctx, signal);
-  const answer = final || draft;
-  events.onDelta(answer);
-  return answer;
+  const final = await streamingTurn(
+    preset.orchestrator,
+    mode,
+    buildReviewRequest(mode, question, draft),
+    ctx,
+    events,
+    signal
+  );
+  if (!final) events.onDelta(draft);
+  return final || draft;
 }
 
 export async function chatOnce(
