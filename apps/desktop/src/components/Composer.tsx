@@ -5,23 +5,19 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
   CircleStop,
-  Cpu,
   Globe2,
   ListChecks,
-  Merge,
   Paperclip,
   Send,
-  Server,
   Sparkles,
   Telescope,
   Wrench,
   X
 } from "lucide-react";
-import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
+import type { ExecutionPlan } from "@ai-orchestrator/contracts";
 import type { ChatMessage } from "../lib/gateway";
-import { chatOnce, describeSelection, fusionModels, type EngineContext } from "../lib/engine";
+import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
 import {
   agentSystemInstruction,
   dispatchTool,
@@ -63,8 +59,8 @@ export function Composer() {
   const setResearchMode = useApp((state) => state.setResearchMode);
   const toolsMode = useApp((state) => state.toolsMode);
   const setToolsMode = useApp((state) => state.setToolsMode);
+  const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const settings = useApp((state) => state.settings);
-  const setEngine = useApp((state) => state.setEngine);
   const session = useApp((state) => state.session);
   const runtimeStatus = useApp((state) => state.runtimeStatus);
   const thread = useApp((state) => state.threads[state.mode]);
@@ -78,7 +74,6 @@ export function Composer() {
   const setAttachments = useApp((state) => state.setAttachments);
   const { appendMessage, patchLastAssistant, replaceLastAssistant, setSending, updateToolGroup } = useApp.getState();
 
-  const [menuOpen, setMenuOpen] = useState(false);
   const [executingPlan, setExecutingPlan] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
@@ -87,31 +82,11 @@ export function Composer() {
   const planSourceRef = useRef("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const selection = settings.engines[mode];
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, [mode]);
-
-  // Seletor de motor fecha ao clicar fora ou com Esc (não só no próprio botão).
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onPointerDown(event: PointerEvent) {
-      if (menuRef.current && event.target instanceof Node && !menuRef.current.contains(event.target)) {
-        setMenuOpen(false);
-      }
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuOpen]);
 
   useEffect(
     () =>
@@ -426,11 +401,6 @@ export function Composer() {
     }
   }
 
-  function choose(nextSelection: EngineSelection) {
-    setEngine(mode, nextSelection);
-    setMenuOpen(false);
-  }
-
   return (
     <footer className={`composer-wrap ${mode === "code" ? "composer-hidden" : ""}`}>
       {error && (
@@ -512,49 +482,16 @@ export function Composer() {
           aria-label="Mensagem"
         />
         <div className="composer-row">
-          <div style={{ position: "relative" }} ref={menuRef}>
-            <button className="model-select" onClick={() => setMenuOpen((open) => !open)} aria-haspopup="menu" aria-expanded={menuOpen}>
-              {selection.kind === "fusion" ? <span className="fusion-dot" /> : <Sparkles size={13} />}
-              {describeSelection(selection, settings.fusionPresets, settings.modelCatalog)}
-              <ChevronDown size={13} />
-            </button>
-            {menuOpen && (
-              <div className="engine-menu glass-strong" role="menu">
-                <button onClick={() => choose({ kind: "workspace" })}>
-                  <Server size={13} />
-                  Rota do workspace
-                  <small>gateway</small>
-                </button>
-                <button onClick={() => choose({ kind: "local" })}>
-                  <Cpu size={13} />
-                  Runtime local
-                  <small>{runtimeStatus.running ? "ativo" : "parado"}</small>
-                </button>
-                {settings.modelCatalog.length > 0 && <span className="eyebrow">MODELOS</span>}
-                {settings.modelCatalog.map((entry) => (
-                  <button
-                    key={`${entry.providerId}/${entry.model}`}
-                    onClick={() => choose({ kind: "model", target: { providerId: entry.providerId, model: entry.model } })}
-                  >
-                    <Sparkles size={13} />
-                    {entry.label ?? entry.model}
-                    <small>{entry.providerId}</small>
-                  </button>
-                ))}
-                {settings.fusionPresets.map((preset) => (
-                  <button
-                    key={preset.id}
-                    title={`Funde: ${fusionModels(preset, settings.modelCatalog)}`}
-                    onClick={() => choose({ kind: "fusion", presetId: preset.id })}
-                  >
-                    <Merge size={13} />
-                    {preset.name}
-                    <small>{fusionModels(preset, settings.modelCatalog)}</small>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Motor é definido pela TI por módulo — aqui só INFORMA qual está
+              valendo; a troca vive em Configurações → Motores & Fusion. */}
+          <button
+            className="model-select readonly"
+            onClick={() => setSettingsOpen(true)}
+            title="O modelo deste módulo é definido nas Configurações (administração)"
+          >
+            {selection.kind === "fusion" ? <span className="fusion-dot" /> : <Sparkles size={13} />}
+            {describeSelection(selection, settings.fusionPresets, settings.modelCatalog)}
+          </button>
           <input
             ref={fileInputRef}
             type="file"
