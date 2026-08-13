@@ -67,8 +67,11 @@ async function openFile(path: string) {
     const extract = await extractOffice(root.trim() || ".", path);
     useOffice.setState({
       ...base,
-      content: extract?.text ?? "",
-      extracted: Boolean(extract)
+      // O MOTIVO vai para a tela: "protegido por senha" e "digitalizado, sem
+      // texto" pedem ações diferentes, e virariam a mesma tela vazia se o
+      // erro fosse engolido.
+      content: extract.ok ? extract.data.text : `Não foi possível ler este arquivo:\n\n${extract.reason}`,
+      extracted: extract.ok
     });
     return;
   }

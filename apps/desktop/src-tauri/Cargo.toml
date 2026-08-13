@@ -43,6 +43,9 @@ tokio = { version = "1", features = ["process", "sync", "time", "fs", "io-util"]
 zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+# FlateDecode do extrator de PDF (src/pdf.rs). JÁ está na árvore via zip —
+# tornar explícito não acrescenta superfície de terceiros.
+flate2 = "1"
 
 # Job Object da sandbox (isolamento de SO real). windows-sys é o binding
 # oficial da Microsoft e JÁ está na árvore por tokio/keyring/tauri — não
