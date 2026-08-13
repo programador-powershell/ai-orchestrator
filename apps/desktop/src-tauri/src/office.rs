@@ -168,6 +168,11 @@ fn format_of(path: &str) -> Option<&'static str> {
         Some("xlsx")
     } else if lower.ends_with(".pptx") {
         Some("pptx")
+    } else if lower.ends_with(".pdf") {
+        // PDF não é OOXML: não é zip, e o texto sai do extrator próprio
+        // (src/pdf.rs). Entra aqui porque, para quem usa, "abrir documento"
+        // é a mesma ação.
+        Some("pdf")
     } else {
         None
     }
@@ -176,7 +181,7 @@ fn format_of(path: &str) -> Option<&'static str> {
 /// Lê e extrai o texto de um DOCX/XLSX/PPTX dentro da raiz do projeto.
 #[tauri::command]
 pub fn office_extract(root: String, path: String) -> Result<OfficeExtract, String> {
-    let format = format_of(&path).ok_or("formato não suportado (só docx, xlsx, pptx)")?;
+    let format = format_of(&path).ok_or("formato não suportado (só docx, xlsx, pptx, pdf)")?;
 
     // Mesma checagem de escopo do fsx: o caminho não pode escapar da raiz.
     let canonical_root = Path::new(&root)
@@ -191,6 +196,23 @@ pub fn office_extract(root: String, path: String) -> Result<OfficeExtract, Strin
     }
 
     let bytes = std::fs::read(&resolved).map_err(|error| error.to_string())?;
+
+    // PDF sai antes: não é zip, e abrir como zip daria "arquivo corrompido"
+    // — um erro que mandaria o usuário procurar problema no arquivo dele.
+    if format == "pdf" {
+        let text = crate::pdf::extract_pdf_text(&bytes)?;
+        let truncated = text.len() > MAX_TEXT;
+        return Ok(OfficeExtract {
+            format: "pdf".into(),
+            text: if truncated {
+                format!("{}\n\n[… texto truncado …]", &text[..MAX_TEXT])
+            } else {
+                text
+            },
+            truncated,
+        });
+    }
+
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|_| "arquivo não é um Office válido (zip corrompido)".to_string())?;
 

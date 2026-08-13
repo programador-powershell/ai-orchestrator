@@ -6,6 +6,7 @@ mod memory;
 mod jail;
 mod office;
 mod office_edit;
+mod pdf;
 mod policy;
 mod providers;
 mod research;
