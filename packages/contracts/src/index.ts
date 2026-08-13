@@ -395,6 +395,12 @@ export interface BootstrapPolicy {
   agentMaxTotal: number;
   /** Área isolada com execução de código na estação — ver ADR do computer use. */
   computerUseAllowed: boolean;
+  /**
+   * Domínios que o app não pode alcançar (pesquisa, webhook, MCP).
+   * `exemplo.com` pega os subdomínios; `*.exemplo.com` pega só eles.
+   * A checagem que VALE é a do Rust, sobre a política assinada.
+   */
+  blockedDomains: string[];
   promptMaster: BootstrapPromptMaster | null;
   offlineGraceHours: number;
 }

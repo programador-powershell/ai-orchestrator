@@ -154,6 +154,9 @@ pub(crate) fn guarded_redirect() -> reqwest::redirect::Policy {
         if attempt.previous().len() >= 5 {
             return attempt.error("redirecionamentos demais");
         }
+        if let Err(motivo) = crate::blocklist::guard_blocklist(attempt.url()) {
+            return attempt.error(motivo);
+        }
         match guard_public_host(attempt.url()) {
             Ok(()) => attempt.follow(),
             Err(motivo) => attempt.error(motivo),
@@ -170,6 +173,8 @@ pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     // SSRF: a URL vem do MODELO. Sem esta guarda, uma resposta poderia fazer o
     // app buscar serviços internos (metadados de nuvem, admin em localhost).
     guard_public_host(&parsed)?;
+    // Blocklist do admin: vale para pesquisa também, não só para conexão.
+    crate::blocklist::guard_blocklist(&parsed)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         // A guarda acima vale só para a PRIMEIRA URL. Com a política padrão do

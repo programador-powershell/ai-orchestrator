@@ -54,15 +54,17 @@ pub async fn groups_list(
 ) -> Result<Json<Value>, ApiError> {
     authorize_admin(&state, &headers, workspace).await?;
     let rows = sqlx::query(
-        "SELECT g.id, g.ad_object_id, g.name, g.created_at, \
+        "SELECT g.id, g.ad_object_id, g.name, g.created_at, g.priority, \
                 COALESCE(array_agg(m.mode) FILTER (WHERE m.mode IS NOT NULL), '{}') AS modes, \
                 p.document AS policy, \
+                COALESCE((SELECT jsonb_object_agg(r.mode, r.config) FROM group_route_configs r \
+                          WHERE r.group_id = g.id AND r.capability = 'chat'), '{}'::jsonb) AS routes, \
                 (SELECT count(*) FROM user_group_memberships u WHERE u.group_id = g.id) AS members \
          FROM ad_groups g \
          LEFT JOIN group_modules m ON m.group_id = g.id \
          LEFT JOIN group_policies p ON p.group_id = g.id \
          WHERE g.workspace_id = $1 \
-         GROUP BY g.id, p.document ORDER BY g.name",
+         GROUP BY g.id, p.document ORDER BY g.priority DESC, g.name",
     )
     .bind(workspace)
     .fetch_all(&state.pool)
@@ -76,6 +78,9 @@ pub async fn groups_list(
                     "name": row.get::<String, _>("name"),
                     "modes": row.get::<Vec<String>, _>("modes"),
                     "policy": row.get::<Option<Value>, _>("policy").unwrap_or(json!({})),
+                    "priority": row.get::<i32, _>("priority"),
+                    // Rota por modo (capacidade chat): o modelo que este grupo usa.
+                    "routes": row.get::<Value, _>("routes"),
                     "members": row.get::<i64, _>("members"),
                 })
             })
@@ -131,6 +136,12 @@ pub struct GroupPatch {
     pub name: Option<String>,
     pub modes: Option<Vec<String>>,
     pub policy: Option<GroupPolicyDoc>,
+    /// Desempate quando dois grupos definem rota para o mesmo modo.
+    /// Maior vence; empate resolve por nome.
+    pub priority: Option<i32>,
+    /// Rota por modo: `{"code": {...RouteConfig}}`. Modo com valor `null`
+    /// REMOVE o override e faz o grupo voltar ao padrão do workspace.
+    pub routes: Option<serde_json::Map<String, Value>>,
 }
 
 pub async fn groups_update(
@@ -159,6 +170,16 @@ pub async fn groups_update(
     if let Some(modes) = &request.modes {
         validate_modes(modes)?;
         replace_modules(&state, group, modes).await?;
+    }
+    if let Some(priority) = request.priority {
+        sqlx::query("UPDATE ad_groups SET priority=$1 WHERE id=$2")
+            .bind(priority)
+            .bind(group)
+            .execute(&state.pool)
+            .await?;
+    }
+    if let Some(routes) = &request.routes {
+        upsert_group_routes(&state, group, routes).await?;
     }
     if let Some(policy) = &request.policy {
         upsert_policy(&state, group, policy).await?;
@@ -194,6 +215,50 @@ async fn replace_modules(state: &AppState, group: Uuid, modes: &[String]) -> Res
         )
         .bind(group)
         .bind(mode)
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Grava as rotas do grupo (capacidade `chat`).
+///
+/// `null` no modo REMOVE o override — é como o admin devolve o grupo ao
+/// padrão do workspace. Sem esse caminho, tirar uma escolha exigiria mexer no
+/// banco à mão.
+///
+/// A configuração é validada como `RouteConfig` antes de entrar: um JSON
+/// solto viraria erro só na hora da chamada do usuário, longe de quem errou.
+async fn upsert_group_routes(
+    state: &AppState,
+    group: Uuid,
+    routes: &serde_json::Map<String, Value>,
+) -> Result<(), ApiError> {
+    for (mode, config) in routes {
+        if crate::models::Mode::parse(mode).is_none() {
+            return Err(ApiError::BadRequest(format!("módulo desconhecido: {mode}")));
+        }
+        if config.is_null() {
+            sqlx::query(
+                "DELETE FROM group_route_configs WHERE group_id=$1 AND mode=$2 AND capability='chat'",
+            )
+            .bind(group)
+            .bind(mode)
+            .execute(&state.pool)
+            .await?;
+            continue;
+        }
+        serde_json::from_value::<crate::models::RouteConfig>(config.clone())
+            .map_err(|error| ApiError::BadRequest(format!("rota inválida para {mode}: {error}")))?;
+        sqlx::query(
+            "INSERT INTO group_route_configs(group_id, mode, capability, config) \
+             VALUES ($1,$2,'chat',$3) \
+             ON CONFLICT (group_id, mode, capability) DO UPDATE SET \
+             config = EXCLUDED.config, updated_at = now()",
+        )
+        .bind(group)
+        .bind(mode)
+        .bind(config)
         .execute(&state.pool)
         .await?;
     }

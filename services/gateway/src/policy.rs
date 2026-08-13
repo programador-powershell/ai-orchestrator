@@ -43,6 +43,10 @@ pub struct GroupPolicyDoc {
     /// Área de trabalho isolada (escrever e EXECUTAR código na estação).
     /// Ver docs/adr-computer-use.md — não reduz privilégio.
     pub computer_use_allowed: Option<bool>,
+    /// Domínios que o app não pode alcançar — nem para pesquisar, nem para
+    /// chamar webhook ou servidor MCP. `exemplo.com` pega os subdomínios;
+    /// `*.exemplo.com` pega só os subdomínios.
+    pub blocked_domains: Option<Vec<String>>,
 }
 
 /// Política efetiva do usuário depois do merge — o que o bootstrap devolve.
@@ -59,6 +63,7 @@ pub struct EffectivePolicy {
     pub agent_max_children: u8,
     pub agent_max_total: u8,
     pub computer_use_allowed: bool,
+    pub blocked_domains: Vec<String>,
     pub prompt_master: Option<PromptMaster>,
     pub offline_grace_hours: u32,
 }
@@ -98,6 +103,7 @@ fn open_policy() -> EffectivePolicy {
         // Mesmo sem gating configurado, computer use nasce FECHADO: ele executa
         // comando na estação e depende de parecer de TI/SI (ver ADR).
         computer_use_allowed: false,
+        blocked_domains: Vec::new(),
         prompt_master: None,
         offline_grace_hours: 72,
     }
@@ -157,6 +163,23 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
         if let Some(value) = doc.computer_use_allowed {
             merged.computer_use_allowed = Some(merged.computer_use_allowed.unwrap_or(true) && value);
         }
+        // Blocklist é UNIÃO: mais domínios bloqueados = mais restritivo, que é
+        // a mesma direção dos booleanos. Interseção deixaria alguém escapar de
+        // um bloqueio do próprio time só por estar em outro grupo.
+        if let Some(value) = &doc.blocked_domains {
+            let lista = merged.blocked_domains.get_or_insert_with(Vec::new);
+            for domain in value {
+                let clean = domain.trim().to_ascii_lowercase();
+                if !clean.is_empty() && !lista.contains(&clean) {
+                    lista.push(clean);
+                }
+            }
+        }
+    }
+    if let Some(lista) = merged.blocked_domains.as_mut() {
+        // Ordem estável: a política entra no etag e é ASSINADA — ordem
+        // variável mudaria a assinatura sem nada ter mudado de fato.
+        lista.sort();
     }
     merged
 }
@@ -253,6 +276,7 @@ pub async fn resolve(
             agent_max_children: 0,
             agent_max_total: 0,
             computer_use_allowed: false,
+            blocked_domains: Vec::new(),
             prompt_master: prompt_master_for(state, workspace, &[]).await?,
             offline_grace_hours: 72,
         });
@@ -296,6 +320,7 @@ pub async fn resolve(
         agent_max_total: merged.agent_max_total.unwrap_or(DEFAULT_AGENT_TOTAL),
         // Sem declaração explícita do admin, computer use fica FECHADO.
         computer_use_allowed: merged.computer_use_allowed.unwrap_or(false),
+        blocked_domains: merged.blocked_domains.unwrap_or_default(),
         prompt_master: prompt_master_for(state, workspace, &group_ids).await?,
         offline_grace_hours: 72,
     })
@@ -619,5 +644,61 @@ mod agent_policy_tests {
         let merged = merge_policies(&[antigo]);
         assert_eq!(merged.effort_max, Some(2));
         assert_eq!(merged.agent_max_total, None);
+    }
+}
+
+#[cfg(test)]
+mod blocklist_tests {
+    use super::*;
+
+    fn doc(json: Value) -> GroupPolicyDoc {
+        serde_json::from_value(json).expect("documento de política")
+    }
+
+    /// União, e não interseção: alguém em dois grupos não pode escapar do
+    /// bloqueio do próprio time só por pertencer a outro.
+    #[test]
+    fn blocklist_e_uniao_dos_grupos() {
+        let merged = merge_policies(&[
+            doc(json!({"blockedDomains": ["facebook.com"]})),
+            doc(json!({"blockedDomains": ["tiktok.com"]})),
+        ]);
+        assert_eq!(
+            merged.blocked_domains,
+            Some(vec!["facebook.com".to_string(), "tiktok.com".to_string()])
+        );
+    }
+
+    #[test]
+    fn duplicata_e_caixa_nao_incham_a_lista() {
+        let merged = merge_policies(&[
+            doc(json!({"blockedDomains": ["Facebook.com", "  facebook.com  "]})),
+            doc(json!({"blockedDomains": ["FACEBOOK.COM"]})),
+        ]);
+        assert_eq!(merged.blocked_domains, Some(vec!["facebook.com".to_string()]));
+    }
+
+    /// A política é ASSINADA: ordem instável mudaria a assinatura sem nada
+    /// ter mudado, e o cliente managed recusaria a política do nada.
+    #[test]
+    fn ordem_e_estavel_independente_da_ordem_dos_grupos() {
+        let a = doc(json!({"blockedDomains": ["zeta.com"]}));
+        let b = doc(json!({"blockedDomains": ["alfa.com"]}));
+        assert_eq!(
+            merge_policies(&[a.clone(), b.clone()]).blocked_domains,
+            merge_policies(&[b, a]).blocked_domains
+        );
+    }
+
+    #[test]
+    fn entrada_vazia_e_descartada() {
+        let merged = merge_policies(&[doc(json!({"blockedDomains": ["", "   ", "ok.com"]}))]);
+        assert_eq!(merged.blocked_domains, Some(vec!["ok.com".to_string()]));
+    }
+
+    #[test]
+    fn nenhum_grupo_opinando_deixa_a_lista_vazia() {
+        assert_eq!(merge_policies(&[doc(json!({}))]).blocked_domains, None);
+        assert!(open_policy().blocked_domains.is_empty());
     }
 }

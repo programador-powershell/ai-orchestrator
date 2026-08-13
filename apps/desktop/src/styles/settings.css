@@ -737,3 +737,22 @@
   white-space: nowrap;
   color: var(--faint);
 }
+
+/* Blocklist por grupo: textarea curta ao lado dos tetos do agente. */
+.admx-group__block {
+  display: grid;
+  gap: 3px;
+  min-width: 170px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.admx-group__block textarea {
+  resize: vertical;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}

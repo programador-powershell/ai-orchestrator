@@ -570,12 +570,41 @@ pub async fn providers_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Rota efetiva: a do GRUPO sobrepõe a do workspace.
+///
+/// O admin escolhe o modelo por área — código com um modelo forte, atendimento
+/// com um barato — e a diferença aparece direto na relatoria de custo.
+///
+/// A decisão é feita AQUI, no servidor, e não no cliente. O cliente pede
+/// `{kind: "workspace"}` e recebe o que a política mandar: se a escolha
+/// estivesse do outro lado, bastaria editar o pedido para usar outro modelo.
+///
+/// Desempate entre dois grupos que definem o mesmo modo: maior `priority`
+/// vence, empate pelo nome. Sem ordem explícita, a rota dependeria da ordem
+/// de retorno do banco e mudaria sozinha entre consultas.
 async fn route(
     state: &AppState,
     workspace: Uuid,
+    user_groups: &[Uuid],
     mode: &Mode,
     capability: Capability,
 ) -> Result<RouteConfig, ApiError> {
+    if !user_groups.is_empty() {
+        let group_value: Option<Value> = sqlx::query_scalar(
+            "SELECT r.config FROM group_route_configs r \
+             JOIN ad_groups g ON g.id = r.group_id \
+             WHERE r.group_id = ANY($1) AND r.mode = $2 AND r.capability = $3 \
+             ORDER BY g.priority DESC, g.name ASC LIMIT 1",
+        )
+        .bind(user_groups)
+        .bind(mode.as_str())
+        .bind(capability.as_str())
+        .fetch_optional(&state.pool)
+        .await?;
+        if let Some(value) = group_value {
+            return serde_json::from_value(value).map_err(|e| ApiError::Internal(e.into()));
+        }
+    }
     let value: Option<Value> = sqlx::query_scalar(
         "SELECT config FROM route_configs WHERE workspace_id=$1 AND mode=$2 AND capability=$3",
     )
@@ -689,7 +718,10 @@ pub async fn chat(
     crate::policy::ensure_mode_allowed(&state, workspace, user, &caller.groups, &request.mode)
         .await?;
     rate_limit(&state, workspace).await?;
-    let route = route(&state, workspace, &request.mode, Capability::Chat).await?;
+    // Grupos resolvidos uma vez: servem para escolher a rota E para congelar
+    // no evento de uso.
+    let groups = group_uuids(&state, workspace, &caller.groups).await;
+    let route = route(&state, workspace, &groups, &request.mode, Capability::Chat).await?;
     let timeout = route.timeout_ms.unwrap_or(90_000).clamp(1_000, 180_000);
     let targets = std::iter::once(&route.primary).chain(route.fallbacks.iter());
     let started = Instant::now();
@@ -718,7 +750,7 @@ pub async fn chat(
                     capability: "chat".into(),
                     model: target.model.clone(),
                     latency_ms: started.elapsed().as_millis() as i32,
-                    group_ids: group_uuids(&state, workspace, &caller.groups).await,
+                    group_ids: groups.clone(),
                 };
                 // A gravação sai no fim do corpo, com os tokens em mãos.
                 return Ok(tap_usage(response, state.clone(), record, kind));
@@ -753,7 +785,8 @@ async fn generic(
     crate::policy::ensure_mode_allowed(&state, workspace, user, &caller.groups, &request.mode)
         .await?;
     rate_limit(&state, workspace).await?;
-    let route = route(&state, workspace, &request.mode, capability.clone()).await?;
+    let groups = group_uuids(&state, workspace, &caller.groups).await;
+    let route = route(&state, workspace, &groups, &request.mode, capability.clone()).await?;
     let timeout = route.timeout_ms.unwrap_or(90_000).clamp(1_000, 180_000);
     for (index, target) in std::iter::once(&route.primary)
         .chain(route.fallbacks.iter())
@@ -782,7 +815,7 @@ async fn generic(
                     capability: capability.as_str().into(),
                     model: target.model.clone(),
                     latency_ms: 0,
-                    group_ids: group_uuids(&state, workspace, &caller.groups).await,
+                    group_ids: groups.clone(),
                 };
                 return Ok(tap_usage(response, state.clone(), record, kind));
             }
