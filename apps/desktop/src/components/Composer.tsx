@@ -615,6 +615,12 @@ export function Composer() {
   }
 
   async function executePlan(plan: ExecutionPlan) {
+    // Mesma guarda do send(). O cartão de plano continua no rodapé mesmo com
+    // outro envio em curso: sem isto, aprovar o plano durante um streaming
+    // punha DOIS turnos escrevendo na mesma mensagem (tokens intercalados),
+    // trocava o abortRef — o botão Parar só alcançava o segundo — e o finally
+    // do primeiro liberava `sending` com o segundo ainda transmitindo.
+    if (useApp.getState().threads[mode].sending) return;
     setExecutingPlan(true);
     setSending(mode, true);
     const abort = new AbortController();
@@ -650,7 +656,7 @@ export function Composer() {
       {activePlan && (
         <PlanCard
           plan={activePlan}
-          executing={executingPlan}
+          executing={executingPlan || thread.sending}
           onApprove={() => void executePlan(activePlan)}
           onDismiss={() => setActivePlan(null)}
         />

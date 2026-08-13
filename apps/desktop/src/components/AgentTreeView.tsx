@@ -34,6 +34,7 @@ import {
   type TreeState,
 } from "../lib/agentTree";
 import { useApp } from "../lib/store";
+import { useApprovalQueue } from "../lib/approvalQueue";
 import { runAgentGoal } from "../lib/agentRuntime";
 import type { ToolCall } from "../lib/agent";
 import type { EngineContext } from "../lib/engine";
@@ -68,7 +69,11 @@ export function AgentTreeView({
   const [running, setRunning] = useState(false);
   const [stage, setStage] = useState("");
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  // FILA, não slot único: dois subordinados irmãos pedem aprovação ao mesmo
+  // tempo (delegação roda em paralelo) e o segundo pedido apagava o resolve
+  // do primeiro, travando a execução inteira.
+  const approvals = useApprovalQueue<Omit<PendingApproval, "resolve">>();
+  const approval = approvals.current;
   /**
    * Computer use nasce DESLIGADO. É a diferença entre um agente que lê e
    * explica e um que executa comando na máquina — quem liga é a pessoa.
@@ -110,10 +115,7 @@ export function AgentTreeView({
           onStage: setStage,
           // A aprovação continua sendo a mesma do resto do app: delegar não
           // pode virar caminho lateral para gravar arquivo sem gate.
-          approve: (task, call) =>
-            new Promise<boolean>((resolve) =>
-              setApproval({ task, call, resolve }),
-            ),
+          approve: (task, call) => approvals.request({ task, call }),
         },
       });
     } finally {
@@ -125,9 +127,9 @@ export function AgentTreeView({
 
   function stop() {
     abortRef.current?.abort();
-    // Uma aprovação pendente ficaria travada esperando clique.
-    approval?.resolve(false);
-    setApproval(null);
+    // Toda aprovação pendente ficaria travada esperando clique — inclusive as
+    // que estão atrás na fila e nem chegaram a aparecer na tela.
+    approvals.denyAll();
   }
 
   function toggle(id: string) {
@@ -266,23 +268,22 @@ export function AgentTreeView({
               <code>{approval.call.tool}</code>
             </strong>
             <pre>{JSON.stringify(approval.call.args, null, 2)}</pre>
+            {approvals.pending > 1 ? (
+              <span className="agtx-approval-fila">
+                +{approvals.pending - 1} na fila
+              </span>
+            ) : null}
           </div>
           <div className="agtx-approval-actions">
             <button
               className="lg-button primary"
-              onClick={() => {
-                approval.resolve(true);
-                setApproval(null);
-              }}
+              onClick={() => approvals.answer(true)}
             >
               Permitir
             </button>
             <button
               className="lg-button ghost"
-              onClick={() => {
-                approval.resolve(false);
-                setApproval(null);
-              }}
+              onClick={() => approvals.answer(false)}
             >
               Recusar
             </button>

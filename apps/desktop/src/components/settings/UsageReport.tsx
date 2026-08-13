@@ -12,7 +12,7 @@
  * total está incompleto por falta de preço cadastrado.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CircleDollarSign, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useApp } from "../../lib/store";
 import {
@@ -140,8 +140,21 @@ export function UsageReport() {
     [base, session]
   );
 
+  /**
+   * Cada busca carrega o número da vez.
+   *
+   * Trocar o chip de janela (7 → 90 dias) dispara uma busca nova sem esperar
+   * a anterior. Se a resposta de 7 dias chegasse por último, ela populava a
+   * tela inteira enquanto o chip mostrava "90 dias" — o admin lia o custo da
+   * janela errada sem nenhum sinal. Resposta de uma volta velha agora é
+   * descartada.
+   */
+  const voltaRef = useRef(0);
+
   const refresh = useCallback(async () => {
     if (!base) return;
+    const volta = voltaRef.current + 1;
+    voltaRef.current = volta;
     setLoading(true);
     setError("");
     try {
@@ -152,19 +165,24 @@ export function UsageReport() {
         call(`/usage/daily?days=${days}`),
         call("/prices")
       ]);
-      setUsers(((await u.json()) as { items: UserRow[] }).items ?? []);
+      const usuarios = ((await u.json()) as { items: UserRow[] }).items ?? [];
       const groupBody = (await g.json()) as { items: GroupRow[]; ungrouped: UsageTotals };
+      const modelos = ((await m.json()) as { items: ModelRow[] }).items ?? [];
+      const diario = ((await d.json()) as { items: DailyRow[] }).items ?? [];
+      const priceBody = (await p.json()) as { items: PriceRow[]; missingPrices: string[] };
+      if (voltaRef.current !== volta) return;
+      setUsers(usuarios);
       setGroups(groupBody.items ?? []);
       setUngrouped(groupBody.ungrouped ?? null);
-      setModels(((await m.json()) as { items: ModelRow[] }).items ?? []);
-      setDaily(((await d.json()) as { items: DailyRow[] }).items ?? []);
-      const priceBody = (await p.json()) as { items: PriceRow[]; missingPrices: string[] };
+      setModels(modelos);
+      setDaily(diario);
       setPrices(priceBody.items ?? []);
       setMissingPrices(priceBody.missingPrices ?? []);
     } catch (cause) {
+      if (voltaRef.current !== volta) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (voltaRef.current === volta) setLoading(false);
     }
   }, [base, call, days]);
 

@@ -389,22 +389,55 @@ describe("runDeepReview", () => {
     expect(call).toHaveBeenCalledTimes(1);
   });
 
-  it("o progresso é gravado ANTES das refutações", async () => {
-    // Interrupção no meio das refutações não pode perder a investigação que
-    // já custou — ela é o passo caro.
+  it("erro na refutação NÃO carimba o arquivo como revisado", async () => {
+    // Carimbar o arquivo e depois falhar escondia os achados restantes: a
+    // volta seguinte dizia "nada mudou" e a falha nunca aparecia.
+    let volta = 0;
+    const resultado = await runDeepReview({
+      files: arquivos,
+      call: async () => {
+        volta += 1;
+        if (volta === 1) return "achado";
+        throw new Error("rede caiu no meio da refutação");
+      },
+      parse: parseFixo([achado()]),
+      signal: new AbortController().signal
+    });
+    expect(resultado.progress["api/users.ts"]).toBeUndefined();
+    expect(resultado.confirmed).toEqual([]);
+  });
+
+  it("cancelamento no meio das refutações não carimba o arquivo", async () => {
     const controller = new AbortController();
     let volta = 0;
     const resultado = await runDeepReview({
       files: arquivos,
       call: async () => {
         volta += 1;
+        // 1: investigação · 2: refutação do 1º achado (e cancela) · o 2º
+        // achado não chega a ser julgado.
         if (volta === 2) controller.abort();
         return volta === 1 ? "achado" : '{"confirmed":true}';
       },
-      parse: parseFixo([achado()]),
+      parse: parseFixo([achado(), { ...achado(), title: "segundo" }]),
       signal: controller.signal
     });
-    expect(resultado.progress["api/users.ts"]).toBeTruthy();
+    expect(resultado.progress["api/users.ts"]).toBeUndefined();
+    expect(resultado.cancelled).toBe(true);
+  });
+
+  it("arquivo julgado até o fim é carimbado e não repete na volta seguinte", async () => {
+    const call = vi.fn(async () => '{"confirmed":true}');
+    const primeira = await correr({ call, parse: parseFixo([achado()]) });
+    expect(primeira.progress["api/users.ts"]).toBeTruthy();
+
+    const segunda = await correr({
+      call,
+      parse: parseFixo([achado()]),
+      progress: primeira.progress
+    });
+    expect(segunda.investigated).toBe(0);
+    expect(segunda.reused).toBe(1);
   });
 
   it("avisa o progresso por arquivo e por refutação", async () => {

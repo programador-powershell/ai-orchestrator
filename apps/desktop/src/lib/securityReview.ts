@@ -444,10 +444,6 @@ export async function runDeepReview(options: DeepReviewOptions): Promise<DeepRev
     options.hooks?.onStage?.(`investigando ${candidate.path}`);
     const bruto = await options.call(buildInvestigationPrompt(file, candidate.reasons), options.signal);
     investigated += 1;
-    // Marca ANTES de refutar: a investigação deste arquivo terminou, e é ela
-    // que não precisa se repetir. Marcar só no fim perderia o trabalho quando
-    // a interrupção cai no meio das refutações.
-    progress[candidate.path] = fingerprint(file.content);
     const achados = options.parse(bruto);
 
     for (const finding of achados) {
@@ -468,6 +464,20 @@ export async function runDeepReview(options: DeepReviewOptions): Promise<DeepRev
       (verdict.confirmed ? confirmed : refuted).push(revisado);
       options.hooks?.onFinding?.(revisado);
     }
+
+    /**
+     * Só agora: o arquivo foi investigado E todos os achados foram julgados.
+     *
+     * Marcar logo após a investigação economizava uma chamada quando a
+     * revisão era interrompida no meio das refutações — mas o preço era
+     * perder achado. Um erro de rede numa refutação (a exceção morre dentro
+     * do runWithLimit) deixava o arquivo carimbado como revisado com os
+     * achados restantes nunca exibidos: a volta seguinte respondia "nada
+     * mudou desde a última revisão" e a falha sumia até alguém editar o
+     * arquivo. Repetir uma investigação custa uma chamada; esconder uma
+     * falha de segurança custa a confiança no painel inteiro.
+     */
+    progress[candidate.path] = fingerprint(file.content);
   });
 
   await runWithLimit(tarefas, options.concurrency ?? 3);

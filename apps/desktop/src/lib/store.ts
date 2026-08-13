@@ -442,8 +442,20 @@ export const useApp = create<AppState>()(
           threads: { ...state.threads, [mode]: emptyThread() },
           activeConversation: { ...state.activeConversation, [mode]: newId() }
         })),
+      /**
+       * Trocar de conversa no meio de um stream contaminava as duas: os deltas
+       * que ainda chegavam eram colados na última mensagem da conversa RECÉM
+       * carregada e persistidos nela pelo `setSending(false)` do fim do turno.
+       * Como a troca ainda zerava `sending`, dava para disparar um segundo
+       * envio e ver dois streams intercalando tokens na mesma mensagem.
+       *
+       * Enquanto o turno está em voo a troca não acontece. A UI já desabilita
+       * a lista; esta guarda é a rede embaixo — o store é o único lugar onde
+       * ninguém consegue passar por fora.
+       */
       loadConversation: (mode, id) =>
         set((state) => {
+          if (state.threads[mode].sending) return {};
           const found = state.conversations[mode]?.find((item) => item.id === id);
           if (!found) return {};
           return {
@@ -453,6 +465,10 @@ export const useApp = create<AppState>()(
         }),
       deleteConversation: (mode, id) =>
         set((state) => {
+          // Excluir a conversa ATIVA durante o turno esvaziava o thread e
+          // gerava um id novo; os appendMessage seguintes ressuscitavam a
+          // conversa "excluída" como registro fantasma sob esse id.
+          if (state.threads[mode].sending && state.activeConversation[mode] === id) return {};
           const remaining = (state.conversations[mode] ?? []).filter((item) => item.id !== id);
           const wasActive = state.activeConversation[mode] === id;
           return {
