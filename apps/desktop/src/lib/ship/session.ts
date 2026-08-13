@@ -67,8 +67,35 @@ function execIn(cwd: string): Exec {
     // Sem host nativo não há terminal. Falha explícita: um "ok" falso aqui
     // liberaria versionar um build que nunca rodou.
     if (!isTauriFs) return { exitCode: 127, output: "Build indisponível no navegador — abra o app desktop." };
-    const result = await terminal.execute(command, cwd);
-    return { exitCode: result.exitCode ?? 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
+    /**
+     * "Parar" devolve o controle na hora, e diz a verdade sobre o limite.
+     *
+     * Antes o signal era consultado só ANTES de iniciar: durante um
+     * `docker compose build` o botão parecia não fazer nada, porque o
+     * `await` só voltava quando o passo terminava sozinho. Agora a espera
+     * termina imediatamente — mas o PROCESSO não morre: nem
+     * `terminal_execute` nem `ssh_exec` aceitam cancelamento hoje, e matar
+     * um build pela metade num servidor exige suporte do outro lado. O passo
+     * registra isso em vez de deixar a pessoa achar que abortou o deploy.
+     */
+    const execucao = terminal
+      .execute(command, cwd)
+      .then((result) => ({
+        exitCode: result.exitCode ?? 0,
+        output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()
+      }));
+    const cancelamento = new Promise<{ exitCode: number; output: string }>((resolve) => {
+      signal.addEventListener(
+        "abort",
+        () =>
+          resolve({
+            exitCode: 130,
+            output: "interrompido pelo usuário — o comando pode seguir rodando até terminar sozinho"
+          }),
+        { once: true }
+      );
+    });
+    return Promise.race([execucao, cancelamento]);
   };
 }
 

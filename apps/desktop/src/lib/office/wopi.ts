@@ -158,6 +158,19 @@ export type LockOutcome =
   | { ok: false; status: 409; currentLock: string };
 
 /**
+ * Desfecho do UNLOCK: sucesso significa "não há mais lock".
+ *
+ * `lock: undefined` e não um `LockState` de id vazio. O sentinela
+ * `{id:"", refreshedAt: now}` era guardado pelo chamador (mesmo contrato do
+ * acquire) e o `isLockValid` — que só olha `refreshedAt` — o considerava
+ * VIVO: depois de destravar com sucesso, LOCK e PutFile respondiam 409 por
+ * 30 minutos num arquivo que ninguém estava usando.
+ */
+export type ReleaseOutcome =
+  | { ok: true; lock: undefined }
+  | { ok: false; status: 409; currentLock: string };
+
+/**
  * O lock NÃO pertence ao usuário: quem tiver permissão e apresentar o lock
  * certo pode destravar, mesmo tendo sido outro a travar.
  */
@@ -167,10 +180,10 @@ export function acquireLock(current: LockState | undefined, lockId: string, now:
   return { ok: false, status: 409, currentLock: current!.id };
 }
 
-export function releaseLock(current: LockState | undefined, lockId: string, now: number): LockOutcome {
+export function releaseLock(current: LockState | undefined, lockId: string, now: number): ReleaseOutcome {
   if (!isLockValid(current, now)) return { ok: false, status: 409, currentLock: "" };
   if (current!.id !== lockId) return { ok: false, status: 409, currentLock: current!.id };
-  return { ok: true, lock: { id: "", acquiredAt: 0, refreshedAt: now } };
+  return { ok: true, lock: undefined };
 }
 
 /**

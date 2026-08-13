@@ -112,6 +112,13 @@ export function tokenize(source: string): Token[] {
       }
       if (i >= source.length) throw new CodeModeError("texto sem aspas de fechamento");
       i += 1;
+      // Crase é aceita como aspas, mas `${…}` NÃO é interpolado. Aceitar em
+      // silêncio devolvia a string literal "total: ${soma}" no lugar do valor
+      // — saída errada sem erro, num módulo que falha alto em tudo que não
+      // suporta (`a[i]`, chamada fora de `tool.*`).
+      if (fim === "`" && /\$\{/.test(valor)) {
+        throw new CodeModeError("interpolação `${…}` não é suportada — use concatenação com +");
+      }
       tokens.push({ kind: "str", value: valor, pos: i });
       continue;
     }
@@ -171,11 +178,16 @@ class Parser {
   constructor(private readonly tokens: Token[]) {}
 
   private peek(): Token {
-    return this.tokens[this.at];
+    return this.tokens[this.at] ?? this.tokens[this.tokens.length - 1];
   }
 
   private eat(value?: string): Token {
+    // Ler além do fim devolvia `undefined` e o acesso a `.value` lançava
+    // TypeError em vez de CodeModeError: o modelo recebia "Cannot read
+    // properties of undefined" no lugar de uma mensagem de sintaxe, e não
+    // tinha como se corrigir. Acontece com resposta cortada no meio ("const").
     const token = this.tokens[this.at];
+    if (!token) throw new CodeModeError("programa terminou no meio de uma instrução");
     if (value !== undefined && token.value !== value) {
       throw new CodeModeError(`esperava "${value}" e veio "${token.value || "fim do programa"}"`);
     }
@@ -573,11 +585,30 @@ function truthy(value: Json): boolean {
   return Boolean(value);
 }
 
+/**
+ * Teto de tamanho de um valor de texto.
+ *
+ * Os limites de passos, chamadas e voltas contam OCORRÊNCIAS, nunca tamanho.
+ * Vinte linhas de `const s2 = s1 + s1;` partindo de 1 KB chegam a centenas de
+ * megabytes de caracteres bem dentro dos 2.000 passos — e um `===`, um `log`
+ * ou o `return` forçam o achatamento e esgotam a memória do renderer. Isso
+ * acontecia sem chamar ferramenta nenhuma, ou seja, sem passar pelo gate de
+ * aprovação: é exatamente a classe de entrada que o confinamento existe para
+ * conter.
+ */
+const MAX_TEXTO = 2_000_000;
+
 function applyBinary(op: string, left: Json, right: Json): Json {
   switch (op) {
     case "+":
       // Texto concatena, número soma — mesma regra que o modelo já espera.
-      if (typeof left === "string" || typeof right === "string") return `${stringify(left)}${stringify(right)}`;
+      if (typeof left === "string" || typeof right === "string") {
+        const juntos = `${stringify(left)}${stringify(right)}`;
+        if (juntos.length > MAX_TEXTO) {
+          throw new CodeModeError(`texto passou de ${MAX_TEXTO} caracteres`);
+        }
+        return juntos;
+      }
       return num(left) + num(right);
     case "-":
       return num(left) - num(right);

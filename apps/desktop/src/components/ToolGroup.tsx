@@ -22,6 +22,40 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * Diff da edição, recolhível: cabeçalho "Criado x.ts +44 −0" + linhas.
+ *
+ * Fica FORA do ToolGroup de propósito. Declarada dentro do render, ela virava
+ * uma função nova a cada atualização de cartão — e o React, vendo outro tipo
+ * de componente, desmontava e remontava a subárvore, zerando o `expanded`. Na
+ * prática era impossível ler um diff enquanto o agente ainda executava: cada
+ * token recolhia o que a pessoa tinha acabado de abrir.
+ */
+function EditDiff({ edit }: { edit: ToolEdit }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="tooledit">
+      <button className="tooledit-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <span className="tooledit-label">{editLabel(edit)}</span>
+      </button>
+      {expanded && (
+        <pre className="tooledit-patch">
+          {edit.patch.split("\n").map((line, index) => (
+            <span
+              key={index}
+              className={line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("…") ? "skip" : ""}
+            >
+              {line}
+            </span>
+          ))}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+
 export function ToolGroup({ cards }: { cards: ToolCard[] }) {
   const running = runningCount(cards);
   // Aberto enquanto executa (o usuário vê o progresso), recolhe ao terminar.
@@ -29,31 +63,6 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
   const open = openOverride ?? running > 0;
 
   if (!cards.length) return null;
-
-  /** Diff da edição, recolhível: cabeçalho "Criado x.ts +44 −0" + linhas. */
-  function EditDiff({ edit }: { edit: ToolEdit }) {
-    const [expanded, setExpanded] = useState(false);
-    return (
-      <div className="tooledit">
-        <button className="tooledit-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
-          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          <span className="tooledit-label">{editLabel(edit)}</span>
-        </button>
-        {expanded && (
-          <pre className="tooledit-patch">
-            {edit.patch.split("\n").map((line, index) => (
-              <span
-                key={index}
-                className={line.startsWith("+") ? "add" : line.startsWith("-") ? "remove" : line.startsWith("…") ? "skip" : ""}
-              >
-                {line}
-              </span>
-            ))}
-          </pre>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div className={`toolgroup ${running ? "running" : ""}`}>

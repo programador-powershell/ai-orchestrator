@@ -60,7 +60,46 @@ const TOOL_NAMES = new Set([
   "run_program"
 ]);
 
-const TOOL_BLOCK = /```tool\s*([\s\S]*?)```/g;
+const ABERTURA = /```tool[ \t]*\r?\n?/g;
+/** Fecho de cerca: crase tripla no COMEÇO de uma linha. */
+const FECHAMENTO = /(^|\r?\n)[ \t]*```[ \t]*/;
+
+/**
+ * Os blocos ```tool``` do texto, com o intervalo que cada um ocupa.
+ *
+ * O regex non-greedy que existia aqui parava na PRIMEIRA crase tripla, mesmo
+ * quando ela estava dentro da string JSON — o caso comum de pedir um README
+ * com exemplo de código. O JSON capturado terminava no meio, o `parse`
+ * falhava, o call era descartado em silêncio e o agente encerrava como se
+ * tivesse terminado: o arquivo nunca era gravado e ninguém era avisado.
+ *
+ * O fecho agora tem de estar no começo de uma linha. Numa string JSON, a
+ * quebra é a sequência `\n` (dois caracteres), então uma cerca aninhada
+ * aparece no MEIO de uma linha física e não fecha nada.
+ */
+function toolBlocks(text: string): Array<{ inicio: number; fim: number; corpo: string }> {
+  const blocos: Array<{ inicio: number; fim: number; corpo: string }> = [];
+  ABERTURA.lastIndex = 0;
+  let abre: RegExpExecArray | null;
+  while ((abre = ABERTURA.exec(text)) !== null) {
+    const corpoInicio = abre.index + abre[0].length;
+    const resto = text.slice(corpoInicio);
+    const fecha = FECHAMENTO.exec(resto);
+    if (!fecha) {
+      // Bloco sem fechamento (resposta cortada pelo limite de tokens): o
+      // corpo é o que sobrou. Se for JSON completo, a chamada ainda vale.
+      blocos.push({ inicio: abre.index, fim: text.length, corpo: resto });
+      break;
+    }
+    blocos.push({
+      inicio: abre.index,
+      fim: corpoInicio + fecha.index + fecha[0].length,
+      corpo: resto.slice(0, fecha.index)
+    });
+    ABERTURA.lastIndex = corpoInicio + fecha.index + fecha[0].length;
+  }
+  return blocos;
+}
 
 /** Ferramentas MCP externas chegam namespaced: mcp:<servidor>:<tool>. */
 const isMcpTool = (name: string) => /^mcp:[^:]+:.+$/.test(name);
@@ -68,9 +107,9 @@ const isMcpTool = (name: string) => /^mcp:[^:]+:.+$/.test(name);
 /** Extrai os tool-calls válidos do texto do modelo. Puro, testável. */
 export function parseToolCalls(text: string): ToolCall[] {
   const calls: ToolCall[] = [];
-  for (const match of text.matchAll(TOOL_BLOCK)) {
+  for (const bloco of toolBlocks(text)) {
     try {
-      const parsed = JSON.parse(match[1].trim()) as { tool?: unknown; args?: unknown };
+      const parsed = JSON.parse(bloco.corpo.trim()) as { tool?: unknown; args?: unknown };
       if (typeof parsed.tool === "string" && (TOOL_NAMES.has(parsed.tool) || isMcpTool(parsed.tool))) {
         calls.push({ tool: parsed.tool, args: (parsed.args as Record<string, unknown>) ?? {} });
       }
@@ -83,7 +122,15 @@ export function parseToolCalls(text: string): ToolCall[] {
 
 /** Remove os blocos ```tool``` deixando só o texto conversacional. */
 export function stripToolCalls(text: string): string {
-  return text.replace(TOOL_BLOCK, "").replace(/\n{3,}/g, "\n\n").trim();
+  const blocos = toolBlocks(text);
+  let saida = "";
+  let cursor = 0;
+  for (const bloco of blocos) {
+    saida += text.slice(cursor, bloco.inicio);
+    cursor = bloco.fim;
+  }
+  saida += text.slice(cursor);
+  return saida.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 const MUTATING = new Set(TOOL_SPECS.filter((spec) => spec.mutating).map((spec) => spec.name));
@@ -104,9 +151,20 @@ export function formatToolResult(call: ToolCall, output: string): string {
   return `Resultado da ferramenta \`${call.tool}\`:\n\n${trimmed}`;
 }
 
-/** Instrução de sistema que ensina o modelo a usar as ferramentas. */
-export function agentSystemInstruction(): string {
-  const list = TOOL_SPECS.map((spec) => `- ${spec.name}: ${spec.description}. args: ${spec.args}`).join("\n");
+/**
+ * Instrução de sistema que ensina o modelo a usar as ferramentas.
+ *
+ * `omitir` existe porque o catálogo não é o mesmo em toda superfície: o chat
+ * resolve `web_search` e `generate_image` num hook próprio, e a árvore de
+ * agentes não. Anunciar o que não se sabe executar fazia o agente insistir
+ * numa ferramenta que só respondia "ferramenta desconhecida" e queimar as
+ * voltas disponíveis sem nunca pesquisar.
+ */
+export function agentSystemInstruction(omitir: string[] = []): string {
+  const fora = new Set(omitir);
+  const list = TOOL_SPECS.filter((spec) => !fora.has(spec.name))
+    .map((spec) => `- ${spec.name}: ${spec.description}. args: ${spec.args}`)
+    .join("\n");
   return (
     "Você pode EXECUTAR ferramentas para investigar e alterar o projeto. Para chamar uma, emita um bloco " +
     "```tool``` contendo um JSON {\"tool\":\"nome\",\"args\":{…}}. Uma ferramenta por bloco; pode emitir várias. " +

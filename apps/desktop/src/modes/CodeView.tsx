@@ -62,7 +62,7 @@ import {
 import { buildIndex, searchSymbols, type CodeSymbol } from "../lib/symbols";
 import { chatOnce, describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
-import { collectFiles, fsList, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
+import { collectFiles, fsList, fsRead, fsRemove, fsWrite, isTauriFs } from "../lib/fsx";
 import { detectByFileName, detectLanguage, isRunnableFileInput } from "../lib/langDetect";
 import { fuzzyRank } from "../lib/fuzzy";
 import { validateOrchestration } from "../lib/gateway";
@@ -538,8 +538,13 @@ export function CodeView() {
     setQuickOpen(false);
     // O arquivo já está aberto (o índice só cobre abertos), então só resta
     // ativá-lo e pular para a linha.
+    const jaAtivo = useCode.getState().activePath === symbol.file;
     setActivePath(symbol.file);
-    pendingRevealRef.current = { path: symbol.file, line: symbol.line };
+    // Com o arquivo já ativo, nem `files` nem `activePath` mudam: o efeito que
+    // consome a pendência não roda e ela ficava ARMADA. Na digitação seguinte
+    // (que muda `files`) o efeito disparava e o editor saltava de volta para a
+    // linha do símbolo, no meio da escrita.
+    pendingRevealRef.current = jaAtivo ? null : { path: symbol.file, line: symbol.line };
     editorApiRef.current?.revealLine(symbol.line);
   }
 
@@ -799,6 +804,15 @@ export function CodeView() {
     } catch (cause) {
       setTermLines((lines) => [...lines, cause instanceof Error ? cause.message : String(cause)]);
     } finally {
+      /*
+       * O temporário sai do projeto.
+       *
+       * Ele ficava no working tree com o código gerado pela IA (ou colado)
+       * dentro, aparecia no `git status` e podia ser commitado por acidente —
+       * e o runner do Rust ainda deixa o `ultra_tmp.exe` ao lado. Apagar é
+       * best-effort: falhar aqui não pode derrubar o resultado do comando.
+       */
+      await fsRemove(useCode.getState().root, tempFile).catch(() => undefined);
       setTermBusy(false);
     }
   }

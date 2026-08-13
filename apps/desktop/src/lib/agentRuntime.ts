@@ -160,7 +160,10 @@ class TreeRunner {
    * Devolve o texto final — que é o relatório entregue ao superior.
    */
   async runTask(taskId: string, systemPrompt: string): Promise<string> {
-    const instrucoes = [systemPrompt, agentSystemInstruction()];
+    // `web_search` e `generate_image` são resolvidas pelo hook do CHAT, não
+    // pelo dispatch da árvore — anunciá-las aqui fazia o agente pedir uma
+    // ferramenta que só responde "desconhecida" e gastar as voltas nisso.
+    const instrucoes = [systemPrompt, agentSystemInstruction(["web_search", "generate_image"])];
     if (this.session) instrucoes.push(computerUseInstruction());
     // Só oferece o code mode quando há ferramenta liberada para ele: descrever
     // um modo que não pode fazer nada gasta contexto e produz programa
