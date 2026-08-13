@@ -63,6 +63,24 @@ export interface PluginTool {
   params?: PluginParam[];
 }
 
+/**
+ * Matcher de varredura da aba Security.
+ *
+ * O caso de uso que motivou: as convenções de auth e de camada de dados são
+ * de CADA empresa, e a lista padrão não as conhece. O admin declara os padrões
+ * da Multiplike e eles valem para o grupo; a pessoa acrescenta os do projeto
+ * dela.
+ */
+export interface PluginScanner {
+  id: string;
+  /** O que este padrão indica — vai no prompt da investigação. */
+  label: string;
+  /** Fonte da expressão regular. Compilada com guarda, nunca com `eval`. */
+  pattern: string;
+  /** Peso na priorização, de 1 a 10. */
+  weight?: number;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -75,6 +93,8 @@ export interface PluginManifest {
   tools?: PluginTool[];
   /** Trecho injetado no sistema quando o plugin está ativo. */
   prompt?: string;
+  /** Padrões extras para a pré-varredura de segurança. */
+  scanners?: PluginScanner[];
 }
 
 export interface MountedPlugin {
@@ -146,7 +166,76 @@ export function validateManifest(manifest: PluginManifest): string | null {
       if (!declarados.has(citado)) return `ferramenta "${tool.name}": parâmetro {${citado}} não declarado`;
     }
   }
+
+  const scanners = new Set<string>();
+  for (const scanner of manifest.scanners ?? []) {
+    if (!TOOL_NAME.test(scanner.id ?? "")) return `padrão "${scanner.id}": use minúsculas, números e sublinhado`;
+    if (scanners.has(scanner.id)) return `padrão "${scanner.id}" declarado duas vezes`;
+    scanners.add(scanner.id);
+    if (!scanner.label?.trim()) return `padrão "${scanner.id}": descreva o que ele indica`;
+    const problema = checkPattern(scanner.pattern ?? "");
+    if (problema) return `padrão "${scanner.id}": ${problema}`;
+  }
   return null;
+}
+
+/** Teto do padrão. Expressão gigante é sinal de gerador, não de intenção. */
+const MAX_PATTERN = 400;
+
+/**
+ * Quantificador aninhado — a forma clássica de expressão que trava.
+ *
+ * `(a+)+` ou `(\w*)*` fazem o motor voltar atrás exponencialmente numa entrada
+ * que quase casa. Como estes padrões rodam sobre TODOS os arquivos do escopo,
+ * um deles derrubaria a interface — e quem escreveu não teria como saber por
+ * quê. Recusar na validação é mais honesto que travar depois.
+ */
+const ANINHADO = /\([^)]*[+*][^)]*\)\s*[+*]/;
+
+/** Devolve o motivo da recusa, ou `null` quando o padrão presta. */
+export function checkPattern(source: string): string | null {
+  const bruto = source?.trim() ?? "";
+  if (!bruto) return "informe a expressão";
+  if (bruto.length > MAX_PATTERN) return `a expressão passa de ${MAX_PATTERN} caracteres`;
+  if (ANINHADO.test(bruto)) return "quantificador aninhado pode travar a varredura — simplifique";
+  try {
+    // Sem `g`: `lastIndex` persistiria entre arquivos e o segundo começaria
+    // no meio. Este é o mesmo cuidado dos matchers padrão.
+    new RegExp(bruto);
+  } catch (cause) {
+    return `expressão inválida (${cause instanceof Error ? cause.message : "erro"})`;
+  }
+  return null;
+}
+
+/**
+ * Padrões dos plugins ativos, prontos para a varredura.
+ *
+ * Já validados na montagem; aqui só compila. O id é qualificado com o do
+ * plugin para dois plugins poderem chamar o padrão de "auth" sem colidir.
+ */
+export function activeScanners(
+  registry: PluginRegistry,
+  options: ResolveOptions
+): Array<{ id: string; label: string; pattern: RegExp; weight: number; scope: PluginScope }> {
+  const saida: Array<{ id: string; label: string; pattern: RegExp; weight: number; scope: PluginScope }> = [];
+  for (const mounted of resolve(registry, options)) {
+    for (const scanner of mounted.manifest.scanners ?? []) {
+      try {
+        saida.push({
+          id: qualify(mounted.manifest.id, scanner.id),
+          label: scanner.label,
+          pattern: new RegExp(scanner.pattern),
+          weight: Math.max(1, Math.min(Math.floor(scanner.weight ?? 3), 10)),
+          scope: mounted.scope
+        });
+      } catch {
+        // Já validado na montagem; se chegou aqui corrompido, ignorar um
+        // padrão é melhor que derrubar a varredura inteira.
+      }
+    }
+  }
+  return saida;
 }
 
 /**

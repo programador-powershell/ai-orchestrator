@@ -8,6 +8,9 @@ import {
   clipAtLine,
   DEFAULT_MATCHERS,
   findCandidates,
+  findingToGoal,
+  fingerprint,
+  planResume,
   parseVerdict,
   runDeepReview,
   type Matcher
@@ -187,6 +190,59 @@ describe("parseVerdict", () => {
   });
 });
 
+describe("planResume", () => {
+  const arquivos = [
+    { path: "a.ts", content: "eval(x)" },
+    { path: "b.ts", content: "eval(y)" }
+  ];
+  const candidatos = findCandidates(arquivos).candidates;
+
+  it("sem progresso anterior, tudo é investigado", () => {
+    const plano = planResume(candidatos, arquivos, {});
+    expect(plano.pending).toHaveLength(2);
+    expect(plano.reused).toEqual([]);
+  });
+
+  it("arquivo intacto é reaproveitado — investigação é o passo caro", () => {
+    const plano = planResume(candidatos, arquivos, { "a.ts": fingerprint("eval(x)") });
+    expect(plano.pending.map((item) => item.path)).toEqual(["b.ts"]);
+    expect(plano.reused).toEqual(["a.ts"]);
+  });
+
+  it("arquivo ALTERADO volta para a fila, mesmo tendo sido investigado", () => {
+    const alterados = [{ path: "a.ts", content: "eval(x); novaLinha();" }];
+    const plano = planResume(findCandidates(alterados).candidates, alterados, {
+      "a.ts": fingerprint("eval(x)")
+    });
+    expect(plano.pending).toHaveLength(1);
+    expect(plano.reused).toEqual([]);
+  });
+
+  it("impressão muda com o conteúdo e é estável para o mesmo texto", () => {
+    expect(fingerprint("abc")).toBe(fingerprint("abc"));
+    expect(fingerprint("abc")).not.toBe(fingerprint("abd"));
+  });
+});
+
+describe("findingToGoal", () => {
+  it("vira um pedido que a equipe de agentes entende", () => {
+    const texto = findingToGoal(achado({ line: 12, suggestion: "use consulta parametrizada" }));
+    expect(texto).toContain("Corrigir a falha de segurança");
+    expect(texto).toContain("api/users.ts:12");
+    expect(texto).toContain("use consulta parametrizada");
+  });
+
+  it("manda confirmar antes de mexer — o achado pode ser falso positivo", () => {
+    expect(findingToGoal(achado())).toContain("Confirme a falha");
+  });
+
+  it("achado sem linha e sem sugestão não deixa campo vazio no texto", () => {
+    const texto = findingToGoal(achado());
+    expect(texto).not.toContain("undefined");
+    expect(texto).not.toContain("Sugestão");
+  });
+});
+
 describe("runDeepReview", () => {
   const arquivos = [
     { path: "api/users.ts", content: "const q = `select * from u where id=${req.query.id}`" },
@@ -318,6 +374,37 @@ describe("runDeepReview", () => {
     });
     expect(resultado.cancelled).toBe(true);
     expect(resultado.investigated).toBeLessThan(5);
+  });
+
+  it("retomada pula o que não mudou e devolve o progresso atualizado", async () => {
+    const call = vi.fn(async () => "");
+    const primeira = await correr({ call });
+    expect(primeira.investigated).toBe(1);
+    expect(primeira.reused).toBe(0);
+
+    // Segunda volta com o progresso da primeira: nada mudou, nada reinvestiga.
+    const segunda = await correr({ call, progress: primeira.progress });
+    expect(segunda.investigated).toBe(0);
+    expect(segunda.reused).toBe(1);
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it("o progresso é gravado ANTES das refutações", async () => {
+    // Interrupção no meio das refutações não pode perder a investigação que
+    // já custou — ela é o passo caro.
+    const controller = new AbortController();
+    let volta = 0;
+    const resultado = await runDeepReview({
+      files: arquivos,
+      call: async () => {
+        volta += 1;
+        if (volta === 2) controller.abort();
+        return volta === 1 ? "achado" : '{"confirmed":true}';
+      },
+      parse: parseFixo([achado()]),
+      signal: controller.signal
+    });
+    expect(resultado.progress["api/users.ts"]).toBeTruthy();
   });
 
   it("avisa o progresso por arquivo e por refutação", async () => {

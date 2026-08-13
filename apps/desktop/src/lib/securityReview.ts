@@ -172,6 +172,61 @@ export function findCandidates(
   };
 }
 
+/* ---------------------------- Retomada ---------------------------- */
+
+/**
+ * Impressão do conteúdo (FNV-1a de 32 bits).
+ *
+ * Serve para saber se o arquivo mudou desde a última varredura. Arquivo
+ * intacto não precisa ser investigado de novo — e investigação é o passo caro.
+ */
+export function fingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/** Caminho → impressão do conteúdo já investigado. */
+export type ReviewProgress = Record<string, string>;
+
+export interface ResumePlan {
+  /** Candidatos que precisam de investigação nesta volta. */
+  pending: Candidate[];
+  /** Reaproveitados: mesmo arquivo, mesmo conteúdo. */
+  reused: string[];
+}
+
+/**
+ * Decide o que reinvestigar.
+ *
+ * Varredura de repositório real leva bastante tempo, e hoje uma interrupção
+ * jogava tudo fora. Aqui só volta ao modelo o que **mudou** — e o que foi
+ * reaproveitado é declarado, senão a segunda volta pareceria ter revisado o
+ * projeto inteiro de novo.
+ */
+export function planResume(
+  candidates: Candidate[],
+  files: Array<{ path: string; content: string }>,
+  progress: ReviewProgress
+): ResumePlan {
+  const porCaminho = new Map(files.map((file) => [file.path, file.content]));
+  const pending: Candidate[] = [];
+  const reused: string[] = [];
+  for (const candidate of candidates) {
+    const conteudo = porCaminho.get(candidate.path);
+    const anterior = progress[candidate.path];
+    if (conteudo !== undefined && anterior && anterior === fingerprint(conteudo)) {
+      reused.push(candidate.path);
+      continue;
+    }
+    pending.push(candidate);
+  }
+  return { pending, reused };
+}
+
 /* --------------------------- Investigação --------------------------- */
 
 /** Corta no limite de LINHA e avisa — cortar no meio de uma função esconde o bug. */
@@ -331,6 +386,8 @@ export interface DeepReviewOptions {
   concurrency?: number;
   /** Teto de candidatos investigados. */
   limit?: number;
+  /** O que já foi investigado numa volta anterior. */
+  progress?: ReviewProgress;
 }
 
 export interface DeepReviewResult {
@@ -339,7 +396,33 @@ export interface DeepReviewResult {
   investigated: number;
   /** Candidatos que ficaram fora do teto — dizer isso evita falsa sensação de cobertura. */
   skipped: number;
+  /** Arquivos pulados por não terem mudado desde a volta anterior. */
+  reused: number;
+  /** Progresso atualizado, para o chamador guardar e retomar depois. */
+  progress: ReviewProgress;
   cancelled: boolean;
+}
+
+/**
+ * Transforma um achado em objetivo para a equipe de agentes.
+ *
+ * O deepsec exporta os achados como instrução para um agente de código
+ * consumir. Aqui o destino é a aba Agent: o texto vira o pedido, e o
+ * orquestrador escala a equipe a partir dele.
+ */
+export function findingToGoal(finding: SecurityFinding): string {
+  return [
+    `Corrigir a falha de segurança: ${finding.title}`,
+    "",
+    `Arquivo: ${finding.file}${finding.line ? `:${finding.line}` : ""}`,
+    `Severidade: ${finding.severity}`,
+    `Detalhe: ${finding.detail}`,
+    finding.suggestion ? `Sugestão do revisor: ${finding.suggestion}` : "",
+    "",
+    "Confirme a falha no código antes de mudar qualquer coisa, e não altere comportamento além do necessário para fechá-la."
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export async function runDeepReview(options: DeepReviewOptions): Promise<DeepReviewResult> {
@@ -347,18 +430,24 @@ export async function runDeepReview(options: DeepReviewOptions): Promise<DeepRev
     matchers: options.matchers,
     limit: options.limit
   });
+  const { pending, reused } = planResume(candidates, options.files, options.progress ?? {});
   const porCaminho = new Map(options.files.map((file) => [file.path, file]));
   const confirmed: ReviewedFinding[] = [];
   const refuted: ReviewedFinding[] = [];
+  const progress: ReviewProgress = { ...(options.progress ?? {}) };
   let investigated = 0;
 
-  const tarefas = candidates.map((candidate) => async () => {
+  const tarefas = pending.map((candidate) => async () => {
     if (options.signal.aborted) return;
     const file = porCaminho.get(candidate.path);
     if (!file) return;
     options.hooks?.onStage?.(`investigando ${candidate.path}`);
     const bruto = await options.call(buildInvestigationPrompt(file, candidate.reasons), options.signal);
     investigated += 1;
+    // Marca ANTES de refutar: a investigação deste arquivo terminou, e é ela
+    // que não precisa se repetir. Marcar só no fim perderia o trabalho quando
+    // a interrupção cai no meio das refutações.
+    progress[candidate.path] = fingerprint(file.content);
     const achados = options.parse(bruto);
 
     for (const finding of achados) {
@@ -385,5 +474,13 @@ export async function runDeepReview(options: DeepReviewOptions): Promise<DeepRev
 
   const ordem: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
   confirmed.sort((a, b) => ordem[a.severity] - ordem[b.severity]);
-  return { confirmed, refuted, investigated, skipped, cancelled: options.signal.aborted };
+  return {
+    confirmed,
+    refuted,
+    investigated,
+    skipped,
+    reused: reused.length,
+    progress,
+    cancelled: options.signal.aborted
+  };
 }
