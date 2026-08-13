@@ -44,7 +44,15 @@ export type Trigger =
 export type Action =
   | { kind: "move_to"; lane: string }
   | { kind: "add_label"; label: string }
-  | { kind: "create_card"; lane: string; title: string };
+  | { kind: "create_card"; lane: string; title: string }
+  /**
+   * Efeito EXTERNO. `secretRef` é a chave no cofre do SO — a URL de webhook
+   * de Slack/Teams É a credencial, então ela nunca entra no documento do
+   * quadro (que vive em localStorage). Aqui fica só o ponteiro.
+   */
+  | { kind: "webhook"; secretRef: string; label: string; template?: string }
+  /** Ferramenta MCP no formato `mcp:<servidor>:<tool>`. */
+  | { kind: "mcp"; tool: string; args?: Record<string, unknown> };
 
 export interface Rule {
   id: string;
@@ -52,6 +60,17 @@ export interface Rule {
   enabled: boolean;
   trigger: Trigger;
   action: Action;
+  /**
+   * Ação externa espera aprovação humana antes de sair. Padrão do builder é
+   * `true`: um `card_overdue` disparado por timer não pode chamar serviço de
+   * fora sem ninguém no circuito.
+   */
+  requireApproval?: boolean;
+}
+
+/** Ações que saem do processo — precisam de gate e de contagem própria. */
+export function isExternal(action: Action): boolean {
+  return action.kind === "webhook" || action.kind === "mcp";
 }
 
 export type BoardEvent =
@@ -59,13 +78,39 @@ export type BoardEvent =
   | { kind: "card_created"; cardId: string }
   | { kind: "card_overdue"; cardId: string };
 
+/**
+ * Efeito externo PENDENTE. O motor é puro: ele descreve o que sairia, quem
+ * executa é `lib/workEffects.ts`. Sem isso, `automations.ts` teria de importar
+ * o cliente MCP — que puxa `agent`/`fsx`/`terminal` e o `invoke` do Tauri,
+ * matando a testabilidade em Node.
+ */
+export type Effect =
+  | { kind: "webhook"; ruleId: string; ruleName: string; secretRef: string; label: string; body: string }
+  | {
+      kind: "mcp";
+      ruleId: string;
+      ruleName: string;
+      server: string;
+      tool: string;
+      args: Record<string, unknown>;
+    };
+
 export interface RunResult {
   board: Board;
   log: string[];
+  /** Efeitos externos a drenar depois — nunca executados aqui. */
+  effects: Effect[];
 }
 
 /** Máximo de eventos DERIVADOS processados a partir do evento original. */
 export const MAX_CHAIN = 5;
+
+/**
+ * Teto de efeitos externos por evento. MAX_CHAIN não protege: efeitos têm
+ * `next: null`, então não entram na contagem de encadeamento — sem este teto,
+ * um quadro com muitas regras metralharia o endpoint de fora.
+ */
+export const MAX_EFFECTS = 8;
 
 /* ----------------------------- Utilidades --------------------------- */
 
@@ -202,10 +247,82 @@ function triggerMatches(trigger: Trigger, event: BoardEvent, board: Board): bool
   return true; // card_overdue: sem filtro adicional
 }
 
+/* ---------------------- Template do corpo externo -------------------- */
+
+export interface TemplateContext {
+  card: Card | null;
+  lane: string;
+  rule: string;
+  event: string;
+}
+
+/** Placeholders reconhecidos — qualquer outro fica literal, não estoura. */
+function templateValue(key: string, ctx: TemplateContext): string | null {
+  switch (key) {
+    case "card.id":
+      return ctx.card?.id ?? "";
+    case "card.title":
+      return ctx.card?.title ?? "";
+    case "card.detail":
+      return ctx.card?.detail ?? "";
+    case "card.labels":
+      return (ctx.card?.labels ?? []).join(", ");
+    case "card.due":
+      return ctx.card?.due ?? "";
+    case "lane":
+      return ctx.lane;
+    case "rule":
+      return ctx.rule;
+    case "event":
+      return ctx.event;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Renderiza o corpo do webhook. Sem template, monta um JSON default com o
+ * cartão inteiro. Placeholder desconhecido é mantido como veio — engolir em
+ * silêncio esconderia o erro de digitação de quem escreveu a regra.
+ */
+export function renderTemplate(template: string | undefined, ctx: TemplateContext): string {
+  if (!template || !template.trim()) {
+    return JSON.stringify({
+      rule: ctx.rule,
+      event: ctx.event,
+      lane: ctx.lane,
+      card: ctx.card
+        ? {
+            id: ctx.card.id,
+            title: ctx.card.title,
+            detail: ctx.card.detail,
+            labels: ctx.card.labels,
+            due: ctx.card.due
+          }
+        : null
+    });
+  }
+  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (whole, key: string) => {
+    const value = templateValue(key, ctx);
+    return value === null ? whole : value;
+  });
+}
+
+/** `mcp:jira:create_issue` → `{server:"jira", tool:"create_issue"}`. */
+export function parseMcpTool(name: string): { server: string; tool: string } | null {
+  const parts = name.split(":");
+  if (parts.length !== 3 || parts[0] !== "mcp") return null;
+  const [, server, tool] = parts;
+  if (!server.trim() || !tool.trim()) return null;
+  return { server: server.trim(), tool: tool.trim() };
+}
+
 interface Applied {
   board: Board;
   line: string;
   next: BoardEvent | null;
+  /** Presente só nas ações externas; o board volta intacto nesse caso. */
+  effect?: Effect;
 }
 
 function applyAction(board: Board, rule: Rule, event: BoardEvent, newId: () => string): Applied | null {
@@ -230,12 +347,59 @@ function applyAction(board: Board, rule: Rule, event: BoardEvent, newId: () => s
       next: null
     };
   }
-  // create_card
-  const card = makeCard(action.title, undefined, newId);
+  if (action.kind === "create_card") {
+    const card = makeCard(action.title, undefined, newId);
+    return {
+      board: addCard(board, action.lane, card),
+      line: `regra "${rule.name}": criou "${action.title}" em "${action.lane}"`,
+      next: { kind: "card_created", cardId: card.id }
+    };
+  }
+
+  // A partir daqui é efeito EXTERNO: o quadro sai INTACTO (mesma referência).
+  const hit = findCard(board, event.cardId);
+  const ctx: TemplateContext = {
+    card: hit?.card ?? null,
+    lane: hit?.lane.name ?? "",
+    rule: rule.name,
+    event: event.kind
+  };
+  if (action.kind === "webhook") {
+    return {
+      board,
+      line: `regra "${rule.name}": webhook "${action.label}" enfileirado`,
+      next: null,
+      effect: {
+        kind: "webhook",
+        ruleId: rule.id,
+        ruleName: rule.name,
+        secretRef: action.secretRef,
+        label: action.label,
+        body: renderTemplate(action.template, ctx)
+      }
+    };
+  }
+  // action.kind === "mcp"
+  const target = parseMcpTool(action.tool);
+  if (!target) {
+    return {
+      board,
+      line: `regra "${rule.name}": ferramenta "${action.tool}" fora do formato mcp:<servidor>:<tool> — ignorada`,
+      next: null
+    };
+  }
   return {
-    board: addCard(board, action.lane, card),
-    line: `regra "${rule.name}": criou "${action.title}" em "${action.lane}"`,
-    next: { kind: "card_created", cardId: card.id }
+    board,
+    line: `regra "${rule.name}": ${action.tool} enfileirado`,
+    next: null,
+    effect: {
+      kind: "mcp",
+      ruleId: rule.id,
+      ruleName: rule.name,
+      server: target.server,
+      tool: target.tool,
+      args: action.args ?? { cardId: event.cardId, cardTitle: ctx.card?.title ?? "", lane: ctx.lane }
+    }
   };
 }
 
@@ -252,7 +416,9 @@ export function runRules(
 ): RunResult {
   const newId = opts?.newId ?? newCardId;
   const log: string[] = [];
+  const effects: Effect[] = [];
   let current = board;
+  let dropped = 0;
   const queue: Array<{ event: BoardEvent; depth: number }> = [{ event, depth: 0 }];
 
   while (queue.length) {
@@ -265,6 +431,10 @@ export function runRules(
       if (!applied) continue;
       current = applied.board;
       log.push(applied.line);
+      if (applied.effect) {
+        if (effects.length < MAX_EFFECTS) effects.push(applied.effect);
+        else dropped += 1;
+      }
       if (!applied.next) continue;
       if (item.depth + 1 > MAX_CHAIN) {
         log.push(`anti-loop: cadeia interrompida após ${MAX_CHAIN} encadeamentos (regra "${rule.name}")`);
@@ -273,7 +443,10 @@ export function runRules(
       }
     }
   }
-  return { board: current, log };
+  if (dropped) {
+    log.push(`limite de efeitos: ${dropped} ação(ões) externa(s) descartada(s) acima de ${MAX_EFFECTS} por evento`);
+  }
+  return { board: current, log, effects };
 }
 
 /* -------------------- Descrições legíveis das regras ----------------- */
@@ -299,6 +472,11 @@ export function describeAction(action: Action): string {
       return `adicionar etiqueta "${action.label}"`;
     case "create_card":
       return `criar cartão "${action.title}" em "${action.lane}"`;
+    case "webhook":
+      // Nunca a URL: ela é a credencial. Só o rótulo escolhido pelo admin.
+      return `chamar webhook "${action.label}"`;
+    case "mcp":
+      return `chamar ferramenta ${action.tool}`;
   }
 }
 
@@ -331,6 +509,12 @@ function parseTriggerText(text: string): Trigger | null {
   return null;
 }
 
+/**
+ * Ações EXTERNAS são deliberadamente ausentes daqui: este parser alimenta a op
+ * `add_automation`, que nasce de texto do modelo. Deixar o chat criar uma regra
+ * que chama serviço de fora seria injeção de prompt com efeito real — webhook e
+ * MCP só existem pelo builder da UI, onde o admin escolhe o segredo.
+ */
 function parseActionText(text: string): Action | null {
   const lower = text.toLowerCase();
   if (/mover|move/.test(lower)) {

@@ -8,9 +8,13 @@ import {
   exportBoardMarkdown,
   findCard,
   findCardByTitle,
+  isExternal,
   isOverdue,
   makeCard,
   MAX_CHAIN,
+  MAX_EFFECTS,
+  parseMcpTool,
+  renderTemplate,
   moveCard,
   parseBoardMarkdown,
   removeCard,
@@ -376,5 +380,150 @@ describe("exportBoardMarkdown / parseBoardMarkdown", () => {
     expect(card.due).toBeNull();
     expect(card.labels).toEqual(["a", "b"]);
     expect(card.detail).toBe("ok");
+  });
+});
+
+/* --------------------- Ações com efeito EXTERNO ---------------------- */
+
+describe("ações externas (webhook / mcp)", () => {
+  const contaCartoes = (board: Board) => board.lanes.reduce((total, lane) => total + lane.cards.length, 0);
+
+  it("webhook não toca no quadro e devolve o efeito", () => {
+    const { board, cardId } = boardWith("Pagar fornecedor");
+    const rules = [
+      rule({
+        trigger: { kind: "card_created" },
+        action: { kind: "webhook", secretRef: "wh.teams", label: "Teams · TI" }
+      })
+    ];
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    // identidade referencial: o quadro sai literalmente o mesmo objeto
+    expect(result.board).toBe(board);
+    expect(result.effects).toHaveLength(1);
+    const effect = result.effects[0];
+    expect(effect.kind).toBe("webhook");
+    if (effect.kind !== "webhook") throw new Error("efeito errado");
+    expect(effect.secretRef).toBe("wh.teams");
+    expect(JSON.parse(effect.body).card.title).toBe("Pagar fornecedor");
+    expect(result.log[0]).toContain("webhook");
+  });
+
+  /**
+   * Regressão direta: `create_card` era o FALLBACK do if-chain, então
+   * qualquer kind novo criava cartão em silêncio.
+   */
+  it("regra de webhook NÃO cria cartão", () => {
+    const { board, cardId } = boardWith("X");
+    const antes = contaCartoes(board);
+    const rules = [
+      rule({
+        trigger: { kind: "card_created" },
+        action: { kind: "webhook", secretRef: "wh.a", label: "A" }
+      })
+    ];
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    expect(contaCartoes(result.board)).toBe(antes);
+  });
+
+  it("regra de MCP também não cria cartão e resolve servidor/tool", () => {
+    const { board, cardId } = boardWith("Abrir chamado");
+    const antes = contaCartoes(board);
+    const rules = [
+      rule({ trigger: { kind: "card_created" }, action: { kind: "mcp", tool: "mcp:jira:create_issue" } })
+    ];
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    expect(contaCartoes(result.board)).toBe(antes);
+    const effect = result.effects[0];
+    if (effect.kind !== "mcp") throw new Error("efeito errado");
+    expect(effect.server).toBe("jira");
+    expect(effect.tool).toBe("create_issue");
+    expect(effect.args).toMatchObject({ cardId, cardTitle: "Abrir chamado" });
+  });
+
+  it("nome de ferramenta fora do formato vira log, não efeito", () => {
+    const { board, cardId } = boardWith("Y");
+    const rules = [rule({ trigger: { kind: "card_created" }, action: { kind: "mcp", tool: "jira.create" } })];
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    expect(result.effects).toHaveLength(0);
+    expect(result.log[0]).toContain("mcp:<servidor>:<tool>");
+  });
+
+  it("efeito não realimenta a fila — não encadeia nem gasta MAX_CHAIN", () => {
+    const { board, cardId } = boardWith("Z");
+    const rules = [
+      rule({
+        id: "r1",
+        trigger: { kind: "card_created" },
+        action: { kind: "webhook", secretRef: "wh.a", label: "A" }
+      })
+    ];
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    expect(result.effects).toHaveLength(1);
+    expect(result.log.some((line) => line.includes("anti-loop"))).toBe(false);
+  });
+
+  it("MAX_EFFECTS corta a lista e registra o corte", () => {
+    const { board, cardId } = boardWith("W");
+    const rules = Array.from({ length: MAX_EFFECTS + 3 }, (_, i) =>
+      rule({
+        id: `r${i}`,
+        name: `regra ${i}`,
+        trigger: { kind: "card_created" },
+        action: { kind: "webhook", secretRef: `wh.${i}`, label: `W${i}` }
+      })
+    );
+    const result = runRules(board, { kind: "card_created", cardId }, rules);
+    expect(result.effects).toHaveLength(MAX_EFFECTS);
+    expect(result.log.at(-1)).toContain("limite de efeitos");
+  });
+
+  it("describeAction nunca revela a URL — só o rótulo", () => {
+    const texto = describeAction({ kind: "webhook", secretRef: "wh.teams", label: "Teams · TI" });
+    expect(texto).toContain("Teams · TI");
+    expect(texto).not.toContain("wh.teams");
+  });
+
+  it("o chat (add_automation) não consegue criar ação externa", () => {
+    const criada = ruleFromTexts("r", "cartão criado", "chamar webhook https://hooks.slack.com/x", idGen());
+    // ou não reconhece, ou cai numa ação interna — nunca em webhook/mcp
+    expect(criada === null || !isExternal(criada.action)).toBe(true);
+  });
+});
+
+describe("renderTemplate", () => {
+  const card = makeCard("Revisar contrato", { createdAt: 0, labels: ["urgente", "jurídico"], due: "2026-08-20" }, () => "c9");
+  const ctx = { card, lane: "A fazer", rule: "SLA", event: "card_overdue" };
+
+  it("substitui os placeholders conhecidos", () => {
+    const out = renderTemplate("{{rule}} | {{card.title}} | {{lane}} | {{card.due}} | {{card.labels}}", ctx);
+    expect(out).toBe("SLA | Revisar contrato | A fazer | 2026-08-20 | urgente, jurídico");
+  });
+
+  it("sem template devolve o JSON default com o cartão", () => {
+    const parsed = JSON.parse(renderTemplate(undefined, ctx));
+    expect(parsed.rule).toBe("SLA");
+    expect(parsed.event).toBe("card_overdue");
+    expect(parsed.card.title).toBe("Revisar contrato");
+  });
+
+  it("placeholder desconhecido fica literal em vez de virar vazio", () => {
+    expect(renderTemplate("{{nao.existe}}", ctx)).toBe("{{nao.existe}}");
+  });
+
+  it("evento sem cartão não estoura", () => {
+    const out = renderTemplate("{{card.title}}/{{lane}}", { card: null, lane: "", rule: "r", event: "e" });
+    expect(out).toBe("/");
+  });
+});
+
+describe("parseMcpTool", () => {
+  it("aceita o formato completo", () => {
+    expect(parseMcpTool("mcp:jira:create_issue")).toEqual({ server: "jira", tool: "create_issue" });
+  });
+
+  it("recusa formatos incompletos", () => {
+    for (const bad of ["jira:create", "mcp:jira", "mcp::create", "mcp:jira:", "mcp:a:b:c"]) {
+      expect(parseMcpTool(bad)).toBeNull();
+    }
   });
 });
