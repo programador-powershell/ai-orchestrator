@@ -6,6 +6,7 @@ use crate::{
         OrchestrationNodeKind, OrchestrationPlan, RouteConfig,
     },
     state::AppState,
+    usage::{SseUsageScanner, TokenUsage},
 };
 use axum::{
     extract::{Path, State},
@@ -13,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use axum::body::Body;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -20,6 +22,7 @@ use sqlx::Row;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -585,6 +588,16 @@ async fn route(
         .map_err(|e| ApiError::Internal(e.into()))
 }
 
+/// Ids internos dos grupos do usuário, para congelar no evento.
+/// Falha de consulta não pode derrubar a chamada: sem grupo, o evento ainda
+/// vale por usuário e por modelo.
+async fn group_uuids(state: &AppState, workspace: Uuid, token_groups: &[String]) -> Vec<Uuid> {
+    crate::policy::match_groups(state, workspace, token_groups)
+        .await
+        .unwrap_or_default()
+}
+
+#[derive(Clone)]
 struct UsageRecord {
     workspace: Uuid,
     user: Uuid,
@@ -593,11 +606,73 @@ struct UsageRecord {
     capability: String,
     model: String,
     latency_ms: i32,
+    /// Grupos do usuário NO MOMENTO da chamada — congelados de propósito para
+    /// o relatório de um mês fechado não mudar quando alguém troca de área.
+    group_ids: Vec<Uuid>,
 }
 
-async fn log_usage(state: AppState, usage: UsageRecord) {
-    let _ = sqlx::query("INSERT INTO usage_events(workspace_id,user_id,provider_id,mode,capability,model,status_code,latency_ms) VALUES($1,$2,$3,$4,$5,$6,200,$7)")
-        .bind(usage.workspace).bind(usage.user).bind(usage.provider).bind(usage.mode.as_str()).bind(usage.capability).bind(usage.model).bind(usage.latency_ms).execute(&state.pool).await;
+async fn log_usage(state: AppState, usage: UsageRecord, tokens: TokenUsage) {
+    let _ = sqlx::query(
+        "INSERT INTO usage_events(workspace_id,user_id,provider_id,mode,capability,model,\
+         status_code,latency_ms,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,group_ids) \
+         VALUES($1,$2,$3,$4,$5,$6,200,$7,$8,$9,$10,$11,$12)",
+    )
+    .bind(usage.workspace)
+    .bind(usage.user)
+    .bind(usage.provider)
+    .bind(usage.mode.as_str())
+    .bind(usage.capability)
+    .bind(usage.model)
+    .bind(usage.latency_ms)
+    // NULL quando o provedor não informou: 0 seria lido como "não consumiu".
+    .bind((!tokens.is_empty()).then_some(tokens.input))
+    .bind((!tokens.is_empty()).then_some(tokens.output))
+    .bind((!tokens.is_empty()).then_some(tokens.cache_read))
+    .bind((!tokens.is_empty()).then_some(tokens.cache_write))
+    .bind(&usage.group_ids[..])
+    .execute(&state.pool)
+    .await;
+}
+
+/// Envolve a resposta para CONTAR os tokens sem atrapalhar o repasse.
+///
+/// O caminho OpenAI faz passthrough do corpo — o gateway nunca desserializa a
+/// resposta. Em vez de bufferizar tudo (que quebraria o streaming e a
+/// percepção de velocidade), os pedaços são inspecionados de passagem e a
+/// gravação acontece quando o corpo termina, no `Drop` do tap.
+fn tap_usage(response: Response, state: AppState, record: UsageRecord, kind: String) -> Response {
+    struct Tap {
+        state: AppState,
+        record: UsageRecord,
+        kind: String,
+        scanner: SseUsageScanner,
+    }
+    impl Drop for Tap {
+        fn drop(&mut self) {
+            let tokens = self.scanner.finish(&self.kind);
+            // O evento é gravado mesmo sem contagem: modo, modelo e latência
+            // continuam valendo, e a ausência de token fica visível como NULL.
+            tokio::spawn(log_usage(self.state.clone(), self.record.clone(), tokens));
+        }
+    }
+
+    let (parts, body) = response.into_parts();
+    let tap = Arc::new(Mutex::new(Tap {
+        state,
+        record,
+        kind: kind.clone(),
+        scanner: SseUsageScanner::new(),
+    }));
+    let stream = body.into_data_stream().map(move |chunk| {
+        if let Ok(bytes) = &chunk {
+            if let Ok(mut guard) = tap.lock() {
+                let kind = guard.kind.clone();
+                guard.scanner.push(bytes, &kind);
+            }
+        }
+        chunk
+    });
+    Response::from_parts(parts, Body::from_stream(stream))
 }
 
 pub async fn chat(
@@ -631,23 +706,22 @@ pub async fn chat(
             )
             .await
         {
-            Ok((provider, response)) => {
+            Ok((provider, kind, response)) => {
                 if index > 0 {
                     state.metrics.fallback();
                 }
-                tokio::spawn(log_usage(
-                    state.clone(),
-                    UsageRecord {
-                        workspace,
-                        user,
-                        provider,
-                        mode: request.mode.clone(),
-                        capability: "chat".into(),
-                        model: target.model.clone(),
-                        latency_ms: started.elapsed().as_millis() as i32,
-                    },
-                ));
-                return Ok(response);
+                let record = UsageRecord {
+                    workspace,
+                    user,
+                    provider,
+                    mode: request.mode.clone(),
+                    capability: "chat".into(),
+                    model: target.model.clone(),
+                    latency_ms: started.elapsed().as_millis() as i32,
+                    group_ids: group_uuids(&state, workspace, &caller.groups).await,
+                };
+                // A gravação sai no fim do corpo, com os tokens em mãos.
+                return Ok(tap_usage(response, state.clone(), record, kind));
             }
             Err(error) => {
                 state.metrics.provider_failure();
@@ -696,23 +770,21 @@ async fn generic(
             )
             .await
         {
-            Ok((provider, response)) => {
+            Ok((provider, kind, response)) => {
                 if index > 0 {
                     state.metrics.fallback();
                 }
-                tokio::spawn(log_usage(
-                    state.clone(),
-                    UsageRecord {
-                        workspace,
-                        user,
-                        provider,
-                        mode: request.mode.clone(),
-                        capability: capability.as_str().into(),
-                        model: target.model.clone(),
-                        latency_ms: 0,
-                    },
-                ));
-                return Ok(response);
+                let record = UsageRecord {
+                    workspace,
+                    user,
+                    provider,
+                    mode: request.mode.clone(),
+                    capability: capability.as_str().into(),
+                    model: target.model.clone(),
+                    latency_ms: 0,
+                    group_ids: group_uuids(&state, workspace, &caller.groups).await,
+                };
+                return Ok(tap_usage(response, state.clone(), record, kind));
             }
             Err(_) => state.metrics.provider_failure(),
         }

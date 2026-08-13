@@ -2,6 +2,7 @@ use crate::{
     crypto::SecretBox,
     error::ApiError,
     models::{ChatRequest, ModelTarget},
+    usage::{from_anthropic, from_gemini, TokenUsage},
 };
 use axum::{
     body::Body,
@@ -70,7 +71,7 @@ impl ProviderClient {
         timeout_ms: u64,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let provider = self.provider(workspace_id, target.provider_id).await?;
         if provider.kind == "anthropic" {
             return self
@@ -115,7 +116,7 @@ impl ProviderClient {
         timeout_ms: u64,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -133,6 +134,12 @@ impl ProviderClient {
             ));
         }
         let mut body = json!({ "model": target.model, "messages": request.messages, "stream": request.stream });
+        if request.stream {
+            // Sem isto a OpenAI NÃO manda o bloco `usage` em streaming — e,
+            // como o chat real é streaming, a relatoria de custo ficaria vazia
+            // justamente no caminho que mais consome.
+            body["stream_options"] = json!({ "include_usage": true });
+        }
         if let Some(value) = temperature {
             body["temperature"] = json!(value);
         }
@@ -165,7 +172,7 @@ impl ProviderClient {
             .header(header::CACHE_CONTROL, "no-cache")
             .body(Body::from_stream(stream))
             .map_err(|e| ApiError::Internal(e.into()))?;
-        Ok((provider.id, response))
+        Ok((provider.id, provider.kind, response))
     }
 
     async fn anthropic(
@@ -176,7 +183,7 @@ impl ProviderClient {
         timeout_ms: u64,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -218,7 +225,12 @@ impl ProviderClient {
             .and_then(|v| v.get("text"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        Ok((provider.id, normalized_response(text, request.stream)?))
+        let usage = from_anthropic(&value);
+        Ok((
+            provider.id,
+            provider.kind.clone(),
+            normalized_response(text, request.stream, &usage)?,
+        ))
     }
 
     async fn gemini(
@@ -229,7 +241,7 @@ impl ProviderClient {
         timeout_ms: u64,
         temperature: Option<f32>,
         max_tokens: Option<u32>,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -263,7 +275,12 @@ impl ProviderClient {
             .pointer("/candidates/0/content/parts/0/text")
             .and_then(Value::as_str)
             .unwrap_or("");
-        Ok((provider.id, normalized_response(text, request.stream)?))
+        let usage = from_gemini(&value);
+        Ok((
+            provider.id,
+            provider.kind.clone(),
+            normalized_response(text, request.stream, &usage)?,
+        ))
     }
 
     pub async fn generic(
@@ -273,7 +290,7 @@ impl ProviderClient {
         capability: &str,
         payload: Value,
         timeout_ms: u64,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let provider = self.provider(workspace_id, target.provider_id).await?;
         if capability == "embedding" && matches!(provider.kind.as_str(), "gemini" | "imagen") {
             return self
@@ -326,7 +343,7 @@ impl ProviderClient {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from_stream(stream))
             .map_err(|e| ApiError::Internal(e.into()))?;
-        Ok((provider.id, response))
+        Ok((provider.id, provider.kind, response))
     }
 
     async fn gemini_embedding(
@@ -335,7 +352,7 @@ impl ProviderClient {
         target: &ModelTarget,
         payload: Value,
         timeout_ms: u64,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -368,6 +385,7 @@ impl ProviderClient {
             .unwrap_or_else(|| json!([]));
         Ok((
             provider.id,
+            provider.kind.clone(),
             json_response(
                 json!({"object":"list","model":target.model,"data":[{"object":"embedding","index":0,"embedding":embedding}]}),
             )?,
@@ -380,7 +398,7 @@ impl ProviderClient {
         target: &ModelTarget,
         payload: Value,
         timeout_ms: u64,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -406,6 +424,7 @@ impl ProviderClient {
             .map(|item| json!({"b64_json":item.get("bytesBase64Encoded").and_then(Value::as_str).unwrap_or("")})).collect::<Vec<_>>();
         Ok((
             provider.id,
+            provider.kind.clone(),
             json_response(json!({"created":chrono::Utc::now().timestamp(),"data":data}))?,
         ))
     }
@@ -416,7 +435,7 @@ impl ProviderClient {
         target: &ModelTarget,
         payload: Value,
         timeout_ms: u64,
-    ) -> Result<(Uuid, Response), ApiError> {
+    ) -> Result<(Uuid, String, Response), ApiError> {
         let base = provider
             .base_url
             .clone()
@@ -461,6 +480,7 @@ impl ProviderClient {
                         .ok_or(ApiError::ProvidersUnavailable)?;
                     return Ok((
                         provider.id,
+                        provider.kind.clone(),
                         json_response(
                             json!({"created":chrono::Utc::now().timestamp(),"data":[{"url":url}]}),
                         )?,
@@ -474,13 +494,36 @@ impl ProviderClient {
     }
 }
 
-fn normalized_response(text: &str, stream: bool) -> Result<Response, ApiError> {
-    let value = json!({"id":format!("chatcmpl-{}",Uuid::new_v4()),"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":text},"finish_reason":"stop"}]});
+/// Converte a resposta do provedor para a forma OpenAI que o cliente espera.
+///
+/// A contagem entra no corpo TRADUZIDA para o formato OpenAI: o corpo inteiro
+/// já é OpenAI-shaped, então manter o formato nativo aqui obrigaria o cliente
+/// a saber de qual provedor veio. De quebra, isso dá ao desktop a contagem por
+/// mensagem que antes não existia em nenhum dos caminhos.
+fn normalized_response(text: &str, stream: bool, usage: &TokenUsage) -> Result<Response, ApiError> {
+    let usage_value = (!usage.is_empty()).then(|| {
+        json!({
+            "prompt_tokens": usage.input,
+            "completion_tokens": usage.output,
+            "total_tokens": usage.input + usage.output,
+            "prompt_tokens_details": { "cached_tokens": usage.cache_read }
+        })
+    });
+    let mut value = json!({"id":format!("chatcmpl-{}",Uuid::new_v4()),"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":text},"finish_reason":"stop"}]});
+    if let Some(block) = usage_value.clone() {
+        value["usage"] = block;
+    }
     let (content_type, body) = if stream {
         let chunk = json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]});
+        // O usage vai num chunk PRÓPRIO no fim, como a OpenAI faz — assim o
+        // mesmo leitor serve para os dois caminhos.
+        let tail = match usage_value {
+            Some(block) => format!("data: {}\n\n", json!({"choices":[],"usage":block})),
+            None => String::new(),
+        };
         (
             "text/event-stream",
-            format!("data: {chunk}\n\ndata: [DONE]\n\n"),
+            format!("data: {chunk}\n\n{tail}data: [DONE]\n\n"),
         )
     } else {
         ("application/json", value.to_string())
@@ -531,5 +574,64 @@ mod tests {
         assert_eq!(message_text(&json!(null)), "");
         assert_eq!(message_text(&json!({"foo": 1})), "");
         assert_eq!(message_text(&json!([{"type": "image_url"}])), "");
+    }
+}
+
+#[cfg(test)]
+mod normalized_tests {
+    use super::*;
+
+    async fn corpo(response: Response) -> String {
+        // O corpo aqui é sempre `Body::from(String)`, então cabe em memória.
+        {
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .expect("corpo");
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+    }
+
+    /// O `usage` de Anthropic/Gemini era descartado ao normalizar a resposta:
+    /// o corpo saía OpenAI-shaped e sem contagem nenhuma.
+    #[tokio::test]
+    async fn json_normalizado_carrega_a_contagem_em_formato_openai() {
+        let usage = TokenUsage { input: 30, output: 12, cache_read: 5, cache_write: 0 };
+        let texto = corpo(normalized_response("oi", false, &usage).unwrap()).await;
+        let value: Value = serde_json::from_str(&texto).unwrap();
+        assert_eq!(value["usage"]["prompt_tokens"], 30);
+        assert_eq!(value["usage"]["completion_tokens"], 12);
+        assert_eq!(value["usage"]["total_tokens"], 42);
+        assert_eq!(value["usage"]["prompt_tokens_details"]["cached_tokens"], 5);
+    }
+
+    /// Em streaming o usage sai num chunk próprio, como a OpenAI faz — assim o
+    /// mesmo leitor serve para o passthrough e para o caminho normalizado.
+    #[tokio::test]
+    async fn stream_normalizado_emite_chunk_de_usage_antes_do_done() {
+        let usage = TokenUsage { input: 7, output: 3, cache_read: 0, cache_write: 0 };
+        let texto = corpo(normalized_response("oi", true, &usage).unwrap()).await;
+        assert!(texto.contains("\"usage\""), "sem chunk de usage: {texto}");
+        let pos_usage = texto.find("\"usage\"").unwrap();
+        let pos_done = texto.find("[DONE]").unwrap();
+        assert!(pos_usage < pos_done, "usage tem de vir antes do [DONE]");
+        // e o scanner do gateway consegue lê-lo de volta
+        let mut scanner = crate::usage::SseUsageScanner::new();
+        scanner.push(texto.as_bytes(), "openai");
+        assert_eq!(scanner.finish("openai").input, 7);
+    }
+
+    /// Provedor que não informou contagem NÃO pode gerar `usage: 0`.
+    #[tokio::test]
+    async fn sem_contagem_o_corpo_sai_sem_bloco_usage() {
+        let texto = corpo(normalized_response("oi", false, &TokenUsage::default()).unwrap()).await;
+        let value: Value = serde_json::from_str(&texto).unwrap();
+        assert!(value.get("usage").is_none(), "não deveria ter usage: {texto}");
+    }
+
+    #[tokio::test]
+    async fn stream_sem_contagem_nao_inventa_chunk() {
+        let texto = corpo(normalized_response("oi", true, &TokenUsage::default()).unwrap()).await;
+        assert!(!texto.contains("\"usage\""));
+        assert!(texto.contains("[DONE]"));
     }
 }
