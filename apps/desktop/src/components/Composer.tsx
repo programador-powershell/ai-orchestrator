@@ -42,6 +42,10 @@ import { McpHttpClient, mcpToolsToSpecs, parseNamespaced } from "../lib/mcp";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
 import { vectorScores } from "../lib/memoryVectors";
 import { embedTexts } from "../lib/gateway";
+import { assembleContext, type Injection } from "../lib/contextAssembly";
+import { pluginPrompt } from "../lib/plugins";
+import { usePlugins } from "../lib/pluginStore";
+import { useTrajectory } from "../lib/trajectoryStore";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
@@ -72,6 +76,13 @@ export function Composer() {
   const researchMode = useApp((state) => state.researchMode);
   const setResearchMode = useApp((state) => state.setResearchMode);
   const policy = useApp((state) => state.policy);
+  // Plugins e trilha: o registro já vem montado (global → usuário) e o modo do
+  // harness decide o que da coleta entra no prompt.
+  const registry = usePlugins((state) => state.registry);
+  const harnessMode = useTrajectory((state) => state.harnessMode);
+  const startTrajectory = useTrajectory((state) => state.begin);
+  const publishTrajectory = useTrajectory((state) => state.publish);
+  const userPluginsAllowed = policy?.userPluginsAllowed ?? false;
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const settings = useApp((state) => state.settings);
   const updateSettings = useApp((state) => state.updateSettings);
@@ -157,6 +168,17 @@ export function Composer() {
     baseOverrides: settings.providerBaseOverrides
   };
 
+  /**
+   * Monta o contexto do pedido.
+   *
+   * As fontes são COLETADAS aqui e montadas num lugar só (`assembleContext`),
+   * que aplica o modo do harness e registra cada injeção na trilha. Antes elas
+   * eram empurradas direto no array e nada ficava registrado: quando a resposta
+   * saía errada, não havia como saber qual das oito causou.
+   *
+   * O prompt master e a diretiva de esforço ficam FORA da coleta: são política
+   * do admin, e nenhum modo os remove.
+   */
   async function buildSystemMessages(question: string): Promise<ChatMessage[]> {
     // Prompt master do SERVIDOR primeiro; o local complementa se permitido.
     // O teto de esforco do grupo limita a diretiva, nao so o slider.
@@ -164,12 +186,13 @@ export function Composer() {
       ...promptMasterMessages(policy, settings.localPrompt ?? ""),
       { role: "system", content: effortDirective(clampEffort(settings.effort, policy)) }
     ];
+    const candidatos: Injection[] = [];
     // Contrato de marca na aba Design. Sem ele em CADA pedido, o modelo
     // respeita a identidade no primeiro prompt e a esquece no terceiro,
     // quando o contexto encheu — mesma razão do prompt master.
     if (mode === "design") {
       const contrato = designContract(parseSystem(window.localStorage.getItem(DESIGN_SYSTEM_KEY)) ?? emptySystem());
-      if (contrato) system.push({ role: "system", content: contrato });
+      if (contrato) candidatos.push({ source: "design-contract", content: contrato });
     }
     if (settings.memoryEnabled) {
       try {
@@ -189,32 +212,42 @@ export function Composer() {
         }
         const hits = await memory.recall(question, settings.memoryRecallK, vectors ?? undefined);
         const preamble = memoryPreamble(hits);
-        if (preamble) system.push({ role: "system", content: preamble });
+        if (preamble) candidatos.push({ source: "memory", content: preamble });
       } catch {
         // memória indisponível não bloqueia a conversa
       }
     }
     const channel = opsChannelForMode[mode];
-    if (channel) system.push({ role: "system", content: opsInstruction(channel, opsCatalogs[channel]) });
+    if (channel) candidatos.push({ source: "ops-catalog", content: opsInstruction(channel, opsCatalogs[channel]) });
     // Office: o chat sabe QUAL arquivo está aberto, a estrutura e a seleção —
     // "aumente essa tabela em 10%" deixa de ser pergunta abstrata.
     if (mode === "office") {
       const officeContext = officeContextMessage();
-      if (officeContext) system.push({ role: "system", content: officeContext });
+      if (officeContext) candidatos.push({ source: "office-context", content: officeContext });
     }
     // Code/Agent: stack detectada e resultado do último build. Sem isso o
     // modelo sugere `npm run build` num projeto Go.
     if (mode === "code" || mode === "agent") {
       const shipContext = shipContextMessage();
-      if (shipContext) system.push({ role: "system", content: shipContext });
+      if (shipContext) candidatos.push({ source: "ship-context", content: shipContext });
     }
+    // Plugins ativos — globais do admin primeiro, depois os do usuário.
+    const doPlugin = pluginPrompt(registry, { mode, userPluginsAllowed });
+    if (doPlugin) candidatos.push({ source: "plugins", content: doPlugin });
     // Regras do projeto (AGENTS.md, CLAUDE.md, .cursorrules) — entram por
     // ÚLTIMO de propósito: a convenção do repositório manda sobre as
     // preferências gerais quando as duas dizem coisas diferentes.
     const rulesRoot = window.localStorage.getItem("code.root") ?? ".";
     const rules = await loadProjectRules(rulesRoot, fsRead).catch(() => null);
-    if (rules) system.push(rulesSystemMessage(rules));
-    return system;
+    if (rules) candidatos.push({ source: "project-rules", content: rulesSystemMessage(rules).content });
+
+    const montado = assembleContext(candidatos, {
+      mode: harnessMode,
+      trajectory: startTrajectory(mode),
+      now: Date.now()
+    });
+    publishTrajectory(montado.trajectory, montado.skipped);
+    return [...system, ...montado.messages];
   }
 
   /**

@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { BootstrapResponse } from "@ai-orchestrator/contracts";
 import { useApp } from "./store";
+import { usePlugins } from "./pluginStore";
 
 const isTauriHost = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -16,6 +17,23 @@ function apply(body: BootstrapResponse & { verified?: boolean }): void {
     policy: body.policy,
     profile: body.profile,
     policyVerified: Boolean(body.verified)
+  });
+  rebuildPlugins(body.policy);
+}
+
+/**
+ * Remonta o registro de plugins a cada política nova.
+ *
+ * Sem isto, mudar o plugin global no console do admin só valeria depois de
+ * reiniciar o app — e o admin ficaria sem saber se a mudança pegou. Também é
+ * aqui que o interruptor de plugin de usuário passa a valer na hora.
+ */
+function rebuildPlugins(policy: BootstrapResponse["policy"]): void {
+  usePlugins.getState().rebuild({
+    global: policy.agentPlugins ?? [],
+    userPluginsAllowed: policy.userPluginsAllowed ?? false,
+    // Capacidades que um plugin pode exigir em `inject`.
+    capabilities: ["http", "mcp", "prompt"]
   });
 }
 

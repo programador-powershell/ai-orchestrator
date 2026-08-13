@@ -402,6 +402,16 @@ export interface BootstrapPolicy {
    * modelo do módulo.
    */
   agentRoleModels: Record<string, string>;
+  /**
+   * Plugins GLOBAIS do grupo (manifesto declarativo — ver `lib/plugins.ts`).
+   * Valem para todo mundo do grupo e o usuário não os remove.
+   */
+  agentPlugins: unknown[];
+  /**
+   * Deixa a pessoa criar plugin próprio, válido só no agente dela.
+   * Fechado por padrão: é ampliação do que a IA alcança.
+   */
+  userPluginsAllowed: boolean;
   /** Área isolada com execução de código na estação — ver ADR do computer use. */
   computerUseAllowed: boolean;
   /**

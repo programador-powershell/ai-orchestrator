@@ -49,6 +49,17 @@ pub struct GroupPolicyDoc {
     /// devolveria ao usuário a escolha de gastar — que é justamente o que a
     /// política do grupo existe para decidir.
     pub agent_role_models: Option<BTreeMap<String, String>>,
+    /// Plugins GLOBAIS do grupo, como manifesto declarativo (ver lib/plugins.ts).
+    ///
+    /// Eles valem para todo mundo do grupo. Ficam aqui, e não no cliente,
+    /// porque uma ferramenta que aponta para um endpoint interno é decisão de
+    /// arquitetura da empresa, não preferência de estação.
+    pub agent_plugins: Option<Vec<Value>>,
+    /// Deixa a pessoa criar plugin próprio para o agente DELA.
+    ///
+    /// Fechado por padrão, como todo o resto que amplia o que a IA alcança: o
+    /// admin abre quando decidir que abre.
+    pub user_plugins_allowed: Option<bool>,
     /// Área de trabalho isolada (escrever e EXECUTAR código na estação).
     /// Ver docs/adr-computer-use.md — não reduz privilégio.
     pub computer_use_allowed: Option<bool>,
@@ -72,6 +83,8 @@ pub struct EffectivePolicy {
     pub agent_max_children: u8,
     pub agent_max_total: u8,
     pub agent_role_models: BTreeMap<String, String>,
+    pub agent_plugins: Vec<Value>,
+    pub user_plugins_allowed: bool,
     pub computer_use_allowed: bool,
     pub blocked_domains: Vec<String>,
     pub prompt_master: Option<PromptMaster>,
@@ -112,6 +125,9 @@ fn open_policy() -> EffectivePolicy {
         agent_max_total: DEFAULT_AGENT_TOTAL,
         // Sem política, todos os papéis usam o modelo do módulo.
         agent_role_models: BTreeMap::new(),
+        agent_plugins: Vec::new(),
+        // Plugin próprio amplia o alcance da IA: fechado até o admin abrir.
+        user_plugins_allowed: false,
         // Mesmo sem gating configurado, computer use nasce FECHADO: ele executa
         // comando na estação e depende de parecer de TI/SI (ver ADR).
         computer_use_allowed: false,
@@ -174,6 +190,29 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
         }
         if let Some(value) = doc.computer_use_allowed {
             merged.computer_use_allowed = Some(merged.computer_use_allowed.unwrap_or(true) && value);
+        }
+        // Plugin do usuário é ampliação do que a IA alcança: o grupo mais
+        // restritivo vence, como nos outros booleanos de segurança.
+        if let Some(value) = doc.user_plugins_allowed {
+            merged.user_plugins_allowed = Some(merged.user_plugins_allowed.unwrap_or(true) && value);
+        }
+        // Plugins globais são UNIÃO, com o primeiro `id` vencendo — pertencer a
+        // dois grupos soma ferramentas, não as tira. O `id` decide para dois
+        // grupos não registrarem a mesma ferramenta duas vezes.
+        if let Some(value) = &doc.agent_plugins {
+            let lista = merged.agent_plugins.get_or_insert_with(Vec::new);
+            for plugin in value {
+                let id = plugin.get("id").and_then(Value::as_str).unwrap_or("").trim();
+                if id.is_empty() {
+                    continue;
+                }
+                let repetido = lista
+                    .iter()
+                    .any(|item| item.get("id").and_then(Value::as_str) == Some(id));
+                if !repetido {
+                    lista.push(plugin.clone());
+                }
+            }
         }
         // Modelo por papel: o PRIMEIRO grupo que definir o papel manda. Não há
         // ordem "mais restritiva" entre dois nomes de modelo — tentar escolher
@@ -303,6 +342,8 @@ pub async fn resolve(
             agent_max_children: 0,
             agent_max_total: 0,
             agent_role_models: BTreeMap::new(),
+            agent_plugins: Vec::new(),
+            user_plugins_allowed: false,
             computer_use_allowed: false,
             blocked_domains: Vec::new(),
             prompt_master: prompt_master_for(state, workspace, &[]).await?,
@@ -347,6 +388,9 @@ pub async fn resolve(
         agent_max_children: merged.agent_max_children.unwrap_or(DEFAULT_AGENT_CHILDREN),
         agent_max_total: merged.agent_max_total.unwrap_or(DEFAULT_AGENT_TOTAL),
         agent_role_models: merged.agent_role_models.unwrap_or_default(),
+        agent_plugins: merged.agent_plugins.unwrap_or_default(),
+        // Sem declaração explícita do admin, plugin de usuário fica FECHADO.
+        user_plugins_allowed: merged.user_plugins_allowed.unwrap_or(false),
         // Sem declaração explícita do admin, computer use fica FECHADO.
         computer_use_allowed: merged.computer_use_allowed.unwrap_or(false),
         blocked_domains: merged.blocked_domains.unwrap_or_default(),
@@ -731,6 +775,35 @@ mod blocklist_tests {
         assert_eq!(mapa.len(), 1);
         // A chave é normalizada em minúsculas — o papel vem do cliente.
         assert_eq!(mapa.get("review").map(String::as_str), Some("sonnet 5"));
+    }
+
+    #[test]
+    fn plugin_de_usuario_fecha_no_grupo_mais_restritivo() {
+        // Pertencer a um grupo que libera não desfaz o grupo que fecha.
+        let merged = merge_policies(&[
+            doc(json!({"userPluginsAllowed": true})),
+            doc(json!({"userPluginsAllowed": false})),
+        ]);
+        assert_eq!(merged.user_plugins_allowed, Some(false));
+    }
+
+    #[test]
+    fn plugins_globais_sao_uniao_com_id_unico() {
+        let merged = merge_policies(&[
+            doc(json!({"agentPlugins": [{"id": "cep", "name": "CEP"}]})),
+            doc(json!({"agentPlugins": [{"id": "cep", "name": "CEP duplicado"}, {"id": "erp", "name": "ERP"}]})),
+        ]);
+        let lista = merged.agent_plugins.expect("lista");
+        assert_eq!(lista.len(), 2);
+        // O primeiro grupo (maior prioridade) manda no id repetido.
+        assert_eq!(lista[0]["name"], "CEP");
+        assert_eq!(lista[1]["id"], "erp");
+    }
+
+    #[test]
+    fn plugin_sem_id_nao_entra() {
+        let merged = merge_policies(&[doc(json!({"agentPlugins": [{"name": "sem id"}, {"id": "  "}]}))]);
+        assert_eq!(merged.agent_plugins, Some(vec![]));
     }
 
     #[test]
