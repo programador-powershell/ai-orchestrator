@@ -3,39 +3,41 @@
 /**
  * Acionamento de agentes — a tela principal da aba Agent.
  *
- * No prompt vai **só o objetivo** (e correções, quando a primeira volta não
- * serviu). O fluxo NÃO é desenhado pela pessoa nem inventado pelo modelo: é
- * pré-determinado pela complexidade do pedido e segue a espinha spec-driven —
- * constituição → spec → plano → tarefas → revisão → CI.
+ * **Não há campo nenhum aqui.** A pessoa escreve o que quer no composer, como
+ * em qualquer outra aba, e o envio vira o objetivo da equipe. Um campo próprio
+ * no corpo faria a mesma coisa de dois jeitos, e ninguém saberia qual manda.
  *
- * Os nós **aparecem conforme os agentes são contratados** e ficam marcados
- * quando saem. Mostrar a equipe inteira de antemão pareceria progresso que não
- * existe; o que interessa é ver quem está trabalhando agora, e o que é série e
- * o que é paralelo.
+ * Quem decide o tamanho da equipe é o **modelo orquestrador**, não a interface:
+ * não existe seletor de complexidade. Ele lê o pedido, escolhe o nível e a
+ * equipe é montada na espinha spec-driven — constituição → spec → plano →
+ * tarefas → revisão → CI. A tela mostra a decisão e o porquê, para ela poder
+ * ser julgada.
+ *
+ * Os nós **aparecem conforme os agentes são contratados**. Mostrar a equipe
+ * inteira de antemão pareceria progresso que não existe; o que interessa é ver
+ * quem trabalha agora, e o que é série e o que é paralelo.
  *
  * A lista viva "modelo - papel" fica na barra lateral (`CrewRail`), lendo o
  * mesmo store.
  */
 
-import { useMemo, useRef, useState } from "react";
-import { CircleAlert, LoaderCircle, Play, Square, Users, Wand2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CircleAlert, LoaderCircle, Square, Users, Wand2 } from "lucide-react";
 import type { EngineSelection } from "@ai-orchestrator/contracts";
 
 import { Markdown } from "./Markdown";
 import {
-  classifyComplexity,
   COMPLEXITY_LABEL,
-  planCrew,
   roleStageLabel,
   ROLE_LABEL,
   rosterLine,
   summarizeCrew,
-  type Complexity,
   type CrewMember,
   type ModelsByRole
 } from "../lib/agentCrew";
-import { runCrew, type CrewCall } from "../lib/agentCrewRun";
+import { runCrew, type CrewCall, type CrewDecision } from "../lib/agentCrewRun";
 import { useCrew } from "../lib/crewStore";
+import { goalBus } from "../lib/ops";
 import { useApp } from "../lib/store";
 import { chatOnce, modelLabel, type EngineContext } from "../lib/engine";
 
@@ -47,8 +49,6 @@ const STATUS_LABEL: Record<CrewMember["status"], string> = {
   cancelled: "cancelado"
 };
 
-const NIVEIS: Complexity[] = ["trivial", "simples", "media", "alta"];
-
 export function CrewView({
   selection,
   ctx
@@ -56,12 +56,10 @@ export function CrewView({
   selection: EngineSelection;
   ctx: EngineContext;
 }) {
-  const [goal, setGoal] = useState("");
-  const [corrections, setCorrections] = useState("");
-  /** Nível forçado pela pessoa; null = o classificado. */
-  const [forced, setForced] = useState<Complexity | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [erro, setErro] = useState("");
+  /** Como o nível foi decidido nesta execução — e por quê. */
+  const [decision, setDecision] = useState<CrewDecision | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const policy = useApp((state) => state.policy);
@@ -70,6 +68,8 @@ export function CrewView({
   const running = useCrew((state) => state.running);
   const outputs = useCrew((state) => state.outputs);
   const storeVerdict = useCrew((state) => state.verdict);
+  // O objetivo vem do store, não de um campo local: quem o define é o composer.
+  const goal = useCrew((state) => state.goal);
 
   /**
    * Modelos por papel vêm da POLÍTICA do grupo. Escolher modelo é escolher
@@ -84,21 +84,23 @@ export function CrewView({
     [policy, selection, catalog]
   );
 
-  // Classificação ao vivo: a pessoa vê a equipe ANTES de acionar.
-  const verdict = useMemo(() => {
-    const base = classifyComplexity(goal);
-    return forced ? { ...base, complexity: forced } : base;
-  }, [goal, forced]);
-  const preview = useMemo(() => planCrew(verdict, models), [verdict, models]);
   const resumo = summarizeCrew(crew);
 
-  async function start() {
-    if (running || !goal.trim()) return;
+  /**
+   * Aciona a equipe a partir do que veio do composer.
+   *
+   * A classificação NÃO acontece aqui: quem decide é o orquestrador, dentro do
+   * `runCrew`. A tela só recebe a decisão pronta pelo `onPlan` e a mostra.
+   */
+  async function start(goal: string) {
+    if (useCrew.getState().running || !goal.trim()) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setErro("");
-    const store = useCrew.getState();
-    store.start(goal.trim(), verdict, preview);
+    setDecision(null);
+    // `running` já vale aqui, antes do orquestrador responder — senão um
+    // segundo envio no composer abriria uma segunda equipe no mesmo objetivo.
+    useCrew.getState().begin(goal.trim());
 
     // O streaming alimenta a barra lateral: sem isso o agente ficaria
     // "trabalhando" por minutos sem sinal nenhum de que algo acontece.
@@ -126,12 +128,28 @@ export function CrewView({
     try {
       await runCrew({
         goal: goal.trim(),
-        corrections: corrections.trim() || undefined,
-        verdict,
         models,
         call,
         signal: controller.signal,
+        // O orquestrador é uma chamada de modelo curta, sem streaming: o que
+        // interessa dela é a decisão, não o texto.
+        orchestrate: ({ system, user, signal }) =>
+          chatOnce(
+            selection,
+            "agent",
+            [
+              { role: "system", content: system },
+              { role: "user", content: user }
+            ],
+            ctx,
+            { onDelta: () => undefined },
+            signal
+          ),
         hooks: {
+          onPlan: (plano, veredito, decidido) => {
+            useCrew.getState().setPlan(veredito, plano);
+            setDecision(decidido);
+          },
           onHire: (member) => useCrew.getState().hire(member),
           onActivity: (id, activity) => useCrew.getState().activity(id, activity),
           onFire: (id, status, output) => useCrew.getState().fire(id, status, output)
@@ -150,79 +168,42 @@ export function CrewView({
     useCrew.getState().stop();
   }
 
-  const mostraPreview = !crew.length && goal.trim().length > 0;
+  // O composer é a ENTRADA da aba: registrar aqui é o que dispensa campo
+  // próprio no corpo.
+  useEffect(() => goalBus.register("agent", (texto) => void start(texto)));
 
   return (
     <div className="crwx">
-      <div className="crwx-goal">
-        <textarea
-          value={goal}
-          onChange={(event) => setGoal(event.target.value)}
-          rows={2}
-          placeholder="Qual é o OBJETIVO? A equipe é escalada pela complexidade do que você pedir."
-          disabled={running}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void start();
-          }}
-        />
-        {running ? (
-          <button className="lg-button" onClick={stop}>
-            <Square size={13} />
-            Parar
-          </button>
-        ) : (
-          <button className="lg-button primary" onClick={() => void start()} disabled={!goal.trim()}>
-            <Play size={13} />
-            Acionar
-          </button>
-        )}
-      </div>
-
-      <input
-        className="crwx-fix"
-        value={corrections}
-        onChange={(event) => setCorrections(event.target.value)}
-        placeholder="Correções (opcional) — o que a volta anterior errou"
-        disabled={running}
-        spellCheck={false}
-      />
-
-      {/* A classificação fica visível e ajustável: uma heurística que decide
-          sozinha e não mostra o porquê vira caixa-preta na primeira discordância. */}
-      <div className="crwx-complex">
-        <span className="crwx-complex-head">
-          complexidade
-          <strong>{COMPLEXITY_LABEL[verdict.complexity]}</strong>
-          {forced ? <em>forçada</em> : null}
-        </span>
-        <span className="crwx-levels">
-          {NIVEIS.map((nivel) => (
-            <button
-              key={nivel}
-              className={`chip${verdict.complexity === nivel ? " accent" : ""}`}
-              onClick={() => setForced(forced === nivel ? null : nivel)}
-              disabled={running}
-              title={forced === nivel ? "Clique para voltar ao classificado" : "Forçar este nível"}
-            >
-              {COMPLEXITY_LABEL[nivel]}
-            </button>
-          ))}
-        </span>
-        {verdict.signals.length > 0 && !forced ? (
-          <small className="crwx-why">
-            {verdict.signals.map((signal) => signal.reason).join(" · ")}
-          </small>
-        ) : null}
-      </div>
-
-      {mostraPreview ? (
-        <div className="crwx-preview">
-          <Users size={12} />
-          <span>
-            equipe: {preview.slots.map((slot) => `${slot.model} - ${ROLE_LABEL[slot.role]}`).join(" · ")}
+      {/* Barra do objetivo em curso. Só aparece quando há execução — sem
+          formulário, o corpo fica vazio até a pessoa pedir algo. */}
+      {goal ? (
+        <div className="crwx-run">
+          <span className="crwx-run-goal" title={goal}>
+            {goal}
           </span>
+          {decision ? (
+            <span className="crwx-decision" title={decision.reason}>
+              {storeVerdict ? COMPLEXITY_LABEL[storeVerdict.complexity] : "…"}
+              <em>{decision.by === "orchestrator" ? "orquestrador" : decision.by === "forced" ? "forçado" : "reserva"}</em>
+            </span>
+          ) : (
+            <span className="crwx-decision">
+              <LoaderCircle size={11} className="spin" />
+              orquestrando…
+            </span>
+          )}
+          {running ? (
+            <button className="lg-button ghost" onClick={stop}>
+              <Square size={12} />
+              Parar
+            </button>
+          ) : null}
         </div>
       ) : null}
+
+      {/* O porquê da escalação. Uma decisão de equipe sem justificativa não dá
+          para julgar — e é o modelo que decide, então ela precisa ficar à vista. */}
+      {decision?.reason ? <small className="crwx-why">{decision.reason}</small> : null}
 
       {crew.length > 0 ? (
         <div className="crwx-summary">
@@ -232,7 +213,6 @@ export function CrewView({
           <span>{resumo.done} entregou</span>
           {resumo.failed > 0 ? <span className="bad">{resumo.failed} falhou</span> : null}
           {resumo.working > 0 ? <span className="live">{resumo.working} trabalhando</span> : null}
-          {storeVerdict ? <span className="crwx-stage">{COMPLEXITY_LABEL[storeVerdict.complexity]}</span> : null}
         </div>
       ) : null}
 
@@ -278,13 +258,13 @@ export function CrewView({
         ))}
       </div>
 
-      {!crew.length && !goal.trim() ? (
+      {!crew.length && !goal ? (
         <div className="crwx-hero">
           <Wand2 size={22} />
-          <strong>Diga o objetivo.</strong>
+          <strong>Diga o que você quer, no campo de mensagem abaixo.</strong>
           <p>
-            A equipe é escalada pela complexidade do pedido e segue sempre a mesma ordem — constituição,
-            especificação, plano, tarefas, revisão. Os agentes aparecem aqui conforme são contratados.
+            O orquestrador lê o pedido e monta a equipe. Ela segue sempre a mesma ordem — constituição,
+            especificação, plano, tarefas, revisão — e os agentes aparecem aqui conforme são contratados.
           </p>
         </div>
       ) : null}

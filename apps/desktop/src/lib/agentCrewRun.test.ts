@@ -204,6 +204,104 @@ describe("runCrew", () => {
     expect(etapas).toContain("tasks");
   });
 
+  it("quem decide a equipe é o ORQUESTRADOR, não a heurística", async () => {
+    const { hired, hooks } = recorder();
+    // O pedido é trivial pela heurística; o orquestrador diz que é alta.
+    const resultado = await runCrew({
+      goal: TRIVIAL,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal,
+      orchestrate: async () => '{"complexity":"alta","reason":"toca o faturamento inteiro"}'
+    });
+    expect(resultado.decision.by).toBe("orchestrator");
+    expect(resultado.decision.reason).toContain("faturamento");
+    expect(hired.map((member) => member.role)).toContain("ci");
+  });
+
+  it("o pedido do orquestrador leva o objetivo", async () => {
+    const { hooks } = recorder();
+    let recebido = "";
+    await runCrew({
+      goal: MEDIA,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal,
+      orchestrate: async ({ user }) => {
+        recebido = user;
+        return '{"complexity":"simples"}';
+      }
+    });
+    expect(recebido).toContain(MEDIA);
+  });
+
+  it("orquestrador ilegível cai na reserva, e a decisão DIZ que caiu", async () => {
+    const { hooks } = recorder();
+    const resultado = await runCrew({
+      goal: TRIVIAL,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal,
+      orchestrate: async () => "acho que é simples, mas depende"
+    });
+    expect(resultado.decision.by).toBe("heuristic");
+    expect(resultado.decision.reason).toContain("formato");
+    // E a execução acontece: não rodar por falta de classificação seria pior.
+    expect(resultado.plan.slots.length).toBeGreaterThan(0);
+  });
+
+  it("orquestrador que falha não derruba a execução", async () => {
+    const { hooks } = recorder();
+    const resultado = await runCrew({
+      goal: TRIVIAL,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal,
+      orchestrate: async () => {
+        throw new Error("gateway fora");
+      }
+    });
+    expect(resultado.decision.by).toBe("heuristic");
+    expect(resultado.decision.reason).toContain("gateway fora");
+    expect(resultado.outputs.length).toBeGreaterThan(0);
+  });
+
+  it("sem orquestrador, a reserva assume e declara", async () => {
+    const { hooks } = recorder();
+    const resultado = await runCrew({
+      goal: TRIVIAL,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal
+    });
+    expect(resultado.decision).toEqual({ by: "heuristic", reason: "sem orquestrador disponível" });
+  });
+
+  it("a equipe é anunciada ANTES da primeira contratação", async () => {
+    const eventos: string[] = [];
+    const hooks: CrewHooks = {
+      onHire: (member) => eventos.push(`hire:${member.id}`),
+      onActivity: () => undefined,
+      onFire: () => undefined,
+      onPlan: (plan) => eventos.push(`plan:${plan.slots.length}`)
+    };
+    await runCrew({
+      goal: TRIVIAL,
+      models,
+      call: echo,
+      hooks,
+      signal: new AbortController().signal,
+      orchestrate: async () => '{"complexity":"trivial"}'
+    });
+    expect(eventos[0]).toBe("plan:2");
+    expect(eventos[1]).toBe("hire:code#1");
+  });
+
   it("aceita a complexidade forçada pela pessoa", async () => {
     const { hired, hooks } = recorder();
     await runCrew({

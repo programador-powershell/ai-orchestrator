@@ -1356,3 +1356,37 @@
   color: var(--ink);
   font-size: var(--fs-eyebrow);
 }
+
+/* Barra do objetivo em curso — substitui o formulário que havia no corpo. */
+.crwx-run {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: var(--fs-micro);
+}
+.crwx-run-goal {
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crwx-decision {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-eyebrow);
+}
+.crwx-decision em {
+  color: var(--muted);
+  font-style: normal;
+}

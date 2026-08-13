@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyComplexity,
+  orchestratorRequest,
+  parseOrchestrator,
   pendingWaves,
   planCrew,
   ROLE_STAGE,
@@ -68,6 +70,60 @@ describe("classifyComplexity", () => {
     const verdict = classifyComplexity("   ");
     expect(verdict.complexity).toBe("trivial");
     expect(verdict.signals).toEqual([]);
+  });
+});
+
+describe("orchestratorRequest", () => {
+  it("manda o pedido e proíbe executar", () => {
+    const pedido = orchestratorRequest("criar o módulo de faturamento");
+    expect(pedido.user).toContain("criar o módulo de faturamento");
+    expect(pedido.system).toContain("Não execute");
+  });
+
+  it("inclui as correções da volta anterior quando existem", () => {
+    expect(orchestratorRequest("x", "faltou o teste").user).toContain("faltou o teste");
+    expect(orchestratorRequest("x").user).not.toContain("CORREÇÕES");
+  });
+
+  it("declara os quatro níveis, para o modelo não inventar um quinto", () => {
+    const system = orchestratorRequest("x").system;
+    for (const nivel of ["trivial", "simples", "media", "alta"]) expect(system).toContain(nivel);
+  });
+});
+
+describe("parseOrchestrator", () => {
+  it("lê a decisão e o motivo", () => {
+    expect(parseOrchestrator('{"complexity":"alta","reason":"módulo novo inteiro"}')).toEqual({
+      complexity: "alta",
+      reason: "módulo novo inteiro"
+    });
+  });
+
+  it("tolera cerca de markdown e texto em volta", () => {
+    const bruto = 'Claro!\n```json\n{"complexity":"simples","reason":"uma entrega"}\n```\nQualquer coisa.';
+    expect(parseOrchestrator(bruto)?.complexity).toBe("simples");
+  });
+
+  it('aceita "média" com acento, que é como o modelo escreve em português', () => {
+    expect(parseOrchestrator('{"complexity":"Média"}')?.complexity).toBe("media");
+  });
+
+  it("nível inventado vira null — escalar por alucinação seria pior que a heurística", () => {
+    expect(parseOrchestrator('{"complexity":"gigantesca"}')).toBeNull();
+    expect(parseOrchestrator('{"complexity":""}')).toBeNull();
+  });
+
+  it("resposta sem JSON vira null", () => {
+    expect(parseOrchestrator("acho que é complexo")).toBeNull();
+    expect(parseOrchestrator("")).toBeNull();
+  });
+
+  it("JSON quebrado vira null em vez de exceção", () => {
+    expect(parseOrchestrator('{"complexity":"alta",}}')).toBeNull();
+  });
+
+  it("motivo ausente não invalida a decisão", () => {
+    expect(parseOrchestrator('{"complexity":"trivial"}')).toEqual({ complexity: "trivial", reason: "" });
   });
 });
 

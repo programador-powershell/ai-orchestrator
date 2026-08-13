@@ -106,12 +106,15 @@ export interface ComplexityVerdict {
 }
 
 /**
- * Classifica o objetivo.
+ * Classificação de RESERVA, sem modelo.
  *
- * Heurística declarada, não um modelo: a escalação precisa ser **a mesma**
- * para o mesmo pedido, e uma classificação por modelo variaria entre execuções
- * — exatamente o que este redesenho veio consertar. Os sinais ficam visíveis
- * para a pessoa discordar e forçar outro nível.
+ * Quem decide a escalação é o **orquestrador** (ver `orchestratorRequest`).
+ * Esta heurística existe para quando ele não pode responder — sem gateway, sem
+ * rede, ou resposta ilegível — porque um agente que não roda por falta de
+ * classificação é pior que um agente escalado por aproximação.
+ *
+ * Ela não aparece na tela: a pessoa descreve o que quer no composer e o
+ * orquestrador resolve o resto.
  */
 export function classifyComplexity(goal: string): ComplexityVerdict {
   const text = goal.trim();
@@ -240,6 +243,63 @@ export function planCrew(goalOrVerdict: string | ComplexityVerdict, models: Mode
 function modelFor(role: CrewRole, models: ModelsByRole): string {
   if (role === "ci") return "Ship";
   return models.byRole?.[role]?.trim() || models.fallback;
+}
+
+/* ---------------------------- Orquestrador ---------------------------- */
+
+/**
+ * Pedido ao modelo ORQUESTRADOR.
+ *
+ * Ele lê o que a pessoa escreveu no composer e decide a complexidade. É o
+ * único ponto onde a escalação é escolhida: não há campo, chip nem seletor na
+ * tela — a pessoa diz o que quer, o orquestrador monta a equipe.
+ *
+ * A resposta é pedida em JSON pequeno, e não em prosa, porque o que interessa
+ * é uma decisão e a justificativa curta que vai para a trilha.
+ */
+export function orchestratorRequest(goal: string, corrections?: string): { system: string; user: string } {
+  const system = [
+    "Você é o ORQUESTRADOR de uma equipe de agentes.",
+    "Leia o pedido e decida o tamanho da equipe necessária. Não execute o pedido.",
+    "",
+    "Níveis:",
+    '- "trivial": mudança pontual e localizada (um rótulo, um typo, uma linha).',
+    '- "simples": uma entrega clara, sem decisão de arquitetura.',
+    '- "media": várias entregas ligadas, ou decisão técnica a tomar.',
+    '- "alta": módulo ou sistema novo, migração, integração, várias frentes.',
+    "",
+    'Responda SOMENTE com JSON: {"complexity":"…","reason":"uma frase curta"}'
+  ].join("\n");
+  const partes = [`PEDIDO:\n${goal.trim()}`];
+  if (corrections?.trim()) partes.push(`CORREÇÕES DA VOLTA ANTERIOR:\n${corrections.trim()}`);
+  return { system, user: partes.join("\n\n") };
+}
+
+/**
+ * Lê a decisão do orquestrador.
+ *
+ * Devolve `null` quando não dá para confiar — e aí o chamador usa a heurística
+ * de reserva. Aceitar um nível inventado seria escalar uma equipe pelo acaso
+ * de uma alucinação.
+ */
+export function parseOrchestrator(raw: string): { complexity: Complexity; reason: string } | null {
+  const texto = raw.replace(/```(?:json)?/gi, "").trim();
+  const inicio = texto.indexOf("{");
+  const fim = texto.lastIndexOf("}");
+  if (inicio < 0 || fim <= inicio) return null;
+  try {
+    const valor = JSON.parse(texto.slice(inicio, fim + 1)) as { complexity?: unknown; reason?: unknown };
+    const nivel = String(valor.complexity ?? "").toLowerCase().trim();
+    // "média" com acento é o que o modelo escreve quando responde em português.
+    const normalizado = nivel === "média" ? "media" : nivel;
+    if (!["trivial", "simples", "media", "alta"].includes(normalizado)) return null;
+    return {
+      complexity: normalizado as Complexity,
+      reason: typeof valor.reason === "string" ? valor.reason.trim() : ""
+    };
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------ Roster ------------------------------ */

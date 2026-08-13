@@ -20,6 +20,9 @@
  */
 
 import {
+  classifyComplexity,
+  orchestratorRequest,
+  parseOrchestrator,
   planCrew,
   roleStageLabel,
   ROLE_STAGE,
@@ -42,6 +45,17 @@ export interface CrewHooks {
   onFire: (id: string, status: CrewMember["status"], output: string) => void;
   /** Onda inteira concluída; entrega o que ela produziu. */
   onWave?: (wave: number, outputs: string[]) => void;
+  /**
+   * A equipe foi definida — antes de qualquer contratação.
+   *
+   * A tela precisa disto para mostrar o que o orquestrador decidiu e por quê;
+   * sem isso a escalação apareceria como fato consumado, sem justificativa.
+   */
+  onPlan?: (
+    plan: CrewPlan,
+    verdict: ComplexityVerdict,
+    decision: CrewDecision
+  ) => void;
 }
 
 /** Uma chamada de modelo. Injetada para o teste não tocar a rede. */
@@ -60,11 +74,26 @@ export interface CrewRunOptions {
   call: CrewCall;
   hooks: CrewHooks;
   signal: AbortSignal;
-  /** Complexidade forçada pela pessoa; ausente = classificada pelo objetivo. */
+  /**
+   * Decisão pronta. Normalmente ausente: quem decide é o ORQUESTRADOR, numa
+   * chamada de modelo antes da primeira onda.
+   */
   verdict?: ComplexityVerdict;
+  /**
+   * Chamada do orquestrador. Ausente (ou falhando) cai na heurística de
+   * reserva — um agente que não roda por falta de classificação é pior que um
+   * escalado por aproximação.
+   */
+  orchestrate?: (input: { system: string; user: string; signal: AbortSignal }) => Promise<string>;
   now?: () => number;
   /** Teto de agentes simultâneos dentro de uma onda. */
   maxParallel?: number;
+}
+
+/** Quem decidiu a complexidade, e por quê. Vai para a tela e para a trilha. */
+export interface CrewDecision {
+  by: "orchestrator" | "heuristic" | "forced";
+  reason: string;
 }
 
 export interface CrewRunResult {
@@ -73,6 +102,52 @@ export interface CrewRunResult {
   /** Entregas por papel, na ordem em que as ondas terminaram. */
   outputs: Array<{ role: CrewRole; stage: StageId | null; text: string }>;
   cancelled: boolean;
+  decision: CrewDecision;
+}
+
+/**
+ * Decide a complexidade ANTES da primeira onda.
+ *
+ * O orquestrador é um modelo, não uma regra da interface: a pessoa descreve o
+ * que quer no composer e ele monta a equipe. Quando não dá para perguntar a
+ * ele — sem rede, sem gateway, resposta ilegível — cai na heurística, e a tela
+ * diz que caiu, porque saber QUEM decidiu importa para julgar a decisão.
+ */
+async function decideComplexity(
+  options: CrewRunOptions
+): Promise<{ verdict: ComplexityVerdict; decision: CrewDecision }> {
+  if (options.verdict) {
+    return { verdict: options.verdict, decision: { by: "forced", reason: "nível informado pelo chamador" } };
+  }
+  const reserva = classifyComplexity(options.goal);
+  if (!options.orchestrate) {
+    return { verdict: reserva, decision: { by: "heuristic", reason: "sem orquestrador disponível" } };
+  }
+  try {
+    const pedido = orchestratorRequest(options.goal, options.corrections);
+    const bruto = await options.orchestrate({ ...pedido, signal: options.signal });
+    const lido = parseOrchestrator(bruto);
+    if (!lido) {
+      return {
+        verdict: reserva,
+        decision: { by: "heuristic", reason: "o orquestrador não respondeu num formato utilizável" }
+      };
+    }
+    return {
+      // Os sinais da heurística seguem juntos: eles não decidem mais nada, mas
+      // continuam úteis na trilha para comparar com o que o modelo achou.
+      verdict: { ...reserva, complexity: lido.complexity },
+      decision: { by: "orchestrator", reason: lido.reason || "decisão do orquestrador" }
+    };
+  } catch (cause) {
+    return {
+      verdict: reserva,
+      decision: {
+        by: "heuristic",
+        reason: `orquestrador indisponível: ${cause instanceof Error ? cause.message : String(cause)}`
+      }
+    };
+  }
 }
 
 const SYSTEM_BASE = [
@@ -107,7 +182,9 @@ function coderBrief(index: number, total: number): string {
 
 export async function runCrew(options: CrewRunOptions): Promise<CrewRunResult> {
   const now = options.now ?? (() => Date.now());
-  const plan = planCrew(options.verdict ?? options.goal, options.models);
+  const { verdict, decision } = await decideComplexity(options);
+  const plan = planCrew(verdict, options.models);
+  options.hooks.onPlan?.(plan, verdict, decision);
   const crew: CrewMember[] = [];
   const outputs: CrewRunResult["outputs"] = [];
 
@@ -138,7 +215,7 @@ export async function runCrew(options: CrewRunOptions): Promise<CrewRunResult> {
     if (daOnda.length === 0 && doTurno.length > 0) break;
   }
 
-  return { plan, crew, outputs, cancelled: options.signal.aborted };
+  return { plan, crew, outputs, cancelled: options.signal.aborted, decision };
 
   async function runSlot(slot: CrewSlot, index: number, total: number): Promise<string> {
     const member: CrewMember = {
