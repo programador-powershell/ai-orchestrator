@@ -12,6 +12,7 @@
 use crate::{error::ApiError, models::Mode, state::AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 #[cfg(test)]
 use serde_json::json;
 use sqlx::Row;
@@ -40,6 +41,14 @@ pub struct GroupPolicyDoc {
     pub agent_max_children: Option<u8>,
     /// Teto absoluto de agentes por execução.
     pub agent_max_total: Option<u8>,
+    /// Modelo por PAPEL da equipe (`idea`, `scope`, `plan`, `code`, `review`).
+    ///
+    /// A escalação da aba Agent é pré-determinada pela complexidade, e cada
+    /// papel tem custo e exigência diferentes: raciocinar sobre princípios não
+    /// é a mesma coisa que aplicar uma fatia de tarefa. Deixar isso no cliente
+    /// devolveria ao usuário a escolha de gastar — que é justamente o que a
+    /// política do grupo existe para decidir.
+    pub agent_role_models: Option<BTreeMap<String, String>>,
     /// Área de trabalho isolada (escrever e EXECUTAR código na estação).
     /// Ver docs/adr-computer-use.md — não reduz privilégio.
     pub computer_use_allowed: Option<bool>,
@@ -62,6 +71,7 @@ pub struct EffectivePolicy {
     pub agent_max_depth: u8,
     pub agent_max_children: u8,
     pub agent_max_total: u8,
+    pub agent_role_models: BTreeMap<String, String>,
     pub computer_use_allowed: bool,
     pub blocked_domains: Vec<String>,
     pub prompt_master: Option<PromptMaster>,
@@ -100,6 +110,8 @@ fn open_policy() -> EffectivePolicy {
         agent_max_depth: DEFAULT_AGENT_DEPTH,
         agent_max_children: DEFAULT_AGENT_CHILDREN,
         agent_max_total: DEFAULT_AGENT_TOTAL,
+        // Sem política, todos os papéis usam o modelo do módulo.
+        agent_role_models: BTreeMap::new(),
         // Mesmo sem gating configurado, computer use nasce FECHADO: ele executa
         // comando na estação e depende de parecer de TI/SI (ver ADR).
         computer_use_allowed: false,
@@ -162,6 +174,21 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
         }
         if let Some(value) = doc.computer_use_allowed {
             merged.computer_use_allowed = Some(merged.computer_use_allowed.unwrap_or(true) && value);
+        }
+        // Modelo por papel: o PRIMEIRO grupo que definir o papel manda. Não há
+        // ordem "mais restritiva" entre dois nomes de modelo — tentar escolher
+        // pelo mais barato exigiria a tabela de preços aqui dentro, e ela vive
+        // no relatório. Os grupos vêm ordenados por prioridade, então o
+        // primeiro é o de maior precedência.
+        if let Some(value) = &doc.agent_role_models {
+            let mapa = merged.agent_role_models.get_or_insert_with(BTreeMap::new);
+            for (role, model) in value {
+                let role = role.trim().to_ascii_lowercase();
+                let model = model.trim();
+                if !role.is_empty() && !model.is_empty() {
+                    mapa.entry(role).or_insert_with(|| model.to_string());
+                }
+            }
         }
         // Blocklist é UNIÃO: mais domínios bloqueados = mais restritivo, que é
         // a mesma direção dos booleanos. Interseção deixaria alguém escapar de
@@ -275,6 +302,7 @@ pub async fn resolve(
             agent_max_depth: 0,
             agent_max_children: 0,
             agent_max_total: 0,
+            agent_role_models: BTreeMap::new(),
             computer_use_allowed: false,
             blocked_domains: Vec::new(),
             prompt_master: prompt_master_for(state, workspace, &[]).await?,
@@ -318,6 +346,7 @@ pub async fn resolve(
         agent_max_depth: merged.agent_max_depth.unwrap_or(DEFAULT_AGENT_DEPTH),
         agent_max_children: merged.agent_max_children.unwrap_or(DEFAULT_AGENT_CHILDREN),
         agent_max_total: merged.agent_max_total.unwrap_or(DEFAULT_AGENT_TOTAL),
+        agent_role_models: merged.agent_role_models.unwrap_or_default(),
         // Sem declaração explícita do admin, computer use fica FECHADO.
         computer_use_allowed: merged.computer_use_allowed.unwrap_or(false),
         blocked_domains: merged.blocked_domains.unwrap_or_default(),
@@ -676,6 +705,37 @@ mod blocklist_tests {
             doc(json!({"blockedDomains": ["FACEBOOK.COM"]})),
         ]);
         assert_eq!(merged.blocked_domains, Some(vec!["facebook.com".to_string()]));
+    }
+
+    #[test]
+    fn modelo_por_papel_vem_do_grupo_de_maior_prioridade() {
+        // Os grupos chegam ordenados por prioridade: o primeiro que definir o
+        // papel manda, e o segundo não sobrescreve.
+        let merged = merge_policies(&[
+            doc(json!({"agentRoleModels": {"idea": "opus 5", "code": "kimi 3"}})),
+            doc(json!({"agentRoleModels": {"idea": "haiku 4.5", "review": "sonnet 5"}})),
+        ]);
+        let mapa = merged.agent_role_models.expect("mapa");
+        assert_eq!(mapa.get("idea").map(String::as_str), Some("opus 5"));
+        assert_eq!(mapa.get("code").map(String::as_str), Some("kimi 3"));
+        // Papel que só o segundo grupo definiu entra normalmente.
+        assert_eq!(mapa.get("review").map(String::as_str), Some("sonnet 5"));
+    }
+
+    #[test]
+    fn papel_em_branco_ou_modelo_vazio_nao_entra() {
+        let merged = merge_policies(&[doc(
+            json!({"agentRoleModels": {"  ": "opus 5", "code": "   ", "REVIEW": "sonnet 5"}}),
+        )]);
+        let mapa = merged.agent_role_models.expect("mapa");
+        assert_eq!(mapa.len(), 1);
+        // A chave é normalizada em minúsculas — o papel vem do cliente.
+        assert_eq!(mapa.get("review").map(String::as_str), Some("sonnet 5"));
+    }
+
+    #[test]
+    fn sem_politica_o_mapa_de_papeis_fica_vazio() {
+        assert_eq!(merge_policies(&[doc(json!({}))]).agent_role_models, None);
     }
 
     /// A política é ASSINADA: ordem instável mudaria a assinatura sem nada

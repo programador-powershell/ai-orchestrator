@@ -393,6 +393,15 @@ export interface BootstrapPolicy {
   agentMaxDepth: number;
   agentMaxChildren: number;
   agentMaxTotal: number;
+  /**
+   * Modelo por PAPEL da equipe (`idea`, `scope`, `plan`, `code`, `review`).
+   *
+   * A escalação da aba Agent é pré-determinada pela complexidade, e cada papel
+   * tem custo diferente. Quem define é o admin: escolher o modelo é escolher
+   * quanto gastar, e essa não é decisão do usuário. Papel ausente cai no
+   * modelo do módulo.
+   */
+  agentRoleModels: Record<string, string>;
   /** Área isolada com execução de código na estação — ver ADR do computer use. */
   computerUseAllowed: boolean;
   /**

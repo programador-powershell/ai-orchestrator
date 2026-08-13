@@ -1100,3 +1100,259 @@
   color: var(--muted);
   font-size: var(--fs-eyebrow);
 }
+
+/* ---------------------------------------------------------------------
+   Equipe (CrewView): fluxo pré-determinado pela complexidade.
+   Os nós aparecem conforme os agentes são contratados; agentes da mesma
+   onda ficam lado a lado, e é isso que torna o paralelo visível.
+   --------------------------------------------------------------------- */
+.crwx {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  width: min(860px, 100%);
+  margin: 0 auto;
+  padding: 16px 4px;
+}
+.crwx-goal {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.crwx-goal textarea,
+.crwx-fix {
+  flex: 1;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-micro);
+}
+.crwx-goal textarea { resize: vertical; }
+
+.crwx-complex {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.crwx-complex-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.crwx-complex-head strong {
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.crwx-complex-head em {
+  color: var(--tone-amber, #f59e0b);
+  font-style: normal;
+  text-transform: none;
+}
+.crwx-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.crwx-why {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.5;
+}
+
+.crwx-preview,
+.crwx-summary,
+.crwx-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.crwx-error {
+  border-color: color-mix(in srgb, var(--tone-red, #ef4444) 40%, var(--line));
+  color: var(--tone-red, #ef4444);
+}
+.crwx-summary .bad { color: var(--tone-red, #ef4444); }
+.crwx-summary .live { color: var(--accent-strong); }
+.crwx-stage { margin-left: auto; }
+
+/* Uma linha por onda: os nós dela são irmãos e correm juntos. */
+.crwx-flow {
+  display: grid;
+  gap: 8px;
+}
+.crwx-wave {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.crwx-node {
+  flex: 1 1 220px;
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.crwx-node--working,
+.crwx-node--hired { border-left-color: var(--accent); }
+.crwx-node--done { border-left-color: var(--tone-green, #22c55e); }
+.crwx-node--failed { border-left-color: var(--tone-red, #ef4444); }
+.crwx-node--cancelled { opacity: 0.6; }
+.crwx-node-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.crwx-node-head:disabled { cursor: default; }
+.crwx-role {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-eyebrow);
+}
+.crwx-badge {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.crwx-stagename {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+.crwx-node-body {
+  margin-top: 5px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  max-height: 280px;
+  overflow-y: auto;
+  font-size: var(--fs-micro);
+}
+
+.crwx-hero {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 34px 18px;
+  color: var(--muted);
+  text-align: center;
+}
+.crwx-hero strong { color: var(--ink); font-size: var(--fs-small); }
+.crwx-hero p { margin: 0; max-width: 46ch; font-size: var(--fs-micro); line-height: 1.6; }
+
+/* Roster vivo na barra lateral: modelo - papel, em ordem de contratação. */
+.crwr-hint,
+.crwr-goal {
+  display: block;
+  padding: 0 8px 6px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.5;
+}
+.crwr-goal {
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crwr-list {
+  display: grid;
+  gap: 2px;
+  padding: 0 6px 8px;
+}
+.crwr-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-micro);
+  animation: float-in var(--t-base) var(--spring-soft) both;
+}
+.crwr-row small {
+  margin-left: auto;
+  overflow: hidden;
+  max-width: 46%;
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crwr-line {
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crwr-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.crwr-row.st-hired .crwr-dot,
+.crwr-row.st-working .crwr-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+.crwr-row.st-done .crwr-dot { background: var(--tone-green, #22c55e); }
+.crwr-row.st-failed .crwr-dot { background: var(--tone-red, #ef4444); }
+.crwr-row.st-working { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Modelo por papel no console do admin. */
+.admx-group__roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.admx-group__roles label {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.admx-group__roles input {
+  width: 92px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-eyebrow);
+}
