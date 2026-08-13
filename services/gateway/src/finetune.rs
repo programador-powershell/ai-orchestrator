@@ -1079,19 +1079,48 @@ async fn reconcile_job(
 
     let provider_job = client.get_job(&provider_job_id).await?;
 
-    // Eventos novos: seq monotônico por job = max(seq)+1. O provedor devolve a
-    // lista completa (mais recente primeiro; já reordenada para cronológica),
-    // então os já gravados são pulados pela contagem.
+    /*
+     * Eventos novos: seq monotônico por job = max(seq)+1.
+     *
+     * O que NÃO dá para fazer é pular pela contagem (`skip(max_seq)`): o
+     * provedor devolve uma JANELA dos 100 mais recentes, não a lista completa.
+     * Quando o job passava de 100 eventos, `skip(100)` sobre 100 elementos
+     * dava conjunto vazio e nenhum evento novo era gravado — a trilha parava
+     * de crescer justamente nos jobs longos, que são os que se quer
+     * acompanhar. Nos casos intermediários, o desalinhamento entre "quantos
+     * já gravei" e "onde estou na janela" associava conteúdo ao seq errado.
+     *
+     * Agora a comparação é por CONTEÚDO, contando repetições: uma mensagem
+     * idêntica que aparece três vezes na janela e duas no banco entra uma vez.
+     */
     match client.list_events(&provider_job_id, None).await {
         Ok(events) => {
-            let max_seq: i32 = sqlx::query_scalar(
+            let gravados: Vec<(String, String)> = sqlx::query_as(
+                "SELECT level, message FROM fine_tune_job_events WHERE job_id=$1",
+            )
+            .bind(job_id)
+            .fetch_all(&state.pool)
+            .await?;
+            let mut restantes: std::collections::HashMap<(String, String), usize> =
+                std::collections::HashMap::new();
+            for chave in gravados {
+                *restantes.entry(chave).or_insert(0) += 1;
+            }
+            let mut seq: i32 = sqlx::query_scalar(
                 "SELECT COALESCE(MAX(seq),0) FROM fine_tune_job_events WHERE job_id=$1",
             )
             .bind(job_id)
             .fetch_one(&state.pool)
             .await?;
-            let mut seq = max_seq;
-            for event in events.iter().skip(max_seq.max(0) as usize) {
+            for event in events.iter() {
+                let mensagem = truncate(&event.message, 2000);
+                let chave = (event.level.clone(), mensagem.clone());
+                if let Some(pendentes) = restantes.get_mut(&chave) {
+                    if *pendentes > 0 {
+                        *pendentes -= 1;
+                        continue;
+                    }
+                }
                 seq += 1;
                 sqlx::query(
                     "INSERT INTO fine_tune_job_events(job_id,seq,level,message) VALUES($1,$2,$3,$4) ON CONFLICT (job_id,seq) DO NOTHING",
@@ -1099,7 +1128,7 @@ async fn reconcile_job(
                 .bind(job_id)
                 .bind(seq)
                 .bind(&event.level)
-                .bind(truncate(&event.message, 2000))
+                .bind(&mensagem)
                 .execute(&state.pool)
                 .await?;
             }

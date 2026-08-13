@@ -77,6 +77,17 @@ const COST_SQL: &str = "
  + COALESCE(e.cache_write_tokens,0)::numeric* COALESCE(p.cache_write_per_mtok,0)
   ) / 1000000";
 
+/// Ordenação das quebras: do maior gasto para o menor.
+///
+/// Pela EXPRESSÃO, nunca pelo alias `cost_usd`. Ele sai como TEXTO de
+/// propósito (dinheiro não vira float no caminho), e em Postgres o nome no
+/// `ORDER BY` casa com o alias de saída — a comparação virava de string:
+/// "9.000000" acima de "80.000000". Com o LIMIT, os maiores gastadores
+/// sumiam do relatório que existe justamente para encontrá-los.
+fn cost_order() -> String {
+    format!("ORDER BY COALESCE(SUM({COST_SQL}),0) DESC, calls DESC")
+}
+
 /// Colunas de soma comuns a todas as quebras.
 fn totals_select() -> String {
     format!(
@@ -128,8 +139,9 @@ pub async fn usage_by_user(
     let sql = format!(
         "SELECT e.user_id, u.email, u.display_name, {} {} \
          GROUP BY e.user_id, u.email, u.display_name \
-         ORDER BY cost_usd DESC, calls DESC LIMIT {MAX_ROWS}",
+         {} LIMIT {MAX_ROWS}",
         totals_select(),
+        cost_order(),
         from_clause().replace(
             "FROM usage_events e ",
             "FROM usage_events e JOIN users u ON u.id = e.user_id "
@@ -174,8 +186,9 @@ pub async fn usage_by_group(
          JOIN ad_groups g ON g.id = gid \
          LEFT JOIN model_prices p ON p.workspace_id = e.workspace_id AND p.model = e.model \
          WHERE e.workspace_id = $1 AND e.created_at >= now() - make_interval(days => $2::int) \
-         GROUP BY g.id, g.name ORDER BY cost_usd DESC, calls DESC LIMIT {MAX_ROWS}",
-        totals_select()
+         GROUP BY g.id, g.name {} LIMIT {MAX_ROWS}",
+        totals_select(),
+        cost_order()
     );
     let rows = sqlx::query(&sql)
         .bind(workspace)
@@ -223,9 +236,10 @@ pub async fn usage_by_model(
     authorize_admin(&state, &headers, workspace).await?;
     let sql = format!(
         "SELECT e.model, e.mode, (p.model IS NOT NULL) AS has_price, {} {} \
-         GROUP BY e.model, e.mode, has_price ORDER BY cost_usd DESC, calls DESC LIMIT {MAX_ROWS}",
+         GROUP BY e.model, e.mode, has_price {} LIMIT {MAX_ROWS}",
         totals_select(),
-        from_clause()
+        from_clause(),
+        cost_order()
     );
     let rows = sqlx::query(&sql)
         .bind(workspace)
@@ -449,6 +463,23 @@ mod tests {
         assert!(select.contains("COUNT(*) AS calls"));
         assert!(select.contains("COUNT(e.input_tokens) AS measured_calls"));
         assert!(select.contains("calls_without_price"));
+    }
+
+    /// `cost_usd` é TEXTO (dinheiro não vira float no caminho). Ordenar pelo
+    /// alias faria o Postgres comparar string: "9.000000" acima de
+    /// "80.000000", e com LIMIT o maior gastador sumia do relatório.
+    #[test]
+    fn ordenacao_de_custo_e_numerica_e_nao_pelo_alias_de_texto() {
+        let ordem = cost_order();
+        assert!(
+            ordem.contains("SUM(") && ordem.contains("input_per_mtok"),
+            "a ordenação precisa ser pela expressão de custo: {ordem}"
+        );
+        assert!(
+            !ordem.contains("cost_usd"),
+            "ordenar pelo alias volta a comparar dinheiro como string"
+        );
+        assert!(totals_select().contains("::text AS cost_usd"));
     }
 
     #[test]
