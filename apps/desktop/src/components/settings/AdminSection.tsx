@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { CircleCheck, LoaderCircle, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
 import { useApp } from "../../lib/store";
+import { UsageReport } from "./UsageReport";
 
 interface AdminGroup {
   id: string;
@@ -289,6 +290,15 @@ export function AdminSection() {
           </button>
         </div>
         {notice ? <p className={`setx-notice ${notice.tone}`}>{notice.text}</p> : null}
+      </div>
+
+      {/* Relatoria de uso e custo — mesma autorização de admin do resto. */}
+      <div className="setx-block">
+        <h4>Relatoria de uso</h4>
+        <p className="setx-hint">
+          Consumo e custo por usuário, grupo, modelo e dia. Os números vêm dos eventos registrados pelo gateway.
+        </p>
+        <UsageReport />
       </div>
     </Section>
   );
