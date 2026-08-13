@@ -70,8 +70,15 @@ describe("escapeDrawText", () => {
     expect(escapeDrawText("Reunião: 10h")).toBe("Reunião\\: 10h");
   });
 
-  it("escapa aspas simples que fechariam o valor", () => {
-    expect(escapeDrawText("d'água")).toBe("d\\'água");
+  it("troca o apóstrofo reto pelo tipográfico, que o parser não lê", () => {
+    // Verificado renderizando um quadro: nem `\'` nem `'\''` funcionam dentro
+    // do valor — a aspas fecha a seção e `:x=…:fontsize=…` vaza para dentro da
+    // legenda. Sem apóstrofo reto no comando, não há o que vazar.
+    expect(escapeDrawText("d'água")).toBe("d’água");
+  });
+
+  it("não deixa nenhuma aspas simples chegar ao comando", () => {
+    expect(escapeDrawText("a'b'c")).not.toContain("'");
   });
 
   it("escapa a barra invertida antes de tudo, sem duplicar o escape seguinte", () => {
@@ -177,12 +184,29 @@ describe("buildCompose", () => {
     expect(plan.command).toContain('-map "[ovout1]"');
   });
 
+  it("desliga a expansão do drawtext, senão um % solto aborta a renderização", () => {
+    const plan = buildCompose([clip()], media, {
+      withAudio: false,
+      overlays: [{ text: "100% pronto", x: 0, y: 0, fontSize: 20, color: "white", from: 0, to: 2 }]
+    });
+    expect(plan.command).toContain("expansion=none");
+  });
+
+  it("escapa os dois pontos do caminho da fonte, que separariam opções", () => {
+    const plan = buildCompose([clip()], media, {
+      withAudio: false,
+      fontFile: "C:\\Windows\\Fonts\\arial.ttf",
+      overlays: [{ text: "Oi", x: 0, y: 0, fontSize: 20, color: "white", from: 0, to: 2 }]
+    });
+    expect(plan.command).toContain("fontfile='C\\:/Windows/Fonts/arial.ttf'");
+  });
+
   it("desenha o texto sobre o último rótulo da cadeia", () => {
     const plan = buildCompose([clip(), clip({ mediaId: "m2", track: 1, end: 3 })], media, {
       withAudio: false,
       overlays: [{ text: "Confidencial", x: 40, y: 50, fontSize: 32, color: "white", from: 0, to: 5 }]
     });
-    expect(plan.command).toContain("[ovout0]drawtext=text='Confidencial'");
+    expect(plan.command).toContain("[ovout0]drawtext=expansion=none:text='Confidencial'");
     expect(plan.command).toContain("fontsize=32:fontcolor=white");
     expect(plan.command).toContain("enable='between(t,0,5)'");
     expect(plan.command).toContain('-map "[txt0]"');
@@ -194,7 +218,7 @@ describe("buildCompose", () => {
       fontFile: "C:\\Windows\\Fonts\\arial.ttf",
       overlays: [{ text: "Oi", x: 0, y: 0, fontSize: 20, color: "white", from: 0, to: 2 }]
     });
-    expect(plan.command).toContain("drawtext=fontfile='C:/Windows/Fonts/arial.ttf':text='Oi'");
+    expect(plan.command).toContain("drawtext=fontfile='C\\:/Windows/Fonts/arial.ttf':expansion=none:text='Oi'");
     expect(plan.warnings.join(" ")).not.toContain("arquivo de fonte");
   });
 
