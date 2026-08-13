@@ -33,6 +33,7 @@ import {
   Plus,
   Ruler,
   Scissors,
+  ShieldCheck,
   SlidersHorizontal,
   Square,
   Terminal as TerminalIcon,
@@ -65,6 +66,7 @@ import {
 import type { CanvasDoc, CanvasNode, CanvasNodeType } from "../lib/canvasDoc";
 import { captureSite } from "../lib/siteCapture";
 import { STENCILS, buildStencil, type StencilId } from "../lib/stencils";
+import { DesignSystemPanel } from "../components/DesignSystemPanel";
 import { extractTokens } from "../lib/htmlTokens";
 import type { ExtractedTokens } from "../lib/htmlTokens";
 import {
@@ -84,7 +86,7 @@ import { RailConversations } from "../components/RailConversations";
 /* ------------------------------ Tipos ------------------------------ */
 
 type StudioTab = "canvas" | "video" | "site";
-type SideTab = "inspect" | "tokens";
+type SideTab = "inspect" | "tokens" | "system";
 type Tool = "select" | CanvasNodeType;
 
 type DragState =
@@ -1612,9 +1614,30 @@ export function DesignView() {
                   <Palette size={12} />
                   Tokens
                 </button>
+                <button
+                  className={sideTab === "system" ? "active" : ""}
+                  onClick={() => setSideTab("system")}
+                  title="Contrato de marca: governa o canvas e entra nos prompts"
+                >
+                  <ShieldCheck size={12} />
+                  Sistema
+                </button>
               </div>
             </div>
-            {sideTab === "inspect" ? (
+            {sideTab === "system" ? (
+              <PanelScroll>
+                <DesignSystemPanel
+                  doc={doc}
+                  onApply={(next) => {
+                    pushHistory();
+                    setDoc(next);
+                  }}
+                  onSelect={selectNode}
+                  seedColors={repResult?.tokens.colors ?? []}
+                  seedFonts={repResult?.tokens.fonts ?? []}
+                />
+              </PanelScroll>
+            ) : sideTab === "inspect" ? (
               <PanelScroll>
                 {selectedNode ? (
                   <>

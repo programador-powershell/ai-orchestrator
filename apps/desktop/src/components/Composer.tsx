@@ -27,6 +27,7 @@ import { applyResult, toolDetail } from "../lib/toolcard";
 import { buildToolEdit } from "../lib/toolEdit";
 import { requiresPrompt } from "../lib/approval";
 import { clampEffort, effectiveAgentTools, effectiveApproval, promptMasterMessages } from "../lib/policy";
+import { DESIGN_SYSTEM_KEY, designContract, emptySystem, parseSystem } from "../lib/designSystem";
 import { collectFiles, fsRead } from "../lib/fsx";
 import { applyMention, detectMention, extractMentionedPaths, mentionContext, rankMentions } from "../lib/mentions";
 import { loadProjectRules, rulesSystemMessage } from "../lib/projectRules";
@@ -161,6 +162,13 @@ export function Composer() {
       ...promptMasterMessages(policy, settings.localPrompt ?? ""),
       { role: "system", content: effortDirective(clampEffort(settings.effort, policy)) }
     ];
+    // Contrato de marca na aba Design. Sem ele em CADA pedido, o modelo
+    // respeita a identidade no primeiro prompt e a esquece no terceiro,
+    // quando o contexto encheu — mesma razão do prompt master.
+    if (mode === "design") {
+      const contrato = designContract(parseSystem(window.localStorage.getItem(DESIGN_SYSTEM_KEY)) ?? emptySystem());
+      if (contrato) system.push({ role: "system", content: contrato });
+    }
     if (settings.memoryEnabled) {
       try {
         const hits = await memory.recall(question, settings.memoryRecallK);
