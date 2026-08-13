@@ -68,6 +68,11 @@ export function AgentTreeView({
   const [stage, setStage] = useState("");
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
   const [approval, setApproval] = useState<PendingApproval | null>(null);
+  /**
+   * Computer use nasce DESLIGADO. É a diferença entre um agente que lê e
+   * explica e um que executa comando na máquina — quem liga é a pessoa.
+   */
+  const [computerUse, setComputerUse] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const limits = clampLimits(limitsInput ?? {});
@@ -86,6 +91,7 @@ export function AgentTreeView({
         limits,
         root,
         signal: controller.signal,
+        computerUse,
         hooks: {
           onTree: setTree,
           onStage: setStage,
@@ -153,6 +159,17 @@ export function AgentTreeView({
           </button>
         )}
       </div>
+
+      <label className="agtx-cu">
+        <input type="checkbox" checked={computerUse} onChange={(event) => setComputerUse(event.target.checked)} disabled={running} />
+        <span>
+          Área de trabalho isolada (escrever e executar código)
+          <small>
+            O agente ganha uma pasta própria, apagada no fim, e roda comandos dentro de um Job Object. Cada execução
+            pede sua aprovação. Não reduz privilégio: o comando roda com os <strong>seus</strong> direitos e alcança a rede.
+          </small>
+        </span>
+      </label>
 
       <p className="agtx-limits">
         Até <strong>{limits.maxTotal}</strong> agentes nesta execução,{" "}

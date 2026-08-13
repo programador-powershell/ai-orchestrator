@@ -1075,3 +1075,28 @@
   color: var(--tone-amber, #f59e0b);
   font-size: var(--fs-eyebrow);
 }
+
+/* Interruptor do computer use — destaque proporcional ao que ele libera. */
+.agtx-cu {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--tone-amber, #f59e0b) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--tone-amber, #f59e0b) 7%, var(--panel));
+  cursor: pointer;
+}
+.agtx-cu input {
+  margin-top: 2px;
+  flex: none;
+}
+.agtx-cu span {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-micro);
+}
+.agtx-cu small {
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
