@@ -391,6 +391,39 @@
 .admx-group__modes { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
 .admx-group__modes .chip, .admx-draft-modes .chip { cursor: pointer; }
 
+/* Modelo de agente por grupo: tetos de delegação + computer use. Fica no
+   cartão do grupo porque é política, não preferência do usuário. */
+.admx-group__agent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.admx-group__agent label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.admx-group__agent input[type="number"] {
+  width: 52px;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-eyebrow);
+}
+/* Executar código é a permissão mais forte do conjunto — destacada. */
+.admx-group__cu {
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--tone-amber, #f59e0b) 45%, var(--line));
+  background: color-mix(in srgb, var(--tone-amber, #f59e0b) 9%, transparent);
+  cursor: pointer;
+}
+
 /* ------------------- Relatoria de uso (Administração) ---------------- */
 
 .usgx {

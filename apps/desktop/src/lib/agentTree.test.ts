@@ -7,6 +7,7 @@ import {
   clampLimits,
   createTree,
   DEFAULT_LIMITS,
+  effectiveLimits,
   finishTask,
   flatten,
   lineage,
@@ -231,5 +232,37 @@ describe("patchTask", () => {
     const tree = patchTask(raiz(), "a1", { output: "parcial" });
     expect(tree.tasks.a1.output).toBe("parcial");
     expect(tree.tasks.a1.status).toBe("running");
+  });
+});
+
+describe("effectiveLimits — o teto é do servidor", () => {
+  const politica = { maxDepth: 2, maxChildren: 3, maxTotal: 10 };
+
+  it("sem preferência local, vale exatamente o do admin", () => {
+    expect(effectiveLimits(politica)).toEqual(politica);
+  });
+
+  /** O ponto: o cliente pode APERTAR o próprio limite. */
+  it("cliente mais restritivo é respeitado", () => {
+    expect(effectiveLimits(politica, { maxTotal: 4 })).toEqual({ ...politica, maxTotal: 4 });
+  });
+
+  /**
+   * O que não pode acontecer: se o cliente conseguisse subir, o teto do
+   * servidor seria decorativo — exatamente o furo que motivou a mudança.
+   */
+  it("cliente NÃO consegue afrouxar nenhum dos três tetos", () => {
+    const tentativa = effectiveLimits(politica, { maxDepth: 5, maxChildren: 10, maxTotal: 60 });
+    expect(tentativa).toEqual(politica);
+  });
+
+  it("política ausente cai nos padrões conservadores, não em 'sem limite'", () => {
+    expect(effectiveLimits(null)).toEqual(DEFAULT_LIMITS);
+    expect(effectiveLimits(undefined, { maxTotal: 999 })).toEqual(DEFAULT_LIMITS);
+  });
+
+  it("profundidade zero do admin proíbe delegar, e o cliente não reabre", () => {
+    const fechado = effectiveLimits({ ...politica, maxDepth: 0 }, { maxDepth: 3 });
+    expect(fechado.maxDepth).toBe(0);
   });
 });

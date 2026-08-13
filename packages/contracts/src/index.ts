@@ -384,6 +384,17 @@ export interface BootstrapPolicy {
   byokAllowed: boolean;
   localRuntimeAllowed: boolean;
   effortMax: number;
+  /**
+   * Modelo de agente definido pelo ADMIN. Um agente que aciona agentes é
+   * recursão dirigida por modelo: estes tetos decidem quanto uma execução
+   * pode custar, e por isso vivem no servidor. O cliente pode apertá-los,
+   * nunca afrouxá-los.
+   */
+  agentMaxDepth: number;
+  agentMaxChildren: number;
+  agentMaxTotal: number;
+  /** Área isolada com execução de código na estação — ver ADR do computer use. */
+  computerUseAllowed: boolean;
   promptMaster: BootstrapPromptMaster | null;
   offlineGraceHours: number;
 }

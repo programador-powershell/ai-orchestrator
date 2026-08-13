@@ -12,6 +12,8 @@
 use crate::{error::ApiError, models::Mode, state::AppState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use sqlx::Row;
 use uuid::Uuid;
 
@@ -26,6 +28,21 @@ pub struct GroupPolicyDoc {
     pub byok_allowed: Option<bool>,
     pub local_runtime_allowed: Option<bool>,
     pub effort_max: Option<u8>,
+    /* ----------------------- modelo de agente ----------------------- */
+    //
+    // Um agente que aciona agentes é recursão dirigida por modelo: os tetos
+    // decidem quanto uma execução pode custar. Deixá-los no cliente era o
+    // mesmo furo do gating cosmético — quem paga a conta é a empresa, então
+    // quem define é o admin.
+    /// Níveis de delegação abaixo da raiz. 0 proíbe delegar.
+    pub agent_max_depth: Option<u8>,
+    /// Subordinados diretos por agente.
+    pub agent_max_children: Option<u8>,
+    /// Teto absoluto de agentes por execução.
+    pub agent_max_total: Option<u8>,
+    /// Área de trabalho isolada (escrever e EXECUTAR código na estação).
+    /// Ver docs/adr-computer-use.md — não reduz privilégio.
+    pub computer_use_allowed: Option<bool>,
 }
 
 /// Política efetiva do usuário depois do merge — o que o bootstrap devolve.
@@ -38,9 +55,20 @@ pub struct EffectivePolicy {
     pub byok_allowed: bool,
     pub local_runtime_allowed: bool,
     pub effort_max: u8,
+    pub agent_max_depth: u8,
+    pub agent_max_children: u8,
+    pub agent_max_total: u8,
+    pub computer_use_allowed: bool,
     pub prompt_master: Option<PromptMaster>,
     pub offline_grace_hours: u32,
 }
+
+/// Tetos padrão do acionamento de agentes quando o admin não definiu nada.
+/// Conservadores: melhor um fluxo que pede para o admin abrir do que uma
+/// execução que gasta antes de alguém perceber.
+pub const DEFAULT_AGENT_DEPTH: u8 = 3;
+pub const DEFAULT_AGENT_CHILDREN: u8 = 5;
+pub const DEFAULT_AGENT_TOTAL: u8 = 20;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +92,12 @@ fn open_policy() -> EffectivePolicy {
         byok_allowed: true,
         local_runtime_allowed: true,
         effort_max: 4,
+        agent_max_depth: DEFAULT_AGENT_DEPTH,
+        agent_max_children: DEFAULT_AGENT_CHILDREN,
+        agent_max_total: DEFAULT_AGENT_TOTAL,
+        // Mesmo sem gating configurado, computer use nasce FECHADO: ele executa
+        // comando na estação e depende de parecer de TI/SI (ver ADR).
+        computer_use_allowed: false,
         prompt_master: None,
         offline_grace_hours: 72,
     }
@@ -107,6 +141,21 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
                     .effort_max
                     .map_or(value, |current| current.min(value)),
             );
+        }
+        // Tetos de agente: o MENOR vence. Quem está em TI (teto alto) e em
+        // Comercial (teto baixo) recebe o baixo — a união dos módulos abre
+        // acesso, mas nunca abre gasto.
+        for (destino, valor) in [
+            (&mut merged.agent_max_depth, doc.agent_max_depth),
+            (&mut merged.agent_max_children, doc.agent_max_children),
+            (&mut merged.agent_max_total, doc.agent_max_total),
+        ] {
+            if let Some(value) = valor {
+                *destino = Some(destino.map_or(value, |current| current.min(value)));
+            }
+        }
+        if let Some(value) = doc.computer_use_allowed {
+            merged.computer_use_allowed = Some(merged.computer_use_allowed.unwrap_or(true) && value);
         }
     }
     merged
@@ -200,6 +249,10 @@ pub async fn resolve(
             byok_allowed: false,
             local_runtime_allowed: false,
             effort_max: 4,
+            agent_max_depth: 0,
+            agent_max_children: 0,
+            agent_max_total: 0,
+            computer_use_allowed: false,
             prompt_master: prompt_master_for(state, workspace, &[]).await?,
             offline_grace_hours: 72,
         });
@@ -238,6 +291,11 @@ pub async fn resolve(
         byok_allowed: merged.byok_allowed.unwrap_or(true),
         local_runtime_allowed: merged.local_runtime_allowed.unwrap_or(true),
         effort_max: merged.effort_max.unwrap_or(4),
+        agent_max_depth: merged.agent_max_depth.unwrap_or(DEFAULT_AGENT_DEPTH),
+        agent_max_children: merged.agent_max_children.unwrap_or(DEFAULT_AGENT_CHILDREN),
+        agent_max_total: merged.agent_max_total.unwrap_or(DEFAULT_AGENT_TOTAL),
+        // Sem declaração explícita do admin, computer use fica FECHADO.
+        computer_use_allowed: merged.computer_use_allowed.unwrap_or(false),
         prompt_master: prompt_master_for(state, workspace, &group_ids).await?,
         offline_grace_hours: 72,
     })
@@ -466,5 +524,100 @@ mod signing_tests {
             &serde_json::json!({}),
         );
         assert!(a.find("\"a\":2").unwrap() < a.find("\"z\":1").unwrap());
+    }
+}
+
+#[cfg(test)]
+mod agent_policy_tests {
+    use super::*;
+
+    fn doc(json: Value) -> GroupPolicyDoc {
+        serde_json::from_value(json).expect("documento de política")
+    }
+
+    /// União abre ACESSO; nunca abre GASTO. Quem está em dois grupos recebe o
+    /// teto do mais restritivo — senão bastaria entrar num grupo permissivo
+    /// para escapar do limite do próprio time.
+    #[test]
+    fn teto_de_agente_pega_o_menor_entre_os_grupos() {
+        let merged = merge_policies(&[
+            doc(json!({"agentMaxDepth": 4, "agentMaxChildren": 8, "agentMaxTotal": 40})),
+            doc(json!({"agentMaxDepth": 1, "agentMaxChildren": 2, "agentMaxTotal": 6})),
+        ]);
+        assert_eq!(merged.agent_max_depth, Some(1));
+        assert_eq!(merged.agent_max_children, Some(2));
+        assert_eq!(merged.agent_max_total, Some(6));
+    }
+
+    #[test]
+    fn ordem_dos_grupos_nao_muda_o_resultado() {
+        let a = doc(json!({"agentMaxTotal": 30}));
+        let b = doc(json!({"agentMaxTotal": 5}));
+        assert_eq!(
+            merge_policies(&[a.clone(), b.clone()]).agent_max_total,
+            merge_policies(&[b, a]).agent_max_total
+        );
+    }
+
+    #[test]
+    fn grupo_que_nao_opina_nao_derruba_o_teto_do_outro() {
+        let merged = merge_policies(&[doc(json!({"agentMaxDepth": 2})), doc(json!({"byokAllowed": true}))]);
+        assert_eq!(merged.agent_max_depth, Some(2));
+    }
+
+    /// Zero é um valor VÁLIDO e significa "não delega" — não pode ser tratado
+    /// como ausência e substituído pelo padrão.
+    #[test]
+    fn profundidade_zero_proibe_delegar_e_sobrevive_ao_merge() {
+        let merged = merge_policies(&[doc(json!({"agentMaxDepth": 3})), doc(json!({"agentMaxDepth": 0}))]);
+        assert_eq!(merged.agent_max_depth, Some(0));
+    }
+
+    #[test]
+    fn computer_use_so_fica_ligado_se_todos_os_grupos_permitirem() {
+        assert_eq!(
+            merge_policies(&[
+                doc(json!({"computerUseAllowed": true})),
+                doc(json!({"computerUseAllowed": true}))
+            ])
+            .computer_use_allowed,
+            Some(true)
+        );
+        // um único grupo que nega fecha para o usuário inteiro
+        assert_eq!(
+            merge_policies(&[
+                doc(json!({"computerUseAllowed": true})),
+                doc(json!({"computerUseAllowed": false}))
+            ])
+            .computer_use_allowed,
+            Some(false)
+        );
+    }
+
+    /// Executa comando na estação e depende de parecer de TI/SI: silêncio do
+    /// admin NÃO pode significar liberado.
+    #[test]
+    fn computer_use_sem_declaracao_fica_fechado() {
+        assert_eq!(merge_policies(&[doc(json!({}))]).computer_use_allowed, None);
+        assert!(!open_policy().computer_use_allowed);
+    }
+
+    #[test]
+    fn workspace_sem_gating_ainda_tem_tetos_de_agente() {
+        let aberta = open_policy();
+        assert_eq!(aberta.agent_max_depth, DEFAULT_AGENT_DEPTH);
+        assert_eq!(aberta.agent_max_children, DEFAULT_AGENT_CHILDREN);
+        assert_eq!(aberta.agent_max_total, DEFAULT_AGENT_TOTAL);
+    }
+
+    #[test]
+    fn documento_antigo_sem_os_campos_novos_continua_valido() {
+        // Política gravada antes desta mudança não pode quebrar a resolução.
+        let antigo = doc(json!({"agentTools": true, "approvalPolicy": "edits", "effortMax": 2}));
+        assert_eq!(antigo.agent_max_depth, None);
+        assert_eq!(antigo.computer_use_allowed, None);
+        let merged = merge_policies(&[antigo]);
+        assert_eq!(merged.effort_max, Some(2));
+        assert_eq!(merged.agent_max_total, None);
     }
 }
