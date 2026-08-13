@@ -151,6 +151,33 @@ describe("runCrew", () => {
     expect(hired.map((member) => member.role)).toEqual(["idea"]);
   });
 
+  it("RECUSA do modelo não vira entrega", async () => {
+    // Sem isto, "não posso ajudar" entrava no contexto da onda seguinte e a
+    // revisão acabava revisando uma recusa — falha silenciosa.
+    const { fired, hooks } = recorder();
+    const call: CrewCall = async () => "Desculpe, não posso ajudar com isso.";
+    const resultado = await runCrew({ goal: TRIVIAL, models, call, hooks, signal: new AbortController().signal });
+    expect(fired[0].status).toBe("failed");
+    expect(fired[0].output).toContain("recusou");
+    expect(resultado.outputs).toEqual([]);
+  });
+
+  it("recusa em inglês também é pega", async () => {
+    const { fired, hooks } = recorder();
+    const call: CrewCall = async () => "I'm sorry, I can't help with that request.";
+    await runCrew({ goal: TRIVIAL, models, call, hooks, signal: new AbortController().signal });
+    expect(fired[0].status).toBe("failed");
+  });
+
+  it("entrega longa que MENCIONA recusa no meio continua valendo", async () => {
+    // "não posso confirmar que…" no meio de um parágrafo é análise, não recusa.
+    const { fired, hooks } = recorder();
+    const texto = `Analisei o arquivo e encontrei o problema na linha 12. ${"Detalhe técnico. ".repeat(40)} Não posso confirmar que o caminho B seja alcançável.`;
+    const call: CrewCall = async () => texto;
+    await runCrew({ goal: TRIVIAL, models, call, hooks, signal: new AbortController().signal });
+    expect(fired[0].status).toBe("done");
+  });
+
   it("resposta vazia conta como falha, não como entrega", async () => {
     const { fired, hooks } = recorder();
     const call: CrewCall = async () => "   ";
