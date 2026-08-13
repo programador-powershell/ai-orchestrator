@@ -3,19 +3,19 @@
 /**
  * Badge de ambiente no rodapé — estilo status bar do VS Code.
  *
- * ATENÇÃO, e está dito na tela: hoje esta escolha **não roteia execução**.
- * Ferramenta, terminal e code mode rodam todos na ESTAÇÃO, qualquer que seja o
- * item marcado aqui. Rodar de fato em WSL, VPS ou nuvem depende do cliente SSH
- * que ainda não existe no binário (ver a linha "Deploy na VPS" no README).
+ * A escolha **roteia execução de verdade** no ambiente VPS: o comando sai pelo
+ * cliente SSH para o servidor cadastrado, e o badge mostra o destino real
+ * (`usuário@host`). WSL e nuvem ainda não têm executor próprio e continuam na
+ * estação — o badge diz isso em vez de deixar supor.
  *
- * Deixar o seletor prometendo roteamento seria o mesmo gating cosmético que o
- * resto do produto passou a sessão eliminando — quem lê "VPS" no rodapé
- * assumiria que o comando não toca a máquina dele, e tocaria.
+ * O destino aparecer no rodapé não é enfeite: é a diferença entre saber e
+ * supor em qual máquina o próximo comando vai rodar.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { Check, Cloud, Monitor, ServerCog, SquareTerminal } from "lucide-react";
 import { ENVIRONMENTS, type Environment } from "../lib/connectors";
+import { resolveRoute, routeLabel } from "../lib/ssh";
 import { useApp } from "../lib/store";
 
 const ICONS: Record<Environment, typeof Monitor> = {
@@ -47,6 +47,9 @@ export function EnvironmentBadge() {
 
   const current = ENVIRONMENTS.find((item) => item.id === environment) ?? ENVIRONMENTS[0];
   const Icon = ICONS[current.id];
+  // O destino REAL do próximo comando — não a intenção.
+  const servers = useApp((state) => state.settings.deployServers);
+  const route = resolveRoute(environment, servers ?? []);
 
   return (
     <div className="envbadge" ref={rootRef}>
@@ -55,19 +58,34 @@ export function EnvironmentBadge() {
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Ambiente pretendido. A execução ainda acontece na estação — falta o cliente SSH."
+        title={`Próximo comando roda em: ${routeLabel(route)}`}
       >
         <Icon size={12} />
         {current.label}
-        {environment !== "local" ? <em className="envbadge__warn">local</em> : null}
+        {/* O destino, quando não é a estação — ou o aviso, quando não há rota. */}
+        {route.kind === "ssh" ? <em className="envbadge__dest">{route.server.host}</em> : null}
+        {route.kind === "blocked" ? <em className="envbadge__warn">sem rota</em> : null}
+        {route.kind === "local" && environment !== "local" ? (
+          <em className="envbadge__warn">estação</em>
+        ) : null}
       </button>
       {open ? (
         <div className="envbadge__menu glass-strong" role="listbox" aria-label="Ambiente">
-          {/* A ressalva vem PRIMEIRO: quem abre a lista para escolher "VPS"
-              precisa saber, antes de clicar, que o comando vai rodar aqui. */}
+          {/* Onde o comando cai HOJE, com a configuração atual — antes de a
+              pessoa escolher, não depois de o comando rodar no lugar errado. */}
           <p className="envbadge__note">
-            Por enquanto tudo roda <strong>na sua estação</strong>. Esta escolha registra a intenção; o
-            roteamento depende do cliente SSH, que ainda não existe no binário.
+            {route.kind === "ssh" ? (
+              <>
+                Comandos vão para <strong>{routeLabel(route)}</strong> pelo cliente SSH do sistema.
+              </>
+            ) : route.kind === "blocked" ? (
+              <>Nada roda: {route.reason}.</>
+            ) : (
+              <>
+                Comandos rodam <strong>na sua estação</strong>. WSL e nuvem ainda não têm executor próprio;
+                só o VPS roteia, e ele exige um servidor habilitado.
+              </>
+            )}
           </p>
           {ENVIRONMENTS.map((env) => {
             const Row = ICONS[env.id];

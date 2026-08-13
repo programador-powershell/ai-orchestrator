@@ -12,6 +12,7 @@ mod providers;
 mod research;
 mod runtime;
 mod sandbox;
+mod ssh;
 mod terminal;
 mod webhook;
 mod workspace;
@@ -102,6 +103,8 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         workspace::sandbox_read,
         workspace::sandbox_list,
         webhook::webhook_post,
+        ssh::ssh_exec,
+        ssh::ssh_fingerprint,
         providers::provider_chat,
         providers::provider_chat_stream,
         providers::provider_chat_cancel,
@@ -150,7 +153,9 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         workspace::sandbox_write,
         workspace::sandbox_read,
         workspace::sandbox_list,
-        webhook::webhook_post
+        webhook::webhook_post,
+        ssh::ssh_exec,
+        ssh::ssh_fingerprint
     ]
 }
 

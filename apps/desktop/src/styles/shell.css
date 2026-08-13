@@ -1347,3 +1347,12 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: var(--fs-eyebrow);
   line-height: 1.5;
 }
+.envbadge__dest {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-eyebrow);
+  font-style: normal;
+}

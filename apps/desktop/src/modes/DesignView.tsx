@@ -1304,7 +1304,7 @@ export function DesignView() {
     }
     setFfmpeg({ status: "checking", note: "" });
     try {
-      const result = await terminal.execute("ffmpeg -version");
+      const result = await terminal.executeLocal("ffmpeg -version");
       const firstLine = (result.stdout || result.stderr).split("\n")[0]?.trim() ?? "";
       if (result.exitCode === 0 && firstLine) setFfmpeg({ status: "ok", note: firstLine });
       else setFfmpeg({ status: "missing", note: firstLine || "ffmpeg não encontrado no PATH." });
@@ -1367,7 +1367,7 @@ export function DesignView() {
     }
     setFfmpeg({ status: "rendering", note: `Renderizando ${plan.output}…${aviso}` });
     try {
-      const result = await terminal.execute(plan.command, folder);
+      const result = await terminal.executeLocal(plan.command, folder);
       if ((result.exitCode ?? 0) === 0) {
         setFfmpeg({
           status: "ok",
