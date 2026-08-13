@@ -25,6 +25,7 @@ import {
   Frame,
   Globe2,
   Image as ImageIcon,
+  Layers,
   Maximize2,
   MousePointer2,
   Palette,
@@ -47,7 +48,7 @@ import {
 import type { DesignReplicationResult } from "@ai-orchestrator/contracts";
 import { replicateDesign } from "../lib/gateway";
 import { terminal } from "../lib/terminal";
-import { buildFfmpegExport } from "../lib/videoExport";
+import { buildCompose, type ComposeClip, type TransitionKind } from "../lib/videoCompose";
 import { useApp } from "../lib/store";
 import { composerBus } from "../lib/ops";
 import {
@@ -116,6 +117,39 @@ interface TimelineClip {
   /** Entrada/saída em segundos dentro da mídia de origem. */
   start: number;
   end: number;
+  /** Transição PARA O PRÓXIMO clipe. Ausente = emenda seca. */
+  transition?: TransitionKind;
+  transitionDuration?: number;
+}
+
+/**
+ * Clipe de sobreposição — a segunda faixa (logo, PiP, selo).
+ *
+ * Fica FORA de `clips` de propósito: a timeline e o transporte do preview
+ * assumem uma faixa sequencial, e misturar as duas listas quebraria a conta
+ * de tempo de todas elas.
+ */
+interface OverlayClip {
+  id: string;
+  mediaId: string;
+  name: string;
+  start: number;
+  end: number;
+  x: number;
+  y: number;
+  /** Momento da linha do tempo final em que entra. */
+  at: number;
+}
+
+interface TextItem {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+  color: string;
+  from: number;
+  to: number;
 }
 
 interface FfmpegState {
@@ -243,6 +277,8 @@ interface DesignStudioState {
   pageIndex: number;
   media: MediaItem[];
   clips: TimelineClip[];
+  overlayClips: OverlayClip[];
+  texts: TextItem[];
   selectedClipId: string | null;
   /** Incrementado a cada remoção de clipe — o player reseta o transporte. */
   playbackEpoch: number;
@@ -259,8 +295,15 @@ interface DesignStudioState {
   addMediaFile: (file: File) => void;
   addClipFromMedia: (item: MediaItem) => void;
   setClips: (next: TimelineClip[] | ((previous: TimelineClip[]) => TimelineClip[])) => void;
+  patchClip: (id: string, patch: Partial<TimelineClip>) => void;
   selectClip: (id: string | null) => void;
   deleteClip: (id: string) => void;
+  addOverlayClip: (item: MediaItem) => void;
+  patchOverlayClip: (id: string, patch: Partial<OverlayClip>) => void;
+  removeOverlayClip: (id: string) => void;
+  addText: () => void;
+  patchText: (id: string, patch: Partial<TextItem>) => void;
+  removeText: (id: string) => void;
 }
 
 /* Histórico de undo fora do React — rail e view compartilham a pilha. */
@@ -313,6 +356,8 @@ const useDesign = create<DesignStudioState>((set) => ({
   pageIndex: 0,
   media: [],
   clips: [],
+  overlayClips: [],
+  texts: [],
   selectedClipId: null,
   playbackEpoch: 0,
   setTab: (tab) => set({ tab }),
@@ -360,13 +405,51 @@ const useDesign = create<DesignStudioState>((set) => ({
       ]
     })),
   setClips: (next) => set((state) => ({ clips: typeof next === "function" ? next(state.clips) : next })),
+  patchClip: (id, patch) =>
+    set((state) => ({
+      clips: state.clips.map((clip) => (clip.id === id ? { ...clip, ...patch } : clip))
+    })),
   selectClip: (selectedClipId) => set({ selectedClipId }),
   deleteClip: (id) =>
     set((state) => ({
       clips: state.clips.filter((clip) => clip.id !== id),
       selectedClipId: state.selectedClipId === id ? null : state.selectedClipId,
       playbackEpoch: state.playbackEpoch + 1
-    }))
+    })),
+  addOverlayClip: (item) =>
+    set((state) => ({
+      overlayClips: [
+        ...state.overlayClips,
+        {
+          id: uid(),
+          mediaId: item.id,
+          name: item.name.replace(/\.[^.]+$/, ""),
+          start: 0,
+          // Um trecho curto: sobreposição costuma ser selo/logo, não o filme
+          // inteiro — e o padrão longo demais só dá trabalho de encurtar.
+          end: Math.min(item.duration, 5),
+          x: 24,
+          y: 24,
+          at: 0
+        }
+      ]
+    })),
+  patchOverlayClip: (id, patch) =>
+    set((state) => ({
+      overlayClips: state.overlayClips.map((clip) => (clip.id === id ? { ...clip, ...patch } : clip))
+    })),
+  removeOverlayClip: (id) =>
+    set((state) => ({ overlayClips: state.overlayClips.filter((clip) => clip.id !== id) })),
+  addText: () =>
+    set((state) => ({
+      texts: [
+        ...state.texts,
+        { id: uid(), text: "Texto", x: 40, y: 40, fontSize: 36, color: "white", from: 0, to: 5 }
+      ]
+    })),
+  patchText: (id, patch) =>
+    set((state) => ({ texts: state.texts.map((item) => (item.id === id ? { ...item, ...patch } : item)) })),
+  removeText: (id) => set((state) => ({ texts: state.texts.filter((item) => item.id !== id) }))
 }));
 
 /* Persistência real do documento (sobrevive a reload), onde quer que a
@@ -385,13 +468,22 @@ useDesign.subscribe((state, previous) => {
    voltam; só o preview pede reimportar o arquivo. Antes nada persistia. */
 const VIDEO_STORAGE_KEY = "design.video";
 useDesign.subscribe((state, previous) => {
-  if (state.media === previous.media && state.clips === previous.clips) return;
+  if (
+    state.media === previous.media &&
+    state.clips === previous.clips &&
+    state.overlayClips === previous.overlayClips &&
+    state.texts === previous.texts
+  ) {
+    return;
+  }
   try {
     window.localStorage.setItem(
       VIDEO_STORAGE_KEY,
       JSON.stringify({
         media: state.media.map(({ id, name, duration }) => ({ id, name, duration })),
-        clips: state.clips
+        clips: state.clips,
+        overlayClips: state.overlayClips,
+        texts: state.texts
       })
     );
   } catch {
@@ -404,11 +496,19 @@ useDesign.subscribe((state, previous) => {
 try {
   const raw = window.localStorage.getItem(VIDEO_STORAGE_KEY);
   if (raw) {
-    const saved = JSON.parse(raw) as { media?: Array<{ id: string; name: string; duration: number }>; clips?: TimelineClip[] };
+    const saved = JSON.parse(raw) as {
+      media?: Array<{ id: string; name: string; duration: number }>;
+      clips?: TimelineClip[];
+      overlayClips?: OverlayClip[];
+      texts?: TextItem[];
+    };
     if (saved.clips?.length) {
       useDesign.setState({
         media: (saved.media ?? []).map((item) => ({ ...item, url: "" })),
-        clips: saved.clips
+        clips: saved.clips,
+        // Projetos gravados antes da composição não têm estes campos.
+        overlayClips: saved.overlayClips ?? [],
+        texts: saved.texts ?? []
       });
     }
   }
@@ -971,12 +1071,22 @@ export function DesignView() {
   const selectedClipId = useDesign((state) => state.selectedClipId);
   const selectClip = useDesign((state) => state.selectClip);
   const deleteClip = useDesign((state) => state.deleteClip);
+  const patchClip = useDesign((state) => state.patchClip);
+  const overlayClips = useDesign((state) => state.overlayClips);
+  const addOverlayClip = useDesign((state) => state.addOverlayClip);
+  const patchOverlayClip = useDesign((state) => state.patchOverlayClip);
+  const removeOverlayClip = useDesign((state) => state.removeOverlayClip);
+  const texts = useDesign((state) => state.texts);
+  const addText = useDesign((state) => state.addText);
+  const patchText = useDesign((state) => state.patchText);
+  const removeText = useDesign((state) => state.removeText);
   const playbackEpoch = useDesign((state) => state.playbackEpoch);
   const [playing, setPlaying] = useState(false);
   const [ffmpeg, setFfmpeg] = useState<FfmpegState>({ status: "idle", note: "" });
   const [mediaFolder, setMediaFolder] = useState(() => window.localStorage.getItem("design.mediaFolder") ?? "");
   const [outputName, setOutputName] = useState("corte-final.mp4");
   const [withAudio, setWithAudio] = useState(true);
+  const [fontFile, setFontFile] = useState(() => window.localStorage.getItem("design.fontFile") ?? "");
   const exportTimerRef = useRef(0);
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1209,18 +1319,45 @@ export function DesignView() {
    * o arquivo de saída é gravado na mesma pasta. Antes isto só copiava o texto.
    */
   async function runExport() {
-    const plan = buildFfmpegExport(clipsRef.current, mediaRef.current, {
+    // A faixa base vem da timeline; as sobreposições entram como faixa 1+.
+    const composeClips: ComposeClip[] = [
+      ...clipsRef.current.map((clip) => ({
+        mediaId: clip.mediaId,
+        start: clip.start,
+        end: clip.end,
+        transition: clip.transition,
+        transitionDuration: clip.transitionDuration
+      })),
+      ...overlayClips.map((clip, index) => ({
+        mediaId: clip.mediaId,
+        start: clip.start,
+        end: clip.end,
+        track: index + 1,
+        x: clip.x,
+        y: clip.y,
+        overlayAt: clip.at
+      }))
+    ];
+    const plan = buildCompose(composeClips, mediaRef.current, {
       output: outputName.trim() || "corte-final.mp4",
-      withAudio
+      withAudio,
+      fontFile: fontFile.trim() || undefined,
+      overlays: texts.map(({ text, x, y, fontSize, color, from, to }) => ({ text, x, y, fontSize, color, from, to }))
     });
     if (!plan.ok) {
       setFfmpeg((previous) => ({ ...previous, note: plan.reason ?? "não foi possível montar o export" }));
       return;
     }
+    // Os avisos não impedem, mas mudam o resultado — mostrá-los depois de
+    // renderizar seria tarde demais para o usuário decidir.
+    const aviso = plan.warnings.length ? ` (atenção: ${plan.warnings.join("; ")})` : "";
     if (!isTauriHost) {
       // No navegador não há terminal; entrega o comando para rodar à mão.
       await navigator.clipboard.writeText(plan.command).catch(() => undefined);
-      setFfmpeg((previous) => ({ ...previous, note: "Sem app desktop: comando copiado para você rodar na máquina." }));
+      setFfmpeg((previous) => ({
+        ...previous,
+        note: `Sem app desktop: comando copiado para você rodar na máquina.${aviso}`
+      }));
       return;
     }
     const folder = mediaFolder.trim();
@@ -1228,11 +1365,14 @@ export function DesignView() {
       setFfmpeg((previous) => ({ ...previous, note: "Informe a pasta onde estão os vídeos importados." }));
       return;
     }
-    setFfmpeg({ status: "rendering", note: `Renderizando ${plan.output}…` });
+    setFfmpeg({ status: "rendering", note: `Renderizando ${plan.output}…${aviso}` });
     try {
       const result = await terminal.execute(plan.command, folder);
       if ((result.exitCode ?? 0) === 0) {
-        setFfmpeg({ status: "ok", note: `Pronto: ${plan.output} gravado em ${folder}` });
+        setFfmpeg({
+          status: "ok",
+          note: `Pronto: ${plan.output} (${plan.durationSec.toFixed(1)}s) gravado em ${folder}${aviso}`
+        });
       } else {
         setFfmpeg({ status: "ok", note: `ffmpeg falhou (código ${result.exitCode}): ${(result.stderr || result.stdout).slice(-600)}` });
       }
@@ -1249,6 +1389,13 @@ export function DesignView() {
   const selectedClipMedia = selectedClip
     ? media.find((item) => item.id === selectedClip.mediaId) ?? null
     : null;
+  const clipIndex = selectedClip ? clips.indexOf(selectedClip) : -1;
+  const isLastClip = clipIndex >= 0 && clipIndex === clips.length - 1;
+  // A transição consome dos DOIS vizinhos: passar disso faz o ffmpeg abortar.
+  const maxTransition =
+    clipIndex >= 0 && !isLastClip
+      ? Math.max(0.1, Math.min(clipLength(clips[clipIndex]), clipLength(clips[clipIndex + 1])) - 0.1)
+      : 1;
 
   return (
     <Surface className="desx-studio">
@@ -1868,16 +2015,230 @@ export function DesignView() {
           <VRight>
             <PanelTitle icon={<SlidersHorizontal size={13} />} label="Clipe" meta={selectedClip ? "selecionado" : "—"} />
             {selectedClip ? (
-              <div className="desx-props">
-                <PropRow label="Nome" value={selectedClip.name} />
-                <PropRow label="Origem" value={selectedClipMedia?.name ?? "—"} />
-                <PropRow label="Entrada (in)" value={formatTime(selectedClip.start)} />
-                <PropRow label="Saída (out)" value={formatTime(selectedClip.end)} />
-                <PropRow label="Duração" value={formatTime(clipLength(selectedClip))} />
-              </div>
+              <>
+                <div className="desx-props">
+                  <PropRow label="Nome" value={selectedClip.name} />
+                  <PropRow label="Origem" value={selectedClipMedia?.name ?? "—"} />
+                  <PropRow label="Entrada (in)" value={formatTime(selectedClip.start)} />
+                  <PropRow label="Saída (out)" value={formatTime(selectedClip.end)} />
+                  <PropRow label="Duração" value={formatTime(clipLength(selectedClip))} />
+                </div>
+                {isLastClip ? (
+                  <p className="desx-hint">
+                    Último clipe da timeline — a transição pertence à emenda com o próximo.
+                  </p>
+                ) : (
+                  <div className="desx-compose-row">
+                    <label className="lg-field">
+                      Transição para o próximo
+                      <select
+                        value={selectedClip.transition ?? "none"}
+                        onChange={(event) =>
+                          patchClip(selectedClip.id, { transition: event.target.value as TransitionKind })
+                        }
+                      >
+                        <option value="none">Corte seco</option>
+                        <option value="fade">Fade</option>
+                        <option value="dissolve">Dissolver</option>
+                        <option value="wipeleft">Wipe ←</option>
+                        <option value="wiperight">Wipe →</option>
+                        <option value="slideup">Slide ↑</option>
+                      </select>
+                    </label>
+                    <label className="lg-field">
+                      Duração (s)
+                      <input
+                        type="number"
+                        min={0.1}
+                        max={maxTransition}
+                        step={0.1}
+                        value={selectedClip.transitionDuration ?? 0.5}
+                        disabled={(selectedClip.transition ?? "none") === "none"}
+                        onChange={(event) =>
+                          patchClip(selectedClip.id, { transitionDuration: Number(event.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+              </>
             ) : (
               <p className="desx-hint">Selecione um clipe na timeline para ver as propriedades.</p>
             )}
+
+            <PanelTitle
+              icon={<Layers size={13} />}
+              label="Sobreposição"
+              meta={overlayClips.length ? `${overlayClips.length} faixa(s)` : "—"}
+            />
+            <div className="desx-export">
+              <p>Uma segunda faixa por cima da base — logo, selo ou PiP, com posição e momento próprios.</p>
+              {overlayClips.map((clip) => (
+                <div key={clip.id} className="desx-overlay-card">
+                  <div className="desx-overlay-head">
+                    <strong>{clip.name}</strong>
+                    <button className="lg-icon-button" onClick={() => removeOverlayClip(clip.id)} title="Remover">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <div className="desx-compose-row">
+                    <label className="lg-field">
+                      Entra em (s)
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={clip.at}
+                        onChange={(event) => patchOverlayClip(clip.id, { at: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Dura (s)
+                      <input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={Number((clip.end - clip.start).toFixed(2))}
+                        onChange={(event) =>
+                          patchOverlayClip(clip.id, { end: clip.start + Math.max(0.1, Number(event.target.value)) })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <div className="desx-compose-row">
+                    <label className="lg-field">
+                      X
+                      <input
+                        type="number"
+                        value={clip.x}
+                        onChange={(event) => patchOverlayClip(clip.id, { x: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Y
+                      <input
+                        type="number"
+                        value={clip.y}
+                        onChange={(event) => patchOverlayClip(clip.id, { y: Number(event.target.value) })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+              {media.length ? (
+                <select
+                  className="desx-overlay-add"
+                  value=""
+                  onChange={(event) => {
+                    const item = media.find((entry) => entry.id === event.target.value);
+                    if (item) addOverlayClip(item);
+                  }}
+                >
+                  <option value="">+ Sobrepor uma mídia…</option>
+                  {media.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="desx-hint">Importe uma mídia para poder sobrepor.</p>
+              )}
+            </div>
+
+            <PanelTitle icon={<Type size={13} />} label="Texto" meta={texts.length ? `${texts.length}` : "—"} />
+            <div className="desx-export">
+              {texts.map((item) => (
+                <div key={item.id} className="desx-overlay-card">
+                  <div className="desx-overlay-head">
+                    <input
+                      className="desx-text-input"
+                      value={item.text}
+                      onChange={(event) => patchText(item.id, { text: event.target.value })}
+                      spellCheck={false}
+                    />
+                    <button className="lg-icon-button" onClick={() => removeText(item.id)} title="Remover">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <div className="desx-compose-row">
+                    <label className="lg-field">
+                      De (s)
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={item.from}
+                        onChange={(event) => patchText(item.id, { from: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Até (s)
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={item.to}
+                        onChange={(event) => patchText(item.id, { to: Number(event.target.value) })}
+                      />
+                    </label>
+                  </div>
+                  <div className="desx-compose-row">
+                    <label className="lg-field">
+                      X
+                      <input
+                        type="number"
+                        value={item.x}
+                        onChange={(event) => patchText(item.id, { x: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Y
+                      <input
+                        type="number"
+                        value={item.y}
+                        onChange={(event) => patchText(item.id, { y: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Corpo
+                      <input
+                        type="number"
+                        min={8}
+                        value={item.fontSize}
+                        onChange={(event) => patchText(item.id, { fontSize: Number(event.target.value) })}
+                      />
+                    </label>
+                    <label className="lg-field">
+                      Cor
+                      <input
+                        type="color"
+                        value={/^#[0-9a-f]{6}$/i.test(item.color) ? item.color : "#ffffff"}
+                        onChange={(event) => patchText(item.id, { color: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+              <button className="lg-button" onClick={addText}>
+                <Type size={13} />
+                Adicionar texto
+              </button>
+              {texts.length > 0 && (
+                <label className="lg-field">
+                  Arquivo de fonte (.ttf)
+                  <input
+                    value={fontFile}
+                    onChange={(event) => {
+                      setFontFile(event.target.value);
+                      window.localStorage.setItem("design.fontFile", event.target.value);
+                    }}
+                    placeholder="C:\\Windows\\Fonts\\arial.ttf"
+                    spellCheck={false}
+                  />
+                </label>
+              )}
+            </div>
             <PanelTitle
               icon={<TerminalIcon size={13} />}
               label="Exportar"
