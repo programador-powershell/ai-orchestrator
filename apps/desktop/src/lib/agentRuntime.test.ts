@@ -382,3 +382,88 @@ describe("auditoria da execução na estação", () => {
     expect(segunda[segunda.length - 1].content).toContain("sem sessão");
   });
 });
+
+describe("code mode", () => {
+  /** Roda um programa como o modelo entregaria, com as ferramentas liberadas. */
+  function comPrograma(program: string, opcoes: { approve: () => Promise<boolean>; tools?: string[] }) {
+    roteiro([toolBlock("run_program", { program })]);
+    return runAgentGoal({
+      goal: "gerar os relatórios",
+      selection: { kind: "workspace" },
+      ctx: { session: null, runtimeRunning: false, fusionPresets: [] } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      codeModeTools: opcoes.tools ?? ["fs_read", "fs_write"],
+      hooks: { onTree: () => undefined, approve: opcoes.approve }
+    });
+  }
+
+  it("um programa só faz várias chamadas — é o ganho de ida e volta", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "conteúdo" });
+    await comPrograma(
+      `for (const nome of ["a", "b", "c"]) { tool.fs_read({ path: nome }); }`,
+      { approve: async () => true }
+    );
+    expect(dispatchToolMock).toHaveBeenCalledTimes(3);
+    // E o modelo foi chamado UMA vez para produzir as três (a segunda volta é
+    // a síntese depois do resultado).
+    expect(chatOnceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a aprovação continua valendo DENTRO do programa", async () => {
+    // É o teste que impede code mode de virar porta lateral: se escrever um
+    // programa dispensasse o gate, seria mais barato do que pedir a
+    // ferramenta direto.
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "gravado" });
+    const approve = vi.fn(async () => false);
+    await comPrograma('tool.fs_write({ path: "a.txt", content: "x" });', { approve });
+    expect(approve).toHaveBeenCalled();
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+
+  it("cada chamada do programa pede aprovação por si", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "gravado" });
+    const approve = vi.fn(async () => true);
+    await comPrograma(
+      `for (const nome of ["a", "b"]) { tool.fs_write({ path: nome, content: "x" }); }`,
+      { approve }
+    );
+    expect(approve).toHaveBeenCalledTimes(2);
+  });
+
+  it("ferramenta fora da lista liberada não roda", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
+    await comPrograma('tool.fs_write({ path: "a" });', {
+      approve: async () => true,
+      tools: ["fs_read"]
+    });
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+
+  it("sem ferramenta liberada, o code mode não faz nada", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
+    roteiro([toolBlock("run_program", { program: 'tool.fs_read({ path: "a" });' })]);
+    await runAgentGoal({
+      goal: "x",
+      selection: { kind: "workspace" },
+      ctx: { session: null, runtimeRunning: false, fusionPresets: [] } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      hooks: { onTree: () => undefined, approve: async () => true }
+    });
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+
+  it("programa que não compila devolve o motivo ao modelo, sem derrubar a execução", async () => {
+    await comPrograma("const = ;", { approve: async () => true });
+    const ultima = enviadas[1];
+    expect(ultima[ultima.length - 1].content).toContain("interrompido");
+  });
+
+  it("programa vazio é recusado sem chamar ferramenta", async () => {
+    await comPrograma("   ", { approve: async () => true });
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+});

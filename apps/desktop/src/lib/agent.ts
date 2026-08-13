@@ -52,7 +52,12 @@ const TOOL_NAMES = new Set([
   "computer_write",
   "computer_read",
   "computer_list",
-  "computer_exec"
+  "computer_exec",
+  // code mode: o programa é interpretado pelo runtime da árvore, que também
+  // aplica a aprovação de cada ferramenta chamada lá dentro. Fica fora de
+  // TOOL_SPECS pela mesma razão de `delegate` — não é ferramenta folha, e
+  // oferecê-la no Chat prometeria algo que ali não existe.
+  "run_program"
 ]);
 
 const TOOL_BLOCK = /```tool\s*([\s\S]*?)```/g;

@@ -55,6 +55,7 @@ import {
   dispatchComputerTool,
   openSession
 } from "./computerUse";
+import { codeModeInstruction, runProgram } from "./codeMode";
 import { chatOnce, type EngineContext } from "./engine";
 import type { ChatMessage } from "./gateway";
 
@@ -85,6 +86,13 @@ export interface RunOptions {
    * na máquina — quem escolhe é o chamador, não o modelo.
    */
   computerUse?: boolean;
+  /**
+   * Liga o code mode e diz QUAIS ferramentas o programa pode citar.
+   *
+   * Lista vazia (o padrão) desliga: sem ferramenta liberada, o programa não
+   * tem o que fazer. Quem abre é a política do grupo.
+   */
+  codeModeTools?: string[];
 }
 
 /** Roda o objetivo inteiro. Devolve a árvore final. */
@@ -150,6 +158,11 @@ class TreeRunner {
   async runTask(taskId: string, systemPrompt: string): Promise<string> {
     const instrucoes = [systemPrompt, agentSystemInstruction()];
     if (this.session) instrucoes.push(computerUseInstruction());
+    // Só oferece o code mode quando há ferramenta liberada para ele: descrever
+    // um modo que não pode fazer nada gasta contexto e produz programa
+    // recusado.
+    const codeTools = this.options.codeModeTools ?? [];
+    if (codeTools.length) instrucoes.push(codeModeInstruction(codeTools));
     const messages: ChatMessage[] = [
       { role: "system", content: instrucoes.join("\n\n") },
       { role: "user", content: this.tree.get().tasks[taskId]?.prompt ?? "" }
@@ -208,8 +221,40 @@ class TreeRunner {
     );
   }
 
+  /**
+   * Code mode: o modelo entrega UM programa que combina várias ferramentas.
+   *
+   * O ganho é a ida e volta: oito passos deixam de custar oito chamadas de
+   * modelo. O programa é interpretado por `codeMode.ts` — não é `eval`, e o
+   * interpretador não tem caminho até nada do app.
+   *
+   * O ponto que NÃO se negocia: cada ferramenta chamada lá dentro passa pelo
+   * mesmo `runTool` de uma chamada avulsa, com a mesma aprovação. Se não
+   * passasse, escrever um programa seria a forma barata de driblar o gate.
+   */
+  private async runCodeProgram(taskId: string, call: ToolCall): Promise<string> {
+    const source = typeof call.args.program === "string" ? call.args.program : "";
+    if (!source.trim()) return formatToolResult(call, "programa vazio");
+    const result = await runProgram(source, {
+      allowed: this.options.codeModeTools ?? [],
+      signal: this.options.signal,
+      call: async (tool, args) => {
+        const saida = await this.runTool(taskId, { tool, args: args as Record<string, unknown> });
+        return saida;
+      }
+    });
+    const linhas = [
+      result.ok ? "programa concluído" : `programa interrompido: ${result.reason}`,
+      `${result.calls.length} chamada(s) de ferramenta`
+    ];
+    if (result.logs.length) linhas.push(`log:\n${result.logs.join("\n")}`);
+    if (result.value !== null) linhas.push(`retorno: ${JSON.stringify(result.value)}`);
+    return formatToolResult(call, linhas.join("\n"));
+  }
+
   /** Ferramenta comum — mesma aprovação do resto do app. */
   private async runTool(taskId: string, call: ToolCall): Promise<string> {
+    if (call.tool === "run_program") return this.runCodeProgram(taskId, call);
     const task = this.tree.get().tasks[taskId];
     // Execução na estação é a única ação que vira trilha de auditoria: é a
     // que sai do app e toca a máquina de alguém.
