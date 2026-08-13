@@ -40,6 +40,8 @@ interface AdminGroup {
     agentPlugins?: unknown[];
     /** Deixa a pessoa criar plugin próprio no agente dela. */
     userPluginsAllowed?: boolean;
+    /** Programa único combinando ferramentas, interpretado no cliente. */
+    codeModeAllowed?: boolean;
     computerUseAllowed?: boolean;
     /** União entre grupos — bloquear num grupo não é desfeito por outro. */
     blockedDomains?: string[];
@@ -279,6 +281,17 @@ export function AdminSection() {
                   onChange={(event) => void patchPolicy(group, { userPluginsAllowed: event.target.checked })}
                 />
                 plugin próprio
+              </label>
+              <label
+                className="admx-group__cu"
+                title="O modelo entrega um programa único combinando ferramentas, interpretado por um subconjunto fechado no cliente. Cada chamada dentro dele mantém a aprovação."
+              >
+                <input
+                  type="checkbox"
+                  checked={group.policy.codeModeAllowed === true}
+                  onChange={(event) => void patchPolicy(group, { codeModeAllowed: event.target.checked })}
+                />
+                code mode
               </label>
             </span>
             {/* Plugins globais do grupo. Uma ferramenta que aponta para um

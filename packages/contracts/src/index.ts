@@ -412,6 +412,12 @@ export interface BootstrapPolicy {
    * Fechado por padrão: é ampliação do que a IA alcança.
    */
   userPluginsAllowed: boolean;
+  /**
+   * Code mode: o modelo entrega um programa que combina várias ferramentas,
+   * interpretado por um subconjunto fechado no cliente — não é `eval`. Cada
+   * chamada dentro do programa mantém a aprovação. Fechado por padrão.
+   */
+  codeModeAllowed: boolean;
   /** Área isolada com execução de código na estação — ver ADR do computer use. */
   computerUseAllowed: boolean;
   /**

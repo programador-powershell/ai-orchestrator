@@ -60,6 +60,13 @@ pub struct GroupPolicyDoc {
     /// Fechado por padrão, como todo o resto que amplia o que a IA alcança: o
     /// admin abre quando decidir que abre.
     pub user_plugins_allowed: Option<bool>,
+    /// Code mode: o modelo escreve UM programa que combina várias ferramentas,
+    /// interpretado por um subconjunto fechado no cliente (lib/codeMode.ts).
+    ///
+    /// Não é `eval`: o interpretador não tem caminho até nada do app. Ainda
+    /// assim é o modelo dirigindo uma sequência de ações com uma aprovação por
+    /// chamada, então quem abre é o admin.
+    pub code_mode_allowed: Option<bool>,
     /// Área de trabalho isolada (escrever e EXECUTAR código na estação).
     /// Ver docs/adr-computer-use.md — não reduz privilégio.
     pub computer_use_allowed: Option<bool>,
@@ -85,6 +92,7 @@ pub struct EffectivePolicy {
     pub agent_role_models: BTreeMap<String, String>,
     pub agent_plugins: Vec<Value>,
     pub user_plugins_allowed: bool,
+    pub code_mode_allowed: bool,
     pub computer_use_allowed: bool,
     pub blocked_domains: Vec<String>,
     pub prompt_master: Option<PromptMaster>,
@@ -128,6 +136,7 @@ fn open_policy() -> EffectivePolicy {
         agent_plugins: Vec::new(),
         // Plugin próprio amplia o alcance da IA: fechado até o admin abrir.
         user_plugins_allowed: false,
+        code_mode_allowed: false,
         // Mesmo sem gating configurado, computer use nasce FECHADO: ele executa
         // comando na estação e depende de parecer de TI/SI (ver ADR).
         computer_use_allowed: false,
@@ -195,6 +204,9 @@ pub fn merge_policies(docs: &[GroupPolicyDoc]) -> GroupPolicyDoc {
         // restritivo vence, como nos outros booleanos de segurança.
         if let Some(value) = doc.user_plugins_allowed {
             merged.user_plugins_allowed = Some(merged.user_plugins_allowed.unwrap_or(true) && value);
+        }
+        if let Some(value) = doc.code_mode_allowed {
+            merged.code_mode_allowed = Some(merged.code_mode_allowed.unwrap_or(true) && value);
         }
         // Plugins globais são UNIÃO, com o primeiro `id` vencendo — pertencer a
         // dois grupos soma ferramentas, não as tira. O `id` decide para dois
@@ -344,6 +356,7 @@ pub async fn resolve(
             agent_role_models: BTreeMap::new(),
             agent_plugins: Vec::new(),
             user_plugins_allowed: false,
+            code_mode_allowed: false,
             computer_use_allowed: false,
             blocked_domains: Vec::new(),
             prompt_master: prompt_master_for(state, workspace, &[]).await?,
@@ -391,6 +404,8 @@ pub async fn resolve(
         agent_plugins: merged.agent_plugins.unwrap_or_default(),
         // Sem declaração explícita do admin, plugin de usuário fica FECHADO.
         user_plugins_allowed: merged.user_plugins_allowed.unwrap_or(false),
+        // Idem para o code mode: o modelo dirigindo uma sequência de ações.
+        code_mode_allowed: merged.code_mode_allowed.unwrap_or(false),
         // Sem declaração explícita do admin, computer use fica FECHADO.
         computer_use_allowed: merged.computer_use_allowed.unwrap_or(false),
         blocked_domains: merged.blocked_domains.unwrap_or_default(),
@@ -785,6 +800,20 @@ mod blocklist_tests {
             doc(json!({"userPluginsAllowed": false})),
         ]);
         assert_eq!(merged.user_plugins_allowed, Some(false));
+    }
+
+    #[test]
+    fn code_mode_fecha_no_grupo_mais_restritivo() {
+        let merged = merge_policies(&[
+            doc(json!({"codeModeAllowed": true})),
+            doc(json!({"codeModeAllowed": false})),
+        ]);
+        assert_eq!(merged.code_mode_allowed, Some(false));
+    }
+
+    #[test]
+    fn code_mode_nasce_fechado_sem_declaracao() {
+        assert_eq!(merge_policies(&[doc(json!({}))]).code_mode_allowed, None);
     }
 
     #[test]
