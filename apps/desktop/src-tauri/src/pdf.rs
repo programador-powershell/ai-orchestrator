@@ -402,7 +402,7 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
         if !parcial.trim().is_empty() {
             texto.push_str(&parcial);
             if texto.len() > MAX_TEXT_BYTES {
-                texto.truncate(MAX_TEXT_BYTES);
+                texto.truncate(crate::office::floor_char_boundary(&texto, MAX_TEXT_BYTES));
                 texto.push_str("\n… (texto truncado)");
                 break;
             }

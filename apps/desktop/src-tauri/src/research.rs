@@ -126,26 +126,50 @@ pub(crate) fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
         return Err("host não resolvido".into());
     }
     for ip in resolved {
-        let blocked = match ip {
-            IpAddr::V4(v4) => {
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_broadcast()
-                    || v4.is_unspecified()
-                    || v4.octets()[0] == 0
-                    // 100.64.0.0/10 (CGNAT) e 169.254.0.0/16 (metadados)
-                    || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
-            }
-            IpAddr::V6(v6) => {
-                v6.is_loopback() || v6.is_unspecified() || v6.segments()[0] & 0xfe00 == 0xfc00
-            }
-        };
-        if blocked {
+        if is_internal(ip) {
             return Err(format!("host {ip} pertence à rede interna — bloqueado"));
         }
     }
     Ok(())
+}
+
+/// O IP pertence a uma rede que o app não pode alcançar?
+///
+/// Separado da resolução para ser testável — e porque a regra de v6 precisa
+/// cair na de v4 quando o endereço embute um IPv4.
+pub(crate) fn is_internal(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.octets()[0] == 0
+                // 100.64.0.0/10 (CGNAT) e 169.254.0.0/16 (metadados, que
+                // `is_link_local` já cobre).
+                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+        }
+        IpAddr::V6(v6) => {
+            // IPv4 embutido volta para a regra v4 ANTES de tudo. Sem isto,
+            // `::ffff:169.254.169.254` não casava nenhum padrão v6 e passava
+            // direto para o endpoint de metadados da nuvem — exatamente o que
+            // esta guarda existe para impedir.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_internal(IpAddr::V4(v4));
+            }
+            if let Some(v4) = v6.to_ipv4() {
+                return is_internal(IpAddr::V4(v4));
+            }
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // fc00::/7 — endereço local único.
+                || v6.segments()[0] & 0xfe00 == 0xfc00
+                // fe80::/10 — link-local, que faltava.
+                || v6.segments()[0] & 0xffc0 == 0xfe80
+        }
+    }
 }
 
 /// Política de redirect que reaplica `guard_public_host` a CADA salto.
@@ -261,6 +285,40 @@ pub async fn page_fetch(url: String) -> Result<FetchedPage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
+
+    #[test]
+    fn ipv4_mapeado_em_ipv6_nao_escapa_da_guarda() {
+        // `::ffff:169.254.169.254` é o endpoint de metadados da nuvem escrito
+        // em forma v6. Antes ele não casava nenhum padrão v6 e passava.
+        for hostil in [
+            "::ffff:169.254.169.254",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.5",
+            "::ffff:192.168.1.1",
+        ] {
+            let ip: IpAddr = hostil.parse().unwrap();
+            assert!(is_internal(ip), "deixou passar {hostil}");
+        }
+    }
+
+    #[test]
+    fn link_local_v6_e_bloqueado() {
+        assert!(is_internal("fe80::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn rede_interna_v4_continua_bloqueada() {
+        for hostil in ["127.0.0.1", "10.0.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1"] {
+            assert!(is_internal(hostil.parse().unwrap()), "deixou passar {hostil}");
+        }
+    }
+
+    #[test]
+    fn endereco_publico_passa() {
+        assert!(!is_internal("8.8.8.8".parse().unwrap()));
+        assert!(!is_internal("2001:4860:4860::8888".parse().unwrap()));
+    }
 
     #[test]
     fn strips_script_and_style_blocks() {

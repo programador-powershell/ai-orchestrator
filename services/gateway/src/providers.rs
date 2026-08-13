@@ -247,11 +247,15 @@ impl ProviderClient {
             .clone()
             .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".into());
         let contents: Vec<_> = request.messages.iter().filter(|m| m.role != "system").map(|m| json!({"role":if m.role=="assistant"{"model"}else{"user"},"parts":[{"text":message_text(&m.content)}]})).collect();
+        // A chave vai em CABEÇALHO, nunca na query string. Na URL ela entra em
+        // toda mensagem de erro do reqwest (o `Display` dele inclui a URL) e
+        // daí para o log — vazando a credencial do workspace num simples
+        // timeout de rede. O Google aceita `x-goog-api-key` para todas as
+        // rotas da API.
         let url = format!(
-            "{}/models/{}:generateContent?key={}",
+            "{}/models/{}:generateContent",
             base.trim_end_matches('/'),
-            urlencoding::encode(&target.model),
-            urlencoding::encode(&provider.api_key)
+            urlencoding::encode(&target.model)
         );
         let mut generation = json!({});
         if let Some(value) = temperature {
@@ -263,6 +267,7 @@ impl ProviderClient {
         let upstream = self
             .http
             .post(url)
+            .header("x-goog-api-key", &provider.api_key)
             .timeout(Duration::from_millis(timeout_ms))
             .json(&json!({"contents":contents,"generationConfig":generation}))
             .send()

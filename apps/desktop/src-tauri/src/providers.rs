@@ -82,19 +82,32 @@ fn read_key(account: &str) -> Result<String, String> {
 
 /// `http://` só é aceito contra a própria máquina (runtime local). Para
 /// qualquer outro host a chave BYOK cruzaria a rede em texto claro.
+/// A URL aponta para a própria máquina?
+///
+/// Só o loopback pode sair sem TLS. A versão anterior recortava a string à mão
+/// e o *userinfo* a enganava: em `http://[::1]:8080@evil.com/`, o
+/// `rsplit_once(':')` devolvia `[::1]` como host e a chave BYOK saía em claro
+/// para o `evil.com`. Quem separa userinfo de host é o parser de URL, não
+/// `split`.
 fn is_loopback_url(url: &str) -> bool {
-    let rest = match url.strip_prefix("http://") {
-        Some(rest) => rest,
-        None => return false,
+    let parsed = match url::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return false,
     };
-    let host = rest
-        .split('/')
-        .next()
-        .unwrap_or("")
-        .rsplit_once(':')
-        .map(|(host, _)| host)
-        .unwrap_or_else(|| rest.split('/').next().unwrap_or(""));
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    // Userinfo presente numa URL de provedor não tem uso legítimo aqui e é o
+    // vetor que enganava a checagem — recusa direto.
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    match parsed.host() {
+        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 fn validate_base_url(base_url: &str) -> Result<String, String> {
@@ -325,7 +338,39 @@ pub struct ProviderFetchRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_sse_delta, validate_base_url};
+    use super::{is_loopback_url, parse_sse_delta, validate_base_url};
+
+    #[test]
+    fn userinfo_nao_engana_a_checagem_de_loopback() {
+        // O recorte por `rsplit_once(':')` devolvia `[::1]` como host aqui e
+        // liberava HTTP em claro para o evil.com, levando a chave BYOK junto.
+        for hostil in [
+            "http://[::1]:8080@evil.com/v1",
+            "http://127.0.0.1@evil.com/v1",
+            "http://localhost:11434@evil.com/v1",
+            "http://user:senha@evil.com/v1",
+        ] {
+            assert!(!is_loopback_url(hostil), "aceitou {hostil}");
+        }
+    }
+
+    #[test]
+    fn loopback_de_verdade_continua_liberado() {
+        for bom in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:1234/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(is_loopback_url(bom), "recusou {bom}");
+        }
+    }
+
+    #[test]
+    fn host_externo_em_http_e_recusado() {
+        assert!(!is_loopback_url("http://api.openai.com/v1"));
+        // HTTPS não passa por aqui: a regra é "só loopback sem TLS".
+        assert!(!is_loopback_url("https://localhost/v1"));
+    }
 
     #[test]
     fn extracts_delta_content() {
