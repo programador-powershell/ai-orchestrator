@@ -76,6 +76,7 @@ import {
 } from "../lib/agentRun";
 import { runWithLimit } from "../lib/pool";
 import { AgentTreeView } from "../components/AgentTreeView";
+import { CrewRail, CrewView } from "../components/CrewView";
 import { SpecFlowView } from "../components/SpecFlowView";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
@@ -762,6 +763,11 @@ export function AgentRail() {
 
   return (
     <>
+      {/* A equipe viva vem PRIMEIRO: é o que responde "o que está acontecendo
+          agora". A paleta do flow builder é ferramenta de edição, não de
+          acompanhamento, e empurrá-la para cima esconderia o que importa. */}
+      <CrewRail />
+
       <span className="eyebrow">Paleta de nós</span>
       <div className="agxr-palette">
         {paletteKinds.map((kind) => (
@@ -846,7 +852,7 @@ export function AgentView() {
    * principal: quem decide dividir o trabalho é o modelo. O flow builder
    * continua em "flow" para quem quer fixar o grafo à mão.
    */
-  const [surface, setSurface] = useState<"agents" | "spec" | "flow">("agents");
+  const [surface, setSurface] = useState<"agents" | "livre" | "spec" | "flow">("agents");
   /** Mesma raiz que o Composer usa para as ferramentas de arquivo. */
   const projectRoot = typeof window === "undefined" ? "." : window.localStorage.getItem("code.root") ?? ".";
   const [zoom, setZoom] = useState(1);
@@ -967,9 +973,16 @@ export function AgentView() {
           <button
             className={`agx-mode ${surface === "agents" ? "active" : ""}`}
             onClick={() => setSurface("agents")}
-            title="Declare um objetivo; o agente decide se aciona subordinados"
+            title="Diga o objetivo; a equipe é escalada pela complexidade e segue a espinha spec-driven"
           >
             Agentes
+          </button>
+          <button
+            className={`agx-mode ${surface === "livre" ? "active" : ""}`}
+            onClick={() => setSurface("livre")}
+            title="Delegação livre: o próprio modelo decide se e como divide o trabalho"
+          >
+            Livre
           </button>
           <button
             className={`agx-mode ${surface === "spec" ? "active" : ""}`}
@@ -1040,6 +1053,21 @@ export function AgentView() {
       )}
 
       {surface === "agents" && (
+        <VBody>
+          <VCenter>
+            <CrewView
+              selection={selection}
+              ctx={{
+                session,
+                runtimeRunning: runtimeStatus.running,
+                fusionPresets: settings.fusionPresets
+              }}
+            />
+          </VCenter>
+        </VBody>
+      )}
+
+      {surface === "livre" && (
         <VBody>
           <VCenter>
             <AgentTreeView

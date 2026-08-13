@@ -31,6 +31,11 @@ interface AdminGroup {
     agentMaxDepth?: number;
     agentMaxChildren?: number;
     agentMaxTotal?: number;
+    /**
+     * Modelo por papel da equipe da aba Agent. Escolher o modelo é escolher
+     * quanto gastar, então é decisão do admin. Papel vazio = modelo do módulo.
+     */
+    agentRoleModels?: Record<string, string>;
     computerUseAllowed?: boolean;
     /** União entre grupos — bloquear num grupo não é desfeito por outro. */
     blockedDomains?: string[];
@@ -260,6 +265,30 @@ export function AdminSection() {
                 />
                 executa código
               </label>
+            </span>
+            {/* Modelo por papel da equipe. A escalação da aba Agent é fixa por
+                complexidade; o que muda é QUEM ocupa cada cadeira — e isso é
+                custo, não preferência. Vazio = modelo do módulo. */}
+            <span className="admx-group__roles" title="Modelo de cada papel da equipe de agentes. Vazio usa o modelo do módulo.">
+              {(["idea", "scope", "plan", "code", "review"] as const).map((papel) => (
+                <label key={papel}>
+                  {papel}
+                  <input
+                    defaultValue={group.policy.agentRoleModels?.[papel] ?? ""}
+                    placeholder="padrão"
+                    spellCheck={false}
+                    onBlur={(event) => {
+                      const valor = event.target.value.trim();
+                      const atual = group.policy.agentRoleModels ?? {};
+                      if ((atual[papel] ?? "") === valor) return;
+                      const proximo = { ...atual };
+                      if (valor) proximo[papel] = valor;
+                      else delete proximo[papel];
+                      void patchPolicy(group, { agentRoleModels: proximo });
+                    }}
+                  />
+                </label>
+              ))}
             </span>
             {/* Blocklist: a lista efetiva é a UNIÃO dos grupos do usuário —
                 bloquear em um grupo não é desfeito por pertencer a outro. */}
