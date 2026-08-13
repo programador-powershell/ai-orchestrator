@@ -608,3 +608,13 @@
   font-size: var(--fs-micro);
   line-height: 1.5;
 }
+
+/* Tipo do símbolo na paleta (@ no Quick Open). */
+.codex-sym-kind {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-eyebrow);
+}

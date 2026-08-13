@@ -9,6 +9,7 @@
 import "../styles/modes/code.css";
 import "../styles/modes/ship.css";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -26,6 +27,7 @@ import {
   FileDiff,
   Folder,
   FolderOpen,
+  Hash,
   Merge,
   Network,
   Plus,
@@ -33,18 +35,32 @@ import {
   Save,
   Search,
   ShieldCheck,
+  Sparkles,
   Terminal as TerminalIcon,
   WandSparkles,
   X
 } from "lucide-react";
 import type { FsEntry, OrchestrationGraph } from "@ai-orchestrator/contracts";
-import { CodeEditor, type CodeEditorApi, type InlineSuggestionContext } from "../components/CodeEditor";
+import {
+  CodeEditor,
+  type CodeEditorApi,
+  type InlineSuggestionContext,
+  type SuggestState
+} from "../components/CodeEditor";
 import { FloatingPulse, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 import { computeDiff, diffStats, toHunks, type DiffLine } from "../lib/diff";
 import { applySelectedHunks, splitIntoHunks, type Hunk } from "../lib/hunks";
 import { suggestIdentifier } from "../lib/inlineSuggest";
-import { describeSelection } from "../lib/engine";
+import {
+  buildFimContext,
+  buildFimRequest,
+  completionKey,
+  sanitizeCompletion,
+  shouldComplete
+} from "../lib/fim";
+import { buildIndex, searchSymbols, type CodeSymbol } from "../lib/symbols";
+import { chatOnce, describeSelection } from "../lib/engine";
 import { composerBus } from "../lib/ops";
 import { collectFiles, fsList, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
 import { detectByFileName, detectLanguage, isRunnableFileInput } from "../lib/langDetect";
@@ -395,6 +411,79 @@ export function CodeView() {
   const editorApiRef = useRef<CodeEditorApi | null>(null);
   const pendingRevealRef = useRef<{ path: string; line: number } | null>(null);
 
+  // O completar por modelo vive num callback estável (o editor guarda a
+  // referência): ler o estado por ref evita capturar uma sessão vencida.
+  const runtimeRunning = useApp((state) => state.runtimeStatus.running);
+  const settingsRef = useRef(settings);
+  const sessionRef = useRef(session);
+  const runtimeRef = useRef(runtimeRunning);
+  settingsRef.current = settings;
+  sessionRef.current = session;
+  runtimeRef.current = runtimeRunning;
+
+  /* ---------------------- Índice de símbolos ------------------------ */
+  /**
+   * Indexa os arquivos ABERTOS. Varrer o projeto inteiro exigiria ler todo o
+   * disco a cada abertura da paleta; os arquivos abertos são os que a pessoa
+   * está de fato navegando, e o custo é proporcional ao que ela mexeu.
+   */
+  const symbolIndex = useMemo(
+    () => buildIndex(files.filter((file) => !file.loading).map((file) => ({ path: file.path, text: file.content }))),
+    [files]
+  );
+  const [suggestState, setSuggestState] = useState<SuggestState>("idle");
+
+  /**
+   * Completar por MODELO no ponto do cursor.
+   *
+   * Só é chamado quando a sugestão do buffer não achou nada (o editor decide).
+   * O cache evita pagar duas vezes pelo mesmo ponto — voltar o cursor para
+   * onde já se pediu é o movimento mais comum de todos.
+   */
+  const fimCacheRef = useRef(new Map<string, string | null>());
+  const modelSuggestion = useCallback(
+    async (context: InlineSuggestionContext): Promise<string | null> => {
+      if (!shouldComplete(context.text, context.cursor)) return null;
+      const fim = buildFimContext(context.text, context.cursor);
+      const chave = completionKey(fim);
+      const cache = fimCacheRef.current;
+      if (cache.has(chave)) return cache.get(chave) ?? null;
+
+      const atual = useCode.getState();
+      const arquivo = atual.files.find((file) => file.path === atual.activePath);
+      const request = buildFimRequest(fim, {
+        language: arquivo ? detectByFileName(arquivo.name)?.language : undefined,
+        symbols: symbolIndex.symbols
+      });
+      try {
+        const bruto = await chatOnce(
+          settingsRef.current.engines.code,
+          "code",
+          [
+            { role: "system", content: request.system },
+            { role: "user", content: request.user }
+          ],
+          {
+            session: sessionRef.current,
+            runtimeRunning: runtimeRef.current,
+            fusionPresets: settingsRef.current.fusionPresets
+          },
+          { onDelta: () => undefined },
+          context.signal
+        );
+        const limpo = sanitizeCompletion(bruto, fim);
+        // Cache com teto: um mapa que só cresce viraria vazamento numa
+        // sessão longa de edição.
+        if (cache.size > 200) cache.clear();
+        cache.set(chave, limpo);
+        return limpo;
+      } catch {
+        return null;
+      }
+    },
+    [symbolIndex]
+  );
+
   /* ------------------------ Quick Open (Ctrl+P) --------------------- */
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickQuery, setQuickQuery] = useState("");
@@ -412,20 +501,51 @@ export function CodeView() {
   const quickPaths = useMemo(() => (quickFiles ?? []).map((file) => file.path), [quickFiles]);
   const quickHits = useMemo(() => fuzzyRank(quickQuery, quickPaths, 50), [quickQuery, quickPaths]);
 
+  /**
+   * `@` na mesma caixa alterna para símbolos — a convenção que quem vem de
+   * outro editor já tem no dedo, e uma tecla a menos para decorar.
+   */
+  const symbolMode = quickQuery.startsWith("@");
+  const symbolHits = useMemo(() => {
+    if (!symbolMode) return [];
+    const termo = quickQuery.slice(1).trim();
+    // Só `@`: lista tudo, para dar para navegar o arquivo sem saber o nome.
+    // Devolver vazio aqui pareceria "não achei" tendo símbolo indexado.
+    if (!termo) return symbolIndex.symbols.slice(0, 50);
+    return searchSymbols(symbolIndex, termo, 50);
+  }, [symbolMode, quickQuery, symbolIndex]);
+
+  function openSymbol(symbol: CodeSymbol) {
+    setQuickOpen(false);
+    // O arquivo já está aberto (o índice só cobre abertos), então só resta
+    // ativá-lo e pular para a linha.
+    setActivePath(symbol.file);
+    pendingRevealRef.current = { path: symbol.file, line: symbol.line };
+    editorApiRef.current?.revealLine(symbol.line);
+  }
+
   function openQuickHit(path: string) {
     setQuickOpen(false);
     openFile({ name: baseName(path), path });
   }
 
   function onQuickKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    // A navegação precisa seguir a lista que está NA TELA: com `@` a seleção
+    // andaria sobre os arquivos enquanto os símbolos são exibidos.
+    const total = symbolMode ? symbolHits.length : quickHits.length;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setQuickIndex((index) => Math.min(index + 1, Math.max(quickHits.length - 1, 0)));
+      setQuickIndex((index) => Math.min(index + 1, Math.max(total - 1, 0)));
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setQuickIndex((index) => Math.max(index - 1, 0));
     } else if (event.key === "Enter") {
       event.preventDefault();
+      if (symbolMode) {
+        const symbol = symbolHits[quickIndex] ?? symbolHits[0];
+        if (symbol) openSymbol(symbol);
+        return;
+      }
       const hit = quickHits[quickIndex] ?? quickHits[0];
       if (hit) openQuickHit(hit.path);
     } else if (event.key === "Escape") {
@@ -1029,6 +1149,8 @@ export function CodeView() {
                 onChange={changeActive}
                 apiRef={editorApiRef}
                 inlineSuggestion={inlineSuggestion}
+                modelSuggestion={modelSuggestion}
+                onSuggestState={setSuggestState}
               />
               {active.loading && <div className="codex-editor-loading">lendo {active.path}…</div>}
             </div>
@@ -1088,13 +1210,39 @@ export function CodeView() {
                       setQuickIndex(0);
                     }}
                     onKeyDown={onQuickKeyDown}
-                    placeholder="Buscar arquivo pelo nome…"
-                    aria-label="Quick Open — busca fuzzy de arquivos"
+                    placeholder="Buscar arquivo pelo nome… (@ para símbolos)"
+                    aria-label="Quick Open — busca fuzzy de arquivos e símbolos"
                   />
+                  {symbolMode && <span className="chip accent">símbolos</span>}
                   {!isTauriHost && <span className="chip warn">demo</span>}
                 </header>
                 <div className="codex-quick-list">
-                  {quickFiles === null ? (
+                  {symbolMode ? (
+                    !symbolHits.length ? (
+                      <span className="codex-tree-note">
+                        {symbolIndex.symbols.length
+                          ? "nenhum símbolo corresponde"
+                          : "abra um arquivo para indexar os símbolos dele"}
+                      </span>
+                    ) : (
+                      symbolHits.map((symbol, index) => (
+                        <button
+                          key={`${symbol.file}:${symbol.line}:${symbol.name}`}
+                          className={`codex-quick-item ${index === quickIndex ? "active" : ""}`}
+                          onMouseEnter={() => setQuickIndex(index)}
+                          onClick={() => openSymbol(symbol)}
+                          title={`${symbol.file}:${symbol.line}`}
+                        >
+                          <span className="codex-sym-kind">{symbol.kind}</span>
+                          <strong>{symbol.name}</strong>
+                          <small>
+                            {symbol.container ? `${symbol.container} · ` : ""}
+                            {baseName(symbol.file)}:{symbol.line}
+                          </small>
+                        </button>
+                      ))
+                    )
+                  ) : quickFiles === null ? (
                     <span className="codex-tree-note">indexando arquivos…</span>
                   ) : !quickHits.length ? (
                     <span className="codex-tree-note">nenhum arquivo corresponde</span>
@@ -1116,9 +1264,11 @@ export function CodeView() {
                 </div>
                 <footer>
                   ↑↓ navega · Enter abre · Esc fecha
-                  {quickFiles
-                    ? ` · ${quickFiles.length} arquivo(s) indexados (máx. ${INDEX_LIMITS.maxEntries}, profundidade ${INDEX_LIMITS.maxDepth})`
-                    : ""}
+                  {symbolMode
+                    ? ` · ${symbolIndex.symbols.length} símbolo(s) nos ${symbolIndex.files.length} arquivo(s) abertos`
+                    : quickFiles
+                      ? ` · ${quickFiles.length} arquivo(s) indexados (máx. ${INDEX_LIMITS.maxEntries}, profundidade ${INDEX_LIMITS.maxDepth})`
+                      : ""}
                   {!isTauriHost && " · árvore demo — o app desktop indexa o projeto real"}
                 </footer>
               </div>
@@ -1309,6 +1459,24 @@ export function CodeView() {
         <span title="Estado do terminal integrado desta aba">
           <TerminalIcon size={11} />
           terminal {termBusy ? "executando…" : "ocioso"}
+        </span>
+        {/* Chamada de modelo por tecla é dinheiro: a pessoa tem direito de
+            ver quando ela acontece, e não descobrir na fatura. */}
+        <span
+          title={
+            suggestState === "loading"
+              ? "Consultando o modelo para completar no cursor"
+              : suggestState === "ready"
+                ? "Sugestão do modelo pronta — Tab aceita"
+                : "Completar por modelo: entra quando o buffer não tem o que sugerir"
+          }
+        >
+          <Sparkles size={11} />
+          {suggestState === "loading" ? "completando…" : suggestState === "ready" ? "Tab aceita" : "completar"}
+        </span>
+        <span title="Símbolos indexados dos arquivos abertos — @ no Ctrl+P busca neles">
+          <Hash size={11} />
+          {symbolIndex.symbols.length} símbolo(s)
         </span>
         <span title="Motor real da aba Code (settings.engines.code) — altere em Configurações → Motores">
           <Merge size={11} />
