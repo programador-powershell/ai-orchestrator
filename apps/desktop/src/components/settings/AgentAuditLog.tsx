@@ -12,7 +12,7 @@
  * falhou e o que por algum motivo rodou fora do Job Object.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, RefreshCw, ShieldAlert, Terminal, TriangleAlert } from "lucide-react";
 import { useApp } from "../../lib/store";
 
@@ -53,8 +53,14 @@ export function AgentAuditLog() {
     ? `${session.baseUrl.replace(/\/$/, "")}/v1/workspaces/${session.workspaceId}/admin`
     : null;
 
+  // Mudar a janela ou o filtro dispara uma busca sem esperar a anterior; a
+  // resposta antiga chegando depois pintaria a tabela com o recorte errado.
+  const voltaRef = useRef(0);
+
   const refresh = useCallback(async () => {
     if (!base || !session) return;
+    const volta = voltaRef.current + 1;
+    voltaRef.current = volta;
     setLoading(true);
     setError("");
     try {
@@ -68,11 +74,14 @@ export function AgentAuditLog() {
             : `gateway respondeu ${response.status}`
         );
       }
-      setItems(((await response.json()) as { items: AgentAction[] }).items ?? []);
+      const lidos = ((await response.json()) as { items: AgentAction[] }).items ?? [];
+      if (voltaRef.current !== volta) return;
+      setItems(lidos);
     } catch (cause) {
+      if (voltaRef.current !== volta) return;
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setLoading(false);
+      if (voltaRef.current === volta) setLoading(false);
     }
   }, [base, session, days, flagged]);
 

@@ -875,6 +875,13 @@
   font-size: var(--fs-eyebrow);
   white-space: pre-wrap;
 }
+/* Quantos pedidos de aprovação estão esperando atrás deste. */
+.agtx-approval-fila {
+  display: inline-block;
+  margin-top: 5px;
+  font-size: var(--fs-eyebrow);
+  color: var(--text-2);
+}
 .agtx-approval-actions {
   display: grid;
   gap: 5px;

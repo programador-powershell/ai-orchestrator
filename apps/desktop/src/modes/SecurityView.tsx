@@ -30,6 +30,7 @@ import {
   ScanLine,
   ShieldCheck,
   FlaskConical,
+  Square,
   Upload,
   UserCheck,
   X
@@ -531,6 +532,21 @@ export function SecurityView() {
     }
   }
 
+  /**
+   * Sair da aba aborta a revisão em curso.
+   *
+   * A view desmonta na troca de aba (o App só monta o modo ativo), mas o
+   * runDeepReview seguia disparando chamadas de modelo — custo real — para
+   * jogar o resultado num componente morto, e o onStage continuava mexendo no
+   * stage GLOBAL a partir dele.
+   */
+  useEffect(
+    () => () => {
+      reviewAbortRef.current?.abort();
+    },
+    []
+  );
+
   async function runAudit(text: string, label: string) {
     if (auditing) return;
     setAuditing(true);
@@ -935,10 +951,20 @@ export function SecurityView() {
               </button>
               <input ref={codeFileRef} type="file" multiple hidden onChange={(event) => void onCodeFiles(event)} />
             </div>
-            <button className="lg-button" disabled={!files.length || reviewing} onClick={() => void runDeepReviewFlow()}>
-              <Merge size={13} />
-              {reviewing ? "Revisando…" : "Revisão profunda (multi-modelo)"}
-            </button>
+            {/* Revisão profunda gasta modelo de verdade (uma investigação e uma
+                refutação por arquivo). Sem botão de parar, quem disparou por
+                engano num escopo grande só podia assistir a fatura correr. */}
+            {reviewing ? (
+              <button className="lg-button" onClick={() => reviewAbortRef.current?.abort()}>
+                <Square size={13} />
+                Parar revisão
+              </button>
+            ) : (
+              <button className="lg-button" disabled={!files.length} onClick={() => void runDeepReviewFlow()}>
+                <Merge size={13} />
+                Revisão profunda (multi-modelo)
+              </button>
+            )}
             {scanNote && <small className="secx-note">{scanNote}</small>}
             {reviewNote && <small className="secx-note">{reviewNote}</small>}
             {/* Os refutados ficam visíveis, recolhidos. Escondê-los de vez

@@ -32,6 +32,7 @@ import { Markdown } from "./Markdown";
 import type { ToolCall } from "../lib/agent";
 import { chatOnce, type EngineContext } from "../lib/engine";
 import { runAgentGoal } from "../lib/agentRuntime";
+import { useApprovalQueue } from "../lib/approvalQueue";
 import { clampLimits } from "../lib/agentTree";
 import {
   approveStage,
@@ -71,18 +72,32 @@ export function SpecFlowView({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [running, setRunning] = useState(false);
-  const [approval, setApproval] = useState<
-    { label: string; call: ToolCall; resolve: (allowed: boolean) => void } | null
-  >(null);
+  const approvals = useApprovalQueue<{ label: string; call: ToolCall }>();
+  const approval = approvals.current;
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * O documento COMMITADO, fora do ciclo de render.
+   *
+   * Gerar uma etapa leva um stream inteiro e executar tarefas leva minutos.
+   * Nesse intervalo a pessoa pode corrigir um texto ou aprovar uma etapa —
+   * e o `doc` capturado no clique já está velho. Commitar aquele valor
+   * apagava a edição e a aprovação, em memória E no localStorage. Toda
+   * escrita passa por aqui e é aplicada sobre o ÚLTIMO estado commitado.
+   */
+  const docRef = useRef<SpecDoc>(doc);
 
   // Restaura o documento salvo (o fluxo dura dias, não uma sessão).
   useEffect(() => {
     const stored = parseDoc(window.localStorage.getItem(SPEC_STORAGE_KEY));
-    if (stored) setDoc(stored);
+    if (stored) {
+      docRef.current = stored;
+      setDoc(stored);
+    }
   }, []);
 
-  function commit(next: SpecDoc) {
+  function commit(update: SpecDoc | ((current: SpecDoc) => SpecDoc)) {
+    const next = typeof update === "function" ? update(docRef.current) : update;
+    docRef.current = next;
     setDoc(next);
     try {
       window.localStorage.setItem(SPEC_STORAGE_KEY, serializeDoc(next));
@@ -129,11 +144,11 @@ export function SpecFlowView({
         },
         controller.signal
       );
-      commit(setStage(doc, stage, texto, Date.now()));
+      commit((current) => setStage(current, stage, texto, Date.now()));
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : String(cause));
       // Volta ao que estava salvo — rascunho parcial não vira documento.
-      setDoc(doc);
+      setDoc(docRef.current);
     } finally {
       setBusy(false);
       abortRef.current = null;
@@ -148,15 +163,13 @@ export function SpecFlowView({
     setRunning(true);
     setNotice("");
     try {
-      let atual = doc;
       for (;;) {
-        const task = nextPendingTask(atual);
+        const task = nextPendingTask(docRef.current);
         if (!task || controller.signal.aborted) break;
-        atual = patchTask(atual, task.id, { status: "running" }, Date.now());
-        commit(atual);
+        commit((current) => patchTask(current, task.id, { status: "running" }, Date.now()));
         try {
           const tree = await runAgentGoal({
-            goal: taskPrompt(atual, task),
+            goal: taskPrompt(docRef.current, task),
             selection,
             ctx,
             limits: clampLimits({}),
@@ -166,32 +179,34 @@ export function SpecFlowView({
               onTree: () => undefined,
               // Mesma trava do resto do app: ferramenta que muda estado só sai
               // com um humano dizendo sim. Recusar por padrão faria a execução
-              // parecer funcionar sem nunca escrever nada.
+              // parecer funcionar sem nunca escrever nada. A fila existe porque
+              // os subordinados rodam em paralelo e pedem ao mesmo tempo.
               approve: (agent, call) =>
-                new Promise<boolean>((resolve) =>
-                  setApproval({ label: `${task.title} · ${agent.title}`, call, resolve })
-                )
+                approvals.request({ label: `${task.title} · ${agent.title}`, call })
             }
           });
           const raiz = tree.tasks[tree.rootId];
-          atual = patchTask(
-            atual,
-            task.id,
-            {
-              status: raiz.status === "done" ? "done" : "failed",
-              report: raiz.report
-            },
-            Date.now()
+          commit((current) =>
+            patchTask(
+              current,
+              task.id,
+              {
+                status: raiz.status === "done" ? "done" : "failed",
+                report: raiz.report
+              },
+              Date.now()
+            )
           );
         } catch (cause) {
-          atual = patchTask(
-            atual,
-            task.id,
-            { status: "failed", report: cause instanceof Error ? cause.message : String(cause) },
-            Date.now()
+          commit((current) =>
+            patchTask(
+              current,
+              task.id,
+              { status: "failed", report: cause instanceof Error ? cause.message : String(cause) },
+              Date.now()
+            )
           );
         }
-        commit(atual);
       }
     } finally {
       setRunning(false);
@@ -278,17 +293,26 @@ export function SpecFlowView({
             <>
               <Markdown source={conteudo} />
               <div className="spkx-actions">
+                {/*
+                  Enquanto o modelo escreve a etapa (ou os agentes executam
+                  tarefas), editar aqui é trabalho jogado fora: o texto na tela
+                  é rascunho e o commit do fim substitui a etapa inteira. Melhor
+                  travar o campo do que aceitar a edição e perdê-la em silêncio.
+                */}
                 <textarea
                   className="spkx-edit"
                   rows={6}
                   value={conteudo}
-                  onChange={(event) => commit(setStage(doc, stage, event.target.value, Date.now()))}
+                  onChange={(event) =>
+                    commit((current) => setStage(current, stage, event.target.value, Date.now()))
+                  }
+                  disabled={busy || running}
                   aria-label={`Editar ${STAGE_LABEL[stage]}`}
                 />
                 <button
                   className={`lg-button ${isApproved(doc, stage) ? "" : "primary"}`}
-                  onClick={() => commit(approveStage(doc, stage, Date.now()))}
-                  disabled={isApproved(doc, stage)}
+                  onClick={() => commit((current) => approveStage(current, stage, Date.now()))}
+                  disabled={isApproved(doc, stage) || busy || running}
                 >
                   <CircleCheck size={13} />
                   {isApproved(doc, stage) ? "Aprovada" : "Aprovar etapa"}
@@ -316,9 +340,9 @@ export function SpecFlowView({
                     className="lg-button"
                     onClick={() => {
                       abortRef.current?.abort();
-                      // Sem isto a execução ficaria travada esperando clique.
-                      approval?.resolve(false);
-                      setApproval(null);
+                      // Sem isto a execução ficaria travada esperando clique —
+                      // inclusive quem está atrás na fila e nem apareceu.
+                      approvals.denyAll();
                     }}
                   >
                     <Square size={13} /> Parar
@@ -374,24 +398,15 @@ export function SpecFlowView({
               “{approval.label}” quer executar <code>{approval.call.tool}</code>
             </strong>
             <pre>{JSON.stringify(approval.call.args, null, 2)}</pre>
+            {approvals.pending > 1 ? (
+              <span className="agtx-approval-fila">+{approvals.pending - 1} na fila</span>
+            ) : null}
           </div>
           <div className="agtx-approval-actions">
-            <button
-              className="lg-button primary"
-              onClick={() => {
-                approval.resolve(true);
-                setApproval(null);
-              }}
-            >
+            <button className="lg-button primary" onClick={() => approvals.answer(true)}>
               Permitir
             </button>
-            <button
-              className="lg-button ghost"
-              onClick={() => {
-                approval.resolve(false);
-                setApproval(null);
-              }}
-            >
+            <button className="lg-button ghost" onClick={() => approvals.answer(false)}>
               Recusar
             </button>
           </div>

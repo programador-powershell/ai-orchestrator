@@ -925,6 +925,13 @@ export function AgentView() {
   // Ao voltar para a aba com uma execução parada pela metade, mostra os
   // resultados que já existiam em vez de um canvas em branco.
   useEffect(() => {
+    // A execução vive num store de MÓDULO e sobrevive à troca de aba; a view
+    // não. Voltar para a aba com um fluxo rodando remontava este efeito e
+    // punha o snapshot do disco por cima do mapa vivo: um nó em "waiting"
+    // voltava para "done", o popup de aprovação (que só existe com status
+    // "waiting") sumia da tela e a Promise nunca resolvia — travava até
+    // alguém apertar Parar. Execução viva manda; disco é só o que sobrou.
+    if (useFlow.getState().running) return;
     const stored = loadRun();
     if (stored && stored.fingerprint === docFingerprint(doc) && Object.keys(stored.runs).length) {
       useFlow.setState({ runs: stored.runs });

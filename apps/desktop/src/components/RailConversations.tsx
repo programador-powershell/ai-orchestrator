@@ -66,6 +66,10 @@ export function RailConversations({ mode, searchable = true }: { mode: UiMode; s
   const allConversations = useApp((state) => state.conversations);
   const projects = useApp((state) => state.projects);
   const active = useApp((state) => state.activeConversation[mode]);
+  // Turno em voo: trocar ou excluir a conversa agora enxertaria a resposta na
+  // conversa errada. O store recusa de todo jeito; aqui a lista fica cinza
+  // para a recusa não parecer clique perdido.
+  const sending = useApp((state) => state.threads[mode].sending);
   const setMode = useApp((state) => state.setMode);
   const loadConversation = useApp((state) => state.loadConversation);
   const deleteConversation = useApp((state) => state.deleteConversation);
@@ -113,7 +117,8 @@ export function RailConversations({ mode, searchable = true }: { mode: UiMode; s
         className={`rail-conversation ${conversation.id === active ? "active" : ""} ${
           menuFor === conversation.id ? "menu-open" : ""
         }`}
-        title={conversation.title}
+        title={sending ? "Aguarde o fim da resposta para trocar de conversa" : conversation.title}
+        disabled={sending}
         onClick={() => loadConversation(mode, conversation.id)}
       >
         <MessageCircle size={14} />
@@ -197,6 +202,18 @@ export function RailConversations({ mode, searchable = true }: { mode: UiMode; s
               key={`${result.mode}-${result.conversationId}`}
               title={result.title}
               onClick={() => {
+                // O resultado pode estar em OUTRA aba, que talvez esteja com
+                // um turno em voo. Ler o estado na hora do clique é mais
+                // barato que assinar o thread de todas as abas (cada token
+                // recriaria o objeto e re-renderizaria o rail inteiro).
+                if (useApp.getState().threads[result.mode].sending) {
+                  useApp
+                    .getState()
+                    .setError(
+                      `A aba ${modeLabels[result.mode]} está respondendo. Aguarde o fim para abrir essa conversa.`
+                    );
+                  return;
+                }
                 setMode(result.mode);
                 loadConversation(result.mode, result.conversationId);
               }}
