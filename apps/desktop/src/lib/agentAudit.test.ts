@@ -23,6 +23,15 @@ describe("redactCommand", () => {
    * O comando É o registro de auditoria — mas pode carregar credencial, e a
    * política proíbe persistir segredo. A forma fica, o valor sai.
    */
+  it("redige segredo em corpo JSON — a forma que o comentário do padrão promete", () => {
+    // `"password": "…"`: a aspa de fechamento do NOME ficava entre ele e o
+    // `:`, então o padrão não casava e a senha ia em claro para a trilha.
+    const out = redactCommand(`curl -d '{"password": "hunter22segredo"}' https://api.x/login`);
+    expect(out).not.toContain("hunter22segredo");
+    expect(out).toContain("password");
+    expect(out).toContain(REDACTED);
+  });
+
   it("redige Bearer preservando o resto do comando", () => {
     const out = redactCommand('curl -H "Authorization: Bearer abcdef1234567890abcdef" https://api.x/y');
     expect(out).toContain("curl -H");

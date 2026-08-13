@@ -12,7 +12,9 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { ResearchReport, ResearchSource } from "@ai-orchestrator/contracts";
+import { blockedMessage, blockedUrl } from "./blocklist";
 import type { ChatMessage } from "./gateway";
+import { useApp } from "./store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -158,6 +160,17 @@ async function collectYoutube(url: string): Promise<GatheredSource> {
 
 async function collectSource(url: string): Promise<GatheredSource> {
   const kind = detectKind(url);
+  /**
+   * A blocklist do admin vale para TODA fonte, inclusive o desvio do vídeo.
+   *
+   * O `collectYoutube` sai por `fetch` do renderer e não passa pelo
+   * `research_fetch` do Rust, onde a política assinada é aplicada — com
+   * youtube.com bloqueado, a pesquisa profunda ainda contatava o domínio.
+   * Esta checagem é camada de renderer (quem abre o devtools contorna), mas
+   * é a única que existe neste caminho e fecha o furo do uso normal.
+   */
+  const bloqueio = blockedUrl(useApp.getState().policy?.blockedDomains ?? [], url);
+  if (bloqueio) return unverifiedSource(url, kind, blockedMessage(bloqueio));
   if (kind === "video") return collectYoutube(url);
   if (isTauriHost) {
     try {

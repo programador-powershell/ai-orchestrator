@@ -72,7 +72,7 @@ import { byok, byokBackend, providerExtraHeaders } from "../lib/byok";
 import { providerBaseUrls, resolveBaseUrl } from "../lib/engine";
 import { extensions } from "../lib/extensions";
 import { listWorkspaces } from "../lib/gateway";
-import { McpHttpClient, type McpServerConfig } from "../lib/mcp";
+import { McpHttpClient, mcpAccount, validateMcpDraft, type McpServerConfig } from "../lib/mcp";
 import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport, rankMemories } from "../lib/memory";
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
@@ -1692,25 +1692,6 @@ function LocalAgentBridge() {
 
 /* -------------------------- 5b. Conectores (MCP) ------------------------ */
 
-/** Nome obrigatório e único (case-insensitive) + URL http(s) válida. */
-function validateMcpDraft(name: string, url: string, existing: McpServerConfig[]): string | null {
-  if (!name) return "Informe um nome para o conector.";
-  if (existing.some((server) => server.name.toLowerCase() === name.toLowerCase())) {
-    return `Já existe um conector chamado "${name}".`;
-  }
-  if (!url) return "Informe a URL do servidor MCP.";
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return "URL inválida — informe o endereço completo, ex.: https://host/mcp.";
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return "A URL deve usar http:// ou https://.";
-  }
-  return null;
-}
-
 const emptyMcpForm = { name: "", url: "", token: "" };
 
 function McpSection() {
@@ -1723,7 +1704,7 @@ function McpSection() {
 
   const servers = settings.mcpServers;
 
-  function addServer() {
+  async function addServer() {
     const name = form.name.trim();
     const url = form.url.trim();
     const token = form.token.trim();
@@ -1732,12 +1713,38 @@ function McpSection() {
       setNotice({ text: problem, tone: "warn" });
       return;
     }
-    updateSettings({ mcpServers: [...servers, token ? { name, url, token } : { name, url }] });
+    /**
+     * O token vai para o COFRE do sistema, não para o estado.
+     *
+     * `settings` inteiro é persistido no localStorage do webview: guardar o
+     * Bearer aqui deixaria um segredo corporativo em texto puro no disco e em
+     * todo backup do perfil — o oposto do que o cabeçalho desta tela promete
+     * e do que a política da empresa exige. Só a EXISTÊNCIA fica no estado.
+     */
+    if (token) {
+      if (!isTauriHost) {
+        setNotice({
+          text: "Token de conector só no app desktop: no navegador não há cofre do sistema para guardá-lo.",
+          tone: "warn"
+        });
+        return;
+      }
+      try {
+        await invoke("credential_store", { account: mcpAccount(name), token });
+      } catch (cause) {
+        setNotice({ text: `Não foi possível guardar o token no cofre: ${errorText(cause)}`, tone: "danger" });
+        return;
+      }
+    }
+    updateSettings({ mcpServers: [...servers, token ? { name, url, hasToken: true } : { name, url }] });
     setForm(emptyMcpForm);
     setNotice({ text: `Conector "${name}" cadastrado. Use "Testar" para confirmar as ferramentas.`, tone: "ok" });
   }
 
   function removeServer(name: string) {
+    // O token morre junto com o conector: deixar o segredo órfão no cofre é
+    // acúmulo silencioso de credencial que ninguém mais sabe que existe.
+    if (isTauriHost) void invoke("credential_delete", { account: mcpAccount(name) }).catch(() => undefined);
     updateSettings({ mcpServers: servers.filter((server) => server.name !== name) });
     setResults((prev) => {
       const next = { ...prev };
@@ -1786,7 +1793,9 @@ function McpSection() {
           <div className="setx-item" key={server.name}>
             <div className="setx-item-head">
               <span className="grow">{server.name}</span>
-              <span className={`chip ${server.token ? "ok" : ""}`}>{server.token ? "com token" : "sem token"}</span>
+              <span className={`chip ${server.hasToken ? "ok" : ""}`} title={server.hasToken ? "Token guardado no cofre do sistema" : undefined}>
+                {server.hasToken ? "token no cofre" : "sem token"}
+              </span>
               <button
                 className="lg-button ghost"
                 disabled={testing === server.name}

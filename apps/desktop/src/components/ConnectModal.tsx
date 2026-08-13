@@ -24,6 +24,7 @@ import {
   type ConnectorCategory,
   type Environment
 } from "../lib/connectors";
+import { validateMcpDraft } from "../lib/mcp";
 import { useApp } from "../lib/store";
 
 const AUTH_HINT: Record<Connector["auth"], string> = {
@@ -49,6 +50,7 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Connector | null>(null);
   const [endpoint, setEndpoint] = useState("");
+  const [erro, setErro] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -65,7 +67,15 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
   const stateOf = (connector: Connector) => connectorState(connector, connected, null);
 
   function connect(connector: Connector, url: string) {
-    if (!url.trim()) return;
+    // A mesma validação das Configurações. Sem ela dava para salvar
+    // "intranet/mcp" (sem esquema): a galeria mostrava "Conectado" e toda
+    // chamada resolvia contra a origem do app e falhava.
+    const problema = validateMcpDraft(connector.name, url.trim(), mcpServers);
+    if (problema) {
+      setErro(problema);
+      return;
+    }
+    setErro("");
     updateSettings({ mcpServers: [...mcpServers, { name: connector.name, url: url.trim() }] });
     setSelected(null);
     setEndpoint("");
@@ -188,6 +198,7 @@ export function ConnectModal({ onClose }: { onClose: () => void }) {
                 <button className="lg-button primary" disabled={!endpoint.trim()} onClick={() => connect(selected, endpoint)}>
                   Conectar
                 </button>
+                {erro ? <small className="connx__erro">{erro}</small> : null}
               </div>
             )}
           </div>

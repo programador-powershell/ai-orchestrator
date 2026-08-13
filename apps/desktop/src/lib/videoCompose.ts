@@ -281,7 +281,10 @@ export function buildCompose(
   // Textos sobre a imagem.
   const overlays = (options.overlays ?? []).filter((overlay) => overlay.text.trim().length > 0);
   const fontFile = (options.fontFile ?? "").trim();
-  if (fontFile && /['\r\n]/.test(fontFile)) {
+  // A ASPA DUPLA fecha o `-filter_complex "…"` no nível do cmd.exe: um caminho
+  // `C:/f"&&calc&&".ttf` sairia do filtro e viraria comando. O `unsafeName`
+  // (usado em saída e mídia) já a recusa pelo mesmo motivo; aqui ela passava.
+  if (fontFile && /["'\r\n]/.test(fontFile)) {
     return { ...vazio, reason: "Caminho de fonte inválido." };
   }
   // `C:/…` precisa do MESMO cuidado do texto: os dois pontos da letra de

@@ -57,6 +57,17 @@ describe("validateManifest", () => {
     expect(validateManifest(manifest({ version: "" }))).toContain("versão");
   });
 
+  it("recusa campo com o TIPO errado antes que ele derrube o app", () => {
+    // `prompt: 123` passava e o `.trim()` do envio lançava TypeError em TODA
+    // mensagem, de TODA aba, até alguém remover o plugin.
+    expect(validateManifest(manifest({ prompt: 123 as never }))).toContain("prompt");
+    // `tools: {}` fazia o for…of LANÇAR dentro da validação, derrubando o
+    // rebuild no meio do apply() da política — em silêncio.
+    expect(validateManifest(manifest({ tools: {} as never }))).toContain("lista");
+    expect(validateManifest(manifest({ scanners: {} as never }))).toContain("lista");
+    expect(validateManifest(manifest({ modes: "chat" as never }))).toContain("lista");
+  });
+
   it("recusa ferramenta HTTP sem TLS", () => {
     const ruim = manifest({
       tools: [{ name: "x", description: "d", kind: "http", target: "http://interno/x" }]
@@ -241,6 +252,18 @@ describe("checkPattern", () => {
     for (const ruim of ["(a+)+", "(\\w*)*", "(x+y*)+"]) {
       expect(checkPattern(ruim)).toContain("aninhado");
     }
+  });
+
+  it("recusa alternância repetida — ela trava igual, sem quantificador dentro", () => {
+    // `(a|a)+b` passava pela regra do aninhado (não há +/* DENTRO dos
+    // parênteses) e congela a interface do mesmo jeito numa linha longa.
+    for (const ruim of ["(a|a)+b", "(\\w|\\d)+x", "(a|b|c)*z", "(x|y){2,}"]) {
+      expect(checkPattern(ruim)).toContain("alternância");
+    }
+  });
+
+  it("alternância SEM repetição continua valendo", () => {
+    expect(checkPattern("(?:senha|password)\\s*=")).toBeNull();
   });
 
   it("recusa expressão gigante e expressão vazia", () => {

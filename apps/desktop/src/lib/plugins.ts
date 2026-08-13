@@ -137,11 +137,35 @@ export function qualify(pluginId: string, tool: string): string {
  * que corrigir, e "plugin inválido" não conserta nada.
  */
 export function validateManifest(manifest: PluginManifest): string | null {
+  if (!manifest || typeof manifest !== "object") return "manifesto deve ser um objeto JSON";
   if (!ID.test(manifest.id ?? "")) {
     return "id deve ter de 3 a 40 caracteres, minúsculas, números e hífen, começando por letra";
   }
   if (!manifest.name?.trim()) return "informe um nome";
   if (!manifest.version?.trim()) return "informe uma versão";
+  /**
+   * O TIPO dos campos importa tanto quanto a presença deles.
+   *
+   * `{"prompt": 123}` passava por aqui, montava, e no próximo envio o
+   * `mounted.manifest.prompt?.trim()` lançava TypeError dentro do
+   * `buildSystemMessages` — TODA mensagem, em TODA aba, falhava com um erro
+   * críptico até alguém remover o plugin. E `tools: {}` (objeto no lugar de
+   * lista) fazia o `for…of` LANÇAR aqui dentro, o que derrubava o
+   * `rebuildPlugins` no meio do `apply()` e deixava a política aplicada pela
+   * metade, em silêncio.
+   */
+  if (manifest.prompt !== undefined && typeof manifest.prompt !== "string") {
+    return "prompt deve ser texto";
+  }
+  if (manifest.tools !== undefined && !Array.isArray(manifest.tools)) {
+    return "tools deve ser uma lista";
+  }
+  if (manifest.scanners !== undefined && !Array.isArray(manifest.scanners)) {
+    return "scanners deve ser uma lista";
+  }
+  if (manifest.modes !== undefined && !Array.isArray(manifest.modes)) {
+    return "modes deve ser uma lista";
+  }
 
   const vistos = new Set<string>();
   for (const tool of manifest.tools ?? []) {
@@ -192,12 +216,31 @@ const MAX_PATTERN = 400;
  */
 const ANINHADO = /\([^)]*[+*][^)]*\)\s*[+*]/;
 
+/**
+ * Alternância quantificada — o mesmo estrago sem quantificador dentro.
+ *
+ * `(a|a)+b` e `(\w|\d)+x` passavam pela regra acima (não há `+`/`*` DENTRO
+ * dos parênteses) e explodem igual: com uma linha longa de "a" sem o "b", o
+ * motor tenta cada combinação de como dividir a entrada. Como o padrão roda
+ * síncrono no renderer sobre o arquivo inteiro, a interface congela — que é
+ * exatamente o que a guarda existe para impedir.
+ *
+ * A regra é conservadora de propósito: grupo com `|` seguido de `+`/`*`/`{n,}`
+ * é recusado, mesmo quando as alternativas não se sobrepõem. Escrever
+ * `(?:abc|def)+` sem quantificador externo continua possível, e um padrão
+ * legítimo raramente precisa dessa forma.
+ */
+const ALTERNANCIA_QUANTIFICADA = /\([^)]*\|[^)]*\)\s*(?:[+*]|\{\d+,\d*\})/;
+
 /** Devolve o motivo da recusa, ou `null` quando o padrão presta. */
 export function checkPattern(source: string): string | null {
   const bruto = source?.trim() ?? "";
   if (!bruto) return "informe a expressão";
   if (bruto.length > MAX_PATTERN) return `a expressão passa de ${MAX_PATTERN} caracteres`;
   if (ANINHADO.test(bruto)) return "quantificador aninhado pode travar a varredura — simplifique";
+  if (ALTERNANCIA_QUANTIFICADA.test(bruto)) {
+    return "alternância repetida (ex.: (a|b)+) pode travar a varredura — simplifique";
+  }
   try {
     // Sem `g`: `lastIndex` persistiria entre arquivos e o segundo começaria
     // no meio. Este é o mesmo cuidado dos matchers padrão.

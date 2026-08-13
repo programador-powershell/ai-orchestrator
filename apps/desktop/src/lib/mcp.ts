@@ -11,6 +11,8 @@
  * O framing (build/parse JSON-RPC) e a conversão de descritores são puros e
  * testáveis; o transporte HTTP usa fetch.
  */
+import { invoke } from "@tauri-apps/api/core";
+
 import { TOOL_SPECS, dispatchTool, type ToolResult } from "./agent";
 import { blockedMessage, blockedUrl } from "./blocklist";
 import { useApp } from "./store";
@@ -95,8 +97,51 @@ export function callInternalTool(name: string, args: Record<string, unknown>, ro
 export interface McpServerConfig {
   name: string;
   url: string;
-  token?: string;
+  /**
+   * O conector TEM token — que fica no cofre do SO, nunca aqui.
+   *
+   * O campo antes era o próprio Bearer, e o `settings` inteiro é persistido
+   * pelo zustand no `localStorage` do webview: um token de conector
+   * corporativo ficava em texto puro, em disco e em qualquer backup do
+   * perfil. Só a EXISTÊNCIA é estado de interface; o valor é segredo.
+   */
+  hasToken?: boolean;
 }
+
+/** Conta do conector no cofre — precisa casar com o `account_for` do Rust. */
+export const mcpAccount = (name: string) => `mcp.${name.trim()}`;
+
+/**
+ * Nome obrigatório e único (case-insensitive) + URL http(s) válida.
+ *
+ * Mora aqui, e não na tela de Configurações, porque a janela "Conectar Apps"
+ * cadastra o mesmo tipo de registro: enquanto a validação era privada de uma
+ * tela, dava para salvar `intranet/mcp` (sem esquema) pela outra e ficar com
+ * um conector marcado como conectado que nunca conseguiria funcionar.
+ */
+export function validateMcpDraft(
+  name: string,
+  url: string,
+  existing: Array<{ name: string }>
+): string | null {
+  if (!name) return "Informe um nome para o conector.";
+  if (existing.some((server) => server.name.toLowerCase() === name.toLowerCase())) {
+    return `Já existe um conector chamado "${name}".`;
+  }
+  if (!url) return "Informe a URL do servidor MCP.";
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "URL inválida — informe o endereço completo, ex.: https://host/mcp.";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "A URL deve usar http:// ou https://.";
+  }
+  return null;
+}
+
+const isTauriHost = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** Cliente MCP sobre HTTP (JSON-RPC). SSE de servidores é lido como stream. */
 export class McpHttpClient {
@@ -104,19 +149,33 @@ export class McpHttpClient {
   constructor(private readonly config: McpServerConfig) {}
 
   private async rpc(method: string, params: Record<string, unknown>): Promise<RpcParsed> {
-    // Blocklist do admin. O MCP fala por `fetch` do webview, sem passar pelo
-    // Rust — então esta é a única checagem que existe neste caminho. É camada
-    // de renderer: quem tiver o devtools aberto contorna. Rotear o MCP pelo
-    // Rust é a correção de verdade, e está registrada como pendência.
+    this.id += 1;
+    const body = JSON.stringify(buildRpcRequest(method, params, this.id));
+    if (isTauriHost) {
+      // Desktop: quem sai é o Rust. Ele lê o token do cofre, resolve o DNS
+      // antes de conectar (rebinding) e aplica a blocklist assinada — as três
+      // coisas que o renderer não consegue garantir.
+      try {
+        const outcome = await invoke<{ status: number; ok: boolean; body: string }>("mcp_rpc", {
+          name: this.config.name,
+          url: this.config.url,
+          body
+        });
+        if (!outcome.ok) return { ok: false, error: `servidor MCP respondeu ${outcome.status}` };
+        return parseRpcResponse(outcome.body);
+      } catch (cause) {
+        return { ok: false, error: cause instanceof Error ? cause.message : String(cause) };
+      }
+    }
+    // Navegador (preview de desenvolvimento): sem cofre e sem Rust. A
+    // blocklist aqui é camada de renderer — quem abrir o devtools contorna —,
+    // e conector com token simplesmente não funciona neste caminho.
     const bloqueio = blockedUrl(useApp.getState().policy?.blockedDomains ?? [], this.config.url);
     if (bloqueio) return { ok: false, error: blockedMessage(bloqueio) };
-    this.id += 1;
-    const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
-    if (this.config.token) headers.Authorization = `Bearer ${this.config.token}`;
     const response = await fetch(this.config.url, {
       method: "POST",
-      headers,
-      body: JSON.stringify(buildRpcRequest(method, params, this.id))
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body
     });
     if (!response.ok) return { ok: false, error: `servidor MCP respondeu ${response.status}` };
     return parseRpcResponse(await response.text());

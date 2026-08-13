@@ -35,9 +35,14 @@ const REDACTIONS: Array<{ pattern: RegExp; replace: (match: string, ...groups: s
   // Authorization: Bearer <token>
   { pattern: /\b(Bearer\s+)[A-Za-z0-9\-._~+/=]{12,}/gi, replace: (_m, prefix) => `${prefix}${REDACTED}` },
   // chave de API em variável/flag: KEY=valor, --token valor, "secret": "valor"
+  //
+  // A aspa OPCIONAL depois do nome é o que faz a forma JSON casar. Sem ela,
+  // `"password": "hunter2"` não batia — o `[:=]` era exigido colado ao nome e
+  // a aspa de fechamento ficava no caminho —, então a senha ia inteira para a
+  // trilha num `curl -d '{"password":"…"}'` aprovado.
   {
     pattern:
-      /\b((?:password|passwd|pwd|senha|api[_-]?key|apikey|secret|token|pgpassword|access[_-]?key)\s*[:=]\s*)(["']?)([^\s"';|&]{4,})\2/gi,
+      /\b((?:password|passwd|pwd|senha|api[_-]?key|apikey|secret|token|pgpassword|access[_-]?key)["']?\s*[:=]\s*)(["']?)([^\s"';|&]{4,})\2/gi,
     replace: (_m, prefix, quote) => `${prefix}${quote}${REDACTED}${quote}`
   },
   { pattern: /(--(?:password|token|api-key|secret)[= ])(\S{4,})/gi, replace: (_m, prefix) => `${prefix}${REDACTED}` },

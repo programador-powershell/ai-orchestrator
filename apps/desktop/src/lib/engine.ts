@@ -46,6 +46,33 @@ export function resolveBaseUrl(providerId: string, overrides?: Record<string, st
   return providerBaseUrls[providerId] ?? providerBaseUrls["openai-compatible"];
 }
 
+/**
+ * A base pode receber a chave BYOK?
+ *
+ * Mesma regra que o Rust aplica em `validate_base_url`: `http://` só para a
+ * própria máquina. O caminho web não tinha o equivalente — com um override
+ * `http://host/v1` (provedor compatível self-hosted), o `Authorization:
+ * Bearer <chave>` saía em texto claro na rede, exatamente o que o lado
+ * desktop recusa por construção.
+ */
+export function assertBaseUrlSegura(baseUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(`Base URL inválida: ${baseUrl}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("Base URL com usuário/senha embutidos não é aceita.");
+  }
+  if (parsed.protocol === "https:") return;
+  const loopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(parsed.hostname);
+  if (parsed.protocol === "http:" && loopback) return;
+  throw new Error(
+    "A chave do provedor não trafega em http:// fora da própria máquina. Use https:// na base URL."
+  );
+}
+
 export interface EngineEvents {
   onDelta: (delta: string) => void;
   /** Notas de progresso do fusion/pesquisa ("orquestrador planejando…"). */
@@ -198,6 +225,9 @@ async function providerChat(
   }
 
   // Navegador: chamada direta com a chave do armazenamento local (BYOK web).
+  // A base é checada ANTES de ler a chave — nem carregar o segredo faz
+  // sentido se o destino não pode recebê-lo.
+  assertBaseUrlSegura(baseUrl);
   const key = await byok.readForWebCall(target.providerId);
   if (!key) {
     throw new Error(

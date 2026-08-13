@@ -112,6 +112,29 @@ export function CrewView({
   const resumo = summarizeCrew(crew);
 
   /**
+   * O modelo do papel deixa de ser rótulo e passa a ser a chamada.
+   *
+   * A política do admin define `agentRoleModels` ("review: opus 5") e a barra
+   * lateral mostrava isso, mas TODA chamada usava a seleção do módulo: a tela
+   * afirmava que a revisão rodou no modelo caro enquanto a conta real era de
+   * outro. Num cliente gerenciado, escolher modelo é escolher quanto gastar —
+   * a política não pode ser enfeite.
+   *
+   * O casamento é pelo RÓTULO do catálogo, que é a mesma string que o admin
+   * digita no console. Papel sem definição (ou com rótulo que não existe no
+   * catálogo) cai na seleção do módulo, como antes.
+   */
+  function selectionFor(member: CrewMember): EngineSelection {
+    const rotulo = policy?.agentRoleModels?.[member.role]?.trim();
+    if (!rotulo) return selection;
+    const alvo = catalog?.find(
+      (item) => (item.label ?? item.model).toLowerCase() === rotulo.toLowerCase()
+    );
+    if (!alvo) return selection;
+    return { kind: "model", target: { providerId: alvo.providerId, model: alvo.model } };
+  }
+
+  /**
    * Aciona a equipe a partir do que veio do composer.
    *
    * A classificação NÃO acontece aqui: quem decide é o orquestrador, dentro do
@@ -141,7 +164,7 @@ export function CrewView({
          */
         const tree = await runAgentGoal({
           goal: `${system}\n\n${user}`,
-          selection,
+          selection: selectionFor(member),
           ctx,
           limits: effectiveLimits(
             policy
@@ -181,7 +204,7 @@ export function CrewView({
       }
       let escritos = 0;
       return chatOnce(
-        selection,
+        selectionFor(member),
         "agent",
         [
           { role: "system", content: system },
