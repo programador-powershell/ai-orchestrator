@@ -114,5 +114,14 @@ pub fn fs_write(root: String, path: String, content: String) -> Result<(), Strin
     if !target.starts_with(&canonical) {
         return Err("fora da raiz".into());
     }
+    // Symlink escapa da checagem acima: o caminho `raiz/link` está dentro da
+    // raiz, mas `fs::write` segue o link e grava no alvo — que pode estar
+    // fora. Com alvo INEXISTENTE (link pendurado) nem o `canonicalize` do
+    // ramo de cima pega, porque ele nunca roda para arquivo novo.
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err("o caminho é um link simbólico — gravação recusada".into());
+        }
+    }
     fs::write(&target, content).map_err(|error| error.to_string())
 }

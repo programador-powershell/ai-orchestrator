@@ -1062,11 +1062,25 @@ fn is_public_v4(ip: Ipv4Addr) -> bool {
 }
 
 fn is_public_v6(ip: Ipv6Addr) -> bool {
+    // Endereço IPv4 embutido volta para a regra v4 ANTES de qualquer outra
+    // coisa. Sem isto, `::ffff:169.254.169.254` não casa nenhum dos padrões
+    // v6 abaixo e é classificado como público — um caminho direto para o
+    // endpoint de metadados da nuvem, que é justamente o que esta guarda
+    // existe para fechar. Vale para o mapeado (`::ffff:a.b.c.d`) e para o
+    // compatível (`::a.b.c.d`), que alguns resolvedores ainda produzem.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_public_v4(v4);
+    }
+    if let Some(v4) = ip.to_ipv4() {
+        return is_public_v4(v4);
+    }
     let segments = ip.segments();
     !(ip.is_loopback()
         || ip.is_unspecified()
         || ip.is_multicast()
+        // fc00::/7 — endereço local único (a rede interna da empresa).
         || (segments[0] & 0xfe00) == 0xfc00
+        // fe80::/10 — link-local.
         || (segments[0] & 0xffc0) == 0xfe80)
 }
 
@@ -1239,6 +1253,40 @@ fn discover_pages(base: &reqwest::Url, html: &str, max_pages: u8) -> Vec<Value> 
         }
     }
     pages
+}
+
+#[cfg(test)]
+mod ssrf_tests {
+    use super::is_public_ip;
+    use std::net::IpAddr;
+
+    #[test]
+    fn ipv4_embutido_em_ipv6_volta_para_a_regra_v4() {
+        for hostil in [
+            "::ffff:169.254.169.254",
+            "::ffff:127.0.0.1",
+            "::ffff:10.1.2.3",
+            "::ffff:192.168.0.7",
+            "::169.254.169.254",
+        ] {
+            let ip: IpAddr = hostil.parse().unwrap();
+            assert!(!is_public_ip(ip), "classificou {hostil} como público");
+        }
+    }
+
+    #[test]
+    fn interno_v6_continua_bloqueado() {
+        for hostil in ["::1", "fc00::1", "fd12::9", "fe80::1"] {
+            assert!(!is_public_ip(hostil.parse::<IpAddr>().unwrap()), "{hostil}");
+        }
+    }
+
+    #[test]
+    fn publico_continua_passando() {
+        assert!(is_public_ip("8.8.8.8".parse().unwrap()));
+        assert!(is_public_ip("2001:4860:4860::8888".parse().unwrap()));
+        assert!(is_public_ip("::ffff:8.8.8.8".parse().unwrap()));
+    }
 }
 
 #[cfg(test)]

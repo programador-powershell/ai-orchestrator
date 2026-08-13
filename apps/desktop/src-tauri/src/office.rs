@@ -16,6 +16,23 @@ use std::path::Path;
 /// e a conversa. O suficiente para a IA ter contexto.
 const MAX_TEXT: usize = 400_000;
 
+/// Maior fronteira de caractere até `limite` bytes.
+///
+/// `&s[..n]` em `String` faz **panic** quando `n` cai no meio de um caractere
+/// multibyte — e um DOCX em português enche de acento, então o corte quase
+/// sempre cai num deles. Um panic aqui derruba o comando inteiro e o usuário
+/// vê "erro desconhecido" ao abrir um arquivo grande.
+pub(crate) fn floor_char_boundary(texto: &str, limite: usize) -> usize {
+    if limite >= texto.len() {
+        return texto.len();
+    }
+    let mut corte = limite;
+    while corte > 0 && !texto.is_char_boundary(corte) {
+        corte -= 1;
+    }
+    corte
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OfficeExtract {
@@ -217,7 +234,7 @@ pub async fn office_extract(
         return Ok(OfficeExtract {
             format: "pdf".into(),
             text: if truncated {
-                format!("{}\n\n[… texto truncado …]", &text[..MAX_TEXT])
+                format!("{}\n\n[… texto truncado …]", &text[..floor_char_boundary(&text, MAX_TEXT)])
             } else {
                 text
             },
@@ -236,7 +253,7 @@ pub async fn office_extract(
 
     let truncated = text.len() > MAX_TEXT;
     let text = if truncated {
-        format!("{}\n\n[… texto truncado …]", &text[..MAX_TEXT])
+        format!("{}\n\n[… texto truncado …]", &text[..floor_char_boundary(&text, MAX_TEXT)])
     } else {
         text
     };
