@@ -94,16 +94,24 @@ function unsafeName(name: string): boolean {
 }
 
 /**
- * Escapa o texto para dentro do `drawtext`.
+ * Prepara o texto para dentro do `drawtext`.
  *
- * O filtro usa `:` para separar opções e `'` para delimitar valor — texto do
- * usuário com esses caracteres quebraria o comando inteiro, e uma quebra
- * dessas é o tipo de coisa que só aparece na hora de exportar.
+ * O ffmpeg desescapa em DOIS níveis: o parser do filtergraph corta em `:` e
+ * `;` respeitando `'…'`, e só depois o parser de opção desescapa `\x`. Por
+ * isso `\:` e `\%` funcionam — atravessam o primeiro nível intactos.
+ *
+ * O apóstrofo é o caso que não tem escape que preste. **Dentro** das aspas a
+ * barra invertida não escapa nada, então `\'` fecha a seção e o resto do
+ * comando vira texto; e `'\''` também não resolve — verificado renderizando um
+ * quadro, não deduzido: a aspas reaberta engole `:x=…:fontsize=…` para dentro
+ * da legenda. A saída é não ter apóstrofo reto nenhum: ele vira o tipográfico
+ * `’`, que desenha certo (melhor, tipograficamente) e não significa nada para
+ * o parser. Zero superfície de injeção, em vez de um escape que quase funciona.
  */
 export function escapeDrawText(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
+    .replace(/'/g, "’")
     .replace(/:/g, "\\:")
     .replace(/%/g, "\\%")
     .replace(/[\r\n]+/g, " ");
@@ -276,13 +284,17 @@ export function buildCompose(
   if (fontFile && /['\r\n]/.test(fontFile)) {
     return { ...vazio, reason: "Caminho de fonte inválido." };
   }
-  // Barra invertida do Windows é escape dentro do filtro; o ffmpeg aceita `/`
-  // no Windows, então normalizar é mais seguro que escapar.
-  const fontArg = fontFile ? `fontfile='${fontFile.replace(/\\/g, "/")}':` : "";
+  // `C:/…` precisa do MESMO cuidado do texto: os dois pontos da letra de
+  // unidade separariam opções e o filtro não montaria. A barra invertida do
+  // Windows vira `/`, que o ffmpeg aceita e dispensa mais um nível de escape.
+  const fontArg = fontFile ? `fontfile='${fontFile.replace(/\\/g, "/").replace(/:/g, "\\:")}':` : "";
   overlays.forEach((overlay, i) => {
     const saida = `txt${i}`;
     filters.push(
-      `[${videoLabel}]drawtext=${fontArg}text='${escapeDrawText(overlay.text)}':` +
+      // `expansion=none` é obrigatório: no padrão (`normal`) o drawtext lê
+      // `%{…}` como expressão e um `%` solto aborta a renderização inteira
+      // ("Stray %"). Texto de usuário nunca deve virar expressão do ffmpeg.
+      `[${videoLabel}]drawtext=${fontArg}expansion=none:text='${escapeDrawText(overlay.text)}':` +
         `x=${Math.round(overlay.x)}:y=${Math.round(overlay.y)}:` +
         `fontsize=${Math.max(8, Math.round(overlay.fontSize))}:fontcolor=${overlay.color}:` +
         `enable='between(t,${seconds(overlay.from)},${seconds(overlay.to)})'[${saida}]`
