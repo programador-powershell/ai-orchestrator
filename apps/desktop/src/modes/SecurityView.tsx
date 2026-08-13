@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FsEntry, SecurityFinding } from "@ai-orchestrator/contracts";
 import {
+  Bot,
   Boxes,
   Check,
   ChevronRight,
@@ -64,7 +65,15 @@ import {
   parseUnifiedDiff,
   scanTextForSecrets
 } from "../lib/scan";
-import { runDeepReview, type ReviewedFinding } from "../lib/securityReview";
+import {
+  DEFAULT_MATCHERS,
+  findingToGoal,
+  runDeepReview,
+  type ReviewProgress,
+  type ReviewedFinding
+} from "../lib/securityReview";
+import { activeScanners } from "../lib/plugins";
+import { usePlugins } from "../lib/pluginStore";
 import { useApp } from "../lib/store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
@@ -290,6 +299,27 @@ export function SecurityView() {
    */
   const [refuted, setRefuted] = useState<ReviewedFinding[]>([]);
   const reviewAbortRef = useRef<AbortController | null>(null);
+  /**
+   * O que já foi investigado, por conteúdo.
+   *
+   * Fica em ref e não em estado: ele não desenha nada, e mudá-lo não deve
+   * provocar renderização no meio da varredura.
+   */
+  const reviewProgressRef = useRef<ReviewProgress>({});
+  const registry = usePlugins((state) => state.registry);
+  const policy = useApp((state) => state.policy);
+
+  /**
+   * Manda o achado para a equipe de agentes.
+   *
+   * Preenche o composer da aba Agent em vez de disparar sozinho: acionar uma
+   * equipe custa, e a pessoa confirma com Enter depois de ler.
+   */
+  function enviarParaAgente(finding: SecurityFinding) {
+    const { setMode, setInput } = useApp.getState();
+    setMode("agent");
+    setInput(findingToGoal(finding));
+  }
   const [reviewNote, setReviewNote] = useState("");
   const [pasteCode, setPasteCode] = useState("");
   const [lockText, setLockText] = useState("");
@@ -440,20 +470,44 @@ export function SecurityView() {
       fusionPresets: settings.fusionPresets
     };
     try {
+      // Matchers dos plugins entram junto com os padrões: são as convenções
+      // de auth e de camada de dados da empresa, que a lista genérica não
+      // conhece. Os globais vêm do admin; os do usuário só se a política abrir.
+      const doPlugin = activeScanners(registry, {
+        mode: "security",
+        userPluginsAllowed: policy?.userPluginsAllowed ?? false
+      }).map((scanner) => ({
+        id: scanner.id,
+        label: `${scanner.label} (plugin ${scanner.scope === "global" ? "da administração" : "seu"})`,
+        pattern: scanner.pattern,
+        weight: scanner.weight
+      }));
+
       const resultado = await runDeepReview({
         files,
         signal: controller.signal,
         parse: parseFindings,
+        matchers: [...DEFAULT_MATCHERS, ...doPlugin],
+        progress: reviewProgressRef.current,
         hooks: { onStage: (texto) => setStage(texto) },
         call: (messages, signal) =>
           chatOnce(selection, "security", messages, ctx, { onDelta: () => undefined }, signal)
       });
+      // Guarda o progresso: a próxima volta só reinvestiga o que mudou.
+      reviewProgressRef.current = resultado.progress;
       setFindings((current) => mergeFindings(current, resultado.confirmed));
       setRefuted(resultado.refuted);
 
-      if (!resultado.investigated) {
+      // `investigated === 0` tem DUAS causas opostas: não havia candidato, ou
+      // todos já tinham sido investigados e nada mudou. Dizer "não havia o que
+      // investigar" no segundo caso é o contrário da verdade.
+      if (!resultado.investigated && !resultado.reused) {
         setReviewNote(
           "Nenhum arquivo do escopo toca autenticação, entrada, execução, SQL, disco ou criptografia — não havia o que investigar."
+        );
+      } else if (!resultado.investigated) {
+        setReviewNote(
+          `Nada mudou desde a última revisão: ${resultado.reused} arquivo(s) reaproveitado(s). Edite um arquivo para reinvestigá-lo.`
         );
       } else {
         // O número de refutados e o de candidatos fora do teto ficam à vista:
@@ -463,6 +517,7 @@ export function SecurityView() {
           `${resultado.confirmed.length} achado(s) confirmado(s)`
         ];
         if (resultado.refuted.length) partes.push(`${resultado.refuted.length} refutado(s)`);
+        if (resultado.reused) partes.push(`${resultado.reused} reaproveitado(s) sem mudança`);
         if (resultado.skipped) partes.push(`${resultado.skipped} candidato(s) fora do teto`);
         if (resultado.cancelled) partes.push("interrompida");
         setReviewNote(`${partes.join(" · ")}.`);
@@ -806,6 +861,17 @@ export function SecurityView() {
                               <button className="lg-button ghost" onClick={() => askAboutFinding(finding)}>
                                 <MessageSquarePlus size={13} />
                                 Pedir correção no chat
+                              </button>
+                              {/* O achado vira pedido para a equipe. Preenche o
+                                  composer em vez de disparar: acionar uma
+                                  equipe custa, e quem confirma é a pessoa. */}
+                              <button
+                                className="lg-button ghost"
+                                onClick={() => enviarParaAgente(finding)}
+                                title="Abre a aba Agent com o pedido pronto; você confirma o envio"
+                              >
+                                <Bot size={13} />
+                                Corrigir com a equipe
                               </button>
                             </div>
                           )}

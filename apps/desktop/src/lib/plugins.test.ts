@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  activeScanners,
   activeTools,
+  checkPattern,
   createRegistry,
   fillTarget,
   mount,
@@ -221,6 +223,97 @@ describe("pluginPrompt", () => {
   it("sem plugin com prompt, devolve vazio em vez de cabeçalho solto", () => {
     const registry = mounted(createRegistry(), manifest(), "global");
     expect(pluginPrompt(registry, opcoes)).toBe("");
+  });
+});
+
+describe("checkPattern", () => {
+  it("aceita expressão comum", () => {
+    expect(checkPattern("guardMultiplike\\(")).toBeNull();
+  });
+
+  it("recusa expressão inválida, com o motivo do motor", () => {
+    expect(checkPattern("(naofecha")).toContain("inválida");
+  });
+
+  it("recusa quantificador aninhado — ele trava a varredura", () => {
+    // `(a+)+` faz o motor voltar atrás exponencialmente. Como o padrão roda
+    // sobre TODOS os arquivos, um deles derrubaria a interface.
+    for (const ruim of ["(a+)+", "(\\w*)*", "(x+y*)+"]) {
+      expect(checkPattern(ruim)).toContain("aninhado");
+    }
+  });
+
+  it("recusa expressão gigante e expressão vazia", () => {
+    expect(checkPattern("a".repeat(500))).toContain("400");
+    expect(checkPattern("  ")).toContain("informe");
+  });
+});
+
+describe("scanners de plugin", () => {
+  const comScanner = (id: string, scope: "global" | "user") =>
+    manifest({
+      id,
+      tools: [],
+      scanners: [{ id: "guard", label: "usa o guard interno", pattern: "guardMulti", weight: 9 }]
+    });
+
+  it("valida o padrão junto com o manifesto", () => {
+    const ruim = manifest({ tools: [], scanners: [{ id: "x", label: "l", pattern: "(a+)+" }] });
+    expect(validateManifest(ruim)).toContain("aninhado");
+  });
+
+  it("exige rótulo — é o que vai no prompt da investigação", () => {
+    const ruim = manifest({ tools: [], scanners: [{ id: "x", label: " ", pattern: "a" }] });
+    expect(validateManifest(ruim)).toContain("descreva");
+  });
+
+  it("recusa dois padrões com o mesmo id", () => {
+    const ruim = manifest({
+      tools: [],
+      scanners: [
+        { id: "x", label: "l", pattern: "a" },
+        { id: "x", label: "l", pattern: "b" }
+      ]
+    });
+    expect(validateManifest(ruim)).toContain("duas vezes");
+  });
+
+  it("expõe os padrões compilados, com o id qualificado e o escopo", () => {
+    let registry = mounted(createRegistry(), comScanner("corp", "global"), "global");
+    registry = mounted(registry, comScanner("meu", "user"), "user");
+    const lista = activeScanners(registry, { mode: "security", userPluginsAllowed: true });
+    expect(lista.map((item) => `${item.id}:${item.scope}`)).toEqual(["corp.guard:global", "meu.guard:user"]);
+    expect(lista[0].pattern.test("guardMulti(req)")).toBe(true);
+  });
+
+  it("padrão compilado NÃO é global — `lastIndex` vazaria entre arquivos", () => {
+    const registry = mounted(createRegistry(), comScanner("corp", "global"), "global");
+    expect(activeScanners(registry, opcoes)[0].pattern.global).toBe(false);
+  });
+
+  it("o interruptor do admin derruba os padrões do usuário", () => {
+    let registry = mounted(createRegistry(), comScanner("corp", "global"), "global");
+    registry = mounted(registry, comScanner("meu", "user"), "user");
+    const lista = activeScanners(registry, { mode: "security", userPluginsAllowed: false });
+    expect(lista.map((item) => item.scope)).toEqual(["global"]);
+  });
+
+  it("peso fora da faixa é preso entre 1 e 10", () => {
+    const registry = mounted(
+      createRegistry(),
+      manifest({ tools: [], scanners: [{ id: "a", label: "l", pattern: "x", weight: 99 }] }),
+      "global"
+    );
+    expect(activeScanners(registry, opcoes)[0].weight).toBe(10);
+  });
+
+  it("peso ausente tem padrão", () => {
+    const registry = mounted(
+      createRegistry(),
+      manifest({ tools: [], scanners: [{ id: "a", label: "l", pattern: "x" }] }),
+      "global"
+    );
+    expect(activeScanners(registry, opcoes)[0].weight).toBe(3);
   });
 });
 
