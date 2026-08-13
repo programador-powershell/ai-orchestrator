@@ -526,3 +526,37 @@
 /* Painel de export de vídeo — pasta, saída, áudio e render. */
 .desx-export .lg-field { margin-bottom: 8px; }
 .desx-export-actions { display: flex; gap: 8px; margin: 6px 0; }
+
+
+/* ---------------- Stencils de prototipagem (rail do canvas) ------------ */
+
+.desx-stencil-group {
+  display: grid;
+  gap: 4px;
+  margin: 0 2px 8px;
+}
+.desx-stencil-group > small {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.desx-stencils {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.desx-stencil {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-eyebrow);
+  cursor: pointer;
+  transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.desx-stencil:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
