@@ -53,6 +53,7 @@ fn parse_target(raw: &str) -> Result<reqwest::Url, String> {
         return Err("o webhook precisa ser https".into());
     }
     guard_public_host(&parsed)?;
+    crate::blocklist::guard_blocklist(&parsed)?;
     Ok(parsed)
 }
 

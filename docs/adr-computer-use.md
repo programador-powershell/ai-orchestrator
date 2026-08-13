@@ -52,7 +52,7 @@ privilégio.**
 
 - O comando roda com o **token do usuário**. Um comando que saiba um caminho
   absoluto ainda lê arquivos fora da sessão pelo shell.
-- **A rede está aberta.** Não há proxy nem allowlist de destino.
+- **A rede está parcialmente contida.** O admin define uma BLOCKLIST de domínios por grupo (bloqueia pesquisa, webhook e MCP), aplicada no Rust sobre a política assinada. Não há allowlist nem proxy: o que não estiver na lista sai.
 - Não é AppContainer, não é contêiner, não é VM.
 - O `PATH` é mínimo e o ambiente é limpo (`env_clear`), o que reduz acidente —
   não um adversário.
@@ -74,13 +74,25 @@ manda declarar.
 
 1. **Aceita** um agente executando comando na estação com o privilégio do
    usuário, tendo como barreira a aprovação por chamada?
-2. Se aceitar: **para quais grupos**? Hoje o interruptor é do usuário; o lugar
-   correto é a política do grupo no gateway, junto de `agentTools` — como já é
-   feito com BYOK e runtime local.
-3. **Egressos.** A área isolada alcança a rede. Vale exigir proxy corporativo ou
-   allowlist antes de liberar?
-4. **Registro.** Hoje a execução aparece no log da tela. Vale mandar cada
-   `computer_exec` aprovado para o `usage_events` do gateway, para auditoria.
+2. ✅ **Resolvido: para quais grupos.** `computerUseAllowed` é campo da política
+   do grupo no gateway, resolvido com "todos precisam permitir" e **fechado por
+   omissão** — silêncio do admin não é permissão.
+3. **Egressos.** Existe **blocklist por grupo** (união entre grupos), aplicada
+   no Rust sobre a política assinada, valendo para pesquisa, webhook e MCP.
+   Não há allowlist nem proxy: o que não estiver na lista sai. A pergunta que
+   resta: a blocklist basta, ou é preciso inverter o modelo (só o que for
+   liberado sai)?
+4. ✅ **Resolvido: registro.** Cada `computer_exec` — aprovado **e recusado** —
+   entra na tabela `agent_actions` com o comando já redigido de segredos.
+   Tabela própria, não `usage_events`: misturar corromperia o relatório de
+   custo, inflando a contagem de chamadas.
+
+### Limite conhecido da blocklist
+
+A checagem do MCP acontece no **renderer** (o cliente MCP usa `fetch` do
+webview, sem passar pelo Rust) e o `tauri.conf.json` está com `csp: null`.
+Quem abrir as ferramentas de desenvolvedor contorna. Rotear o MCP pelo Rust é
+a correção de verdade e está registrada como pendência — não como resolvida.
 
 ## Consequências
 

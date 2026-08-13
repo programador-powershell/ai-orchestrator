@@ -12,6 +12,8 @@
  * testáveis; o transporte HTTP usa fetch.
  */
 import { TOOL_SPECS, dispatchTool, type ToolResult } from "./agent";
+import { blockedMessage, blockedUrl } from "./blocklist";
+import { useApp } from "./store";
 
 export interface RpcRequest {
   jsonrpc: "2.0";
@@ -102,6 +104,12 @@ export class McpHttpClient {
   constructor(private readonly config: McpServerConfig) {}
 
   private async rpc(method: string, params: Record<string, unknown>): Promise<RpcParsed> {
+    // Blocklist do admin. O MCP fala por `fetch` do webview, sem passar pelo
+    // Rust — então esta é a única checagem que existe neste caminho. É camada
+    // de renderer: quem tiver o devtools aberto contorna. Rotear o MCP pelo
+    // Rust é a correção de verdade, e está registrada como pendência.
+    const bloqueio = blockedUrl(useApp.getState().policy?.blockedDomains ?? [], this.config.url);
+    if (bloqueio) return { ok: false, error: blockedMessage(bloqueio) };
     this.id += 1;
     const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
     if (this.config.token) headers.Authorization = `Bearer ${this.config.token}`;

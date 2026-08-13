@@ -1,4 +1,5 @@
 mod auth;
+mod blocklist;
 mod extensions;
 mod fsx;
 mod memory;

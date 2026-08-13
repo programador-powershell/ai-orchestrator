@@ -32,6 +32,8 @@ interface AdminGroup {
     agentMaxChildren?: number;
     agentMaxTotal?: number;
     computerUseAllowed?: boolean;
+    /** União entre grupos — bloquear num grupo não é desfeito por outro. */
+    blockedDomains?: string[];
   };
   members: number;
 }
@@ -259,6 +261,25 @@ export function AdminSection() {
                 executa código
               </label>
             </span>
+            {/* Blocklist: a lista efetiva é a UNIÃO dos grupos do usuário —
+                bloquear em um grupo não é desfeito por pertencer a outro. */}
+            <label className="admx-group__block" title="Um domínio por linha. exemplo.com pega os subdomínios; *.exemplo.com pega só eles.">
+              domínios bloqueados
+              <textarea
+                rows={2}
+                placeholder="facebook.com&#10;*.tiktok.com"
+                defaultValue={(group.policy.blockedDomains ?? []).join("\n")}
+                onBlur={(event) => {
+                  const lista = event.target.value
+                    .split(/[\n,;]+/)
+                    .map((item) => item.trim().toLowerCase())
+                    .filter(Boolean);
+                  const atual = group.policy.blockedDomains ?? [];
+                  // Só grava se mudou: o onBlur dispara a cada saída de foco.
+                  if (lista.join("|") !== atual.join("|")) void patchPolicy(group, { blockedDomains: lista });
+                }}
+              />
+            </label>
             <button className="lg-button danger" onClick={() => void removeGroup(group)} title="Remover grupo">
               <Trash2 size={13} />
             </button>
