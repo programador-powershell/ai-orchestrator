@@ -76,6 +76,7 @@ import {
 } from "../lib/agentRun";
 import { runWithLimit } from "../lib/pool";
 import { AgentTreeView } from "../components/AgentTreeView";
+import { SpecFlowView } from "../components/SpecFlowView";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
@@ -845,7 +846,7 @@ export function AgentView() {
    * principal: quem decide dividir o trabalho é o modelo. O flow builder
    * continua em "flow" para quem quer fixar o grafo à mão.
    */
-  const [surface, setSurface] = useState<"agents" | "flow">("agents");
+  const [surface, setSurface] = useState<"agents" | "spec" | "flow">("agents");
   /** Mesma raiz que o Composer usa para as ferramentas de arquivo. */
   const projectRoot = typeof window === "undefined" ? "." : window.localStorage.getItem("code.root") ?? ".";
   const [zoom, setZoom] = useState(1);
@@ -971,6 +972,13 @@ export function AgentView() {
             Agentes
           </button>
           <button
+            className={`agx-mode ${surface === "spec" ? "active" : ""}`}
+            onClick={() => setSurface("spec")}
+            title="Constituição → spec → plano → tarefas, com revisão humana entre as etapas"
+          >
+            Spec
+          </button>
+          <button
             className={`agx-mode ${surface === "flow" ? "active" : ""}`}
             onClick={() => setSurface("flow")}
             title="Grafo desenhado à mão, executado em ondas"
@@ -1014,6 +1022,22 @@ export function AgentView() {
           </>
         )}
       </TopbarActions>
+
+      {surface === "spec" && (
+        <VBody>
+          <VCenter>
+            <SpecFlowView
+              selection={selection}
+              ctx={{
+                session,
+                runtimeRunning: runtimeStatus.running,
+                fusionPresets: settings.fusionPresets
+              }}
+              root={projectRoot}
+            />
+          </VCenter>
+        </VBody>
+      )}
 
       {surface === "agents" && (
         <VBody>
