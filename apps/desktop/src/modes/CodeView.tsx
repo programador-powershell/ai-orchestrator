@@ -84,6 +84,16 @@ interface OpenFile {
   savedContent: string;
   dirty: boolean;
   loading: boolean;
+  /**
+   * A raiz de onde o arquivo VEIO.
+   *
+   * Sem isto, trocar o projeto no rail e apertar Ctrl+S gravava o conteúdo do
+   * projeto antigo dentro do novo — `src/config.json` de A sobrescrevia o
+   * `src/config.json` de B em silêncio, porque a gravação usava a raiz
+   * corrente. O caminho relativo coincide com frequência (README.md,
+   * package.json); o arquivo, não. Cada aba grava onde nasceu.
+   */
+  root: string;
 }
 
 interface SearchResult {
@@ -232,7 +242,7 @@ function openFile(entry: Pick<FsEntry, "name" | "path">): void {
   useCode.setState((state) => ({
     files: [
       ...state.files,
-      { path: entry.path, name: entry.name, content: "", savedContent: "", dirty: false, loading: true }
+      { path: entry.path, name: entry.name, content: "", savedContent: "", dirty: false, loading: true, root }
     ]
   }));
   void fsRead(root, entry.path)
@@ -276,8 +286,16 @@ async function saveActive(): Promise<void> {
   if (!file || file.loading || useCode.getState().saveState === "saving") return;
   useCode.setState({ saveState: "saving" });
   try {
-    await fsWrite(useCode.getState().root, file.path, file.content);
-    patchFile(file.path, () => ({ dirty: false, savedContent: file.content }));
+    // `file.root`, não a raiz corrente: a aba pertence ao projeto de onde foi
+    // aberta, mesmo que o rail já aponte para outro.
+    await fsWrite(file.root, file.path, file.content);
+    patchFile(file.path, (atual) => ({
+      // Editar durante o await é possível (gravação lenta, rota SSH). Marcar
+      // limpo ali apagava o indicador de sujo com o texto já diferente do que
+      // foi gravado, e a pessoa fechava a aba confiando no chip "salvo".
+      dirty: atual.content !== file.content,
+      savedContent: file.content
+    }));
     useCode.setState({ saveState: "saved" });
     scheduleSavedReset();
   } catch {
@@ -287,9 +305,10 @@ async function saveActive(): Promise<void> {
 
 async function applyContent(path: string, next: string): Promise<void> {
   if (isTauriHost) {
+    const alvo = useCode.getState().files.find((file) => file.path === path);
     useCode.setState({ saveState: "saving" });
     try {
-      await fsWrite(useCode.getState().root, path, next);
+      await fsWrite(alvo?.root ?? useCode.getState().root, path, next);
       patchFile(path, () => ({ content: next, savedContent: next, dirty: false }));
       useCode.setState({ saveState: "saved" });
       scheduleSavedReset();
@@ -734,6 +753,14 @@ export function CodeView() {
   const [termBusy, setTermBusy] = useState(false);
   /** Último bloco de código vindo da IA — `run` executa com detecção ultra. */
   const [lastAiCode, setLastAiCode] = useState<{ code: string; hint: string } | null>(null);
+  /**
+   * Código colado, ARMADO e não executado.
+   *
+   * Colar não pode ser gatilho de execução: uma página hostil consegue trocar
+   * o conteúdo do clipboard no evento `copy` e o que a pessoa acha que copiou
+   * (um comando de uma linha) vira um script inteiro rodando ao colar.
+   */
+  const [pastedCode, setPastedCode] = useState<{ code: string; hint: string } | null>(null);
   const termRef = useRef<HTMLPreElement>(null);
   const promptRef = useRef<HTMLInputElement>(null);
 
@@ -817,14 +844,20 @@ export function CodeView() {
       return;
     }
 
-    // `run` — executa o último bloco de código da IA (ultra-terminal).
+    // `run` — executa o código colado ou o último bloco vindo da IA.
     if (/^run$/i.test(cmd)) {
       setTermLines((lines) => [...lines, `$ ${cmd}`]);
-      if (!lastAiCode) {
-        setTermLines((lines) => [...lines, 'nada para executar — peça código com "ai <pergunta>" primeiro.']);
+      // Colado tem prioridade: é o mais recente e foi a pessoa quem trouxe.
+      const alvo = pastedCode ?? lastAiCode;
+      if (!alvo) {
+        setTermLines((lines) => [
+          ...lines,
+          'nada para executar — cole um código ou peça um com "ai <pergunta>".'
+        ]);
         return;
       }
-      await runDetectedSource(lastAiCode.code, lastAiCode.hint || undefined);
+      setPastedCode(null);
+      await runDetectedSource(alvo.code, alvo.hint || undefined);
       return;
     }
 
@@ -1117,12 +1150,18 @@ export function CodeView() {
                   role="tab"
                   tabIndex={0}
                   aria-selected={activePath === file.path}
-                  className={`codex-tab ${activePath === file.path ? "active" : ""}`}
+                  className={`codex-tab ${activePath === file.path ? "active" : ""} ${
+                    file.root !== root ? "outra-raiz" : ""
+                  }`}
                   onClick={() => setActivePath(file.path)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") setActivePath(file.path);
                   }}
-                  title={file.path}
+                  title={
+                    file.root === root
+                      ? file.path
+                      : `${file.path}\n(de ${file.root} — salvar grava lá, não no projeto aberto)`
+                  }
                 >
                   <FileCode2 size={12} />
                   {file.name}
@@ -1183,12 +1222,31 @@ export function CodeView() {
                   placeholder='comando, arquivo (auto-detect) ou "ai <pergunta>"'
                   onPaste={(event) => {
                     const text = event.clipboardData.getData("text");
-                    if (text.includes("\n") && detectLanguage(text)) {
-                      // Código multilinha colado: ultra-terminal detecta e executa.
-                      event.preventDefault();
-                      setTermLines((lines) => [...lines, "$ (código colado)"]);
-                      void runDetectedSource(text);
-                    }
+                    const detectado = text.includes("\n") ? detectLanguage(text) : null;
+                    if (!detectado) return;
+                    /**
+                     * Colar ARMA, não dispara.
+                     *
+                     * Antes, colar texto multilinha reconhecido gravava o
+                     * arquivo e executava na hora — sem Enter, sem prévia.
+                     * Uma página hostil que troque o clipboard no evento
+                     * `copy` (pastejacking) punha `import os; os.system(…)`
+                     * onde a pessoa achava ter copiado um comando de uma
+                     * linha, e o código rodava ao colar. Terminal de verdade
+                     * resolve isso com bracketed paste: o texto entra, quem
+                     * executa é o Enter.
+                     */
+                    event.preventDefault();
+                    const linhas = text.split(/\r?\n/);
+                    setPastedCode({ code: text, hint: detectado.extension });
+                    setTermLines((lines) => [
+                      ...lines,
+                      `↳ colado: ${detectado.language} · ${linhas.length} linha(s) — NÃO executado`,
+                      ...linhas.slice(0, 6).map((linha) => `  │ ${linha}`),
+                      linhas.length > 6 ? `  │ … +${linhas.length - 6} linha(s)` : "",
+                      'confira acima e digite "run" para executar.',
+                      ""
+                    ].filter(Boolean));
                   }}
                   spellCheck={false}
                   autoComplete="off"

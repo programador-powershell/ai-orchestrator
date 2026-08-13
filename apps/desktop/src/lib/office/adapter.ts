@@ -104,7 +104,12 @@ export class TextAdapter implements OfficeAdapter {
         const value = typeof command.value === "string" ? command.value : "";
         if (!needle) {
           // Sem alvo textual: troca o primeiro heading (caso "troque o título").
-          const replaced = before.replace(/^(#{1,6}\s+).*/m, `$1${value}`);
+          //
+          // A troca vai por FUNÇÃO, não por string de template: `$1`, `$&` e
+          // `$$` são padrões dentro do replacement, e o valor aqui vem do
+          // MODELO. Um título como "Orçamento: $150" virava "# Orçamento: # 50"
+          // — o "$1" do meio do preço sendo lido como o grupo capturado.
+          const replaced = before.replace(/^(#{1,6}\s+).*/m, (_todo, prefixo: string) => `${prefixo}${value}`);
           if (replaced === before) return { ok: false, error: "nenhum título encontrado para substituir" };
           this.content = replaced;
           return { ok: true, content: replaced, touched: 1 };

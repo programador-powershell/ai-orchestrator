@@ -99,6 +99,22 @@ describe("extractSymbols · TypeScript", () => {
     expect(nomes(extractSymbols("a.ts", src))).toEqual(["real"]);
   });
 
+  it('"/*" dentro de string não engole o resto do arquivo', () => {
+    // Um glob, uma URL ou uma regex numa linha comum ligavam o modo
+    // comentário e TODAS as declarações seguintes sumiam do índice.
+    const src = [
+      'const GLOB = "src/*";',
+      'const URL_BASE = "https://x.com/*";',
+      "export function real() {}"
+    ].join("\n");
+    expect(nomes(extractSymbols("a.ts", src))).toEqual(["GLOB", "URL_BASE", "real"]);
+  });
+
+  it("tempo de vida do Rust não é literal de texto", () => {
+    const src = ["pub fn pega<'a>(x: &'a str) -> &'a str { x }", "pub fn outra() {}"].join("\n");
+    expect(nomes(extractSymbols("a.rs", src))).toEqual(["pega", "outra"]);
+  });
+
   it("marca exportado, que é o que o resto do projeto alcança", () => {
     const symbols = extractSymbols("a.ts", "export function publica() {}\nfunction privada() {}");
     expect(symbols[0].exported).toBe(true);

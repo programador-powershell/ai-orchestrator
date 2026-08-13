@@ -147,6 +147,40 @@ function stripInlineBlock(line: string): string {
   return line.replace(/\/\*[^]*?\*\//g, " ");
 }
 
+/**
+ * A linha sem literais de texto e sem o comentário de fim de linha.
+ *
+ * Serve só para achar o `/*` que ABRE um comentário de bloco. Sem isto, uma
+ * linha perfeitamente válida como `const GLOB = "src/*";` — glob, URL
+ * `https://x/*`, expressão regular — ligava o modo comentário e TODAS as
+ * declarações seguintes do arquivo sumiam do índice, em silêncio: outline
+ * vazio, "ir para símbolo" sem achar nada e o FIM sem as dicas.
+ *
+ * Aspas que não fecham na mesma linha NÃO abrem literal: é o caso do tempo de
+ * vida do Rust (`&'a str`) e do apóstrofo solto em comentário.
+ */
+function semTextoLiteral(linha: string): string {
+  let saida = "";
+  let i = 0;
+  while (i < linha.length) {
+    const c = linha[i];
+    if (c === "/" && linha[i + 1] === "/") break;
+    if (c === '"' || c === "'" || c === "`") {
+      const fecha = linha.indexOf(c, i + 1);
+      if (fecha < 0) {
+        saida += c;
+        i += 1;
+        continue;
+      }
+      i = fecha + 1;
+      continue;
+    }
+    saida += c;
+    i += 1;
+  }
+  return saida;
+}
+
 /** Linha que só tem comentário — nomes ali não são símbolos. */
 function isComment(line: string, dialect: Dialect): boolean {
   const trimmed = line.trimStart();
@@ -202,8 +236,9 @@ export function extractSymbols(file: string, text: string): CodeSymbol[] {
         if (line.includes("*/")) inBlockComment = false;
         continue;
       }
-      const open = line.indexOf("/*");
-      if (open >= 0 && !line.includes("*/", open)) {
+      const semTexto = semTextoLiteral(line);
+      const open = semTexto.indexOf("/*");
+      if (open >= 0 && !semTexto.includes("*/", open)) {
         inBlockComment = true;
         continue;
       }

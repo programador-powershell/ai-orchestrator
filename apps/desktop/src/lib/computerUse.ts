@@ -153,7 +153,10 @@ export async function dispatchComputerTool(
           session,
           timeoutMs: 30_000
         });
-        return { ok: run.exitCode === 0, output: formatRun(run) };
+        // `run` vai junto: a trilha de auditoria precisa do código de saída
+        // REAL e do jailed de verdade. Achatar tudo em {ok, output} obrigava
+        // quem audita a inferir por substring da prosa.
+        return { ok: run.exitCode === 0, output: formatRun(run), run };
       }
       default:
         return { ok: false, output: `ferramenta desconhecida: ${tool}` };

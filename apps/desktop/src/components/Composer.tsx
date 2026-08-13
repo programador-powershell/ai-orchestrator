@@ -207,6 +207,8 @@ export function Composer() {
             items: itens,
             query: question,
             storage: window.localStorage,
+            // Gateway + workspace definem de qual espaço vetorial o cache é.
+            space: `${session.baseUrl}|${session.workspaceId}`,
             embed: (inputs) => embedTexts(session, inputs)
           });
         }

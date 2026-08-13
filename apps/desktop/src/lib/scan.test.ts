@@ -92,6 +92,26 @@ describe("parseUnifiedDiff", () => {
     expect(lines[0].type).toBe("hunk");
     expect(lines).toHaveLength(3);
   });
+
+  it("dentro do hunk, +++ e --- são conteúdo — e aparecem na prévia", () => {
+    // O furo: a prévia escondia estas duas linhas e a aplicação gravava as
+    // duas. Quem revisava aprovava um patch diferente do que ia para o disco.
+    const patch = "@@ -1,2 +1,2 @@\n---- senha = 'x'\n++++i;";
+    const lines = parseUnifiedDiff(patch);
+    expect(lines.map((line) => line.type)).toEqual(["hunk", "remove", "add"]);
+    expect(lines[1].text).toBe("--- senha = 'x'");
+    expect(lines[2].text).toBe("+++i;");
+  });
+
+  it("a prévia mostra exatamente o que a aplicação grava", () => {
+    const source = "--- senha = 'x'\nfim";
+    const patch = "@@ -1,1 +1,1 @@\n---- senha = 'x'\n++++i;";
+    const previa = parseUnifiedDiff(patch);
+    const aplicado = applyUnifiedDiff(source, patch);
+    const adicionadas = previa.filter((line) => line.type === "add").map((line) => line.text);
+    expect(aplicado).toBe("+++i;\nfim");
+    expect(adicionadas.every((texto) => aplicado?.includes(texto))).toBe(true);
+  });
 });
 
 describe("applyUnifiedDiff", () => {
@@ -103,6 +123,21 @@ describe("applyUnifiedDiff", () => {
 
   it("devolve null quando o patch não bate com o conteúdo", () => {
     expect(applyUnifiedDiff("outra coisa", "@@ -1,1 +1,1 @@\n-não existe\n+x")).toBeNull();
+  });
+
+  it("aplica em arquivo CRLF e devolve CRLF", () => {
+    // Windows é a plataforma-alvo: sem isto o auto-fix de segredo nunca
+    // aplicava, e a UI culpava o arquivo ("mudou desde o scan").
+    const source = 'linha 1\r\npassword = "abc"\r\nlinha 3';
+    const patch = '@@ -2,1 +2,1 @@\n-password = "abc"\n+password = "${SECRET_FROM_VAULT}"';
+    expect(applyUnifiedDiff(source, patch)).toBe(
+      'linha 1\r\npassword = "${SECRET_FROM_VAULT}"\r\nlinha 3'
+    );
+  });
+
+  it("arquivo LF continua saindo em LF", () => {
+    const source = "a\nb";
+    expect(applyUnifiedDiff(source, "@@ -1,1 +1,1 @@\n-a\n+z")).toBe("z\nb");
   });
 });
 

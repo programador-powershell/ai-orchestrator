@@ -126,6 +126,14 @@ export interface ToolResult {
   sources?: Array<{ title: string; url: string; kind?: string }>;
   /** Imagens geradas — renderizadas dentro do cartão da ferramenta. */
   images?: string[];
+  /**
+   * Dados brutos da execução isolada (só `computer_exec`).
+   *
+   * A trilha de auditoria precisa do código de saída real — um comando que
+   * termina em 137 não é "1" — e do `jailed` que o Rust reportou. Sem isto,
+   * quem audita tinha de adivinhar lendo a prosa do resultado.
+   */
+  run?: { exitCode: number | null; jailed: boolean };
 }
 
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");

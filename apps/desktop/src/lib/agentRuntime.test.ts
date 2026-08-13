@@ -436,6 +436,32 @@ describe("code mode", () => {
     expect(approve).toHaveBeenCalledTimes(2);
   });
 
+  it("o programa recebe a saída CRUA da ferramenta, não o texto do modelo", async () => {
+    // O defeito: o programa recebia "Resultado da ferramenta `fs_read`:\n\n…"
+    // e gravava esse cabeçalho dentro do arquivo do usuário num
+    // read-modify-write comum.
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "linha original" });
+    await comPrograma(
+      'const c = tool.fs_read({ path: "a.md" }); tool.fs_write({ path: "a.md", content: c });',
+      { approve: async () => true }
+    );
+    const escrita = dispatchToolMock.mock.calls.find(([call]) => call.tool === "fs_write");
+    expect(escrita?.[0].args.content).toBe("linha original");
+  });
+
+  it("saída grande não chega truncada ao programa", async () => {
+    // O teto de 8.000 caracteres existe para o PROMPT do modelo. Aplicá-lo ao
+    // valor do programa gravava o arquivo pela metade.
+    const grande = "x".repeat(9000);
+    dispatchToolMock.mockResolvedValue({ ok: true, output: grande });
+    await comPrograma(
+      'const c = tool.fs_read({ path: "grande.txt" }); tool.fs_write({ path: "copia.txt", content: c });',
+      { approve: async () => true }
+    );
+    const escrita = dispatchToolMock.mock.calls.find(([call]) => call.tool === "fs_write");
+    expect(escrita?.[0].args.content).toBe(grande);
+  });
+
   it("ferramenta fora da lista liberada não roda", async () => {
     dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
     // `terminal` não entra na lista do code mode em nenhum dos dois modos.

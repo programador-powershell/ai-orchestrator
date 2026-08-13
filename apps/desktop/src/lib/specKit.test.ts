@@ -305,6 +305,16 @@ describe("parseTasks — variações reais de formato do modelo", () => {
     expect(tasks[0].detail).toContain("**destaque**");
   });
 
+  it("linha inteira em negrito abre tarefa mesmo sem ##", () => {
+    // O defeito: com as tarefas todas nesse formato, parseTasks devolvia []
+    // e o trabalho gerado sumia sem aviso nenhum.
+    const tasks = parseTasks(
+      "**1. Criar endpoint**\ndetalhe\nVerificação: responde 200\n\n**2. Testar**\noutro"
+    );
+    expect(tasks.map((t) => t.title)).toEqual(["Criar endpoint", "Testar"]);
+    expect(tasks[0].verify).toBe("responde 200");
+  });
+
   it("cabeçalho vazio não vira tarefa fantasma", () => {
     expect(parseTasks("##\n\n## 1. Real\ncorpo").map((t) => t.title)).toEqual(["Real"]);
   });

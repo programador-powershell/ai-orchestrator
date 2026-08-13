@@ -172,6 +172,8 @@
 }
 .codex-tab:hover { background: var(--glass); color: var(--ink); transform: translateY(-1px); }
 .codex-tab.active { background: var(--accent-soft); color: var(--ink); }
+/* Aba herdada de outro projeto: salvar grava na raiz de origem, não na aberta. */
+.codex-tab.outra-raiz { border-bottom: 2px dashed var(--warn); }
 .codex-tab svg { flex: none; }
 .codex-tab button {
   width: 18px;
