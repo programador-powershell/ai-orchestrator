@@ -125,7 +125,7 @@ pub fn union_modes(sets: &[Vec<String>]) -> Vec<String> {
 
 /// Grupos do token (ObjectIds do claim groups + nomes de app roles) casados
 /// contra ad_groups do workspace. Devolve os ids internos.
-async fn match_groups(
+pub(crate) async fn match_groups(
     state: &AppState,
     workspace: Uuid,
     token_groups: &[String],

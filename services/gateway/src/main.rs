@@ -1,4 +1,5 @@
 mod admin;
+mod analytics;
 mod auth;
 mod config;
 mod crypto;
@@ -9,6 +10,7 @@ mod policy;
 mod providers;
 mod routes;
 mod state;
+mod usage;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -60,6 +62,31 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/workspaces/{workspace}/admin/prompt-master",
             get(admin::prompt_master_get).put(admin::prompt_master_put),
+        )
+        // Relatoria: uso e custo por usuário, grupo, modelo e dia.
+        .route(
+            "/workspaces/{workspace}/admin/usage/users",
+            get(analytics::usage_by_user),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/usage/groups",
+            get(analytics::usage_by_group),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/usage/models",
+            get(analytics::usage_by_model),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/usage/daily",
+            get(analytics::usage_daily),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/prices",
+            get(analytics::prices_list).put(analytics::price_put),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/prices/{model}",
+            axum::routing::delete(analytics::price_delete),
         )
         .route("/workspaces", get(routes::workspaces))
         .route(
