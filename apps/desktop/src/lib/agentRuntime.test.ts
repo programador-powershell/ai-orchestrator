@@ -13,6 +13,7 @@ vi.stubGlobal("window", {});
 
 const chatOnceMock = vi.fn();
 const dispatchToolMock = vi.fn();
+const auditMock = vi.fn();
 
 /**
  * O runtime empilha no MESMO array de mensagens depois de chamar o modelo, e o
@@ -30,6 +31,9 @@ vi.mock("./engine", () => ({
     capturar(args);
     return chatOnceMock(...args);
   }
+}));
+vi.mock("./agentAudit", () => ({
+  recordAgentAction: (...args: unknown[]) => auditMock(...args)
 }));
 vi.mock("./agent", async () => {
   const real = await vi.importActual<typeof import("./agent")>("./agent");
@@ -71,6 +75,8 @@ function correr(goal: string, limits = LIMITS, signal = new AbortController().si
 beforeEach(() => {
   chatOnceMock.mockReset();
   dispatchToolMock.mockReset();
+  auditMock.mockReset();
+  auditMock.mockResolvedValue({ recorded: true });
   enviadas.length = 0;
 });
 
@@ -296,5 +302,83 @@ describe("observabilidade", () => {
     expect(vistas.length).toBeGreaterThan(3);
     // em algum momento a árvore teve 2 agentes
     expect(vistas.some((state) => Object.keys(state.tasks).length === 2)).toBe(true);
+  });
+});
+
+describe("auditoria da execução na estação", () => {
+  it("computer_exec aprovado vira uma linha de auditoria", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "saída 0 · 5ms" });
+    roteiro([toolBlock("computer_exec", { command: "python script.py" }), "rodei"]);
+
+    await runAgentGoal({
+      goal: "gerar o gráfico",
+      selection: { kind: "workspace" },
+      ctx: { session: { baseUrl: "x", accessToken: "t", workspaceId: "w" } } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      hooks: { onTree: () => undefined, approve: async () => true }
+    } as never);
+
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    const [registro] = auditMock.mock.calls[0].slice(1);
+    expect(registro).toMatchObject({ command: "python script.py", approved: true, goal: "gerar o gráfico" });
+  });
+
+  /** Saber o que a IA TENTOU rodar e alguém barrou vale tanto quanto o resto. */
+  it("recusa também é auditada, e a ferramenta não executa", async () => {
+    roteiro([toolBlock("computer_exec", { command: "format c:" }), "não rodei"]);
+
+    await runAgentGoal({
+      goal: "objetivo",
+      selection: { kind: "workspace" },
+      ctx: { session: { baseUrl: "x", accessToken: "t", workspaceId: "w" } } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      hooks: { onTree: () => undefined, approve: async () => false }
+    } as never);
+
+    expect(auditMock).toHaveBeenCalledTimes(1);
+    expect(auditMock.mock.calls[0][1]).toMatchObject({ command: "format c:", approved: false });
+  });
+
+  it("ferramenta que não toca a máquina NÃO é auditada", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "conteúdo" });
+    roteiro([toolBlock("fs_read", { path: "a.txt" }), "li"]);
+
+    await runAgentGoal({
+      goal: "objetivo",
+      selection: { kind: "workspace" },
+      ctx: { session: { baseUrl: "x", accessToken: "t", workspaceId: "w" } } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      hooks: { onTree: () => undefined, approve: async () => true }
+    } as never);
+
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  /** Falha de auditoria não derruba a execução — mas não pode sumir. */
+  it("auditoria que falha vira aviso visível ao modelo", async () => {
+    auditMock.mockResolvedValue({ recorded: false, reason: "sem sessão com o gateway" });
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "saída 0" });
+    roteiro([toolBlock("computer_exec", { command: "dir" }), "segui"]);
+
+    const final = await runAgentGoal({
+      goal: "objetivo",
+      selection: { kind: "workspace" },
+      ctx: { session: null } as never,
+      limits: LIMITS,
+      root: "",
+      signal: new AbortController().signal,
+      hooks: { onTree: () => undefined, approve: async () => true }
+    } as never);
+
+    expect(final.tasks[final.rootId].status).toBe("done");
+    const segunda = enviadas[1];
+    expect(segunda[segunda.length - 1].content).toContain("[auditoria]");
+    expect(segunda[segunda.length - 1].content).toContain("sem sessão");
   });
 });
