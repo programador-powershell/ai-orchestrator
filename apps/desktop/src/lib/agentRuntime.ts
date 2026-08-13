@@ -87,12 +87,16 @@ export interface RunOptions {
    */
   computerUse?: boolean;
   /**
-   * Liga o code mode e diz QUAIS ferramentas o programa pode citar.
+   * Liga o code mode. Quem abre é a política do grupo; `false` (o padrão)
+   * desliga.
    *
-   * Lista vazia (o padrão) desliga: sem ferramenta liberada, o programa não
-   * tem o que fazer. Quem abre é a política do grupo.
+   * As ferramentas do programa NÃO vêm daqui de propósito — elas são
+   * derivadas da sessão em `codeModeTools()`. Deixar o chamador escolher a
+   * lista foi um erro na primeira versão: a view passava as ferramentas de
+   * projeto mesmo com a área isolada aberta, então o programa gravava fora do
+   * sandbox.
    */
-  codeModeTools?: string[];
+  codeMode?: boolean;
 }
 
 /** Roda o objetivo inteiro. Devolve a árvore final. */
@@ -161,7 +165,7 @@ class TreeRunner {
     // Só oferece o code mode quando há ferramenta liberada para ele: descrever
     // um modo que não pode fazer nada gasta contexto e produz programa
     // recusado.
-    const codeTools = this.options.codeModeTools ?? [];
+    const codeTools = this.codeModeTools();
     if (codeTools.length) instrucoes.push(codeModeInstruction(codeTools));
     const messages: ChatMessage[] = [
       { role: "system", content: instrucoes.join("\n\n") },
@@ -232,11 +236,33 @@ class TreeRunner {
    * mesmo `runTool` de uma chamada avulsa, com a mesma aprovação. Se não
    * passasse, escrever um programa seria a forma barata de driblar o gate.
    */
+  /**
+   * Ferramentas que o programa pode citar — **derivadas da sessão**.
+   *
+   * Com a área isolada aberta, o programa usa as ferramentas do SANDBOX: elas
+   * escrevem no diretório efêmero e a execução nasce dentro do Job Object. Sem
+   * ela, usa as do projeto, que é o que o agente já fazia avulso.
+   *
+   * Misturar as duas seria o pior dos mundos: o usuário liga a área isolada
+   * esperando confinamento e o programa grava no projeto real assim mesmo.
+   */
+  private codeModeTools(): string[] {
+    if (!this.options.codeMode) return [];
+    if (this.options.computerUse) {
+      // Pediu confinamento. Se a sessão NÃO abriu, o programa não recebe
+      // ferramenta nenhuma — cair para as do projeto rodaria justamente sem o
+      // confinamento que a pessoa ligou, que é o oposto do pedido. Falhar
+      // fechado é a única leitura honesta de "ligue a área isolada".
+      return this.session ? ["computer_read", "computer_list", "computer_write", "computer_exec"] : [];
+    }
+    return ["fs_read", "fs_list", "search", "fs_write"];
+  }
+
   private async runCodeProgram(taskId: string, call: ToolCall): Promise<string> {
     const source = typeof call.args.program === "string" ? call.args.program : "";
     if (!source.trim()) return formatToolResult(call, "programa vazio");
     const result = await runProgram(source, {
-      allowed: this.options.codeModeTools ?? [],
+      allowed: this.codeModeTools(),
       signal: this.options.signal,
       call: async (tool, args) => {
         const saida = await this.runTool(taskId, { tool, args: args as Record<string, unknown> });
