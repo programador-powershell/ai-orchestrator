@@ -113,3 +113,48 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+
+/* ------- Substituir texto no BINÁRIO (docx/pptx), sem motor externo ------- */
+
+/* Destaque proporcional: a operação reescreve o arquivo no lugar. */
+.offx-replace {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
+}
+.offx-replace-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+}
+.offx-replace-row input {
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+.offx-replace-hint {
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.offx-replace-ok {
+  margin: 0;
+  color: var(--ok, #10b981);
+  font-size: var(--fs-micro);
+}
+.offx-replace-error {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--danger, #ef4444);
+  font-size: var(--fs-micro);
+}
