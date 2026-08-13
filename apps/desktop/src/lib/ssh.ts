@@ -19,9 +19,10 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { TerminalResult } from "@ai-orchestrator/contracts";
+import type { FsEntry, TerminalResult } from "@ai-orchestrator/contracts";
 
 import type { DeployServer } from "./ship/server";
+import { useApp } from "./store";
 
 export type Environment = "local" | "wsl" | "vps" | "cloud";
 
@@ -94,8 +95,25 @@ export function routeLabel(route: Route): string {
 
 export const ssh = {
   exec: (target: SshTarget, command: string) => invoke<SshResult>("ssh_exec", { target, command }),
-  fingerprint: (host: string, port: number) => invoke<string>("ssh_fingerprint", { host, port })
+  fingerprint: (host: string, port: number) => invoke<string>("ssh_fingerprint", { host, port }),
+  read: (target: SshTarget, path: string) => invoke<string>("ssh_read", { target, path }),
+  write: (target: SshTarget, path: string, content: string) =>
+    invoke<void>("ssh_write", { target, path, content }),
+  list: (target: SshTarget, sub: string) => invoke<FsEntry[]>("ssh_list", { target, sub })
 };
+
+/**
+ * Rota atual, lida do estado da aplicação.
+ *
+ * Fica aqui e não em cada chamador porque o ponto do roteamento é ser **um
+ * só**: com cada aba resolvendo a rota do seu jeito, uma delas ficaria para
+ * trás — que foi exatamente o que aconteceu quando só o terminal roteava e os
+ * arquivos não.
+ */
+export function currentRoute(): Route {
+  const settings = useApp.getState().settings;
+  return resolveRoute(settings.environment ?? "local", settings.deployServers ?? []);
+}
 
 /**
  * Converte o resultado do SSH no formato do terminal, para quem chama não

@@ -282,6 +282,196 @@ pub async fn ssh_exec(target: SshTarget, command: String) -> Result<SshResult, S
     })
 }
 
+/* --------------------------- Arquivos remotos --------------------------- */
+
+/// Caminho relativo seguro dentro do diretório remoto.
+///
+/// Mesma regra do sandbox local: sem `..`, sem raiz absoluta, sem `~`. Sem
+/// isto, `fs_read` com `../../etc/shadow` sairia do diretório do projeto — e
+/// no servidor isso é bem pior que na estação.
+pub fn safe_remote_path(workdir: &str, relativo: &str) -> Result<String, String> {
+    let limpo = relativo.trim().replace('\\', "/");
+    if limpo.is_empty() {
+        return Err("informe o caminho".into());
+    }
+    if limpo.starts_with('/') || limpo.starts_with('~') || limpo.contains(':') {
+        return Err("use caminho relativo ao diretório do projeto".into());
+    }
+    if limpo.split('/').any(|parte| parte == "..") {
+        return Err("caminho não pode subir de diretório".into());
+    }
+    if limpo.contains('\n') || limpo.contains('\r') || limpo.contains('\0') {
+        return Err("caminho inválido".into());
+    }
+    let base = workdir.trim().trim_end_matches('/');
+    Ok(if base.is_empty() {
+        limpo
+    } else {
+        format!("{base}/{limpo}")
+    })
+}
+
+/// Roda um comando remoto opcionalmente alimentando o stdin.
+///
+/// O stdin existe para a GRAVAÇÃO: mandar o conteúdo do arquivo dentro da
+/// linha de comando exigiria escapá-lo, e conteúdo de arquivo é justamente o
+/// texto mais hostil que existe para escape.
+async fn run_ssh(target: &SshTarget, command: &str, stdin: Option<&str>) -> Result<SshResult, String> {
+    validate_target(target)?;
+    let inicio = Instant::now();
+    let mut cmd = Command::new("ssh");
+    // Aqui o comando já vem montado com caminho absoluto: não usa o workdir.
+    let mut alvo_sem_cd = target.clone();
+    alvo_sem_cd.remote_workdir = None;
+    cmd.args(build_args(&alvo_sem_cd, command))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+    let mut filho = cmd.spawn().map_err(|erro| format!("falha ao executar o ssh: {erro}"))?;
+    if let (Some(texto), Some(mut entrada)) = (stdin, filho.stdin.take()) {
+        use tokio::io::AsyncWriteExt;
+        entrada
+            .write_all(texto.as_bytes())
+            .await
+            .map_err(|erro| format!("falha ao enviar o conteúdo: {erro}"))?;
+        // Fechar o stdin é o que faz o `cat` remoto terminar; sem isso o
+        // comando fica esperando para sempre.
+        drop(entrada);
+    }
+    let saida = tokio::time::timeout(Duration::from_secs(120), filho.wait_with_output())
+        .await
+        .map_err(|_| "a operação remota passou de 2 minutos".to_string())?
+        .map_err(|erro| format!("falha ao executar o ssh: {erro}"))?;
+    Ok(SshResult {
+        exit_code: saida.status.code(),
+        stdout: String::from_utf8_lossy(&saida.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&saida.stderr).to_string(),
+        duration_ms: inicio.elapsed().as_millis() as u64,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_read(target: SshTarget, path: String) -> Result<String, String> {
+    let alvo = safe_remote_path(target.remote_workdir.as_deref().unwrap_or(""), &path)?;
+    let saida = run_ssh(&target, &format!("cat -- {}", quote_posix(&alvo)), None).await?;
+    if saida.exit_code != Some(0) {
+        return Err(saida.stderr.trim().to_string());
+    }
+    Ok(saida.stdout)
+}
+
+#[tauri::command]
+pub async fn ssh_write(target: SshTarget, path: String, content: String) -> Result<(), String> {
+    let alvo = safe_remote_path(target.remote_workdir.as_deref().unwrap_or(""), &path)?;
+    let citado = quote_posix(&alvo);
+    // `mkdir -p` do diretório-pai: gravar num caminho novo é o caso comum, e
+    // falhar por pasta inexistente seria ruído.
+    let comando = format!("mkdir -p -- \"$(dirname {citado})\" && cat > {citado}");
+    let saida = run_ssh(&target, &comando, Some(&content)).await?;
+    if saida.exit_code != Some(0) {
+        return Err(saida.stderr.trim().to_string());
+    }
+    Ok(())
+}
+
+/// Decodifica base64 sem depender de crate — só o alfabeto padrão.
+///
+/// É o suficiente para trazer um binário do servidor, e evita mais uma
+/// dependência num projeto que já escreve o que precisa.
+pub fn decode_base64(texto: &str) -> Result<Vec<u8>, String> {
+    let mut saida = Vec::with_capacity(texto.len() * 3 / 4);
+    let mut acumulado: u32 = 0;
+    let mut bits = 0u32;
+    for byte in texto.bytes() {
+        let valor = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            // `=` e espaço em branco (o `base64` quebra linha) são ignorados.
+            b'=' | b'\n' | b'\r' | b' ' | b'\t' => continue,
+            _ => return Err("resposta do servidor não é base64 válido".into()),
+        } as u32;
+        acumulado = (acumulado << 6) | valor;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            saida.push(((acumulado >> bits) & 0xFF) as u8);
+        }
+    }
+    Ok(saida)
+}
+
+/// Lê um arquivo BINÁRIO do servidor.
+///
+/// Vai em base64 porque o stdout do `ssh` é texto: mandar bytes crus os
+/// corromperia na primeira sequência inválida de UTF-8 — que num `.docx`
+/// aparece já no cabeçalho do zip.
+pub async fn read_remote_bytes(target: &SshTarget, path: &str) -> Result<Vec<u8>, String> {
+    let alvo = safe_remote_path(target.remote_workdir.as_deref().unwrap_or(""), path)?;
+    let comando = format!("base64 {} 2>/dev/null || base64 -i {}", quote_posix(&alvo), quote_posix(&alvo));
+    let saida = run_ssh(target, &comando, None).await?;
+    if saida.exit_code != Some(0) {
+        return Err(if saida.stderr.trim().is_empty() {
+            "não foi possível ler o arquivo no servidor".into()
+        } else {
+            saida.stderr.trim().to_string()
+        });
+    }
+    decode_base64(&saida.stdout)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+/// Lê uma linha do `ls -1Ap`, onde a barra final marca diretório.
+pub fn parse_ls_line(linha: &str, sub: &str) -> Option<RemoteEntry> {
+    let bruto = linha.trim_end_matches(['\r', '\n']);
+    if bruto.is_empty() {
+        return None;
+    }
+    let is_dir = bruto.ends_with('/');
+    let name = bruto.trim_end_matches('/').to_string();
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    let base = sub.trim().trim_matches('/');
+    let path = if base.is_empty() {
+        name.clone()
+    } else {
+        format!("{base}/{name}")
+    };
+    Some(RemoteEntry { name, path, is_dir, size: 0 })
+}
+
+#[tauri::command]
+pub async fn ssh_list(target: SshTarget, sub: String) -> Result<Vec<RemoteEntry>, String> {
+    let base = target.remote_workdir.clone().unwrap_or_default();
+    let alvo = if sub.trim().is_empty() {
+        let limpo = base.trim().trim_end_matches('/');
+        if limpo.is_empty() { ".".to_string() } else { limpo.to_string() }
+    } else {
+        safe_remote_path(&base, &sub)?
+    };
+    // `-p` põe barra nos diretórios; `-A` mostra ocultos sem `.` e `..`.
+    let saida = run_ssh(&target, &format!("ls -1Ap -- {}", quote_posix(&alvo)), None).await?;
+    if saida.exit_code != Some(0) {
+        return Err(saida.stderr.trim().to_string());
+    }
+    Ok(saida
+        .stdout
+        .lines()
+        .filter_map(|linha| parse_ls_line(linha, &sub))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,5 +628,99 @@ mod tests {
     #[test]
     fn mesma_chave_passa() {
         assert!(fingerprint_ok(Some("SHA256:igual"), Some("SHA256:igual")));
+    }
+
+    #[test]
+    fn caminho_remoto_e_relativo_ao_projeto() {
+        assert_eq!(safe_remote_path("/srv/app", "src/main.rs").unwrap(), "/srv/app/src/main.rs");
+        assert_eq!(safe_remote_path("/srv/app/", "a.txt").unwrap(), "/srv/app/a.txt");
+        assert_eq!(safe_remote_path("", "a.txt").unwrap(), "a.txt");
+    }
+
+    #[test]
+    fn caminho_remoto_nao_sobe_de_diretorio() {
+        // No servidor isso e bem pior que na estacao.
+        for ruim in ["../etc/shadow", "src/../../x", ".."] {
+            assert!(safe_remote_path("/srv/app", ruim).is_err(), "aceitou: {ruim}");
+        }
+    }
+
+    #[test]
+    fn caminho_remoto_recusa_raiz_e_til() {
+        assert!(safe_remote_path("/srv/app", "/etc/passwd").is_err());
+        assert!(safe_remote_path("/srv/app", "~/.ssh/id_rsa").is_err());
+        assert!(safe_remote_path("/srv/app", "C:/Windows").is_err());
+    }
+
+    #[test]
+    fn caminho_remoto_normaliza_barra_do_windows() {
+        assert_eq!(safe_remote_path("/srv/app", "src\\lib.rs").unwrap(), "/srv/app/src/lib.rs");
+    }
+
+    #[test]
+    fn caminho_remoto_recusa_quebra_de_linha() {
+        assert!(safe_remote_path("/srv/app", "a\nrm -rf /").is_err());
+    }
+
+    #[test]
+    fn caminho_remoto_vazio_e_recusado() {
+        assert!(safe_remote_path("/srv/app", "  ").is_err());
+    }
+
+    #[test]
+    fn caminho_com_aspas_e_escapado_no_comando() {
+        // Nome de arquivo com aspas simples nao pode fechar o argumento.
+        let alvo = safe_remote_path("/srv/app", "rel'atorio.txt").unwrap();
+        let citado = quote_posix(&alvo);
+        assert!(citado.starts_with('\'') && citado.ends_with('\''));
+        assert!(citado.contains(r"'\''"));
+    }
+
+    #[test]
+    fn ls_marca_diretorio_pela_barra() {
+        let arquivo = parse_ls_line("main.rs", "src").unwrap();
+        assert!(!arquivo.is_dir);
+        assert_eq!(arquivo.path, "src/main.rs");
+
+        let pasta = parse_ls_line("lib/", "src").unwrap();
+        assert!(pasta.is_dir);
+        assert_eq!(pasta.name, "lib");
+        assert_eq!(pasta.path, "src/lib");
+    }
+
+    #[test]
+    fn ls_na_raiz_nao_prefixa_barra() {
+        assert_eq!(parse_ls_line("README.md", "").unwrap().path, "README.md");
+        assert_eq!(parse_ls_line("README.md", "/").unwrap().path, "README.md");
+    }
+
+    #[test]
+    fn base64_decodifica_o_alfabeto_padrao() {
+        assert_eq!(decode_base64("aGVsbG8=").unwrap(), b"hello");
+        assert_eq!(decode_base64("").unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn base64_ignora_quebra_de_linha_do_utilitario() {
+        // O `base64` do coreutils quebra em 76 colunas por padrão.
+        assert_eq!(decode_base64("aGVs\nbG8=\n").unwrap(), b"hello");
+    }
+
+    #[test]
+    fn base64_traz_byte_binario_intacto() {
+        // Cabeçalho de zip (docx): é onde a leitura como texto corromperia.
+        assert_eq!(decode_base64("UEsDBBQA").unwrap(), vec![0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]);
+    }
+
+    #[test]
+    fn base64_recusa_caractere_invalido() {
+        assert!(decode_base64("aGVs*bG8=").is_err());
+    }
+
+    #[test]
+    fn ls_descarta_linha_vazia_e_pontos() {
+        assert!(parse_ls_line("", "src").is_none());
+        assert!(parse_ls_line(".", "src").is_none());
+        assert!(parse_ls_line("../", "src").is_none());
     }
 }
