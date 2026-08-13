@@ -25,7 +25,16 @@ interface CrewState {
   running: boolean;
   /** Entrega de cada agente, por id. */
   outputs: Record<string, string>;
-  start: (goal: string, verdict: ComplexityVerdict, plan: CrewPlan) => void;
+  /**
+   * Marca que uma execução COMEÇOU, antes de existir equipe.
+   *
+   * O orquestrador leva alguns segundos para decidir, e nesse intervalo o
+   * `running` precisa já valer: senão um segundo envio no composer dispararia
+   * uma segunda equipe sobre o mesmo objetivo.
+   */
+  begin: (goal: string) => void;
+  /** A equipe ficou pronta — o orquestrador decidiu. */
+  setPlan: (verdict: ComplexityVerdict, plan: CrewPlan) => void;
   hire: (member: CrewMember) => void;
   activity: (id: string, activity: string) => void;
   fire: (id: string, status: CrewMember["status"], output: string) => void;
@@ -40,7 +49,8 @@ export const useCrew = create<CrewState>((set) => ({
   crew: [],
   running: false,
   outputs: {},
-  start: (goal, verdict, plan) => set({ goal, verdict, plan, crew: [], outputs: {}, running: true }),
+  begin: (goal) => set({ goal, verdict: null, plan: null, crew: [], outputs: {}, running: true }),
+  setPlan: (verdict, plan) => set({ verdict, plan }),
   hire: (member) =>
     set((state) => ({
       // Reexecução do mesmo slot substitui a linha em vez de duplicá-la.

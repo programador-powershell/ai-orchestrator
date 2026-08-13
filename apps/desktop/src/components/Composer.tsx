@@ -46,7 +46,7 @@ import { assembleContext, type Injection } from "../lib/contextAssembly";
 import { pluginPrompt } from "../lib/plugins";
 import { usePlugins } from "../lib/pluginStore";
 import { useTrajectory } from "../lib/trajectoryStore";
-import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
+import { composerBus, goalBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
@@ -492,7 +492,11 @@ export function Composer() {
     if (!text || useApp.getState().threads[mode].sending) return;
     setError("");
     setInput("");
+    // A aba Agent trata o envio como OBJETIVO da equipe, não como pergunta de
+    // chat: quem responde é a equipe escalada pelo orquestrador. A mensagem
+    // aparece no thread do mesmo jeito, para a conversa não ficar com buraco.
     if (options?.echoUser !== false) appendMessage(mode, { role: "user", content: text });
+    if (goalBus.deliver(mode, text)) return;
     if (currentAttachments.length) setAttachments([]);
     setSending(mode, true);
     const abort = new AbortController();
