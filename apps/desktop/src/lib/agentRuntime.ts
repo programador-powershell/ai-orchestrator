@@ -1,0 +1,257 @@
+/**
+ * Runtime do ACIONAMENTO de agentes — executa a árvore de delegação.
+ *
+ * O flow builder (dag.ts) executa um grafo desenhado à mão: quem divide o
+ * trabalho é o usuário, antes de rodar. Aqui existe um objetivo e um agente
+ * raiz, e quem decide dividir é o **modelo**, chamando `delegate` durante a
+ * execução. Cada subordinado abre a própria conversa, roda o mesmo loop
+ * (podendo delegar de novo até o teto) e devolve um relatório ao superior.
+ *
+ * Regras que este arquivo faz valer:
+ *
+ * - **Contexto isolado.** O subordinado recebe a instrução dele e a linhagem,
+ *   nunca o histórico do superior. É isso que mantém cada contexto pequeno —
+ *   e é a razão de `delegate` exigir instrução autocontida.
+ * - **Tetos checados no núcleo.** A recusa volta para o modelo como resultado
+ *   de ferramenta, com o motivo, para ele se adaptar em vez de insistir.
+ * - **Cancelamento desce a árvore inteira** por um único AbortSignal.
+ * - **Ferramentas mutantes continuam pedindo aprovação.** Delegar não é uma
+ *   porta lateral para escrever arquivo sem gate: o subordinado passa pelo
+ *   mesmo `needsApproval` do superior.
+ */
+import {
+  agentSystemInstruction,
+  dispatchTool,
+  formatToolResult,
+  needsApproval,
+  parseToolCalls,
+  type ToolCall
+} from "./agent";
+import {
+  canSpawn,
+  cancelPending,
+  createTree,
+  finishTask,
+  patchTask,
+  spawnTask,
+  type AgentTask,
+  type DelegationLimits,
+  type TreeState
+} from "./agentTree";
+import {
+  DELEGATE_TOOL,
+  goalTitle,
+  parseDelegateArgs,
+  reportsMessage,
+  rootSystemPrompt,
+  subordinateSystemPrompt
+} from "./delegation";
+import type { EngineSelection } from "@ai-orchestrator/contracts";
+import { chatOnce, type EngineContext } from "./engine";
+import type { ChatMessage } from "./gateway";
+
+/** Voltas de ferramenta por agente — impede um agente de girar sozinho. */
+const MAX_TURNS = 8;
+
+export interface RunHooks {
+  /** Estado novo da árvore após cada mudança (a UI só reflete). */
+  onTree: (state: TreeState) => void;
+  /** Aprovação de ferramenta mutante; false cancela a chamada. */
+  approve: (task: AgentTask, call: ToolCall) => Promise<boolean>;
+  /** Nota de progresso para a barra de status. */
+  onStage?: (text: string) => void;
+}
+
+export interface RunOptions {
+  goal: string;
+  selection: EngineSelection;
+  ctx: EngineContext;
+  limits: DelegationLimits;
+  /** Raiz do projeto para as ferramentas de arquivo. */
+  root: string;
+  signal: AbortSignal;
+  hooks: RunHooks;
+}
+
+/** Roda o objetivo inteiro. Devolve a árvore final. */
+export async function runAgentGoal(options: RunOptions): Promise<TreeState> {
+  const now = () => Date.now();
+  let tree = createTree(goalTitle(options.goal), options.goal, now());
+  const publish = () => options.hooks.onTree(tree);
+  publish();
+
+  const runner = new TreeRunner(options, {
+    get: () => tree,
+    set: (next) => {
+      tree = next;
+      publish();
+    }
+  });
+
+  try {
+    const report = await runner.runTask(tree.rootId, rootSystemPrompt(options.goal, options.limits));
+    tree = finishTask(tree, tree.rootId, "done", report, now());
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    tree = options.signal.aborted
+      ? cancelPending(tree, now())
+      : finishTask(tree, tree.rootId, "failed", message, now());
+  }
+  publish();
+  return tree;
+}
+
+interface TreeAccess {
+  get: () => TreeState;
+  set: (next: TreeState) => void;
+}
+
+class TreeRunner {
+  constructor(
+    private readonly options: RunOptions,
+    private readonly tree: TreeAccess
+  ) {}
+
+  /**
+   * Executa UM agente até ele responder sem chamar ferramenta.
+   * Devolve o texto final — que é o relatório entregue ao superior.
+   */
+  async runTask(taskId: string, systemPrompt: string): Promise<string> {
+    const messages: ChatMessage[] = [
+      { role: "system", content: `${systemPrompt}\n\n${agentSystemInstruction()}` },
+      { role: "user", content: this.tree.get().tasks[taskId]?.prompt ?? "" }
+    ];
+
+    for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+      if (this.options.signal.aborted) throw new Error("execução interrompida");
+      const answer = await this.callModel(taskId, messages);
+      messages.push({ role: "assistant", content: answer });
+
+      const calls = parseToolCalls(answer);
+      const delegations = calls.filter((call) => call.tool === DELEGATE_TOOL);
+      const plain = calls.filter((call) => call.tool !== DELEGATE_TOOL);
+
+      // Sem ferramenta nenhuma: este é o texto final do agente.
+      if (!calls.length) {
+        this.patch(taskId, { status: "running", output: answer });
+        return answer;
+      }
+
+      const results: string[] = [];
+      for (const call of plain) {
+        results.push(await this.runTool(taskId, call));
+      }
+      if (delegations.length) {
+        results.push(await this.runDelegations(taskId, delegations));
+      }
+      messages.push({ role: "user", content: results.join("\n\n") });
+    }
+
+    // Estourou as voltas: o que já existe vale mais que um erro seco.
+    const partial = this.tree.get().tasks[taskId]?.output ?? "";
+    return (
+      partial ||
+      `o agente atingiu o limite de ${MAX_TURNS} rodadas de ferramenta sem concluir a tarefa`
+    );
+  }
+
+  /** Chamada ao modelo com streaming refletido na árvore. */
+  private async callModel(taskId: string, messages: ChatMessage[]): Promise<string> {
+    this.patch(taskId, { output: "" });
+    let buffer = "";
+    return chatOnce(
+      this.options.selection,
+      "agent",
+      messages,
+      this.options.ctx,
+      {
+        onDelta: (delta) => {
+          buffer += delta;
+          this.patch(taskId, { output: buffer });
+        },
+        onStage: (stage) => this.options.hooks.onStage?.(stage)
+      },
+      this.options.signal
+    );
+  }
+
+  /** Ferramenta comum — mesma aprovação do resto do app. */
+  private async runTool(taskId: string, call: ToolCall): Promise<string> {
+    const task = this.tree.get().tasks[taskId];
+    if (task && needsApproval(call)) {
+      const allowed = await this.options.hooks.approve(task, call);
+      if (!allowed) {
+        return formatToolResult(call, "recusada pelo usuário — siga sem esta ferramenta");
+      }
+    }
+    const result = await dispatchTool(call, this.options.root);
+    return formatToolResult(call, result.output);
+  }
+
+  /**
+   * Aciona os subordinados pedidos nesta volta.
+   *
+   * Os irmãos rodam EM PARALELO: são independentes por definição (o superior
+   * os criou como partes separadas), e serializar dobraria o tempo à toa.
+   */
+  private async runDelegations(taskId: string, calls: ToolCall[]): Promise<string> {
+    const aceitos: Array<{ id: string; prompt: string }> = [];
+    const recusas: string[] = [];
+
+    for (const call of calls) {
+      const parsed = parseDelegateArgs(call.args);
+      if ("error" in parsed) {
+        recusas.push(`- ${parsed.error}`);
+        continue;
+      }
+      const check = canSpawn(this.tree.get(), taskId, this.options.limits);
+      if (!check.ok) {
+        recusas.push(`- "${parsed.title || parsed.task.slice(0, 40)}": ${check.message}`);
+        continue;
+      }
+      const { state, child } = spawnTask(
+        this.tree.get(),
+        taskId,
+        { title: parsed.title, prompt: parsed.task },
+        Date.now()
+      );
+      this.tree.set(state);
+      aceitos.push({ id: child.id, prompt: parsed.task });
+    }
+
+    await Promise.all(
+      aceitos.map(async ({ id }) => {
+        const task = this.tree.get().tasks[id];
+        if (!task) return;
+        try {
+          const report = await this.runTask(id, subordinateSystemPrompt(this.tree.get(), task, this.options.limits));
+          this.tree.set(finishTask(this.tree.get(), id, "done", report, Date.now()));
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          // Falha de um subordinado NÃO derruba os irmãos nem o superior:
+          // ela vira informação ausente no relatório.
+          this.tree.set(
+            finishTask(
+              this.tree.get(),
+              id,
+              this.options.signal.aborted ? "cancelled" : "failed",
+              message,
+              Date.now()
+            )
+          );
+        }
+      })
+    );
+
+    // O pai volta a "running" para a síntese.
+    this.patch(taskId, { status: "running" });
+    const relatorios = reportsMessage(this.tree.get(), taskId);
+    return recusas.length
+      ? `${relatorios}\n\nAcionamentos recusados:\n${recusas.join("\n")}`
+      : relatorios;
+  }
+
+  private patch(taskId: string, patch: Partial<AgentTask>) {
+    this.tree.set(patchTask(this.tree.get(), taskId, patch));
+  }
+}

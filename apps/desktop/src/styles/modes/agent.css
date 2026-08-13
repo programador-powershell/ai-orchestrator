@@ -679,3 +679,221 @@
   line-height: 1.5;
   padding: 0 2px;
 }
+
+/* =================== Acionamento de agentes (árvore) ================== */
+
+/* Alternador da aba: acionamento (padrão) × flow builder. */
+.agx-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  margin-right: auto;
+}
+.agx-mode {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.agx-mode.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgb(0 0 0 / 8%));
+}
+
+.agtx {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  width: min(860px, 100%);
+  margin: 0 auto;
+  padding: 16px 4px;
+}
+.agtx-goal {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.agtx-goal textarea {
+  flex: 1;
+  resize: vertical;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-micro);
+}
+.agtx-limits {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+
+.agtx-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: var(--fs-eyebrow);
+  color: var(--muted);
+}
+.agtx-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.agtx-summary .bad {
+  color: var(--danger, #ef4444);
+}
+.agtx-summary .live {
+  color: var(--accent);
+}
+.agtx-stage {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+
+/* A árvore: indentação por profundidade mostra o quanto foi delegado. */
+.agtx-tree {
+  display: grid;
+  gap: 4px;
+}
+.agtx-node {
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  overflow: hidden;
+  animation: float-in var(--t-base) var(--spring) both;
+}
+.agtx-node--running,
+.agtx-node--waiting-children {
+  border-left-color: var(--accent);
+}
+.agtx-node--done {
+  border-left-color: var(--ok, #10b981);
+}
+.agtx-node--failed {
+  border-left-color: var(--danger, #ef4444);
+}
+.agtx-node--cancelled {
+  opacity: 0.7;
+}
+.agtx-node-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.agtx-node-head svg {
+  flex: none;
+  transition: transform var(--t-fast) ease;
+}
+.agtx-node-head svg.open {
+  transform: rotate(90deg);
+}
+.agtx-node-head strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agtx-node-head small {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+.agtx-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.agtx-node-body {
+  padding: 0 12px 10px 29px;
+  border-top: 1px solid var(--line);
+}
+.agtx-task {
+  margin: 8px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.agtx-empty {
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+
+/* Aprovação: identifica QUAL agente pediu — numa árvore isso não é óbvio. */
+.agtx-approval {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--tone-amber, #f59e0b) 50%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--tone-amber, #f59e0b) 10%, var(--surface));
+}
+.agtx-approval > div:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.agtx-approval strong {
+  display: block;
+  font-size: var(--fs-micro);
+}
+.agtx-approval pre {
+  margin: 5px 0 0;
+  padding: 6px 8px;
+  max-height: 120px;
+  overflow: auto;
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  white-space: pre-wrap;
+}
+.agtx-approval-actions {
+  display: grid;
+  gap: 5px;
+}
+
+.agtx-hero {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.agtx-hero strong {
+  color: var(--ink);
+  font-size: var(--fs-body);
+}
+.agtx-hero p {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--fs-micro);
+}

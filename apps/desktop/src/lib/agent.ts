@@ -35,7 +35,16 @@ export const TOOL_SPECS: ToolSpec[] = [
   { name: "terminal", description: "Executa um comando no terminal do projeto", mutating: true, args: '{"command":"pnpm test"}' }
 ];
 
-const TOOL_NAMES = new Set(TOOL_SPECS.map((spec) => spec.name));
+/**
+ * Nomes aceitos pelo parser.
+ *
+ * `delegate` entra aqui mas NAO em TOOL_SPECS de proposito: ela nao e uma
+ * ferramenta folha (nao le arquivo nem roda comando) — ela cria outro agente,
+ * e quem a executa e o runtime da arvore (lib/agentRuntime.ts). Colocá-la em
+ * TOOL_SPECS faria `dispatchTool` precisar conhecer a arvore inteira, e a
+ * ofereceria no Chat, onde nao ha arvore para acionar.
+ */
+const TOOL_NAMES = new Set([...TOOL_SPECS.map((spec) => spec.name), "delegate"]);
 
 const TOOL_BLOCK = /```tool\s*([\s\S]*?)```/g;
 

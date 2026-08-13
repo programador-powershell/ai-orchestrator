@@ -75,6 +75,7 @@ import {
   type RunStatus
 } from "../lib/agentRun";
 import { runWithLimit } from "../lib/pool";
+import { AgentTreeView } from "../components/AgentTreeView";
 import { useApp } from "../lib/store";
 import { Markdown } from "../components/Markdown";
 import { RailConversations } from "../components/RailConversations";
@@ -839,6 +840,14 @@ export function AgentView() {
   const agentThread = useApp((state) => state.threads.agent);
   const stage = useApp((state) => state.stage);
 
+  /**
+   * Superfície da aba. Abre em "agents" porque acionar um agente é o modo
+   * principal: quem decide dividir o trabalho é o modelo. O flow builder
+   * continua em "flow" para quem quer fixar o grafo à mão.
+   */
+  const [surface, setSurface] = useState<"agents" | "flow">("agents");
+  /** Mesma raiz que o Composer usa para as ferramentas de arquivo. */
+  const projectRoot = typeof window === "undefined" ? "." : window.localStorage.getItem("code.root") ?? ".";
   const [zoom, setZoom] = useState(1);
   const [validating, setValidating] = useState(false);
   /** Execução salva no disco — só existe depois que algum nó terminou. */
@@ -953,39 +962,76 @@ export function AgentView() {
   return (
     <Surface className="agx-view">
       <TopbarActions>
-        <span className="chip" title="maxConcurrency do documento">
-          Concorrência {doc.maxConcurrency}
-        </span>
-        <button className="lg-button" onClick={() => void validate()} disabled={validating}>
-          <ShieldCheck size={13} />
-          {validating ? "Validando…" : "Validar DAG"}
-        </button>
-        {running ? (
-          <button className="lg-button" onClick={stopRun}>
-            <Square size={13} />
-            Parar
+        <div className="agx-modes">
+          <button
+            className={`agx-mode ${surface === "agents" ? "active" : ""}`}
+            onClick={() => setSurface("agents")}
+            title="Declare um objetivo; o agente decide se aciona subordinados"
+          >
+            Agentes
           </button>
-        ) : (
+          <button
+            className={`agx-mode ${surface === "flow" ? "active" : ""}`}
+            onClick={() => setSurface("flow")}
+            title="Grafo desenhado à mão, executado em ondas"
+          >
+            Fluxo
+          </button>
+        </div>
+        {surface === "flow" && (
           <>
-            {resumable && (
-              <button
-                className="lg-button"
-                onClick={resumeGraph}
-                disabled={Boolean(cycle)}
-                title="Reexecuta só o que falhou, ficou pendente ou foi interrompido"
-              >
-                <RotateCw size={13} />
-                Retomar
-              </button>
-            )}
-            <button className="lg-button primary" onClick={() => void runGraph()} disabled={Boolean(cycle)}>
-              <Play size={13} />
-              Executar
+            <span className="chip" title="maxConcurrency do documento">
+              Concorrência {doc.maxConcurrency}
+            </span>
+            <button className="lg-button" onClick={() => void validate()} disabled={validating}>
+              <ShieldCheck size={13} />
+              {validating ? "Validando…" : "Validar DAG"}
             </button>
+            {running ? (
+              <button className="lg-button" onClick={stopRun}>
+                <Square size={13} />
+                Parar
+              </button>
+            ) : (
+              <>
+                {resumable && (
+                  <button
+                    className="lg-button"
+                    onClick={resumeGraph}
+                    disabled={Boolean(cycle)}
+                    title="Reexecuta só o que falhou, ficou pendente ou foi interrompido"
+                  >
+                    <RotateCw size={13} />
+                    Retomar
+                  </button>
+                )}
+                <button className="lg-button primary" onClick={() => void runGraph()} disabled={Boolean(cycle)}>
+                  <Play size={13} />
+                  Executar
+                </button>
+              </>
+            )}
           </>
         )}
       </TopbarActions>
 
+      {surface === "agents" && (
+        <VBody>
+          <VCenter>
+            <AgentTreeView
+              selection={selection}
+              ctx={{
+                session,
+                runtimeRunning: runtimeStatus.running,
+                fusionPresets: settings.fusionPresets
+              }}
+              root={projectRoot}
+            />
+          </VCenter>
+        </VBody>
+      )}
+
+      {surface === "flow" && (
       <VBody>
         <VCenter>
           {running ? (
@@ -1294,6 +1340,7 @@ export function AgentView() {
           </PanelScroll>
         </VRight>
       </VBody>
+      )}
 
       <VStatus>
         <span>
