@@ -205,6 +205,59 @@ pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     Ok(FetchedPage { title, text, links })
 }
 
+
+/// Busca o HTML **bruto** de uma página, para o clone do Design reconstruir o
+/// layout de verdade.
+///
+/// Por que não dá para reusar `research_fetch`: ele devolve o texto já sem
+/// tags — serve para a IA ler, não para renderizar. E por que não dá para o
+/// webview buscar sozinho: a resposta de outra origem é bloqueada pelo CORS na
+/// leitura, então o HTML nunca chegaria ao JS.
+///
+/// Passa exatamente pelas mesmas guardas do research_fetch: rede pública
+/// (anti-SSRF), blocklist do admin e reavaliação a cada redirect.
+#[tauri::command]
+pub async fn page_fetch(url: String) -> Result<FetchedPage, String> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "URL inválida".to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err("apenas URLs http(s) são aceitas".into());
+    }
+    guard_public_host(&parsed)?;
+    crate::blocklist::guard_blocklist(&parsed)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(guarded_redirect())
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get(parsed.clone())
+        .header("User-Agent", "AI Orchestrator Design/1.0")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+
+    // A URL FINAL importa: se houve redirect, os caminhos relativos do HTML
+    // são relativos a ela, não à que o usuário digitou.
+    let final_url = response.url().to_string();
+    let mut body = response
+        .bytes()
+        .await
+        .map_err(|error| error.to_string())?
+        .to_vec();
+    body.truncate(MAX_BODY_BYTES);
+    let html = String::from_utf8_lossy(&body).into_owned();
+
+    Ok(FetchedPage {
+        title: extract_title(&html),
+        // Aqui `text` carrega o HTML BRUTO — é o ponto do comando.
+        text: html,
+        links: vec![final_url],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

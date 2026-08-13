@@ -63,6 +63,8 @@ import {
   updateNode
 } from "../lib/canvasDoc";
 import type { CanvasDoc, CanvasNode, CanvasNodeType } from "../lib/canvasDoc";
+import { captureSite } from "../lib/siteCapture";
+import { STENCILS, buildStencil, type StencilId } from "../lib/stencils";
 import { extractTokens } from "../lib/htmlTokens";
 import type { ExtractedTokens } from "../lib/htmlTokens";
 import {
@@ -416,6 +418,22 @@ try {
 
 /** Rail dinâmico da aba Design: páginas/camadas (canvas) ou mídia/clipes
  *  (vídeo), mais as sessões persistidas. Mesmo store da view. */
+/**
+ * Insere um stencil no canvas, em cascata para não empilhar tudo no mesmo
+ * ponto — dois cliques seguidos precisam produzir duas peças visíveis.
+ */
+function insertStencil(id: StencilId) {
+  const state = useDesign.getState();
+  const existentes = state.doc.nodes.length;
+  const x = 60 + (existentes % 6) * 24;
+  const y = 60 + (existentes % 6) * 24;
+  const seed = `st${Date.now().toString(36)}`;
+  const novos = buildStencil(id, x, y, seed);
+  state.setDoc((current) => ({ ...current, nodes: [...current.nodes, ...novos] }));
+  // Seleciona o primeiro nó — o usuário quer mexer no que acabou de inserir.
+  if (novos[0]) state.selectNode(novos[0].id);
+}
+
 export function DesignRail() {
   const tab = useDesign((state) => state.tab);
   const doc = useDesign((state) => state.doc);
@@ -436,6 +454,31 @@ export function DesignRail() {
 
   return (
     <>
+      {tab === "canvas" && (
+        <>
+          <span className="eyebrow">STENCILS</span>
+          {/* Um botão não é "retângulo + texto que você alinha na mão": é um
+              item que nasce pronto e sempre igual. É isso que torna a
+              prototipagem repetível. */}
+          {["Formulário", "Layout", "Fluxograma"].map((grupo) => (
+            <div className="desx-stencil-group" key={grupo}>
+              <small>{grupo}</small>
+              <div className="desx-stencils">
+                {STENCILS.filter((spec) => spec.group === grupo).map((spec) => (
+                  <button
+                    key={spec.id}
+                    className="desx-stencil"
+                    title={`Inserir ${spec.label} (${spec.w}×${spec.h})`}
+                    onClick={() => insertStencil(spec.id)}
+                  >
+                    {spec.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
       {tab !== "video" ? (
         <>
           {repResult && (
@@ -860,6 +903,48 @@ export function DesignView() {
     state.setTab("canvas");
   }
 
+  const [capturing, setCapturing] = useState(false);
+
+  /**
+   * Clona o LAYOUT REAL: busca o HTML pelo Rust (anti-SSRF + blocklist),
+   * renderiza num iframe sem script e lê a geometria que o navegador calculou.
+   *
+   * Diferente do "só tokens": ali saía paleta e fonte; aqui saem os elementos
+   * nas posições em que aparecem de verdade, prontos para editar.
+   */
+  async function handleCaptureLayout() {
+    const sourceUrl = repUrl.trim();
+    if (!sourceUrl || capturing) return;
+    setCapturing(true);
+    setRepNote("");
+    try {
+      const capture = await captureSite(sourceUrl);
+      if (!capture.doc.nodes.length) {
+        setRepNote("nada visível foi capturado — a página pode montar a tela por JavaScript");
+        return;
+      }
+      pushHistory();
+      const state = useDesign.getState();
+      // Entra ao lado do que já existe, para não sobrescrever o trabalho atual.
+      const offsetX = state.doc.nodes.reduce((max, node) => Math.max(max, node.x + node.w), 0) + 80;
+      const deslocados = capture.doc.nodes.map((node) => ({
+        ...node,
+        id: `cap-${node.id}`,
+        x: node.x + offsetX
+      }));
+      state.setDoc((current) => ({ ...current, nodes: [...current.nodes, ...deslocados] }));
+      state.setTab("canvas");
+      flashNote(
+        `Layout clonado: ${deslocados.length} elemento(s)` +
+          (capture.dropped > 0 ? ` · ${capture.dropped} ignorado(s) (invisível ou minúsculo)` : "")
+      );
+    } catch (cause) {
+      setRepNote(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCapturing(false);
+    }
+  }
+
   async function handleReplicate() {
     const sourceUrl = repUrl.trim();
     if (!sourceUrl || replicating || !session) return;
@@ -1182,14 +1267,24 @@ export function DesignView() {
                 disabled={!session}
               />
             </label>
+            {/* Reconstrói o LAYOUT de verdade: renderiza a página e lê a
+                geometria do motor do navegador. Não depende do gateway. */}
             <button
               className="desx-editar"
-              disabled={replicating || !repUrl.trim() || !session}
-              title={session ? "Clona todo o design do site e abre no canvas para edição direta" : "Requer gateway conectado"}
-              onClick={() => void handleReplicate()}
+              disabled={capturing || !repUrl.trim()}
+              title="Reconstrói o layout real da página em nós editáveis do canvas"
+              onClick={() => void handleCaptureLayout()}
             >
               <Wand2 size={13} />
-              {replicating ? "Clonando…" : "Editar"}
+              {capturing ? "Capturando…" : "Clonar layout"}
+            </button>
+            <button
+              className="lg-button"
+              disabled={replicating || !repUrl.trim() || !session}
+              title={session ? "Só a paleta e as fontes, pelo gateway" : "Requer gateway conectado"}
+              onClick={() => void handleReplicate()}
+            >
+              {replicating ? "Extraindo…" : "Só tokens"}
             </button>
             {repNote && <span className="chip danger">{repNote.slice(0, 60)}</span>}
           </>
