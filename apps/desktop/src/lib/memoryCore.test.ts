@@ -81,6 +81,52 @@ describe("rankMemories", () => {
     expect(hits[0].score).toBeGreaterThan(hits[1]?.score ?? 0);
   });
 
+  it("encontra a memória mesmo com a palavra em outra forma", () => {
+    // O caso que a busca por token exato não resolvia: a pessoa pergunta no
+    // plural/substantivo, a memória está no singular/verbo.
+    const memoria = makeItem({
+      id: "publicar",
+      title: "Como publicar o sistema",
+      content: "roteiro para subir a versão",
+      updatedAt: new Date(now).toISOString()
+    });
+    const hits = rankMemories([irrelevantFresh, memoria], "publicações do sistema", 5);
+    expect(hits[0]?.item.id).toBe("publicar");
+  });
+
+  it("usa o vetor quando o gateway calculou, mesmo sem palavra em comum", () => {
+    const deploy = makeItem({
+      id: "deploy",
+      title: "Procedimento de deploy",
+      content: "esteira e homologação",
+      updatedAt: new Date(now).toISOString()
+    });
+    const semVetor = rankMemories([irrelevantFresh, deploy], "como coloco no ar", 5);
+    const comVetor = rankMemories(
+      [irrelevantFresh, deploy],
+      "como coloco no ar",
+      5,
+      new Map([["deploy", 0.92]])
+    );
+    // Sem vetor a consulta não tem token em comum e a memória não aparece.
+    expect(semVetor.map((hit) => hit.item.id)).not.toContain("deploy");
+    expect(comVetor[0]?.item.id).toBe("deploy");
+  });
+
+  it("memória recente e importante não entra em consulta que não é dela", () => {
+    // O corte é na RELEVÂNCIA, não na nota final — senão a recência sozinha
+    // colaria essa memória em toda pergunta.
+    const querida = makeItem({
+      id: "querida",
+      title: "Preferência de fonte",
+      content: "usa fonte monoespaçada",
+      importance: 5,
+      uses: 50,
+      updatedAt: new Date(now).toISOString()
+    });
+    expect(rankMemories([querida], "cronograma de faturamento", 5)).toEqual([]);
+  });
+
   it("filtra itens com score abaixo do corte", () => {
     const noise = makeItem({
       id: "ruido",

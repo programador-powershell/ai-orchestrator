@@ -7,6 +7,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { MemoryItem, MemoryKind, MemorySearchHit } from "@ai-orchestrator/contracts";
+import { buildIdf, memoryText, semanticScore } from "./semantic";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -49,13 +50,53 @@ export function scoreMemory(item: MemoryItem, queryTokens: string[], now = Date.
   return relevance * 3 + recency * 0.8 + (item.importance / 5) * 0.9 + usage * 0.3;
 }
 
-export function rankMemories(items: MemoryItem[], query: string, k: number): MemorySearchHit[] {
-  const queryTokens = tokenize(query);
+/**
+ * Ordena por relevância SEMÂNTICA.
+ *
+ * A versão anterior casava token exato: quem perguntasse "como publico o
+ * sistema" não achava a memória escrita como "procedimento de deploy" e
+ * concluía que a memória não tinha guardado nada — falha silenciosa, a pior
+ * delas. Agora a relevância vem de `semanticScore`, que radicaliza a palavra,
+ * pesa termo raro acima de termo comum e usa o vetor do gateway quando o
+ * chamador conseguiu calculá-lo.
+ *
+ * Recência, importância e uso continuam pesando: uma memória de dois anos
+ * atrás não deve ganhar de uma de ontem só por empatar no texto.
+ */
+export function rankMemories(
+  items: MemoryItem[],
+  query: string,
+  k: number,
+  vectors?: Map<string, number>
+): MemorySearchHit[] {
+  if (!items.length) return [];
+  const textos = items.map((item) => memoryText(item));
+  const idf = buildIdf(textos);
+  const now = Date.now();
   return items
-    .map((item) => ({ item, score: scoreMemory(item, queryTokens) }))
-    .filter((hit) => hit.score > 0.35)
+    .map((item, index) => {
+      const relevance = semanticScore({
+        query,
+        document: textos[index],
+        idf,
+        vector: vectors?.get(item.id)
+      });
+      const ageDays = Math.max(0, (now - Date.parse(item.updatedAt)) / 86_400_000);
+      const recency = Math.exp(-ageDays / 45);
+      const usage = Math.min(1, item.uses / 12);
+      return {
+        item,
+        score: relevance * 3 + recency * 0.8 + (item.importance / 5) * 0.9 + usage * 0.3,
+        relevance
+      };
+    })
+    // O corte é na RELEVÂNCIA, não na nota final: sem isso, uma memória
+    // recente e importante entraria em toda consulta, inclusive nas que não
+    // têm nada a ver com ela.
+    .filter((hit) => hit.relevance >= 0.18)
     .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .slice(0, k)
+    .map(({ item, score }) => ({ item, score }));
 }
 
 /** Preâmbulo de sistema injetado em qualquer fornecedor. */
@@ -193,11 +234,22 @@ export const memory = {
     const items = await (await backend()).list();
     return items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
   },
-  async recall(query: string, k: number): Promise<MemorySearchHit[]> {
+  /**
+   * Recupera as memórias relevantes.
+   *
+   * `vectors` é opcional de propósito: quem sabe falar com o gateway é a UI,
+   * e este módulo não pode depender de sessão. Sem ele, a busca continua
+   * funcionando pela camada morfológica — semântica melhor, nunca requisito.
+   */
+  async recall(query: string, k: number, vectors?: Map<string, number>): Promise<MemorySearchHit[]> {
     const store = await backend();
-    const hits = rankMemories(await store.list(), query, k);
+    const hits = rankMemories(await store.list(), query, k, vectors);
     if (hits.length) void store.touch(hits.map((hit) => hit.item.id)).catch(() => undefined);
     return hits;
+  },
+  /** Lista sem tocar em `uses` — para calcular vetores antes do recall. */
+  async listForVectors(): Promise<MemoryItem[]> {
+    return (await backend()).list();
   },
   async exportJson(): Promise<string> {
     return JSON.stringify({ schema: 1, exportedAt: nowIso(), memories: await (await backend()).list() }, null, 2);

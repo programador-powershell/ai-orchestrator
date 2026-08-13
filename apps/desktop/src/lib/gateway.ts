@@ -123,6 +123,46 @@ export async function generateImage(
     .filter(Boolean);
 }
 
+/**
+ * Vetores de texto pelo gateway — a camada que dá SENTIDO à busca na memória.
+ *
+ * Devolve `null` (e não lança) quando o workspace não tem provedor com essa
+ * capacidade: busca semântica é melhoria, não requisito. Derrubar a recuperação
+ * de memória porque o admin não configurou embeddings seria trocar um recurso
+ * ausente por uma falha visível.
+ */
+export async function embedTexts(
+  session: GatewaySession,
+  inputs: string[],
+  signal?: AbortSignal
+): Promise<number[][] | null> {
+  if (!inputs.length) return [];
+  try {
+    const response = await authorizedFetch(
+      session,
+      `${ensureUrl(session.baseUrl)}/v1/workspaces/${session.workspaceId}/embeddings`,
+      { method: "POST", signal, body: JSON.stringify({ payload: { input: inputs } }) },
+      { "Content-Type": "application/json" }
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { data?: Array<{ embedding?: number[]; index?: number }> };
+    const data = payload.data ?? [];
+    if (data.length !== inputs.length) return null;
+    // A ordem do retorno não é garantida por todos os provedores; quando vem
+    // `index`, ele manda — senão, um vetor iria para a memória errada.
+    const saida: number[][] = new Array(inputs.length);
+    data.forEach((entry, posicao) => {
+      const alvo = typeof entry.index === "number" ? entry.index : posicao;
+      if (alvo >= 0 && alvo < inputs.length && Array.isArray(entry.embedding)) {
+        saida[alvo] = entry.embedding;
+      }
+    });
+    return saida.every((vetor) => Array.isArray(vetor) && vetor.length > 0) ? saida : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function replicateDesign(
   session: GatewaySession,
   request: DesignReplicationRequest,
