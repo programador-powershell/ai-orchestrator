@@ -150,6 +150,33 @@ async function decideComplexity(
   }
 }
 
+/**
+ * Aberturas típicas de recusa, em português e inglês.
+ *
+ * Só o começo é olhado: uma entrega legítima pode conter "não posso confirmar
+ * que…" no meio de um parágrafo, e tratar isso como recusa descartaria
+ * trabalho bom.
+ */
+const RECUSA = /^\s*(?:desculpe|sinto muito|infelizmente|n[ãa]o posso|n[ãa]o consigo|n[ãa]o vou|i(?:'m| am) (?:sorry|unable|not able)|i can(?:'|no)?t|as an ai|i'm not able)/i;
+
+/** Acima disto já é entrega: recusa é curta por natureza. */
+const RECUSA_MAX_CHARS = 600;
+
+/**
+ * O modelo RECUSOU a tarefa?
+ *
+ * Sem esta checagem, "não posso ajudar com isso" era registrado como entrega
+ * concluída: entrava no contexto da onda seguinte e a revisão acabava
+ * revisando uma recusa. Falha silenciosa — a pior forma de falhar.
+ *
+ * Exportada porque o mesmo problema existe em qualquer chamada de modelo.
+ */
+export function looksLikeRefusal(text: string): boolean {
+  const limpo = text.trim();
+  if (!limpo || limpo.length > RECUSA_MAX_CHARS) return false;
+  return RECUSA.test(limpo.slice(0, 200));
+}
+
 const SYSTEM_BASE = [
   "Você faz parte de uma equipe de agentes com papéis fixos.",
   "Responda APENAS com a entrega do seu papel — sem saudação, sem plano de ação, sem perguntar.",
@@ -199,7 +226,10 @@ export async function runCrew(options: CrewRunOptions): Promise<CrewRunResult> {
     const daOnda: string[] = [];
     for (let i = 0; i < resultados.length; i += 1) {
       const resultado = resultados[i];
-      if (resultado.ok && typeof resultado.value === "string") {
+      // Texto VAZIO não é entrega: é o que o slot devolve quando falhou,
+      // recusou ou foi cancelado. Contá-lo faria a onda parecer produtiva e a
+      // detecção de "onda inteira falhou" nunca disparar.
+      if (resultado.ok && typeof resultado.value === "string" && resultado.value.trim()) {
         daOnda.push(resultado.value);
         outputs.push({
           role: doTurno[i].role,
@@ -253,7 +283,17 @@ export async function runCrew(options: CrewRunOptions): Promise<CrewRunResult> {
         signal: options.signal
       });
       const limpo = text.trim();
-      finish(member, limpo ? "done" : "failed", limpo || "o agente não devolveu conteúdo");
+      if (!limpo) {
+        finish(member, "failed", "o agente não devolveu conteúdo");
+        return "";
+      }
+      // Recusa NÃO é entrega. Sem esta checagem ela virava `done`, entrava no
+      // contexto da onda seguinte e a revisão revisava uma recusa.
+      if (looksLikeRefusal(limpo)) {
+        finish(member, "failed", `o modelo recusou a tarefa: ${limpo.slice(0, 200)}`);
+        return "";
+      }
+      finish(member, "done", limpo);
       return limpo;
     } catch (cause) {
       const motivo = cause instanceof Error ? cause.message : String(cause);

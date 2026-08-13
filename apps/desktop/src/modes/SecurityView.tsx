@@ -60,11 +60,11 @@ import {
 } from "../lib/osv";
 import {
   applyUnifiedDiff,
-  buildReviewPrompt,
   parseFindings,
   parseUnifiedDiff,
   scanTextForSecrets
 } from "../lib/scan";
+import { runDeepReview, type ReviewedFinding } from "../lib/securityReview";
 import { useApp } from "../lib/store";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
@@ -282,6 +282,14 @@ export function SecurityView() {
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  /**
+   * Achados que o refutador derrubou.
+   *
+   * Ficam guardados em vez de apagados: uma refutação agressiva demais
+   * pararia de mostrar coisa real e ninguém perceberia.
+   */
+  const [refuted, setRefuted] = useState<ReviewedFinding[]>([]);
+  const reviewAbortRef = useRef<AbortController | null>(null);
   const [reviewNote, setReviewNote] = useState("");
   const [pasteCode, setPasteCode] = useState("");
   const [lockText, setLockText] = useState("");
@@ -410,35 +418,60 @@ export function SecurityView() {
     event.target.value = "";
   }
 
-  async function runDeepReview() {
+  /**
+   * Revisão profunda — um arquivo por investigação, com refutação.
+   *
+   * A versão anterior mandava TODOS os arquivos num prompt só, cortados em
+   * 6.000 caracteres cada, e mostrava na tela o que voltasse. Agora a
+   * pré-varredura escolhe os candidatos, cada um é investigado sozinho e um
+   * segundo agente tenta **derrubar** cada achado. Falso positivo é o que faz
+   * um painel de segurança ser ignorado — inclusive quando ele acerta.
+   */
+  async function runDeepReviewFlow() {
     if (!files.length || reviewing) return;
     setReviewing(true);
     setReviewNote("");
+    setRefuted([]);
+    const controller = new AbortController();
+    reviewAbortRef.current = controller;
     const ctx: EngineContext = {
       session,
       runtimeRunning: runtimeStatus.running,
       fusionPresets: settings.fusionPresets
     };
     try {
-      const answer = await chatOnce(selection, "security", buildReviewPrompt(files), ctx, {
-        onDelta: () => undefined,
-        onStage: (value) => setStage(value)
+      const resultado = await runDeepReview({
+        files,
+        signal: controller.signal,
+        parse: parseFindings,
+        hooks: { onStage: (texto) => setStage(texto) },
+        call: (messages, signal) =>
+          chatOnce(selection, "security", messages, ctx, { onDelta: () => undefined }, signal)
       });
-      const incoming = parseFindings(answer);
-      if (!incoming.length && answer.includes("modo demonstração")) {
+      setFindings((current) => mergeFindings(current, resultado.confirmed));
+      setRefuted(resultado.refuted);
+
+      if (!resultado.investigated) {
         setReviewNote(
-          "Motor em modo demonstração — nenhum achado gerado. Conecte o gateway, um provedor (BYOK) ou o runtime local em Configurações."
+          "Nenhum arquivo do escopo toca autenticação, entrada, execução, SQL, disco ou criptografia — não havia o que investigar."
         );
-      } else if (!incoming.length) {
-        setReviewNote("O revisor não retornou achados estruturados.");
       } else {
-        setReviewNote(`Revisão profunda concluída: ${incoming.length} achado(s) do revisor.`);
+        // O número de refutados e o de candidatos fora do teto ficam à vista:
+        // sem eles a revisão pareceria ter coberto tudo e acertado tudo.
+        const partes = [
+          `${resultado.investigated} arquivo(s) investigado(s)`,
+          `${resultado.confirmed.length} achado(s) confirmado(s)`
+        ];
+        if (resultado.refuted.length) partes.push(`${resultado.refuted.length} refutado(s)`);
+        if (resultado.skipped) partes.push(`${resultado.skipped} candidato(s) fora do teto`);
+        if (resultado.cancelled) partes.push("interrompida");
+        setReviewNote(`${partes.join(" · ")}.`);
       }
-      setFindings((current) => mergeFindings(current, incoming));
     } catch (cause) {
       setReviewNote(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setReviewing(false);
+      reviewAbortRef.current = null;
       setStage("");
     }
   }
@@ -836,12 +869,27 @@ export function SecurityView() {
               </button>
               <input ref={codeFileRef} type="file" multiple hidden onChange={(event) => void onCodeFiles(event)} />
             </div>
-            <button className="lg-button" disabled={!files.length || reviewing} onClick={() => void runDeepReview()}>
+            <button className="lg-button" disabled={!files.length || reviewing} onClick={() => void runDeepReviewFlow()}>
               <Merge size={13} />
               {reviewing ? "Revisando…" : "Revisão profunda (multi-modelo)"}
             </button>
             {scanNote && <small className="secx-note">{scanNote}</small>}
             {reviewNote && <small className="secx-note">{reviewNote}</small>}
+            {/* Os refutados ficam visíveis, recolhidos. Escondê-los de vez
+                deixaria uma refutação exagerada passar despercebida — a
+                revisão pararia de achar coisa real e ninguém saberia. */}
+            {refuted.length > 0 && (
+              <details className="secx-refuted">
+                <summary>{refuted.length} achado(s) refutado(s) na segunda opinião</summary>
+                {refuted.map((finding) => (
+                  <div className="secx-refuted-item" key={`${finding.file}:${finding.title}`}>
+                    <strong>{finding.title}</strong>
+                    <small>{finding.file}</small>
+                    <p>{finding.verdict.reason || "sem motivo declarado"}</p>
+                  </div>
+                ))}
+              </details>
+            )}
           </div>
 
           <PanelTitle
