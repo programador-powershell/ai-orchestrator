@@ -56,6 +56,7 @@ import {
 
   ServerCog,
   Settings2,
+  Waypoints,
   ShieldCheck,
   Sparkles,
   Square,
@@ -76,6 +77,7 @@ import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport, rankMemorie
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
 import { AdminSection } from "./settings/AdminSection";
+import { PluginsPanel } from "./PluginsPanel";
 import { ShipSection, VpsServerSection } from "./settings/ShipSections";
 import { useApp, type CatalogModel } from "../lib/store";
 
@@ -87,6 +89,7 @@ type SectionId =
   | "provedores"
   | "memoria"
   | "extensoes"
+  | "plugins"
   | "conectores"
   | "runtime"
   | "ship"
@@ -102,6 +105,7 @@ const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
   { id: "provedores", label: "Provedores (BYOK)", icon: KeyRound },
   { id: "memoria", label: "Memória", icon: Brain },
   { id: "extensoes", label: "Extensões", icon: Puzzle },
+  { id: "plugins", label: "Plugins & trilha", icon: Waypoints },
   { id: "conectores", label: "Conectores (MCP)", icon: Cable },
   { id: "runtime", label: "Runtime local", icon: Cpu },
   { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
@@ -2320,6 +2324,7 @@ export function SettingsPanel() {
             {section === "provedores" && <ProvidersSection />}
             {section === "memoria" && <MemorySection />}
             {section === "extensoes" && <ExtensionsSection />}
+            {section === "plugins" && <PluginsPanel />}
             {section === "conectores" && <McpSection />}
             {section === "runtime" && <RuntimeSection />}
             {section === "ship" && <ShipSection />}

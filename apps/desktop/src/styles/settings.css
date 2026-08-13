@@ -756,3 +756,83 @@
   font-family: var(--font-mono);
   font-size: var(--fs-eyebrow);
 }
+
+/* ---------------------------------------------------------------------
+   Plugins & trilha. O que entra no prompt, e como conferir o que entrou.
+   --------------------------------------------------------------------- */
+.plgx { display: grid; gap: 14px; }
+.plgx-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+.plgx-hint {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.55;
+}
+.plgx-group { display: grid; gap: 6px; margin-top: 8px; }
+.plgx-card {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.plgx-card.global { border-left-color: var(--accent); }
+.plgx-card header { display: flex; align-items: center; gap: 7px; }
+.plgx-card header strong { flex: 1; font-size: var(--fs-micro); }
+.plgx-card small { color: var(--muted); font-size: var(--fs-eyebrow); }
+.plgx-actions { display: flex; gap: 7px; }
+.plgx-error,
+.plgx-locked {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--tone-red, #ef4444) 40%, var(--line));
+  border-radius: var(--radius-sm);
+  color: var(--tone-red, #ef4444);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.5;
+}
+.plgx-locked {
+  border-color: color-mix(in srgb, var(--tone-amber, #f59e0b) 40%, var(--line));
+  color: var(--tone-amber, #f59e0b);
+}
+.plgx-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.plgx-summary .bad { color: var(--tone-red, #ef4444); }
+.plgx-summary button { margin-left: auto; }
+.plgx-bars { display: grid; gap: 5px; margin-top: 8px; }
+.plgx-bar {
+  display: grid;
+  grid-template-columns: minmax(96px, 26%) 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-eyebrow);
+}
+.plgx-bar-label {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plgx-bar-track {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.plgx-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.plgx-bar small { color: var(--muted); white-space: nowrap; }

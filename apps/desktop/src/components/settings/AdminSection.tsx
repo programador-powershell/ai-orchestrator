@@ -36,6 +36,10 @@ interface AdminGroup {
      * quanto gastar, então é decisão do admin. Papel vazio = modelo do módulo.
      */
     agentRoleModels?: Record<string, string>;
+    /** Plugins válidos para todo o grupo. União entre grupos. */
+    agentPlugins?: unknown[];
+    /** Deixa a pessoa criar plugin próprio no agente dela. */
+    userPluginsAllowed?: boolean;
     computerUseAllowed?: boolean;
     /** União entre grupos — bloquear num grupo não é desfeito por outro. */
     blockedDomains?: string[];
@@ -265,7 +269,55 @@ export function AdminSection() {
                 />
                 executa código
               </label>
+              <label
+                className="admx-group__cu"
+                title="Permite que a pessoa crie plugin próprio, válido só no agente dela. Os plugins globais abaixo continuam valendo."
+              >
+                <input
+                  type="checkbox"
+                  checked={group.policy.userPluginsAllowed === true}
+                  onChange={(event) => void patchPolicy(group, { userPluginsAllowed: event.target.checked })}
+                />
+                plugin próprio
+              </label>
             </span>
+            {/* Plugins globais do grupo. Uma ferramenta que aponta para um
+                endpoint interno é decisão de arquitetura da empresa, não
+                preferência de estação — por isso mora aqui. */}
+            <label
+              className="admx-group__block"
+              title="Lista JSON de manifestos (ver a seção Plugins & trilha para o formato). União entre grupos; o primeiro id vence."
+            >
+              plugins globais (JSON)
+              <textarea
+                rows={3}
+                placeholder='[{"id":"cep","name":"CEP","version":"1.0.0","tools":[…]}]'
+                defaultValue={
+                  group.policy.agentPlugins?.length ? JSON.stringify(group.policy.agentPlugins, null, 2) : ""
+                }
+                onBlur={(event) => {
+                  const bruto = event.target.value.trim();
+                  const atual = JSON.stringify(group.policy.agentPlugins ?? []);
+                  if (!bruto) {
+                    if (atual !== "[]") void patchPolicy(group, { agentPlugins: [] });
+                    return;
+                  }
+                  try {
+                    const lista = JSON.parse(bruto) as unknown;
+                    if (!Array.isArray(lista)) {
+                      setNotice({ text: "Os plugins globais devem ser uma lista.", tone: "danger" });
+                      return;
+                    }
+                    // Só grava se mudou: o onBlur dispara a cada saída de foco.
+                    if (JSON.stringify(lista) !== atual) void patchPolicy(group, { agentPlugins: lista });
+                  } catch {
+                    // Salvar JSON quebrado deixaria o grupo sem plugin nenhum
+                    // sem o admin perceber.
+                    setNotice({ text: "JSON inválido nos plugins globais — nada foi salvo.", tone: "danger" });
+                  }
+                }}
+              />
+            </label>
             {/* Modelo por papel da equipe. A escalação da aba Agent é fixa por
                 complexidade; o que muda é QUEM ocupa cada cadeira — e isso é
                 custo, não preferência. Vazio = modelo do módulo. */}
