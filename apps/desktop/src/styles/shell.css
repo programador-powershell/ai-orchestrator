@@ -1327,3 +1327,23 @@ button { -webkit-tap-highlight-color: transparent; }
 .envbadge__text { display: grid; gap: 1px; min-width: 0; }
 .envbadge__text strong { font-size: var(--fs-micro); font-weight: 500; }
 .envbadge__text small { color: var(--muted); font-size: 10px; }
+
+/* Ambiente: a escolha ainda não roteia execução, e a tela diz isso. */
+.envbadge__warn {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone-amber, #f59e0b) 22%, transparent);
+  color: var(--tone-amber, #f59e0b);
+  font-size: var(--fs-eyebrow);
+  font-style: normal;
+}
+.envbadge__note {
+  margin: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  max-width: 260px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.5;
+}

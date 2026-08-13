@@ -384,8 +384,11 @@ describe("auditoria da execução na estação", () => {
 });
 
 describe("code mode", () => {
-  /** Roda um programa como o modelo entregaria, com as ferramentas liberadas. */
-  function comPrograma(program: string, opcoes: { approve: () => Promise<boolean>; tools?: string[] }) {
+  /** Roda um programa como o modelo entregaria. */
+  function comPrograma(
+    program: string,
+    opcoes: { approve: () => Promise<boolean>; codeMode?: boolean; computerUse?: boolean }
+  ) {
     roteiro([toolBlock("run_program", { program })]);
     return runAgentGoal({
       goal: "gerar os relatórios",
@@ -394,7 +397,8 @@ describe("code mode", () => {
       limits: LIMITS,
       root: "",
       signal: new AbortController().signal,
-      codeModeTools: opcoes.tools ?? ["fs_read", "fs_write"],
+      codeMode: opcoes.codeMode ?? true,
+      computerUse: opcoes.computerUse ?? false,
       hooks: { onTree: () => undefined, approve: opcoes.approve }
     });
   }
@@ -434,26 +438,46 @@ describe("code mode", () => {
 
   it("ferramenta fora da lista liberada não roda", async () => {
     dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
-    await comPrograma('tool.fs_write({ path: "a" });', {
+    // `terminal` não entra na lista do code mode em nenhum dos dois modos.
+    await comPrograma('tool.terminal({ command: "rm -rf /" });', { approve: async () => true });
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+
+  it("sem a política do admin, o code mode não faz nada", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
+    await comPrograma('tool.fs_read({ path: "a" });', { approve: async () => true, codeMode: false });
+    expect(dispatchToolMock).not.toHaveBeenCalled();
+  });
+
+  it("com a área isolada ligada, o programa NÃO alcança as ferramentas do projeto", async () => {
+    // O defeito que este teste trava: a primeira versão passava as
+    // ferramentas de projeto mesmo com o sandbox aberto, então o programa
+    // gravava fora da área isolada que a pessoa ligou justamente para conter.
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "gravado" });
+    await comPrograma('tool.fs_write({ path: "a.txt", content: "x" });', {
       approve: async () => true,
-      tools: ["fs_read"]
+      computerUse: true
     });
     expect(dispatchToolMock).not.toHaveBeenCalled();
   });
 
-  it("sem ferramenta liberada, o code mode não faz nada", async () => {
+  it("área isolada pedida e NÃO aberta deixa o programa sem ferramenta alguma", async () => {
+    // Falhar fechado: quem ligou o confinamento não pode acabar rodando sem
+    // ele. Aqui a sessão não abre (não há Tauri), então nada roda.
     dispatchToolMock.mockResolvedValue({ ok: true, output: "ok" });
-    roteiro([toolBlock("run_program", { program: 'tool.fs_read({ path: "a" });' })]);
-    await runAgentGoal({
-      goal: "x",
-      selection: { kind: "workspace" },
-      ctx: { session: null, runtimeRunning: false, fusionPresets: [] } as never,
-      limits: LIMITS,
-      root: "",
-      signal: new AbortController().signal,
-      hooks: { onTree: () => undefined, approve: async () => true }
+    await comPrograma('tool.computer_write({ path: "a.txt", content: "x" });', {
+      approve: async () => true,
+      computerUse: true
     });
     expect(dispatchToolMock).not.toHaveBeenCalled();
+    const ultima = enviadas[1];
+    expect(ultima[ultima.length - 1].content).toContain("não está liberada");
+  });
+
+  it("sem área isolada, o programa usa as ferramentas do projeto", async () => {
+    dispatchToolMock.mockResolvedValue({ ok: true, output: "conteúdo" });
+    await comPrograma('tool.fs_read({ path: "a.txt" });', { approve: async () => true });
+    expect(dispatchToolMock).toHaveBeenCalledTimes(1);
   });
 
   it("programa que não compila devolve o motivo ao modelo, sem derrubar a execução", async () => {

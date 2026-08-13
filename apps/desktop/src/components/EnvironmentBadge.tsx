@@ -3,9 +3,14 @@
 /**
  * Badge de ambiente no rodapé — estilo status bar do VS Code.
  *
- * Mostra onde o trabalho roda e abre uma lista suspensa (para cima) para
- * trocar entre Local, WSL, VPS e Nuvem. O usuário escolhe; a TI configura
- * cada ambiente. A escolha persiste em settings.environment.
+ * ATENÇÃO, e está dito na tela: hoje esta escolha **não roteia execução**.
+ * Ferramenta, terminal e code mode rodam todos na ESTAÇÃO, qualquer que seja o
+ * item marcado aqui. Rodar de fato em WSL, VPS ou nuvem depende do cliente SSH
+ * que ainda não existe no binário (ver a linha "Deploy na VPS" no README).
+ *
+ * Deixar o seletor prometendo roteamento seria o mesmo gating cosmético que o
+ * resto do produto passou a sessão eliminando — quem lê "VPS" no rodapé
+ * assumiria que o comando não toca a máquina dele, e tocaria.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -50,13 +55,20 @@ export function EnvironmentBadge() {
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Ambiente onde o trabalho roda"
+        title="Ambiente pretendido. A execução ainda acontece na estação — falta o cliente SSH."
       >
         <Icon size={12} />
         {current.label}
+        {environment !== "local" ? <em className="envbadge__warn">local</em> : null}
       </button>
       {open ? (
         <div className="envbadge__menu glass-strong" role="listbox" aria-label="Ambiente">
+          {/* A ressalva vem PRIMEIRO: quem abre a lista para escolher "VPS"
+              precisa saber, antes de clicar, que o comando vai rodar aqui. */}
+          <p className="envbadge__note">
+            Por enquanto tudo roda <strong>na sua estação</strong>. Esta escolha registra a intenção; o
+            roteamento depende do cliente SSH, que ainda não existe no binário.
+          </p>
           {ENVIRONMENTS.map((env) => {
             const Row = ICONS[env.id];
             return (

@@ -101,12 +101,10 @@ export function AgentTreeView({
         root,
         signal: controller.signal,
         computerUse: computerUse && computerUseAllowed,
-        // Code mode só existe se a política do grupo abrir. As ferramentas
-        // liberadas para o programa são as de LEITURA mais a gravação: cada
-        // uma continua pedindo aprovação lá dentro.
-        codeModeTools: policy?.codeModeAllowed
-          ? ["fs_read", "fs_list", "search", "fs_write"]
-          : [],
+        // Code mode só existe se a política do grupo abrir. QUAIS ferramentas
+        // o programa recebe é decisão do runtime, não daqui: com a área
+        // isolada ligada ele usa as do sandbox, senão as do projeto.
+        codeMode: policy?.codeModeAllowed === true,
         hooks: {
           onTree: setTree,
           onStage: setStage,
