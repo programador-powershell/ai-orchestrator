@@ -6,6 +6,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import type { FsEntry } from "@ai-orchestrator/contracts";
+import { currentRoute, ssh, toTarget, type SshTarget } from "./ssh";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
@@ -110,8 +111,28 @@ function demoFallbackContent(path: string): string {
   return `// ${banner}\nexport {};\n`;
 }
 
+/**
+ * O projeto SEGUE o ambiente selecionado.
+ *
+ * Rotear só o terminal era pior que não rotear nada: no ambiente VPS o agente
+ * rodava o build no servidor e lia/gravava os arquivos no disco da estação —
+ * montava aqui e compilava lá, sem ninguém perceber. Arquivo e comando
+ * precisam ver a MESMA máquina.
+ *
+ * O que não segue, e por quê: documento do Office, mídia de vídeo e dataset de
+ * treino são arquivos da pessoa, não do projeto — eles não estão no servidor, e
+ * transferir binário por este caminho de texto os corromperia.
+ */
+function remoteTarget(): SshTarget | null {
+  if (!isTauriHost) return null;
+  const rota = currentRoute();
+  return rota.kind === "ssh" ? toTarget(rota.server) : null;
+}
+
 /** Lista o conteúdo de uma subpasta da raiz do projeto. */
 export async function fsList(root: string, sub: string): Promise<FsEntry[]> {
+  const remoto = remoteTarget();
+  if (remoto) return sortEntries(await ssh.list(remoto, sub));
   if (isTauriHost) {
     try {
       return sortEntries(await invoke<FsEntry[]>("fs_list", { root, sub }));
@@ -124,6 +145,8 @@ export async function fsList(root: string, sub: string): Promise<FsEntry[]> {
 
 /** Lê um arquivo relativo à raiz do projeto. */
 export async function fsRead(root: string, path: string): Promise<string> {
+  const remoto = remoteTarget();
+  if (remoto) return ssh.read(remoto, path);
   if (isTauriHost) {
     try {
       return await invoke<string>("fs_read", { root, path });
@@ -184,6 +207,11 @@ export async function collectFiles(root: string, options: CollectOptions = {}): 
 
 /** Grava um arquivo relativo à raiz do projeto. No navegador é um no-op. */
 export async function fsWrite(root: string, path: string, content: string): Promise<void> {
+  const remoto = remoteTarget();
+  if (remoto) {
+    await ssh.write(remoto, path, content);
+    return;
+  }
   if (isTauriHost) {
     await invoke("fs_write", { root, path, content });
     return;

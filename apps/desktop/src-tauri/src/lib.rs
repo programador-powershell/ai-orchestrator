@@ -105,6 +105,9 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         webhook::webhook_post,
         ssh::ssh_exec,
         ssh::ssh_fingerprint,
+        ssh::ssh_read,
+        ssh::ssh_write,
+        ssh::ssh_list,
         providers::provider_chat,
         providers::provider_chat_stream,
         providers::provider_chat_cancel,
@@ -155,7 +158,10 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         workspace::sandbox_list,
         webhook::webhook_post,
         ssh::ssh_exec,
-        ssh::ssh_fingerprint
+        ssh::ssh_fingerprint,
+        ssh::ssh_read,
+        ssh::ssh_write,
+        ssh::ssh_list
     ]
 }
 

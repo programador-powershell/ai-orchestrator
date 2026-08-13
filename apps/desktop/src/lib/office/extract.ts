@@ -8,6 +8,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { currentRoute, toTarget } from "../ssh";
+
 const isTauriHost = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /**
@@ -46,7 +48,13 @@ export async function extractOffice(
     return { ok: false, reason: "a leitura de documentos exige o app desktop" };
   }
   try {
-    return { ok: true, data: await invoke<OfficeExtract>("office_extract", { root, path }) };
+    // O documento segue o ambiente selecionado, como o resto do projeto: no
+    // VPS os bytes vêm do servidor. Sem isso a aba Office ficaria lendo o
+    // disco local enquanto o terminal roda no servidor — a incoerência que o
+    // roteamento veio consertar.
+    const rota = currentRoute();
+    const target = rota.kind === "ssh" ? toTarget(rota.server) : undefined;
+    return { ok: true, data: await invoke<OfficeExtract>("office_extract", { root, path, target }) };
   } catch (cause) {
     return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
   }

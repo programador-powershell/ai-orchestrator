@@ -178,24 +178,36 @@ fn format_of(path: &str) -> Option<&'static str> {
     }
 }
 
-/// Lê e extrai o texto de um DOCX/XLSX/PPTX dentro da raiz do projeto.
+/// Lê e extrai o texto de um DOCX/XLSX/PPTX.
+///
+/// Quando vem um `target`, o arquivo é lido NO SERVIDOR — é o que faz a aba
+/// Office seguir o ambiente selecionado junto com as outras. Sem ele, lê da
+/// raiz local, como antes.
 #[tauri::command]
-pub fn office_extract(root: String, path: String) -> Result<OfficeExtract, String> {
+pub async fn office_extract(
+    root: String,
+    path: String,
+    target: Option<crate::ssh::SshTarget>,
+) -> Result<OfficeExtract, String> {
     let format = format_of(&path).ok_or("formato não suportado (só docx, xlsx, pptx, pdf)")?;
 
-    // Mesma checagem de escopo do fsx: o caminho não pode escapar da raiz.
-    let canonical_root = Path::new(&root)
-        .canonicalize()
-        .map_err(|_| "raiz do projeto inválida".to_string())?;
-    let resolved = Path::new(&root)
-        .join(&path)
-        .canonicalize()
-        .map_err(|_| "caminho não encontrado".to_string())?;
-    if !resolved.starts_with(&canonical_root) {
-        return Err("fora da raiz do projeto".into());
-    }
-
-    let bytes = std::fs::read(&resolved).map_err(|error| error.to_string())?;
+    let bytes = match target {
+        Some(alvo) => crate::ssh::read_remote_bytes(&alvo, &path).await?,
+        None => {
+            // Mesma checagem de escopo do fsx: o caminho não pode escapar da raiz.
+            let canonical_root = Path::new(&root)
+                .canonicalize()
+                .map_err(|_| "raiz do projeto inválida".to_string())?;
+            let resolved = Path::new(&root)
+                .join(&path)
+                .canonicalize()
+                .map_err(|_| "caminho não encontrado".to_string())?;
+            if !resolved.starts_with(&canonical_root) {
+                return Err("fora da raiz do projeto".into());
+            }
+            std::fs::read(&resolved).map_err(|error| error.to_string())?
+        }
+    };
 
     // PDF sai antes: não é zip, e abrir como zip daria "arquivo corrompido"
     // — um erro que mandaria o usuário procurar problema no arquivo dele.
