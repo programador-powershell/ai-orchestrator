@@ -11,6 +11,7 @@ mod runtime;
 mod sandbox;
 mod terminal;
 mod webhook;
+mod workspace;
 
 use runtime::RuntimeManager;
 use tauri::{AppHandle, Manager, State};
@@ -90,6 +91,11 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         office::office_extract,
         research::research_fetch,
         sandbox::sandbox_execute,
+        workspace::sandbox_open,
+        workspace::sandbox_close,
+        workspace::sandbox_write,
+        workspace::sandbox_read,
+        workspace::sandbox_list,
         webhook::webhook_post,
         providers::provider_chat,
         providers::provider_chat_stream,
@@ -132,6 +138,11 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         office::office_extract,
         research::research_fetch,
         sandbox::sandbox_execute,
+        workspace::sandbox_open,
+        workspace::sandbox_close,
+        workspace::sandbox_write,
+        workspace::sandbox_read,
+        workspace::sandbox_list,
         webhook::webhook_post
     ]
 }

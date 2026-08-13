@@ -47,6 +47,13 @@ import {
   subordinateSystemPrompt
 } from "./delegation";
 import type { EngineSelection } from "@ai-orchestrator/contracts";
+import {
+  closeSession,
+  computerUseInstruction,
+  COMPUTER_TOOL_NAMES,
+  dispatchComputerTool,
+  openSession
+} from "./computerUse";
 import { chatOnce, type EngineContext } from "./engine";
 import type { ChatMessage } from "./gateway";
 
@@ -71,6 +78,12 @@ export interface RunOptions {
   root: string;
   signal: AbortSignal;
   hooks: RunHooks;
+  /**
+   * Liga a área de trabalho isolada (computer use). Desligado por padrão:
+   * é a diferença entre um agente que lê e explica e um que executa comando
+   * na máquina — quem escolhe é o chamador, não o modelo.
+   */
+  computerUse?: boolean;
 }
 
 /** Roda o objetivo inteiro. Devolve a árvore final. */
@@ -80,13 +93,25 @@ export async function runAgentGoal(options: RunOptions): Promise<TreeState> {
   const publish = () => options.hooks.onTree(tree);
   publish();
 
+  // A sessão isolada nasce e morre COM a execução: o diretório não pode
+  // sobreviver ao objetivo que o justificou.
+  let session = "";
+  if (options.computerUse) {
+    try {
+      session = (await openSession()).id;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      options.hooks.onStage?.(`sem área isolada: ${message}`);
+    }
+  }
+
   const runner = new TreeRunner(options, {
     get: () => tree,
     set: (next) => {
       tree = next;
       publish();
     }
-  });
+  }, session);
 
   try {
     const report = await runner.runTask(tree.rootId, rootSystemPrompt(options.goal, options.limits));
@@ -96,6 +121,9 @@ export async function runAgentGoal(options: RunOptions): Promise<TreeState> {
     tree = options.signal.aborted
       ? cancelPending(tree, now())
       : finishTask(tree, tree.rootId, "failed", message, now());
+  } finally {
+    // Fecha mesmo em erro ou cancelamento — senão o diretório fica no %TEMP%.
+    if (session) await closeSession(session).catch(() => undefined);
   }
   publish();
   return tree;
@@ -109,7 +137,9 @@ interface TreeAccess {
 class TreeRunner {
   constructor(
     private readonly options: RunOptions,
-    private readonly tree: TreeAccess
+    private readonly tree: TreeAccess,
+    /** Id da área isolada; vazio quando computer use está desligado. */
+    private readonly session: string
   ) {}
 
   /**
@@ -117,8 +147,10 @@ class TreeRunner {
    * Devolve o texto final — que é o relatório entregue ao superior.
    */
   async runTask(taskId: string, systemPrompt: string): Promise<string> {
+    const instrucoes = [systemPrompt, agentSystemInstruction()];
+    if (this.session) instrucoes.push(computerUseInstruction());
     const messages: ChatMessage[] = [
-      { role: "system", content: `${systemPrompt}\n\n${agentSystemInstruction()}` },
+      { role: "system", content: instrucoes.join("\n\n") },
       { role: "user", content: this.tree.get().tasks[taskId]?.prompt ?? "" }
     ];
 
@@ -184,7 +216,11 @@ class TreeRunner {
         return formatToolResult(call, "recusada pelo usuário — siga sem esta ferramenta");
       }
     }
-    const result = await dispatchTool(call, this.options.root);
+    // Computer use vai para a sessão isolada; o dispatch comum não conhece
+    // sessão e escreveria na pasta do PROJETO — que é outra coisa.
+    const result = COMPUTER_TOOL_NAMES.has(call.tool)
+      ? await dispatchComputerTool(call.tool, call.args, this.session)
+      : await dispatchTool(call, this.options.root);
     return formatToolResult(call, result.output);
   }
 

@@ -29,7 +29,16 @@ fn truncated(bytes: &[u8]) -> String {
 
 /// Retorna a pasta de trabalho e, quando ela foi criada só para esta execução,
 /// o caminho a remover ao final (jail efêmero em %TEMP%).
-fn workdir(cwd: Option<String>) -> Result<(PathBuf, Option<PathBuf>), String> {
+///
+/// `session` tem precedência sobre `cwd` de propósito. `cwd` é um caminho
+/// ARBITRÁRIO do chamador — aceitável no painel, onde uma pessoa escolhe; para
+/// um agente seria a saída da caixa (bastaria pedir a pasta do usuário). O
+/// agente só manda um id de sessão, e quem resolve o caminho é o registro.
+fn workdir(cwd: Option<String>, session: Option<String>) -> Result<(PathBuf, Option<PathBuf>), String> {
+    if let Some(id) = session.filter(|value| !value.trim().is_empty()) {
+        // Sessão é persistente entre chamadas: NÃO entra na remoção do final.
+        return Ok((crate::workspace::session_path(id.trim())?, None));
+    }
     if let Some(value) = cwd.filter(|value| !value.trim().is_empty()) {
         let canonical = PathBuf::from(value)
             .canonicalize()
@@ -48,13 +57,14 @@ fn workdir(cwd: Option<String>) -> Result<(PathBuf, Option<PathBuf>), String> {
 pub async fn sandbox_execute(
     command: String,
     cwd: Option<String>,
+    session: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<SandboxResult, String> {
     let command = command.trim().to_owned();
     if command.is_empty() || command.len() > 8_192 {
         return Err("o comando deve ter entre 1 e 8.192 caracteres".into());
     }
-    let (directory, ephemeral) = workdir(cwd)?;
+    let (directory, ephemeral) = workdir(cwd, session)?;
     let limit = Duration::from_millis(timeout_ms.unwrap_or(15_000));
     let temp = directory.to_string_lossy().into_owned();
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());

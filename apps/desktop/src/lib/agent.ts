@@ -44,7 +44,16 @@ export const TOOL_SPECS: ToolSpec[] = [
  * TOOL_SPECS faria `dispatchTool` precisar conhecer a arvore inteira, e a
  * ofereceria no Chat, onde nao ha arvore para acionar.
  */
-const TOOL_NAMES = new Set([...TOOL_SPECS.map((spec) => spec.name), "delegate"]);
+const TOOL_NAMES = new Set([
+  ...TOOL_SPECS.map((spec) => spec.name),
+  "delegate",
+  // computer use: executadas pelo runtime da árvore contra a sessão isolada,
+  // não pelo dispatch daqui (que não conhece sessão).
+  "computer_write",
+  "computer_read",
+  "computer_list",
+  "computer_exec"
+]);
 
 const TOOL_BLOCK = /```tool\s*([\s\S]*?)```/g;
 
@@ -76,7 +85,10 @@ const MUTATING = new Set(TOOL_SPECS.filter((spec) => spec.mutating).map((spec) =
 
 /** Ferramentas que gravam/executam — e toda MCP externa — exigem aprovação. */
 export function needsApproval(call: ToolCall): boolean {
-  return MUTATING.has(call.tool) || isMcpTool(call.tool);
+  // computer_exec roda comando com o token do usuário: o confinamento de
+  // caminho não impede o que um comando faz, só onde ele escreve por caminho
+  // relativo. A aprovação humana é a barreira que resta.
+  return MUTATING.has(call.tool) || isMcpTool(call.tool) || call.tool === "computer_exec";
 }
 
 const MAX_RESULT = 8000;
