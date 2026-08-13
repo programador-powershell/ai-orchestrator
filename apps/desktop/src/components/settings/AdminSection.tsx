@@ -9,7 +9,7 @@
  * é o portão.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CircleCheck, LoaderCircle, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
 import { useApp } from "../../lib/store";
@@ -90,6 +90,23 @@ export function AdminSection() {
   const [masterAppend, setMasterAppend] = useState(true);
   const [masterMax, setMasterMax] = useState(2000);
 
+  /**
+   * Os grupos como o SERVIDOR devolveu por último, fora do ciclo de render.
+   *
+   * O PATCH manda a política inteira e o servidor substitui o documento. Se o
+   * corpo fosse montado a partir do `group` do render — que só muda depois do
+   * refresh —, marcar "executa código" e, antes do roundtrip terminar, marcar
+   * "code mode" faria o segundo PATCH sobrescrever o primeiro com o valor
+   * velho: a flag de segurança voltava a desligada sem nenhum aviso.
+   */
+  const groupsRef = useRef<AdminGroup[]>([]);
+  /**
+   * Fila de gravações. Duas edições rápidas viram duas gravações em ORDEM,
+   * cada uma montada sobre o resultado da anterior — é o que fecha a corrida
+   * de vez, já que o servidor é last-write-wins por contrato.
+   */
+  const filaRef = useRef<Promise<void>>(Promise.resolve());
+
   const base = session ? `${session.baseUrl.replace(/\/$/, "")}/v1/workspaces/${session.workspaceId}/admin` : null;
 
   async function call(path: string, init: RequestInit = {}): Promise<Response> {
@@ -107,7 +124,11 @@ export function AdminSection() {
   async function refresh() {
     try {
       const [groupsResponse, masterResponse] = await Promise.all([call("/groups"), call("/prompt-master")]);
-      if (groupsResponse.ok) setGroups((await groupsResponse.json()) as AdminGroup[]);
+      if (groupsResponse.ok) {
+        const lidos = (await groupsResponse.json()) as AdminGroup[];
+        groupsRef.current = lidos;
+        setGroups(lidos);
+      }
       if (masterResponse.ok) {
         const master = (await masterResponse.json()) as {
           content: string;
@@ -158,22 +179,39 @@ export function AdminSection() {
     }
   }
 
-  /** Grava um pedaço da política do grupo, preservando o resto. */
-  async function patchPolicy(group: AdminGroup, patch: Partial<AdminGroup["policy"]>) {
-    const response = await call(`/groups/${group.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ policy: { ...group.policy, ...patch } })
-    });
-    if (response.ok) await refresh();
-    else setNotice({ text: "não foi possível salvar a política do grupo", tone: "danger" });
+  /** Enfileira uma gravação; cada uma vê o resultado da anterior. */
+  function enfileirar(tarefa: () => Promise<void>): Promise<void> {
+    filaRef.current = filaRef.current.then(tarefa, tarefa).catch(() => undefined);
+    return filaRef.current;
   }
 
-  async function toggleMode(group: AdminGroup, mode: UiMode) {
-    const modes = group.modes.includes(mode)
-      ? group.modes.filter((item) => item !== mode)
-      : [...group.modes, mode];
-    const response = await call(`/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ modes }) });
-    if (response.ok) await refresh();
+  /** O grupo como o servidor devolveu por último — nunca o do render. */
+  function atual(id: string, fallback: AdminGroup): AdminGroup {
+    return groupsRef.current.find((item) => item.id === id) ?? fallback;
+  }
+
+  /** Grava um pedaço da política do grupo, preservando o resto. */
+  function patchPolicy(group: AdminGroup, patch: Partial<AdminGroup["policy"]>) {
+    return enfileirar(async () => {
+      const base = atual(group.id, group);
+      const response = await call(`/groups/${group.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ policy: { ...base.policy, ...patch } })
+      });
+      if (response.ok) await refresh();
+      else setNotice({ text: "não foi possível salvar a política do grupo", tone: "danger" });
+    });
+  }
+
+  function toggleMode(group: AdminGroup, mode: UiMode) {
+    return enfileirar(async () => {
+      const base = atual(group.id, group);
+      const modes = base.modes.includes(mode)
+        ? base.modes.filter((item) => item !== mode)
+        : [...base.modes, mode];
+      const response = await call(`/groups/${group.id}`, { method: "PATCH", body: JSON.stringify({ modes }) });
+      if (response.ok) await refresh();
+    });
   }
 
   async function removeGroup(group: AdminGroup) {
@@ -245,17 +283,29 @@ export function AdminSection() {
               ).map(([campo, rotulo, teto]) => (
                 <label key={campo} title={`Teto de ${rotulo} na delegação (máx. ${teto})`}>
                   {rotulo}
+                  {/*
+                    `defaultValue` + `onBlur`, como nos textareas vizinhos.
+                    Com input CONTROLADO pelo estado do servidor e PATCH a cada
+                    tecla, digitar "10" gravava 1 e depois 0 — o React
+                    restaurava o valor antigo entre as teclas e o segundo
+                    evento chegava num campo vazio. Teto 0 é delegação
+                    bloqueada; ninguém pediu isso.
+                  */}
                   <input
                     type="number"
                     min={0}
                     max={teto}
-                    value={group.policy[campo] ?? ""}
+                    key={`${group.id}-${campo}-${group.policy[campo] ?? ""}`}
+                    defaultValue={group.policy[campo] ?? ""}
                     placeholder="padrão"
-                    onChange={(event) => {
+                    onBlur={(event) => {
                       const bruto = event.target.value.trim();
-                      void patchPolicy(group, {
-                        [campo]: bruto === "" ? undefined : Math.max(0, Math.min(Number(bruto) || 0, teto))
-                      });
+                      const valor = bruto === "" ? undefined : Math.max(0, Math.min(Number(bruto) || 0, teto));
+                      if (valor === (group.policy[campo] ?? undefined)) return;
+                      void patchPolicy(group, { [campo]: valor });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
                     }}
                   />
                 </label>

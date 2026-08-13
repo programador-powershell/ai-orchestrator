@@ -117,7 +117,13 @@ export interface AppSettings {
   /** Ambiente onde o trabalho roda — o usuário escolhe, o admin configura. */
   environment: Environment;
   /** Servidores MCP externos (nome + URL JSON-RPC + token opcional). */
-  mcpServers: Array<{ name: string; url: string; token?: string }>;
+  /**
+   * Conectores MCP. `hasToken` e NÃO o token: este objeto é persistido no
+   * localStorage do webview, e Bearer de conector corporativo em texto puro
+   * no disco é exatamente o que a política proíbe. O valor mora no cofre do
+   * sistema (conta `mcp.<nome>`) e quem o lê é o Rust.
+   */
+  mcpServers: Array<{ name: string; url: string; hasToken?: boolean }>;
 }
 
 export const effortLevels = ["Baixo", "Médio", "Alto", "Extra", "Máximo"] as const;

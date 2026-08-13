@@ -2,6 +2,7 @@ mod auth;
 mod blocklist;
 mod extensions;
 mod fsx;
+mod mcp;
 mod memory;
 mod jail;
 mod office;
@@ -103,6 +104,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         workspace::sandbox_read,
         workspace::sandbox_list,
         webhook::webhook_post,
+        mcp::mcp_rpc,
         ssh::ssh_exec,
         ssh::ssh_fingerprint,
         ssh::ssh_read,
@@ -157,6 +159,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         workspace::sandbox_read,
         workspace::sandbox_list,
         webhook::webhook_post,
+        mcp::mcp_rpc,
         ssh::ssh_exec,
         ssh::ssh_fingerprint,
         ssh::ssh_read,

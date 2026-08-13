@@ -27,13 +27,21 @@ import {
 
 export const USER_PLUGINS_KEY = "aio.plugins.user.v1";
 
+interface RebuildInput {
+  global: unknown[];
+  userPluginsAllowed: boolean;
+  capabilities: string[];
+}
+
 interface PluginState {
   registry: PluginRegistry;
   /** Manifestos locais crus, como a pessoa salvou. */
   userPlugins: PluginManifest[];
   /** Motivos de recusa na última montagem — a UI mostra em vez de sumir. */
   rejected: Array<{ id: string; reason: string }>;
-  rebuild: (input: { global: unknown[]; userPluginsAllowed: boolean; capabilities: string[] }) => void;
+  /** A última política aplicada, para remontar sem esperar o próximo sync. */
+  lastInput: RebuildInput;
+  rebuild: (input: RebuildInput) => void;
   addUserPlugin: (raw: string) => { ok: true } | { ok: false; reason: string };
   removeUserPlugin: (id: string) => void;
 }
@@ -90,14 +98,24 @@ export const usePlugins = create<PluginState>((set, get) => ({
   registry: createRegistry(),
   userPlugins: loadUser(),
   rejected: [],
-  rebuild: ({ global, userPluginsAllowed, capabilities }) => {
+  /**
+   * Últimas entradas da política — guardadas para poder remontar sozinho.
+   *
+   * Sem elas, remontar exigia a política em mãos, e só o `policySync.apply()`
+   * (boot/login) a tinha: salvar ou remover um plugin próprio não mudava nada
+   * na sessão. O painel dizia "removido", mas o Composer seguia injetando o
+   * prompt daquele plugin em TODA mensagem e o SecurityView continuava
+   * rodando os scanners dele até alguém relogar.
+   */
+  lastInput: { global: [], userPluginsAllowed: false, capabilities: [] },
+  rebuild: (input) => {
     const { registry, rejected } = buildRegistry({
-      global,
+      global: input.global,
       user: get().userPlugins,
-      userPluginsAllowed,
-      capabilities
+      userPluginsAllowed: input.userPluginsAllowed,
+      capabilities: input.capabilities
     });
-    set({ registry, rejected });
+    set({ registry, rejected, lastInput: input });
   },
   addUserPlugin: (raw) => {
     const lido = parseManifest(raw);
@@ -106,11 +124,13 @@ export const usePlugins = create<PluginState>((set, get) => ({
     const proximos = [...atuais, lido.manifest];
     saveUser(proximos);
     set({ userPlugins: proximos });
+    get().rebuild(get().lastInput);
     return { ok: true };
   },
   removeUserPlugin: (id) => {
     const proximos = get().userPlugins.filter((item) => item.id !== id);
     saveUser(proximos);
     set({ userPlugins: proximos });
+    get().rebuild(get().lastInput);
   }
 }));

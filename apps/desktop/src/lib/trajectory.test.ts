@@ -35,6 +35,25 @@ describe("redact", () => {
     expect(redact(jwt)).toContain("«token»");
   });
 
+  it("Bearer com ESPAÇO não deixa o token do lado do rótulo", () => {
+    // O `\S+` genérico parava no espaço: mascarava a palavra "Bearer" e
+    // deixava o token inteiro exposto na prévia e no export.
+    const saida = redact("authorization: Bearer 3f9c8a7b21e4d5f6a7b8");
+    expect(saida).not.toContain("3f9c8a7b21e4d5f6a7b8");
+    expect(saida).toContain("«segredo»");
+    // O esquema fica: saber COMO autentica é informação de auditoria.
+    expect(saida).toContain("Bearer");
+  });
+
+  it("segredo em JSON com chave entre aspas é mascarado", () => {
+    // A aspa de fechamento do nome quebrava o `[:=]` colado e nada casava.
+    for (const entrada of ['"api_key": "hunter2"', '{"password":"hunter22segredo"}']) {
+      const saida = redact(entrada);
+      expect(saida).not.toContain("hunter2");
+      expect(saida).toContain("«segredo»");
+    }
+  });
+
   it("mascara valor depois de rótulo sensível, mantendo o rótulo", () => {
     const saida = redact("Authorization: Bearer-abcdefghij");
     expect(saida).toContain("Authorization");

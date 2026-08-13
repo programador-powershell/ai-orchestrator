@@ -80,14 +80,32 @@ export function createTrajectory(id: string, mode: UiMode, startedAt: number): T
 /**
  * Máscara do que parece segredo.
  *
- * A trilha é lida por outra pessoa (o admin), então ela não pode virar um
- * caminho lateral para ver a chave que o cofre guarda.
+ * A trilha é lida por outra pessoa (o admin) e o `exportText` vira anexo de
+ * chamado, então ela não pode virar um caminho lateral para ver a chave que o
+ * cofre guarda.
+ *
+ * Duas formas que passavam batido e agora não passam:
+ *
+ * - `authorization: Bearer 3f9c8a…` — o `\S+` genérico parava no primeiro
+ *   espaço, ou seja, mascarava a palavra "Bearer" e deixava o token do lado;
+ * - `"api_key": "hunter2"` — a aspa de fechamento do NOME da chave ficava
+ *   entre ele e o `:`, e o padrão exigia os dois colados.
  */
 export function redact(text: string): string {
   return text
     .replace(/\b(sk|pk|ghp|gho|xox[baprs])[-_][A-Za-z0-9_-]{8,}/g, "«segredo»")
     .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "«token»")
-    .replace(/(authorization|api[-_]?key|senha|password|secret|token)(\s*[:=]\s*)\S+/gi, "$1$2«segredo»");
+    // O esquema (Bearer/Basic/Token) fica: ele diz COMO autentica, e isso é
+    // informação de auditoria. O que vem depois é que é segredo.
+    .replace(/\b(Bearer|Basic|Token)\s+[A-Za-z0-9\-._~+/=]{8,}/gi, "$1 «segredo»")
+    // As duas exclusões evitam mascarar o que a regra acima já tratou: sem
+    // elas `authorization: Bearer «segredo»` virava `«segredo» «segredo»` e a
+    // trilha perdia a informação de COMO a chamada autenticava. O esquema
+    // colado ao valor (`Bearer-abc…`) continua caindo aqui.
+    .replace(
+      /(authorization|api[-_]?key|senha|password|secret|token)(["']?\s*[:=]\s*)(["']?)(?!«)(?!(?:Bearer|Basic|Token)\s)[^\s"';,|&]+\3/gi,
+      "$1$2$3«segredo»$3"
+    );
 }
 
 export function preview(text: string): string {

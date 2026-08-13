@@ -1219,7 +1219,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .connx__detail-head { display: grid; gap: 1px; flex: 1; min-width: 0; }
 .connx__detail-head strong { font-size: var(--fs-small); font-weight: 570; }
 .connx__detail-head small { color: var(--muted); font-size: var(--fs-micro); }
-.connx__connect { display: flex; gap: 8px; flex: 1; max-width: 460px; }
+.connx__connect { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; max-width: 460px; }
+.connx__erro { flex-basis: 100%; color: var(--tone-red, #ef4444); font-size: var(--fs-eyebrow); }
 .connx__endpoint {
   flex: 1;
   min-width: 0;
