@@ -10,6 +10,7 @@ mod research;
 mod runtime;
 mod sandbox;
 mod terminal;
+mod webhook;
 
 use runtime::RuntimeManager;
 use tauri::{AppHandle, Manager, State};
@@ -89,6 +90,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         office::office_extract,
         research::research_fetch,
         sandbox::sandbox_execute,
+        webhook::webhook_post,
         providers::provider_chat,
         providers::provider_chat_stream,
         providers::provider_chat_cancel,
@@ -129,7 +131,8 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         fsx::fs_write,
         office::office_extract,
         research::research_fetch,
-        sandbox::sandbox_execute
+        sandbox::sandbox_execute,
+        webhook::webhook_post
     ]
 }
 

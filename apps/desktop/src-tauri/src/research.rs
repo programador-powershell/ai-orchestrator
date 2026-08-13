@@ -101,10 +101,14 @@ fn extract_links(html: &str) -> Vec<String> {
     links
 }
 
-#[tauri::command]
 /// Recusa hosts que não são internet pública: loopback, rede privada,
 /// link-local (inclui o 169.254.169.254 de metadados de nuvem) e nomes internos.
-fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
+///
+/// Não é `#[tauri::command]`: recebe `&reqwest::Url`, que não é serializável —
+/// o atributo que existia aqui era inerte (nunca esteve em `generate_handler!`)
+/// e só enganava quem lesse o arquivo. É um guard interno, usado por qualquer
+/// comando que faça requisição com URL de fora.
+pub(crate) fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
     use std::net::{IpAddr, ToSocketAddrs};
     let host = url.host_str().ok_or_else(|| "URL sem host".to_string())?;
     let lowered = host.to_ascii_lowercase();
@@ -144,6 +148,19 @@ fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
     Ok(())
 }
 
+/// Política de redirect que reaplica `guard_public_host` a CADA salto.
+pub(crate) fn guarded_redirect() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            return attempt.error("redirecionamentos demais");
+        }
+        match guard_public_host(attempt.url()) {
+            Ok(()) => attempt.follow(),
+            Err(motivo) => attempt.error(motivo),
+        }
+    })
+}
+
 #[tauri::command]
 pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     let parsed = reqwest::Url::parse(url.trim()).map_err(|_| "URL inválida".to_string())?;
@@ -155,6 +172,10 @@ pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     guard_public_host(&parsed)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
+        // A guarda acima vale só para a PRIMEIRA URL. Com a política padrão do
+        // reqwest (até 10 saltos), um 302 para 169.254.169.254 furava tudo.
+        // Aqui cada salto é reavaliado — redirect legítimo continua funcionando.
+        .redirect(guarded_redirect())
         .build()
         .map_err(|error| error.to_string())?;
     let response = client
@@ -197,5 +218,53 @@ mod tests {
                     <body><a href=\"https://a.dev/x\">a</a><a href=\"/relativo\">b</a></body></html>";
         assert_eq!(extract_title(html), "Página Demo");
         assert_eq!(extract_links(html), vec!["https://a.dev/x".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    fn guard(raw: &str) -> Result<(), String> {
+        guard_public_host(&reqwest::Url::parse(raw).expect("url"))
+    }
+
+    #[test]
+    fn bloqueia_loopback_e_nomes_internos() {
+        for alvo in [
+            "http://localhost/admin",
+            "http://127.0.0.1:8080/",
+            "https://algo.local/",
+            "https://painel.internal/",
+        ] {
+            assert!(guard(alvo).is_err(), "deveria bloquear {alvo}");
+        }
+    }
+
+    #[test]
+    fn bloqueia_redes_privadas_e_metadados_de_nuvem() {
+        for alvo in [
+            "http://10.1.2.3/",
+            "http://192.168.0.1/",
+            "http://172.16.5.4/",
+            // o clássico de SSRF em nuvem
+            "http://169.254.169.254/latest/meta-data/",
+            "http://0.0.0.0/",
+            "http://100.64.0.1/",
+        ] {
+            assert!(guard(alvo).is_err(), "deveria bloquear {alvo}");
+        }
+    }
+
+    #[test]
+    fn bloqueia_ipv6_interno() {
+        for alvo in ["http://[::1]/", "http://[fc00::1]/", "http://[::]/"] {
+            assert!(guard(alvo).is_err(), "deveria bloquear {alvo}");
+        }
+    }
+
+    #[test]
+    fn url_sem_host_e_recusada() {
+        assert!(guard("file:///c:/windows/system32/config/sam").is_err());
     }
 }

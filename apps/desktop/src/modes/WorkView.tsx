@@ -58,8 +58,9 @@ import {
   makeCard,
   moveCard,
   newCardId,
+  isExternal,
+  parseMcpTool,
   ruleFromTexts,
-  runRules,
   todayISO,
   type Action,
   type Board,
@@ -82,149 +83,21 @@ import {
 } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 
-/* --------------------------- Estado persistido ---------------------- */
-
-const STORAGE_KEY = "work.board";
-const ARTIFACTS_KEY = "work.artifacts";
-const ROOT_KEY = "work.root";
-const LOG_CAP = 120;
-
-/** Aviso honesto sobre o motor sem quadro visível — usado em tooltips. */
-const DORMANT_HINT =
-  "Motor de automações íntegro: sem o quadro visível, os gatilhos de cartão ficam dormentes — " +
-  "disparam quando cartões mudam pelo chat (ops:work) ou quando um due date vence no quadro salvo, com a aba Work aberta.";
-
-interface LogEntry {
-  at: number;
-  line: string;
-}
-
-interface WorkState {
-  board: Board;
-  rules: Rule[];
-  log: LogEntry[];
-  /** chaves `${cardId}:${due}` já processadas pelo trigger card_overdue */
-  overdueSeen: string[];
-}
-
-/** Artefato de texto/Markdown REAL, salvo localmente. */
-interface Artifact {
-  id: string;
-  title: string;
-  content: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-function initialWorkState(): WorkState {
-  return { board: emptyBoard(), rules: [], log: [], overdueSeen: [] };
-}
-
-function loadWorkState(): WorkState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return initialWorkState();
-    const parsed = JSON.parse(raw) as Partial<WorkState> | null;
-    if (!parsed || !Array.isArray(parsed.board?.lanes)) return initialWorkState();
-    return {
-      board: { lanes: parsed.board.lanes },
-      rules: Array.isArray(parsed.rules) ? parsed.rules : [],
-      log: Array.isArray(parsed.log) ? parsed.log : [],
-      overdueSeen: Array.isArray(parsed.overdueSeen) ? parsed.overdueSeen : []
-    };
-  } catch {
-    return initialWorkState();
-  }
-}
-
-function loadArtifacts(): Artifact[] {
-  try {
-    const raw = localStorage.getItem(ARTIFACTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item): item is Artifact =>
-        Boolean(item) &&
-        typeof (item as Artifact).id === "string" &&
-        typeof (item as Artifact).title === "string" &&
-        typeof (item as Artifact).content === "string" &&
-        typeof (item as Artifact).createdAt === "number" &&
-        typeof (item as Artifact).updatedAt === "number"
-    );
-  } catch {
-    return [];
-  }
-}
-
-function loadRoot(): string {
-  try {
-    return localStorage.getItem(ROOT_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/* ------------------- Store de módulo (rail + centro) ----------------- */
-
-interface WorkStore extends WorkState {
-  artifacts: Artifact[];
-  root: string;
-}
-
-/** Store zustand de módulo: WorkRail e WorkView compartilham o MESMO estado. */
-const useWork = create<WorkStore>()(() => ({
-  ...loadWorkState(),
-  artifacts: loadArtifacts(),
-  root: loadRoot()
-}));
-
-/* Persistência real: cada fatia na sua chave, só quando muda. */
-useWork.subscribe((state, previous) => {
-  try {
-    if (
-      state.board !== previous.board ||
-      state.rules !== previous.rules ||
-      state.log !== previous.log ||
-      state.overdueSeen !== previous.overdueSeen
-    ) {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ board: state.board, rules: state.rules, log: state.log, overdueSeen: state.overdueSeen })
-      );
-    }
-    if (state.artifacts !== previous.artifacts) localStorage.setItem(ARTIFACTS_KEY, JSON.stringify(state.artifacts));
-    if (state.root !== previous.root) localStorage.setItem(ROOT_KEY, state.root);
-  } catch {
-    // storage cheio/indisponível: o estado segue em memória
-  }
-});
-
-const entry = (line: string): LogEntry => ({ at: Date.now(), line });
-
-/** Aplica uma transformação pura sobre a fatia do motor (board/regras/log). */
-function updateEngine(mutate: (prev: WorkState) => WorkState) {
-  const current = useWork.getState();
-  const prev: WorkState = {
-    board: current.board,
-    rules: current.rules,
-    log: current.log,
-    overdueSeen: current.overdueSeen
-  };
-  const next = mutate(prev);
-  if (next !== prev) useWork.setState(next);
-}
-
-/** Roda o motor para um evento e anexa as execuções ao log (imutável). */
-function withEvent(prev: WorkState, board: Board, event: BoardEvent): WorkState {
-  const result = runRules(board, event, prev.rules);
-  if (!result.log.length) return { ...prev, board: result.board };
-  return {
-    ...prev,
-    board: result.board,
-    log: [...result.log.map(entry), ...prev.log].slice(0, LOG_CAP)
-  };
-}
+import {
+  DORMANT_HINT,
+  LOG_CAP,
+  applyWorkOps,
+  approveEffect,
+  entry,
+  processOverdue,
+  rejectEffect,
+  updateEngine,
+  useWork,
+  withEvent,
+  type Artifact,
+  type LogEntry,
+  type WorkState
+} from "../lib/workEngine";
 
 /* ---------------- Mission control derivado (item 6 do original) ------- */
 
@@ -284,82 +157,6 @@ function MissionCard() {
       ))}
     </div>
   );
-}
-
-/* ---------------------- Ops do chat via motor ------------------------ */
-
-function asText(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-/** Aplica as ops do canal "work" passando cada efeito pelo motor de regras. */
-function applyWorkOps(prev: WorkState, ops: StructuredOp[]): WorkState {
-  let next = prev;
-  for (const op of ops) {
-    switch (op.op) {
-      case "add_task": {
-        const title = asText(op.title);
-        if (!title || findCardByTitle(next.board, title)) break;
-        const laneName = asText(op.lane) ?? next.board.lanes[0]?.name ?? "A fazer";
-        const card = makeCard(title, { detail: asText(op.detail) ?? "" });
-        next = withEvent(next, addCard(next.board, laneName, card), {
-          kind: "card_created",
-          cardId: card.id
-        });
-        break;
-      }
-      case "move_task": {
-        const title = asText(op.title);
-        const laneName = asText(op.lane);
-        if (!title || !laneName) break;
-        const card = findCardByTitle(next.board, title);
-        if (!card) break;
-        const moved = moveCard(next.board, card.id, laneName);
-        if (moved.moved) {
-          next = withEvent(next, moved.board, { kind: "card_moved", cardId: card.id, toLane: laneName });
-        }
-        break;
-      }
-      case "add_lane": {
-        const name = asText(op.name);
-        if (name) next = { ...next, board: ensureLane(next.board, name) };
-        break;
-      }
-      case "add_automation": {
-        const name = asText(op.name);
-        if (!name || next.rules.some((rule) => rule.name.toLowerCase() === name.toLowerCase())) break;
-        const rule = ruleFromTexts(name, asText(op.trigger) ?? "", asText(op.action) ?? "");
-        const line = rule
-          ? `regra "${name}" criada pelo chat: quando ${describeTrigger(rule.trigger)} → ${describeAction(rule.action)}`
-          : `automação "${name}" não reconhecida pelo motor (trigger/ação sem forma estruturável) — nada foi criado`;
-        next = {
-          ...next,
-          rules: rule ? [...next.rules, rule] : next.rules,
-          log: [entry(line), ...next.log].slice(0, LOG_CAP)
-        };
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  return next;
-}
-
-/* Trigger card_overdue REAL: dispara uma vez por (cartão, due) vencido. */
-function processOverdue(prev: WorkState, today: string): WorkState {
-  const cards = prev.board.lanes.flatMap((lane) => lane.cards);
-  const liveKeys = new Set(cards.filter((card) => card.due).map((card) => `${card.id}:${card.due}`));
-  const seen = prev.overdueSeen.filter((key) => liveKeys.has(key));
-  const pending = cards.filter((card) => isOverdue(card.due, today) && !seen.includes(`${card.id}:${card.due}`));
-  if (!pending.length) {
-    return seen.length === prev.overdueSeen.length ? prev : { ...prev, overdueSeen: seen };
-  }
-  let next: WorkState = { ...prev, overdueSeen: [...seen, ...pending.map((card) => `${card.id}:${card.due}`)] };
-  for (const card of pending) {
-    next = withEvent(next, next.board, { kind: "card_overdue", cardId: card.id });
-  }
-  return next;
 }
 
 /* ------------------------- Ações das regras -------------------------- */
@@ -482,6 +279,17 @@ interface RuleDraft {
   actionLane: string;
   actionLabel: string;
   actionTitle: string;
+  /** Nome amigável do webhook — é o que aparece no log e na UI. */
+  webhookLabel: string;
+  /**
+   * URL do webhook, TRANSITÓRIA: só existe enquanto o modal está aberto. Ao
+   * salvar ela vai para o cofre do SO e some daqui. A regra guarda apenas a
+   * referência — ela é a credencial e não pode encostar no localStorage.
+   */
+  webhookUrl: string;
+  webhookTemplate: string;
+  mcpTool: string;
+  requireApproval: boolean;
 }
 
 const emptyDraft = (): RuleDraft => ({
@@ -492,8 +300,25 @@ const emptyDraft = (): RuleDraft => ({
   actionKind: "add_label",
   actionLane: "",
   actionLabel: "",
-  actionTitle: ""
+  actionTitle: "",
+  webhookLabel: "",
+  webhookUrl: "",
+  webhookTemplate: "",
+  mcpTool: "",
+  // Padrão seguro: ação externa pede aprovação até o admin dizer o contrário.
+  requireApproval: true
 });
+
+/** Referência estável e sem espaços para a conta no cofre. */
+function secretRefFor(label: string): string {
+  const slug = label
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${slug || "webhook"}-${newCardId().slice(-6)}`;
+}
 
 function buildRule(draft: RuleDraft): Rule | null {
   const name = draft.name.trim();
@@ -517,18 +342,45 @@ function buildRule(draft: RuleDraft): Rule | null {
     const label = draft.actionLabel.trim();
     if (!label) return null;
     action = { kind: "add_label", label };
-  } else {
+  } else if (draft.actionKind === "create_card") {
     const title = draft.actionTitle.trim();
     if (!title) return null;
     action = { kind: "create_card", lane: draft.actionLane.trim() || "A fazer", title };
+  } else if (draft.actionKind === "webhook") {
+    const label = draft.webhookLabel.trim();
+    const url = draft.webhookUrl.trim();
+    // A URL é exigida na criação porque é ela que vai para o cofre; depois
+    // disso nunca mais aparece na UI.
+    if (!label || !url) return null;
+    if (!/^https:\/\//i.test(url)) return null;
+    action = {
+      kind: "webhook",
+      secretRef: secretRefFor(label),
+      label,
+      ...(draft.webhookTemplate.trim() ? { template: draft.webhookTemplate.trim() } : {})
+    };
+  } else {
+    // mcp
+    const tool = draft.mcpTool.trim();
+    if (!parseMcpTool(tool)) return null;
+    action = { kind: "mcp", tool };
   }
-  return { id: newCardId(), name, enabled: true, trigger, action };
+  return {
+    id: newCardId(),
+    name,
+    enabled: true,
+    trigger,
+    action,
+    ...(isExternal(action) ? { requireApproval: draft.requireApproval } : {})
+  };
 }
 
 /** Popup glass central (portal) com o builder estruturado de regras. */
 function RuleBuilderModal({ onClose }: { onClose: () => void }) {
   const lanes = useWork((state) => state.board.lanes);
+  const mcpServers = useApp((state) => state.settings.mcpServers ?? []);
   const [draft, setDraft] = useState<RuleDraft>(emptyDraft);
+  const isExternalDraft = draft.actionKind === "webhook" || draft.actionKind === "mcp";
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -538,9 +390,39 @@ function RuleBuilderModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  function createRuleFromDraft() {
+  const [saving, setSaving] = useState(false);
+  const [secretError, setSecretError] = useState("");
+
+  async function createRuleFromDraft() {
     const rule = buildRule(draft);
-    if (!rule) return;
+    if (!rule || saving) return;
+    // Webhook: a URL vai para o cofre do SO ANTES da regra existir. Se o cofre
+    // falhar, a regra não é criada — pior que não ter a automação seria ter uma
+    // regra apontando para um segredo que não está lá.
+    if (rule.action.kind === "webhook") {
+      setSaving(true);
+      setSecretError("");
+      try {
+        await invoke("credential_store", {
+          account: `webhook.${rule.action.secretRef}`,
+          token: draft.webhookUrl.trim()
+        });
+      } catch (cause) {
+        // Mensagem do usuário, não a do runtime: fora do desktop o erro cru é
+        // "Cannot read properties of undefined (reading 'invoke')", que não
+        // diz nada a quem está criando a regra.
+        setSecretError(
+          isTauriFs
+            ? `Não foi possível guardar a URL no cofre do sistema — a regra não foi criada. (${
+                cause instanceof Error ? cause.message : String(cause)
+              })`
+            : "Webhook precisa do app desktop: é lá que existe o cofre do sistema onde a URL fica guardada. No navegador a regra não é criada."
+        );
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+    }
     addRule(rule);
     onClose();
   }
@@ -616,6 +498,14 @@ function RuleBuilderModal({ onClose }: { onClose: () => void }) {
               <option value="add_label">adicionar etiqueta</option>
               <option value="move_to">mover para coluna</option>
               <option value="create_card">criar cartão</option>
+              <option
+                value="webhook"
+                disabled={!isTauriFs}
+                title={isTauriFs ? undefined : "Requer o app desktop: a URL é guardada no cofre do sistema"}
+              >
+                chamar webhook (sai do app){isTauriFs ? "" : " — só no desktop"}
+              </option>
+              <option value="mcp">chamar ferramenta MCP (sai do app)</option>
             </select>
           </label>
           {draft.actionKind === "add_label" && (
@@ -627,7 +517,7 @@ function RuleBuilderModal({ onClose }: { onClose: () => void }) {
               />
             </label>
           )}
-          {draft.actionKind !== "add_label" && (
+          {(draft.actionKind === "move_to" || draft.actionKind === "create_card") && (
             <label className="lg-field">
               Coluna destino
               <input
@@ -646,18 +536,102 @@ function RuleBuilderModal({ onClose }: { onClose: () => void }) {
               />
             </label>
           )}
+          {draft.actionKind === "webhook" && (
+            <>
+              <label className="lg-field">
+                Nome do webhook
+                <input
+                  value={draft.webhookLabel}
+                  placeholder="Teams · TI"
+                  onChange={(event) => setDraft({ ...draft, webhookLabel: event.target.value })}
+                />
+              </label>
+              <label className="lg-field">
+                URL (https)
+                <input
+                  type="password"
+                  value={draft.webhookUrl}
+                  placeholder="https://…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => setDraft({ ...draft, webhookUrl: event.target.value })}
+                />
+                <small>
+                  Guardada no cofre do sistema, não no navegador — a URL de Slack/Teams é a própria credencial. Depois de
+                  salva ela não é mais exibida.
+                </small>
+              </label>
+              <label className="lg-field">
+                Corpo (opcional)
+                <textarea
+                  rows={3}
+                  value={draft.webhookTemplate}
+                  placeholder={'{"text": "{{card.title}} venceu em {{card.due}}"}'}
+                  spellCheck={false}
+                  onChange={(event) => setDraft({ ...draft, webhookTemplate: event.target.value })}
+                />
+                <small>
+                  Placeholders: {"{{card.title}}"}, {"{{card.detail}}"}, {"{{card.due}}"}, {"{{card.labels}}"},{" "}
+                  {"{{lane}}"}, {"{{rule}}"}, {"{{event}}"}. Vazio envia o cartão em JSON.
+                </small>
+              </label>
+            </>
+          )}
+          {draft.actionKind === "mcp" && (
+            <label className="lg-field">
+              Ferramenta MCP
+              <input
+                list="workx-mcp-tools"
+                value={draft.mcpTool}
+                placeholder="mcp:servidor:ferramenta"
+                spellCheck={false}
+                onChange={(event) => setDraft({ ...draft, mcpTool: event.target.value })}
+              />
+              <small>
+                {mcpServers.length
+                  ? `Servidores cadastrados: ${mcpServers.map((server) => server.name).join(", ")}`
+                  : "Nenhum servidor MCP cadastrado nas Configurações — a regra ficaria sem destino."}
+              </small>
+            </label>
+          )}
+          {isExternalDraft && (
+            <label className="workx-approval-toggle">
+              <input
+                type="checkbox"
+                checked={draft.requireApproval}
+                onChange={(event) => setDraft({ ...draft, requireApproval: event.target.checked })}
+              />
+              <span>
+                Pedir aprovação antes de enviar
+                <small>
+                  Desmarcado, a regra chama o serviço externo sozinha — inclusive quando o gatilho é um vencimento
+                  disparado por relógio, sem ninguém olhando.
+                </small>
+              </span>
+            </label>
+          )}
           <datalist id="workx-lanes">
             {lanes.map((lane) => (
               <option key={lane.name} value={lane.name} />
             ))}
           </datalist>
+          <datalist id="workx-mcp-tools">
+            {mcpServers.map((server) => (
+              <option key={server.name} value={`mcp:${server.name}:`} />
+            ))}
+          </datalist>
         </div>
 
+        {secretError ? <p className="workx-secret-error">{secretError}</p> : null}
         <p className="workx-dormant-note">{DORMANT_HINT}</p>
 
         <div className="workx-builder-actions">
-          <button className="lg-button primary" onClick={createRuleFromDraft} disabled={!buildRule(draft)}>
-            Criar regra
+          <button
+            className="lg-button primary"
+            onClick={() => void createRuleFromDraft()}
+            disabled={!buildRule(draft) || saving}
+          >
+            {saving ? "Guardando no cofre…" : "Criar regra"}
           </button>
           <button className="lg-button ghost" onClick={onClose}>
             Cancelar
@@ -675,11 +649,36 @@ function RuleBuilderModal({ onClose }: { onClose: () => void }) {
 export function WorkRail() {
   const rules = useWork((state) => state.rules);
   const log = useWork((state) => state.log);
+  const pending = useWork((state) => state.pending);
   const [builderOpen, setBuilderOpen] = useState(false);
   const activeRules = rules.filter((rule) => rule.enabled).length;
 
   return (
     <>
+      {pending.length > 0 && (
+        <>
+          <span className="eyebrow">AGUARDANDO APROVAÇÃO · {pending.length}</span>
+          {pending.map((item) => (
+            <div className="workx-pending" key={item.id}>
+              <strong>{item.effect.ruleName}</strong>
+              <small>
+                {item.effect.kind === "webhook"
+                  ? `webhook "${item.effect.label}"`
+                  : `mcp:${item.effect.server}:${item.effect.tool}`}
+              </small>
+              {item.effect.kind === "webhook" && <pre className="workx-pending-body">{item.effect.body}</pre>}
+              <div className="workx-pending-actions">
+                <button className="lg-button primary" onClick={() => approveEffect(item.id)}>
+                  Enviar
+                </button>
+                <button className="lg-button ghost" onClick={() => rejectEffect(item.id)}>
+                  Recusar
+                </button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
       <span className="eyebrow">
         AUTOMAÇÕES{rules.length ? ` · ${activeRules}/${rules.length}` : ""}
       </span>
@@ -701,6 +700,11 @@ export function WorkRail() {
           </span>
           <small>
             quando {describeTrigger(rule.trigger)} → {describeAction(rule.action)}
+            {isExternal(rule.action) && (
+              <em className="workx-rule-external">
+                {rule.requireApproval === false ? " · envia sem aprovação" : " · pede aprovação"}
+              </em>
+            )}
           </small>
         </div>
       ))}
@@ -759,23 +763,16 @@ export function WorkView() {
   const [listError, setListError] = useState(false);
   const [today, setToday] = useState(() => todayISO());
 
-  /* Ops do chat (canal work) passam pelo motor — regras seguem aplicáveis. */
-  useEffect(() => {
-    return opsBus.subscribe("work", (ops) => {
-      updateEngine((previous) => applyWorkOps(previous, ops));
-    });
-  }, []);
+  /* Ops do chat, relógio de due date e disparo de card_overdue MIGRARAM para
+     lib/workEngine.ts: presos ao componente, morriam ao trocar de aba (e as
+     ops:work emitidas nesse intervalo eram perdidas, porque o opsBus não tem
+     buffer). Aqui a view só reflete o estado; quem roda é o motor do boot. */
 
-  /* Relógio de due date: revalida a cada minuto (vira o dia → reprocessa). */
+  /* Relógio local só para a EXIBIÇÃO de "atrasado" no cartão. */
   useEffect(() => {
     const timer = window.setInterval(() => setToday(todayISO()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  /* Trigger card_overdue REAL sobre o quadro salvo (dormente, sem exibição). */
-  useEffect(() => {
-    updateEngine((previous) => processOverdue(previous, today));
-  }, [board, rules, today]);
 
   /* Listagem REAL da pasta (só no desktop; no navegador o aviso é honesto).
      Estrita: erro do fs_list vira aviso — jamais uma árvore demo como real. */

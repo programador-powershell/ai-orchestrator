@@ -40,6 +40,7 @@ import { effectiveModes, safeMode } from "./lib/policy";
 import { restorePolicy, syncPolicy } from "./lib/policySync";
 import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
+import { startWorkEngine } from "./lib/workEngine";
 import { GlassFilters } from "./components/GlassFilters";
 import { Composer } from "./components/Composer";
 import { ConnectionsPopover } from "./components/ConnectionsPopover";
@@ -239,6 +240,13 @@ function App() {
   }, []);
   const gatewayConnected = Boolean(session?.accessToken && session.workspaceId);
   const connected = gatewayConnected || runtimeStatus.running;
+
+  // Motor de automações do Work: precisa valer em QUALQUER aba. Antes vivia
+  // dentro do WorkView, que só é montado quando a aba está ativa — o timer de
+  // due date parava e as ops:work emitidas por outra aba eram perdidas.
+  useEffect(() => {
+    startWorkEngine();
+  }, []);
 
   useEffect(() => {
     // Pré-aquece todas as views (e o Settings) fora do caminho crítico de boot.
