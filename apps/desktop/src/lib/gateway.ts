@@ -77,6 +77,17 @@ export async function streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
+  /**
+   * O stream chegou ao fim de verdade?
+   *
+   * `done` só diz que a conexão acabou. Um proxy que corta no meio (ou um
+   * provedor que encerra o SSE limpo antes da hora) entregava o texto pela
+   * metade como se fosse a resposta completa — falha silenciosa, a pior
+   * delas. Os dois leitores irmãos do projeto (`engine.ts` e o
+   * `providers.rs`) tratam exatamente isso como erro; esta rota tinha ficado
+   * sem a proteção.
+   */
+  let terminou = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -89,10 +100,30 @@ export async function streamChat(
         .find((line) => line.startsWith("data:"))
         ?.slice(5)
         .trim();
-      if (!data || data === "[DONE]") continue;
-      const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+      if (!data) continue;
+      if (data === "[DONE]") {
+        terminou = true;
+        continue;
+      }
+      const parsed = JSON.parse(data) as {
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+      };
+      if (parsed.choices?.[0]?.finish_reason) terminou = true;
       onDelta(parsed.choices?.[0]?.delta?.content ?? "");
     }
+  }
+  if (!terminou) {
+    throw new StreamInterruptedError(
+      "a resposta foi interrompida antes do fim — o texto acima está incompleto"
+    );
+  }
+}
+
+/** Stream cortado no meio: quem chama decide se refaz ou avisa. */
+export class StreamInterruptedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StreamInterruptedError";
   }
 }
 

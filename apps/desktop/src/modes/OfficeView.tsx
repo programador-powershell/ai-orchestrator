@@ -153,8 +153,15 @@ export function OfficeView() {
    */
   useEffect(
     () =>
-      opsBus.subscribe("office", () => undefined) &&
+      /*
+       * Os DOIS unsubscribes voltam juntos.
+       *
+       * O `&&` descartava o do opsBus, cujo Set vive em escopo de módulo:
+       * como a view desmonta e remonta a cada troca de aba, cada volta
+       * acrescentava um listener no-op permanente que ninguém mais removia.
+       */
       (() => {
+        const sairDoOps = opsBus.subscribe("office", () => undefined);
         const unsubscribe = useApp.subscribe((state, previous) => {
           const current = state.threads.office.messages;
           if (current === previous.threads.office.messages) return;
@@ -178,7 +185,10 @@ export function OfficeView() {
           const { applied, touched } = applyCommands(commands);
           if (applied) setNote(`${applied} operação(ões) aplicadas · ${touched} elemento(s)`);
         });
-        return unsubscribe;
+        return () => {
+          sairDoOps();
+          unsubscribe();
+        };
       })(),
     []
   );

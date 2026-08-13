@@ -255,8 +255,11 @@ export const memory = {
     return JSON.stringify({ schema: 1, exportedAt: nowIso(), memories: await (await backend()).list() }, null, 2);
   },
   async importJson(payload: string): Promise<number> {
-    const parsed = JSON.parse(payload) as { memories?: MemoryItem[] } | MemoryItem[];
-    const items = Array.isArray(parsed) ? parsed : parsed.memories ?? [];
+    const parsed = JSON.parse(payload) as { memories?: MemoryItem[]; items?: MemoryItem[] } | MemoryItem[];
+    // `items` também: a tela de importação já reconhece esse formato como
+    // "shape próprio", e ler só `memories` fazia o arquivo inteiro ser
+    // descartado com um "0 memória(s) importada(s)" de cara de sucesso.
+    const items = Array.isArray(parsed) ? parsed : parsed.memories ?? parsed.items ?? [];
     const store = await backend();
     let imported = 0;
     for (const item of items) {

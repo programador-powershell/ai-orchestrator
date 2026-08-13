@@ -49,8 +49,12 @@ function fillNamedVariables(template: string, args: string[]): string {
 export function expandCommand(input: string, catalog: CommandCatalog): string | null {
   const name = parseCommandName(input);
   if (!name) return null;
-  const command = catalog[name];
-  if (!command) return null;
+  // `catalog[name]` num objeto literal enxerga o protótipo: "/toString",
+  // "/valueOf" e "/constructor" devolviam a função herdada, passavam pelo
+  // `if (!command)` e estouravam TypeError no `.template` — antes do try do
+  // envio, então a mensagem sumia sem erro nenhum na tela.
+  const command = Object.hasOwn(catalog, name) ? catalog[name] : undefined;
+  if (!command || typeof command.template !== "string") return null;
   const rest = input.slice(name.length + 1).trim();
   if (command.template.includes("$ARGS")) {
     return command.template.replaceAll("$ARGS", rest);

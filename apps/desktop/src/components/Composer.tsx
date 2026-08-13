@@ -109,6 +109,16 @@ export function Composer() {
   const [mention, setMention] = useState<{ term: string; start: number } | null>(null);
   const [pendingApproval, setPendingApproval] = useState<{ call: ToolCall; resolve: (ok: boolean) => void } | null>(null);
   const abortRef = useRef<AbortController | undefined>(undefined);
+  /**
+   * Resumo da compactação, por conversa. `ate` é quantas mensagens do começo
+   * ele já cobre — é o que permite resumir só o trecho novo na próxima volta.
+   */
+  const compactRef = useRef<{ ate: number; resumo: string } | null>(null);
+  const conversaAtiva = useApp((state) => state.activeConversation[state.mode]);
+  // Conversa nova ou outra conversa: o resumo anterior não fala dela.
+  useEffect(() => {
+    compactRef.current = null;
+  }, [conversaAtiva, mode]);
   /** Um grupo de tool calls por turno agêntico (cartão recolhível). */
   const toolGroupOpenRef = useRef(false);
   const planSourceRef = useRef("");
@@ -176,17 +186,23 @@ export function Composer() {
    * eram empurradas direto no array e nada ficava registrado: quando a resposta
    * saía errada, não havia como saber qual das oito causou.
    *
-   * O prompt master e a diretiva de esforço ficam FORA da coleta: são política
-   * do admin, e nenhum modo os remove.
+   * O prompt master passa PELA coleta, como fonte inegociável: nenhum modo o
+   * remove (o `assembleContext` garante isso), e assim ele aparece na trilha.
+   * Ficar de fora fazia a auditoria "contexto por fonte" omitir justamente a
+   * maior injeção — a trilha respondia errado a pergunta que ela existe para
+   * responder ("o que está ocupando o prompt?").
    */
   async function buildSystemMessages(question: string): Promise<ChatMessage[]> {
-    // Prompt master do SERVIDOR primeiro; o local complementa se permitido.
-    // O teto de esforco do grupo limita a diretiva, nao so o slider.
+    // A diretiva de esforço é uma linha, não uma fonte de contexto: fica fora
+    // da coleta porque contá-la como injeção só sujaria o relatório.
     const system: ChatMessage[] = [
-      ...promptMasterMessages(policy, settings.localPrompt ?? ""),
       { role: "system", content: effortDirective(clampEffort(settings.effort, policy)) }
     ];
     const candidatos: Injection[] = [];
+    // Prompt master do SERVIDOR primeiro; o local complementa se permitido.
+    for (const mensagem of promptMasterMessages(policy, settings.localPrompt ?? "")) {
+      candidatos.push({ source: "prompt-master", content: mensagem.content });
+    }
     // Contrato de marca na aba Design. Sem ele em CADA pedido, o modelo
     // respeita a identidade no primeiro prompt e a esquece no terceiro,
     // quando o contexto encheu — mesma razão do prompt master.
@@ -243,6 +259,29 @@ export function Composer() {
     const rules = await loadProjectRules(rulesRoot, fsRead).catch(() => null);
     if (rules) candidatos.push({ source: "project-rules", content: rulesSystemMessage(rules).content });
 
+    /**
+     * @-mentions entram como FONTE, não empurradas no array depois.
+     *
+     * Fora da coleta, elas escapavam do modo mínimo — que a UI descreve como
+     * "só a política da empresa e a sua mensagem" enquanto o arquivo inteiro
+     * ia junto — e nunca apareciam na trilha, apesar de serem a maior injeção
+     * do pedido.
+     */
+    const mencionados = extractMentionedPaths(question);
+    if (mencionados.length) {
+      const raiz = window.localStorage.getItem("code.root") ?? ".";
+      const lidos = await Promise.all(
+        mencionados.slice(0, 5).map(async (path) => ({
+          path,
+          content: await fsRead(raiz, path).catch(() => "")
+        }))
+      );
+      const comConteudo = lidos.filter((file) => file.content);
+      if (comConteudo.length) {
+        candidatos.push({ source: "mentions", content: mentionContext(comConteudo) });
+      }
+    }
+
     const montado = assembleContext(candidatos, {
       mode: harnessMode,
       trajectory: startTrajectory(mode),
@@ -259,16 +298,43 @@ export function Composer() {
   async function compactHistory(history: ChatMessage[], signal: AbortSignal): Promise<ChatMessage[]> {
     const plan = planCompaction(history, { maxTokens: 12_000, keepRecent: 8 });
     if (!plan) return history.slice(-12);
+
+    /**
+     * O resumo é GUARDADO entre os envios.
+     *
+     * Sem cache, toda mensagem enviada depois de cruzar o orçamento pagava um
+     * resumo completo do histórico (uma chamada de modelo inteira, sobre um
+     * texto que só cresce) e ainda acrescentava um aviso "🗜️ Contexto
+     * compactado" novo ao thread — avisos que entravam no próprio histórico a
+     * resumir. Uma conversa longa acumulava dezenas deles.
+     *
+     * Agora só o TRECHO NOVO é resumido, em cima do resumo anterior, e o aviso
+     * aparece apenas quando houve compactação de verdade.
+     */
+    const cache = compactRef.current;
+    const jaResumidas = cache ? cache.ate : 0;
+    const novas = plan.toSummarize.slice(jaResumidas);
+    if (cache && novas.length === 0) {
+      return [{ role: "system", content: `Resumo da conversa anterior:\n${cache.resumo}` }, ...plan.keep];
+    }
+    const paraResumir: ChatMessage[] = cache
+      ? [{ role: "system", content: `Resumo até aqui:\n${cache.resumo}` }, ...novas]
+      : plan.toSummarize;
     const summary = await chatOnce(
       selection,
       mode,
-      buildSummaryRequest(plan.toSummarize),
+      buildSummaryRequest(paraResumir),
       ctx,
       { onDelta: () => undefined },
       signal
     ).catch(() => "");
-    if (!summary) return history.slice(-12);
-    appendMessage(mode, { role: "assistant", content: compactionNotice(plan.toSummarize.length), meta: { kind: "ops" } });
+    if (!summary) {
+      return cache
+        ? [{ role: "system", content: `Resumo da conversa anterior:\n${cache.resumo}` }, ...plan.keep]
+        : history.slice(-12);
+    }
+    compactRef.current = { ate: plan.toSummarize.length, resumo: summary };
+    appendMessage(mode, { role: "assistant", content: compactionNotice(novas.length), meta: { kind: "ops" } });
     return [{ role: "system", content: `Resumo da conversa anterior:\n${summary}` }, ...plan.keep];
   }
 
@@ -504,20 +570,9 @@ export function Composer() {
     const abort = new AbortController();
     abortRef.current = abort;
     try {
+      // As @-mentions entram pelo assembleContext (dentro daqui), junto com as
+      // outras fontes — assim o modo mínimo as corta e a trilha as registra.
       const system = await buildSystemMessages(text);
-      // @-mentions: carrega o conteúdo dos arquivos citados na pergunta.
-      const mentioned = extractMentionedPaths(text);
-      if (mentioned.length) {
-        const root = window.localStorage.getItem("code.root") ?? ".";
-        const loaded = await Promise.all(
-          mentioned.slice(0, 5).map(async (path) => ({
-            path,
-            content: await fsRead(root, path).catch(() => "")
-          }))
-        );
-        const withContent = loaded.filter((file) => file.content);
-        if (withContent.length) system.push({ role: "system", content: mentionContext(withContent) });
-      }
       for (const attachment of currentAttachments) {
         // Imagem vai como conteúdo de VISÃO (image_url); texto vai como system.
         if (attachment.dataUrl && attachment.mime?.startsWith("image/")) continue;
@@ -587,9 +642,22 @@ export function Composer() {
         request.push({ role: "system", content: research.researchSystemContext(report) });
       }
 
+      /**
+       * O histórico é o que veio ANTES do eco desta pergunta.
+       *
+       * O `slice(0, -1)` assumia que a última mensagem era o eco do usuário —
+       * mas na pesquisa profunda o cartão de ferramentas entra DEPOIS dele.
+       * O corte tirava o cartão e deixava o eco, então a pergunta ia duas
+       * vezes ao modelo (o eco e o `request.push` abaixo). Cortar pelo índice
+       * do eco resolve nos dois casos.
+       */
       const priorMessages = useApp.getState().threads[mode].messages;
+      const ecoIndex =
+        options?.echoUser === false
+          ? priorMessages.length
+          : priorMessages.map((item) => item.role).lastIndexOf("user");
       const fullHistory = priorMessages
-        .slice(0, options?.echoUser === false ? undefined : -1)
+        .slice(0, ecoIndex < 0 ? priorMessages.length : ecoIndex)
         .map(({ role, content }) => ({ role, content }));
       const history = await compactHistory(fullHistory, abort.signal);
       // Com imagem colada/anexada, a mensagem do usuário vira multimodal.
@@ -717,8 +785,12 @@ export function Composer() {
       <div className="composer glass-strong">
         {attachments.length > 0 && (
           <div className="composer-attachments">
-            {attachments.map((attachment) => (
-              <span className="chip accent attach-chip" key={attachment.name}>
+            {/* Identidade pelo ÍNDICE, não pelo nome: dois arquivos homônimos
+                de pastas diferentes (ou duas imagens coladas, que reiniciam a
+                numeração por evento) davam chave duplicada no React e o X de
+                um chip descartava os dois anexos de uma vez. */}
+            {attachments.map((attachment, indice) => (
+              <span className="chip accent attach-chip" key={`${indice}-${attachment.name}`}>
                 {attachment.dataUrl && attachment.mime?.startsWith("image/") ? (
                   <img className="attach-thumb" src={attachment.dataUrl} alt="" />
                 ) : (
@@ -728,7 +800,7 @@ export function Composer() {
                 <i
                   role="button"
                   aria-label={`Remover ${attachment.name}`}
-                  onClick={() => setAttachments(attachments.filter((item) => item.name !== attachment.name))}
+                  onClick={() => setAttachments(attachments.filter((_, posicao) => posicao !== indice))}
                 >
                   <X size={10} />
                 </i>

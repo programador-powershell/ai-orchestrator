@@ -1029,9 +1029,20 @@ export function DesignView() {
       const state = useDesign.getState();
       // Entra ao lado do que já existe, para não sobrescrever o trabalho atual.
       const offsetX = state.doc.nodes.reduce((max, node) => Math.max(max, node.x + node.w), 0) + 80;
+      /**
+       * O prefixo precisa ser ÚNICO por captura.
+       *
+       * `docFromSnapshots` renumera n1, n2… do zero a cada clone, então um
+       * segundo "Clonar layout" criava outro `cap-n1` no mesmo documento —
+       * e `updateNode`/`removeNode` casam por id: mover ou apagar um clone
+       * mexia no outro, com `key` duplicada quebrando a reconciliação.
+       */
+      const existentes = new Set(state.doc.nodes.map((node) => node.id));
+      let serie = 1;
+      while (capture.doc.nodes.some((node) => existentes.has(`cap${serie}-${node.id}`))) serie += 1;
       const deslocados = capture.doc.nodes.map((node) => ({
         ...node,
-        id: `cap-${node.id}`,
+        id: `cap${serie}-${node.id}`,
         x: node.x + offsetX
       }));
       state.setDoc((current) => ({ ...current, nodes: [...current.nodes, ...deslocados] }));

@@ -126,6 +126,16 @@ function demoFallbackContent(path: string): string {
 function remoteTarget(): SshTarget | null {
   if (!isTauriHost) return null;
   const rota = currentRoute();
+  /**
+   * Rota BLOQUEADA falha alto — não cai para o disco local.
+   *
+   * Com o ambiente em VPS e nenhum servidor habilitado (ou dois), o terminal
+   * já recusava o comando com o motivo, mas o explorador e o agente seguiam
+   * lendo e GRAVANDO na estação achando que estavam no servidor: a mesma
+   * inconsistência "monta aqui e compila lá" que este módulo existe para
+   * eliminar, só que silenciosa.
+   */
+  if (rota.kind === "blocked") throw new Error(rota.reason);
   return rota.kind === "ssh" ? toTarget(rota.server) : null;
 }
 
@@ -218,4 +228,20 @@ export async function fsWrite(root: string, path: string, content: string): Prom
   }
   // Web: nada é persistido fora do desktop (demonstração).
   void content;
+}
+
+/**
+ * Apaga um arquivo do projeto. Segue o ambiente, como o resto do módulo.
+ *
+ * Serve para limpar o que o app cria e não é do usuário (o temporário do
+ * terminal), não para o agente remover arquivo — isso continua não existindo
+ * como ferramenta.
+ */
+export async function fsRemove(root: string, path: string): Promise<void> {
+  const remoto = remoteTarget();
+  if (remoto) {
+    await ssh.exec(remoto, `rm -f -- ${JSON.stringify(path)}`);
+    return;
+  }
+  if (isTauriHost) await invoke("fs_remove", { root, path });
 }

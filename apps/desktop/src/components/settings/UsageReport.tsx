@@ -190,19 +190,39 @@ export function UsageReport() {
     void refresh();
   }, [refresh]);
 
+  /**
+   * Preço digitado → número, aceitando a vírgula decimal.
+   *
+   * `Number("3,75")` é NaN e o `|| 0` transformava isso em ZERO sem avisar:
+   * o modelo saía da lista de "sem preço", todo o uso dele passava a custar
+   * nada e o relatório — cuja proposta é justamente separar "barato" de "não
+   * medido" — passava a subnotificar o gasto como se estivesse completo.
+   * Campo inválido agora RECUSA a gravação.
+   */
+  function parsePreco(bruto: string): number | null {
+    const limpo = bruto.trim().replace(",", ".");
+    if (!limpo) return 0;
+    const valor = Number(limpo);
+    return Number.isFinite(valor) && valor >= 0 ? valor : null;
+  }
+
   async function savePrice() {
     const model = priceDraft.model.trim();
     if (!model) return;
+    const campos = {
+      inputPerMTok: parsePreco(priceDraft.input),
+      outputPerMTok: parsePreco(priceDraft.output),
+      cacheReadPerMTok: parsePreco(priceDraft.cacheRead),
+      cacheWritePerMTok: parsePreco(priceDraft.cacheWrite)
+    };
+    if (Object.values(campos).some((valor) => valor === null)) {
+      setError("Preço inválido: use apenas número (vírgula ou ponto), sem símbolo de moeda.");
+      return;
+    }
     try {
       await call("/prices", {
         method: "PUT",
-        body: JSON.stringify({
-          model,
-          inputPerMTok: Number(priceDraft.input) || 0,
-          outputPerMTok: Number(priceDraft.output) || 0,
-          cacheReadPerMTok: Number(priceDraft.cacheRead) || 0,
-          cacheWritePerMTok: Number(priceDraft.cacheWrite) || 0
-        })
+        body: JSON.stringify({ model, ...campos })
       });
       setPriceDraft({ model: "", input: "", output: "", cacheRead: "", cacheWrite: "" });
       await refresh();

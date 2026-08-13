@@ -12,6 +12,28 @@ describe("parseToolCalls", () => {
     expect(parseToolCalls(text)).toEqual([{ tool: "fs_read", args: { path: "src/app.ts" } }]);
   });
 
+  it("cerca de código DENTRO do JSON não corta a chamada", () => {
+    // O caso comum de "escreva o README": o `content` traz um exemplo em
+    // markdown. O regex non-greedy fechava na crase de dentro, o parse
+    // falhava e o arquivo nunca era gravado — sem aviso nenhum.
+    const conteudo = "# Doc\\n\\n```js\\nconst x = 1;\\n```\\n";
+    const text = `Vou escrever.\n\`\`\`tool\n{"tool":"fs_write","args":{"path":"README.md","content":"${conteudo}"}}\n\`\`\``;
+    const calls = parseToolCalls(text);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].tool).toBe("fs_write");
+    expect(String(calls[0].args.content)).toContain("```js");
+  });
+
+  it("o texto conversacional sobra limpo mesmo com cerca aninhada", () => {
+    const text = 'Antes.\n```tool\n{"tool":"fs_write","args":{"content":"a\\n```x\\n```"}}\n```\nDepois.';
+    expect(stripToolCalls(text)).toBe("Antes.\n\nDepois.");
+  });
+
+  it("bloco cortado pelo limite de tokens ainda vale se o JSON fechou", () => {
+    const text = '```tool\n{"tool":"fs_list","args":{"sub":"src"}}';
+    expect(parseToolCalls(text)).toEqual([{ tool: "fs_list", args: { sub: "src" } }]);
+  });
+
   it("extrai vários blocos e ignora JSON malformado", () => {
     const text =
       '```tool\n{"tool":"fs_list","args":{"sub":"src"}}\n```\n' +

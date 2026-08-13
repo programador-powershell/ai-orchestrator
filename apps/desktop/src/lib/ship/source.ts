@@ -63,7 +63,17 @@ const ARTIFACT_FORMATS: Array<[RegExp, ArtifactSource["format"]]> = [
   [/\.(tar|tar\.gz|tgz)$/i, "tar"],
   [/\.jar$/i, "jar"],
   [/\.war$/i, "war"],
-  [/\.(tar)?$/i, "binary"]
+  // Imagem de contêiner: `repo/nome:tag`, sem extensão de arquivo.
+  [/^[a-z0-9][\w.\-/]*:[\w.\-]+$/i, "image"],
+  /*
+   * Binário: qualquer outra coisa que pareça um caminho de ARQUIVO.
+   *
+   * A regra anterior era `/\.(tar)?$/`, que exige um ponto NO FIM: `app.exe`,
+   * `api` e AppImage eram recusados com a mensagem "…ou binário" — a
+   * validação contradizia o próprio texto —, enquanto "app." (ponto solto)
+   * virava binário. E o formato "image" era inalcançável.
+   */
+  [/[^\\/]$/, "binary"]
 ];
 
 export function parseGithub(input: string): SourceResult {

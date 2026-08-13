@@ -111,6 +111,9 @@ export interface McpServerConfig {
 /** Conta do conector no cofre — precisa casar com o `account_for` do Rust. */
 export const mcpAccount = (name: string) => `mcp.${name.trim()}`;
 
+/** Teto por chamada. O do Rust é o mesmo (30 s). */
+const RPC_TIMEOUT_MS = 30_000;
+
 /**
  * Nome obrigatório e único (case-insensitive) + URL http(s) válida.
  *
@@ -172,10 +175,16 @@ export class McpHttpClient {
     // e conector com token simplesmente não funciona neste caminho.
     const bloqueio = blockedUrl(useApp.getState().policy?.blockedDomains ?? [], this.config.url);
     if (bloqueio) return { ok: false, error: blockedMessage(bloqueio) };
+    // Timeout obrigatório: um servidor que aceita a conexão e nunca responde
+    // pendurava o envio inteiro (o Composer chama listTools em série para
+    // CADA conector antes do turno) até o socket do navegador desistir, e o
+    // botão Parar não alcançava este fetch.
+    const relogio = AbortSignal.timeout(RPC_TIMEOUT_MS);
     const response = await fetch(this.config.url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body
+      body,
+      signal: relogio
     });
     if (!response.ok) return { ok: false, error: `servidor MCP respondeu ${response.status}` };
     return parseRpcResponse(await response.text());

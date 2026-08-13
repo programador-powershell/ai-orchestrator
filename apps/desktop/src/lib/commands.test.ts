@@ -30,6 +30,15 @@ describe("expandCommand", () => {
     expect(expandCommand("/saudar Ana Multiplike", commands)).toBe("Olá, Ana! Bem-vindo ao Multiplike.");
   });
 
+  it("nome herdado do protótipo não vira comando", () => {
+    // "/toString" devolvia Object.prototype.toString: passava pelo `if
+    // (!command)` e estourava TypeError no `.template` ANTES do try do envio,
+    // então a mensagem simplesmente não era enviada e nada aparecia na tela.
+    for (const herdado of ["/toString x", "/valueOf", "/constructor a", "/hasOwnProperty b"]) {
+      expect(expandCommand(herdado, commands)).toBeNull();
+    }
+  });
+
   it("deixa variável sem argumento como string vazia", () => {
     expect(expandCommand("/saudar Ana", commands)).toBe("Olá, Ana! Bem-vindo ao .");
   });

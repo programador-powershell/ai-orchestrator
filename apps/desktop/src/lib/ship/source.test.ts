@@ -72,6 +72,18 @@ describe("validateArtifact", () => {
     expect(ok(validateArtifact("/opt/site.war"))).toMatchObject({ format: "war" });
   });
 
+  it("binário de verdade é aceito como binário", () => {
+    // A regra antiga exigia um PONTO no fim: app.exe e "api" eram recusados
+    // com a mensagem que promete aceitar binário.
+    expect(ok(validateArtifact("C:\\dist\\app.exe"))).toMatchObject({ format: "binary" });
+    expect(ok(validateArtifact("/opt/api"))).toMatchObject({ format: "binary" });
+    expect(ok(validateArtifact("/opt/App-x86_64.AppImage"))).toMatchObject({ format: "binary" });
+  });
+
+  it("imagem de contêiner é reconhecida", () => {
+    expect(ok(validateArtifact("registry.local/api:1.4"))).toMatchObject({ format: "image" });
+  });
+
   it("recusa pasta em vez de arquivo", () => {
     expect(validateArtifact("C:\\dist\\").ok).toBe(false);
   });

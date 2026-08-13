@@ -61,9 +61,14 @@ export function PluginsPanel() {
     () => registry.plugins.filter((item) => item.scope === "global"),
     [registry]
   );
+  // A aba CORRENTE, não "agent" fixo: o contador dizia "0 ativos nesta aba"
+  // para um plugin restrito ao Security enquanto a pessoa estava no Security
+  // — e o contrário no Chat. Quem depura tirava a conclusão errada sobre o
+  // que entrou no prompt.
+  const abaAtual = useApp((state) => state.mode);
   const ativos = useMemo(
-    () => resolve(registry, { mode: "agent", userPluginsAllowed: allowed }),
-    [registry, allowed]
+    () => resolve(registry, { mode: abaAtual, userPluginsAllowed: allowed }),
+    [registry, allowed, abaAtual]
   );
   const participacao = trajectory ? bySource(trajectory) : [];
   const resumo = trajectory ? summarize(trajectory, Date.now()) : null;

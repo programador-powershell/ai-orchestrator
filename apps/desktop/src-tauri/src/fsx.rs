@@ -88,6 +88,35 @@ pub fn fs_read(root: String, path: String) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// Apaga um arquivo dentro da raiz.
+///
+/// Existe por causa do temporário do terminal (`.ultra_tmp.<ext>`), que ficava
+/// no working tree do usuário com código gerado pela IA dentro. Mesmas guardas
+/// do `fs_write`: caminho resolvido dentro da raiz e link simbólico recusado
+/// (seguir o link apagaria o ALVO, fora do projeto). Pasta não é removida —
+/// apagar diretório recursivamente não é operação para um comando de conforto.
+#[tauri::command]
+pub fn fs_remove(root: String, path: String) -> Result<(), String> {
+    let canonical = canonical_root(&root)?;
+    let candidate = Path::new(&root).join(&path);
+    if let Ok(meta) = fs::symlink_metadata(&candidate) {
+        if meta.file_type().is_symlink() {
+            return Err("o caminho é um link simbólico — remoção recusada".into());
+        }
+    }
+    let Ok(resolvido) = candidate.canonicalize() else {
+        // Já não existe: o objetivo (não estar lá) está cumprido.
+        return Ok(());
+    };
+    if !resolvido.starts_with(&canonical) {
+        return Err("fora da raiz".into());
+    }
+    if !resolvido.is_file() {
+        return Err("o caminho informado não é um arquivo".into());
+    }
+    fs::remove_file(&resolvido).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub fn fs_write(root: String, path: String, content: String) -> Result<(), String> {
     let canonical = canonical_root(&root)?;

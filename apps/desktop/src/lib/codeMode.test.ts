@@ -196,6 +196,33 @@ describe("tetos e recusas", () => {
     expect(resultado.reason).toContain("passos");
   });
 
+  it("texto que dobra é barrado antes de esgotar a memória", async () => {
+    // Os tetos contavam ocorrências, nunca TAMANHO: vinte dobras a partir de
+    // 1 KB passavam folgado nos 2.000 passos e derrubavam o renderer — sem
+    // chamar ferramenta, ou seja, sem passar por aprovação nenhuma.
+    const programa = [
+      'const s0 = "aaaaaaaaaa";',
+      ...Array.from({ length: 20 }, (_, i) => `const s${i + 1} = s${i} + s${i};`)
+    ].join("\n");
+    const resultado = await run(programa);
+    expect(resultado.ok).toBe(false);
+    expect(resultado.reason).toContain("caracteres");
+  });
+
+  it("interpolação de template falha alto em vez de virar texto literal", async () => {
+    const resultado = await run("const soma = 2; log(`total: ${soma}`);");
+    expect(resultado.ok).toBe(false);
+    expect(resultado.reason).toContain("interpolação");
+  });
+
+  it("programa cortado no meio devolve erro de sintaxe, não TypeError", async () => {
+    for (const truncado of ["const", "let x", "for (const"]) {
+      const resultado = await run(truncado);
+      expect(resultado.ok).toBe(false);
+      expect(resultado.reason).not.toContain("undefined");
+    }
+  });
+
   it("cancelamento interrompe no meio", async () => {
     const controller = new AbortController();
     const call = async () => {

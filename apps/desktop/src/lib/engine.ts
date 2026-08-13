@@ -352,16 +352,31 @@ async function singleTurn(
     if (!ctx.runtimeRunning) return demoStream(messages, events, signal);
     // Streaming real do llama.cpp local (antes vinha tudo de uma vez).
     let streamed = "";
+    /**
+     * "Parar" para de PINTAR na hora, e o turno é liberado.
+     *
+     * O runtime local não expõe cancelamento (não existe
+     * `runtime_chat_cancel`, e o `pump_sse` do Rust é a variante sem
+     * `stream_id`), então a geração segue até o modelo terminar sozinho — mas
+     * antes o botão não fazia nem isso: os tokens continuavam chegando na
+     * bolha e o `sending` só liberava no fim. As rotas de provedor e de
+     * gateway cancelam de verdade; esta é a única que não, e o limite fica
+     * dito aqui em vez de virar um botão que engana.
+     */
+    const cancelado = () => signal?.aborted === true;
     try {
       const full = await runtime.chatStream(messages, (delta) => {
+        if (cancelado()) return;
         streamed += delta;
         events.onDelta(delta);
       });
+      if (cancelado()) return streamed;
       if (!streamed && full) events.onDelta(full);
       return full || streamed;
     } catch {
       // Build antiga sem o comando de stream: cai no caminho não-streaming.
       const response = await runtime.chat(messages);
+      if (cancelado()) return streamed;
       const content = response.choices?.[0]?.message?.content ?? "O runtime não retornou conteúdo.";
       events.onDelta(content);
       return content;
