@@ -40,6 +40,8 @@ import { createStreamBuffer } from "../lib/streamBuffer";
 import { diagnosticCommand, formatDiagnostics } from "../lib/diagnostics";
 import { McpHttpClient, mcpToolsToSpecs, parseNamespaced } from "../lib/mcp";
 import { extractMemoryCandidates, memory, memoryPreamble } from "../lib/memory";
+import { vectorScores } from "../lib/memoryVectors";
+import { embedTexts } from "../lib/gateway";
 import { composerBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
@@ -171,7 +173,21 @@ export function Composer() {
     }
     if (settings.memoryEnabled) {
       try {
-        const hits = await memory.recall(question, settings.memoryRecallK);
+        // Busca semântica: com gateway, os vetores aproximam por SENTIDO —
+        // "como coloco no ar" acha "procedimento de deploy". Sem gateway (ou
+        // sem provedor de embeddings) `vectors` fica nulo e a recuperação cai
+        // na camada morfológica, que não depende de rede.
+        let vectors: Map<string, number> | null = null;
+        if (session) {
+          const itens = await memory.listForVectors();
+          vectors = await vectorScores({
+            items: itens,
+            query: question,
+            storage: window.localStorage,
+            embed: (inputs) => embedTexts(session, inputs)
+          });
+        }
+        const hits = await memory.recall(question, settings.memoryRecallK, vectors ?? undefined);
         const preamble = memoryPreamble(hits);
         if (preamble) system.push({ role: "system", content: preamble });
       } catch {

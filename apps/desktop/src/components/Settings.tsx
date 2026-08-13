@@ -72,7 +72,7 @@ import { providerBaseUrls, resolveBaseUrl } from "../lib/engine";
 import { extensions } from "../lib/extensions";
 import { listWorkspaces } from "../lib/gateway";
 import { McpHttpClient, type McpServerConfig } from "../lib/mcp";
-import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport } from "../lib/memory";
+import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport, rankMemories } from "../lib/memory";
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
 import { AdminSection } from "./settings/AdminSection";
@@ -1138,12 +1138,27 @@ function MemorySection() {
     void reload();
   }, []);
 
+  /**
+   * A busca do painel usa o MESMO ranqueamento que o modelo recebe.
+   *
+   * Era um filtro de substring, e isso mentia para o usuário: procurando
+   * "publicações" ele não achava "Como publicar o sistema" e concluía que a
+   * memória não existia — enquanto o modelo, que já usa o ranqueamento
+   * semântico, a recebia normalmente. Duas buscas diferentes sobre a mesma
+   * memória é como se perde a confiança na função inteira.
+   */
   const filtered = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term = query.trim();
     if (!term) return items;
-    return items.filter((item) =>
-      `${item.title} ${item.content} ${item.tags.join(" ")}`.toLowerCase().includes(term)
+    const hits = rankMemories(items, term, items.length);
+    // Substring continua valendo como rede de segurança: quem digita um
+    // pedaço de identificador ou um código espera achar literalmente.
+    const literal = term.toLowerCase();
+    const porSubstring = items.filter((item) =>
+      `${item.title} ${item.content} ${item.tags.join(" ")}`.toLowerCase().includes(literal)
     );
+    const vistos = new Set(hits.map((hit) => hit.item.id));
+    return [...hits.map((hit) => hit.item), ...porSubstring.filter((item) => !vistos.has(item.id))];
   }, [items, query]);
 
   async function saveEdit(item: MemoryItem) {
