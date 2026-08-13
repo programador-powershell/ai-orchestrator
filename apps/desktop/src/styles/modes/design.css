@@ -477,6 +477,58 @@
   animation: float-in var(--t-base) var(--spring-soft) both;
 }
 
+/* Composição: transição do clipe, faixa sobreposta e texto */
+.desx-compose-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.desx-compose-row .lg-field { flex: 1 1 84px; min-width: 0; }
+.desx-compose-row input[type="color"] { padding: 2px; height: 26px; cursor: pointer; }
+
+.desx-overlay-card {
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+}
+.desx-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.desx-overlay-head strong {
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--fs-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desx-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+.desx-overlay-add {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.desx-overlay-add:hover { border-color: var(--accent); color: var(--ink); }
+
 /* Aba Site: campo de URL no topo + pill Editar (estilo "Pedir ao agente") */
 .desx-url-top {
   height: 30px;
