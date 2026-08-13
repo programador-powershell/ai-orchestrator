@@ -1,4 +1,5 @@
 mod admin;
+mod agent_audit;
 mod analytics;
 mod auth;
 mod config;
@@ -87,6 +88,16 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/workspaces/{workspace}/admin/prices/{model}",
             axum::routing::delete(analytics::price_delete),
+        )
+        // Trilha de auditoria: gravar é do membro (quem executa registra),
+        // ler é do admin (não é informação para colega ver).
+        .route(
+            "/workspaces/{workspace}/agent-actions",
+            post(agent_audit::record_action),
+        )
+        .route(
+            "/workspaces/{workspace}/admin/agent-actions",
+            get(agent_audit::list_actions),
         )
         .route("/workspaces", get(routes::workspaces))
         .route(

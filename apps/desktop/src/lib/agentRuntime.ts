@@ -47,6 +47,7 @@ import {
   subordinateSystemPrompt
 } from "./delegation";
 import type { EngineSelection } from "@ai-orchestrator/contracts";
+import { recordAgentAction } from "./agentAudit";
 import {
   closeSession,
   computerUseInstruction,
@@ -210,18 +211,59 @@ class TreeRunner {
   /** Ferramenta comum — mesma aprovação do resto do app. */
   private async runTool(taskId: string, call: ToolCall): Promise<string> {
     const task = this.tree.get().tasks[taskId];
+    // Execução na estação é a única ação que vira trilha de auditoria: é a
+    // que sai do app e toca a máquina de alguém.
+    const auditable = call.tool === "computer_exec";
     if (task && needsApproval(call)) {
       const allowed = await this.options.hooks.approve(task, call);
       if (!allowed) {
+        // Recusa TAMBÉM é auditada: saber o que a IA tentou rodar e alguém
+        // barrou vale tanto quanto saber o que rodou.
+        if (auditable) await this.audit(task?.title ?? "", call, false, null, 0, true);
         return formatToolResult(call, "recusada pelo usuário — siga sem esta ferramenta");
       }
     }
     // Computer use vai para a sessão isolada; o dispatch comum não conhece
     // sessão e escreveria na pasta do PROJETO — que é outra coisa.
+    const started = performance.now();
     const result = COMPUTER_TOOL_NAMES.has(call.tool)
       ? await dispatchComputerTool(call.tool, call.args, this.session)
       : await dispatchTool(call, this.options.root);
-    return formatToolResult(call, result.output);
+    let aviso = "";
+    if (auditable) {
+      const outcome = await this.audit(
+        task?.title ?? "",
+        call,
+        true,
+        result.ok ? 0 : 1,
+        performance.now() - started,
+        !result.output.includes("SEM Job Object")
+      );
+      // Falha de auditoria NÃO derruba a execução, mas também não passa em
+      // silêncio: o modelo e o usuário veem que aquela linha não foi gravada.
+      if (!outcome.recorded) aviso = `\n\n[auditoria] ${outcome.reason ?? "não registrada"}`;
+    }
+    return formatToolResult(call, `${result.output}${aviso}`);
+  }
+
+  /** Manda a linha para a trilha do gateway. Nunca lança. */
+  private audit(
+    agent: string,
+    call: ToolCall,
+    approved: boolean,
+    exitCode: number | null,
+    durationMs: number,
+    jailed: boolean
+  ) {
+    return recordAgentAction(this.options.ctx.session ?? null, {
+      agent,
+      goal: this.options.goal,
+      command: typeof call.args.command === "string" ? call.args.command : JSON.stringify(call.args),
+      approved,
+      exitCode,
+      durationMs,
+      jailed
+    });
   }
 
   /**

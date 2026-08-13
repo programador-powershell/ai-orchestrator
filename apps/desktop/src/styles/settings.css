@@ -637,3 +637,103 @@
 .usgx-price-del:hover {
   color: var(--danger, #ef4444);
 }
+
+/* ---------- Trilha de execuções do agente (Administração) ------------ */
+
+.audx {
+  display: grid;
+  gap: 8px;
+}
+.audx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.audx-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  cursor: pointer;
+}
+.audx-rows {
+  display: grid;
+  gap: 5px;
+  max-height: 340px;
+  overflow: auto;
+}
+.audx-row {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+/* Recusa é a linha que mais importa numa revisão — destacada. */
+.audx-row--denied {
+  border-left-color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 6%, var(--panel));
+}
+.audx-row header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.audx-row header strong {
+  font-size: var(--fs-micro);
+}
+.audx-agent {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.audx-row header small {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+.audx-cmd {
+  margin: 0;
+  padding: 6px 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-radius: var(--radius-xs, 6px);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.audx-row footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.audx-row footer .ok {
+  color: var(--ok, #10b981);
+}
+.audx-row footer .bad {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--danger, #ef4444);
+}
+.audx-row footer small {
+  margin-left: auto;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}

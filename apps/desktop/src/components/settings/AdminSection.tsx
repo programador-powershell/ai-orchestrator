@@ -14,6 +14,7 @@ import { CircleCheck, LoaderCircle, ShieldCheck, Trash2, UsersRound } from "luci
 import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
 import { useApp } from "../../lib/store";
 import { UsageReport } from "./UsageReport";
+import { AgentAuditLog } from "./AgentAuditLog";
 
 interface AdminGroup {
   id: string;
@@ -354,6 +355,17 @@ export function AdminSection() {
           Consumo e custo por usuário, grupo, modelo e dia. Os números vêm dos eventos registrados pelo gateway.
         </p>
         <UsageReport />
+      </div>
+
+      {/* Trilha de execuções: pergunta diferente da relatoria de custo, por
+          isso vem em bloco próprio e sai de outra tabela. */}
+      <div className="setx-block">
+        <h4>Execuções do agente na estação</h4>
+        <p className="setx-hint">
+          O que a IA executou na máquina de cada usuário, com aprovações e recusas. Alimentado pelas ações de{" "}
+          <code>computer_exec</code> — ver <code>docs/adr-computer-use.md</code>.
+        </p>
+        <AgentAuditLog />
       </div>
     </Section>
   );
