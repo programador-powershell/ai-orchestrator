@@ -40,6 +40,11 @@ import { useCrew } from "../lib/crewStore";
 import { goalBus } from "../lib/ops";
 import { useApp } from "../lib/store";
 import { chatOnce, modelLabel, type EngineContext } from "../lib/engine";
+import { runAgentGoal } from "../lib/agentRuntime";
+import { effectiveLimits } from "../lib/agentTree";
+import { useApprovalQueue } from "../lib/approvalQueue";
+import type { ToolCall } from "../lib/agent";
+import type { AgentTask } from "../lib/agentTree";
 
 const STATUS_LABEL: Record<CrewMember["status"], string> = {
   hired: "contratado",
@@ -49,18 +54,38 @@ const STATUS_LABEL: Record<CrewMember["status"], string> = {
   cancelled: "cancelado"
 };
 
+/**
+ * Papéis que TOCAM o repositório.
+ *
+ * Idea, scope e plan produzem documento: uma chamada de modelo basta e dar
+ * ferramenta a eles só gastaria voltas. Code, review e CI precisam ler o
+ * projeto, gravar arquivo e rodar comando — sem isso a equipe "entrega" um
+ * texto dizendo o que faria, que é exatamente o que esta aba não pode ser.
+ */
+const EXECUTORES = new Set<CrewMember["role"]>(["code", "review", "ci"]);
+
 export function CrewView({
   selection,
-  ctx
+  ctx,
+  root
 }: {
   selection: EngineSelection;
   ctx: EngineContext;
+  root: string;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [erro, setErro] = useState("");
   /** Como o nível foi decidido nesta execução — e por quê. */
   const [decision, setDecision] = useState<CrewDecision | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * Aprovações dos papéis executores.
+   *
+   * Fila e não slot único: os agentes de uma mesma onda rodam em paralelo e
+   * pedem ao mesmo tempo; o segundo pedido apagaria o resolve do primeiro e
+   * travaria a onda inteira.
+   */
+  const approvals = useApprovalQueue<{ task: AgentTask; call: ToolCall }>();
 
   const policy = useApp((state) => state.policy);
   const catalog = useApp((state) => state.settings.modelCatalog);
@@ -105,6 +130,55 @@ export function CrewView({
     // O streaming alimenta a barra lateral: sem isso o agente ficaria
     // "trabalhando" por minutos sem sinal nenhum de que algo acontece.
     const call: CrewCall = async ({ member, system, user, signal }) => {
+      if (EXECUTORES.has(member.role)) {
+        /**
+         * Papel executor roda no runtime de ferramentas, não numa conversa.
+         *
+         * É a diferença entre a equipe DIZER o que faria e fazer: aqui o
+         * agente lê o projeto, grava arquivo (com a mesma aprovação humana do
+         * resto do app) e roda comando. As permissões continuam sendo do
+         * admin — code mode e área isolada só existem se a política abrir.
+         */
+        const tree = await runAgentGoal({
+          goal: `${system}\n\n${user}`,
+          selection,
+          ctx,
+          limits: effectiveLimits(
+            policy
+              ? {
+                  maxDepth: policy.agentMaxDepth,
+                  maxChildren: policy.agentMaxChildren,
+                  maxTotal: policy.agentMaxTotal
+                }
+              : null
+          ),
+          root,
+          signal,
+          codeMode: policy?.codeModeAllowed === true,
+          hooks: {
+            onTree: (estado) => {
+              // Quantos agentes a delegação abriu e quanto já saiu: é o sinal
+              // de vida de um papel que pode levar minutos.
+              const raiz = estado.tasks[estado.rootId];
+              const total = Object.keys(estado.tasks).length;
+              const escrito = raiz?.output.length ?? 0;
+              useCrew
+                .getState()
+                .activity(
+                  member.id,
+                  total > 1
+                    ? `${total} agentes · ${escrito} car.`
+                    : escrito
+                      ? `escrevendo · ${escrito} car.`
+                      : "trabalhando"
+                );
+            },
+            onStage: (nota) => useCrew.getState().activity(member.id, nota),
+            approve: (task, chamada) => approvals.request({ task, call: chamada })
+          }
+        });
+        return tree.tasks[tree.rootId]?.report ?? "";
+      }
       let escritos = 0;
       return chatOnce(
         selection,
@@ -165,6 +239,9 @@ export function CrewView({
 
   function stop() {
     abortRef.current?.abort();
+    // Aprovação pendente (inclusive as que estão atrás na fila) ficaria
+    // esperando um clique que não vem mais.
+    approvals.denyAll();
     useCrew.getState().stop();
   }
 
@@ -220,6 +297,32 @@ export function CrewView({
         <div className="crwx-error">
           <CircleAlert size={13} />
           {erro}
+        </div>
+      ) : null}
+
+      {/* Ferramenta que altera o projeto para com uma pessoa. É o mesmo gate do
+          resto do app: a equipe não vira caminho lateral para gravar arquivo. */}
+      {approvals.current ? (
+        <div className="agtx-approval">
+          <CircleAlert size={13} />
+          <div>
+            <strong>
+              “{approvals.current.task.title}” quer executar{" "}
+              <code>{approvals.current.call.tool}</code>
+            </strong>
+            <pre>{JSON.stringify(approvals.current.call.args, null, 2)}</pre>
+            {approvals.pending > 1 ? (
+              <span className="agtx-approval-fila">+{approvals.pending - 1} na fila</span>
+            ) : null}
+          </div>
+          <div className="agtx-approval-actions">
+            <button className="lg-button primary" onClick={() => approvals.answer(true)}>
+              Permitir
+            </button>
+            <button className="lg-button ghost" onClick={() => approvals.answer(false)}>
+              Recusar
+            </button>
+          </div>
         </div>
       ) : null}
 

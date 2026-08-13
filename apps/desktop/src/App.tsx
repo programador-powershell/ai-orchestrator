@@ -96,7 +96,7 @@ const railAction: Record<UiMode, string> = {
   data: "Nova sessão",
   work: "Nova sessão",
   security: "Nova revisão",
-  agent: "Novo fluxo",
+  agent: "Nova equipe",
   office: "Nova sessão",
   tune: "Novo treino"
 };
