@@ -163,6 +163,14 @@ export function OfficeView() {
           const { commands, issues } = parseCommands(last.content, useOffice.getState().format);
           if (issues.length) setNote(issues[0]);
           if (!commands.length) return;
+          // Binário extraído é leitura: aplicar aqui mudaria só a memória e a
+          // tela anunciaria uma edição que o disco nunca recebe.
+          if (useOffice.getState().extracted) {
+            setNote(
+              "Este arquivo foi lido de um binário (DOCX/PPTX/PDF): a edição pelo chat não persiste. Use “Substituir no arquivo” para reescrever o documento."
+            );
+            return;
+          }
           if (commands.length > 3) {
             useOffice.setState({ pending: commands });
             return;

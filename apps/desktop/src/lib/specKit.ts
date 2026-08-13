@@ -185,7 +185,17 @@ function taskHeading(linha: string): string | null {
   // `[-*]\s+` não casa `**negrito**`, que não tem espaço depois do asterisco.
   const bullet = semHeader.match(/^\s*[-*]\s+(.*)$/);
   const numerada = semHeader.match(/^\s*\d+[.)]\s*(.*)$/);
-  const corpo = bullet?.[1] ?? numerada?.[1] ?? (eraHeader ? semHeader : null);
+  /**
+   * Linha INTEIRA em negrito — `**1. Título**` — sem `##` na frente.
+   *
+   * É um dos formatos que o docstring acima promete tolerar, e era
+   * justamente o que não passava: o bullet exige espaço depois do
+   * asterisco, a numerada exige dígito no começo e sem `##` não havia
+   * header. Com as tarefas todas nesse formato, `parseTasks` devolvia
+   * lista vazia e o trabalho gerado sumia sem aviso.
+   */
+  const negrito = semHeader.match(/^\s*\*\*(.+)\*\*\s*$/);
+  const corpo = bullet?.[1] ?? numerada?.[1] ?? negrito?.[1] ?? (eraHeader ? semHeader : null);
   if (corpo === null) return null;
   const limpo = corpo
     .replace(/^\*\*(.*)\*\*$/, "$1") // **Título**

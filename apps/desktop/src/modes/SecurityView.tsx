@@ -285,6 +285,8 @@ export function SecurityView() {
     }
   });
   const [files, setFiles] = useState<ScannedFile[]>([]);
+  /** A pasta de onde os achados vieram — o campo acima pode mudar depois. */
+  const [scannedRoot, setScannedRoot] = useState("");
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [category, setCategory] = useState<Category | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -411,6 +413,9 @@ export function SecurityView() {
       );
       const sources = reads.filter((file): file is ScannedFile => file !== null);
       setFiles(sources);
+      // A raiz DESTE scan. O campo pode mudar depois; os achados continuam
+      // sendo daqui, e é aqui que o patch tem de ser gravado.
+      setScannedRoot(root.trim());
       setFindings(sources.flatMap((file) => scanTextForSecrets(file.path, file.content)));
       setScanNote(
         `${sources.length} arquivo(s) de texto da raiz da pasta escaneados` +
@@ -625,8 +630,20 @@ export function SecurityView() {
     }
     const inMemoryOnly = !isTauriHost || finding.file.startsWith("colado/") || finding.file.startsWith("upload/");
     if (!inMemoryOnly) {
+      /**
+       * Grava na raiz DO SCAN, não na que está no campo agora.
+       *
+       * Trocar a pasta entre escanear e aplicar não limpava os achados: o
+       * `fs_write` levava o caminho relativo do projeto A (`config.json`)
+       * para a raiz do projeto B e sobrescrevia um arquivo sem relação
+       * nenhuma — marcado na tela como "patch aplicado".
+       */
+      const alvo = scannedRoot || root.trim();
+      if (scannedRoot && scannedRoot !== root.trim()) {
+        setReviewNote(`Patch gravado em ${alvo} (a pasta do scan), não na pasta que está no campo.`);
+      }
       try {
-        await invoke("fs_write", { root: root.trim(), path: finding.file, content: nextContent });
+        await invoke("fs_write", { root: alvo, path: finding.file, content: nextContent });
         setFiles((current) =>
           current.map((file) => (file.path === finding.file ? { ...file, content: nextContent } : file))
         );

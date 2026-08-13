@@ -261,12 +261,29 @@ class TreeRunner {
   private async runCodeProgram(taskId: string, call: ToolCall): Promise<string> {
     const source = typeof call.args.program === "string" ? call.args.program : "";
     if (!source.trim()) return formatToolResult(call, "programa vazio");
+    const avisos: string[] = [];
     const result = await runProgram(source, {
       allowed: this.codeModeTools(),
       signal: this.options.signal,
+      /**
+       * O programa recebe a saída CRUA da ferramenta.
+       *
+       * Antes ele recebia o texto que vai para o modelo — com cabeçalho
+       * ("Resultado da ferramenta `fs_read`:") e cortado em 8.000 caracteres.
+       * Um read-modify-write comum gravava o cabeçalho dentro do arquivo do
+       * usuário e, em arquivo grande, gravava a versão truncada por cima do
+       * original: perda de dados depois de uma aprovação que parecia inócua.
+       * Comparar saída com `===` também nunca batia.
+       */
       call: async (tool, args) => {
-        const saida = await this.runTool(taskId, { tool, args: args as Record<string, unknown> });
-        return saida;
+        const { output, notice } = await this.runToolRaw(taskId, {
+          tool,
+          args: args as Record<string, unknown>
+        });
+        // O aviso de auditoria é META, não valor: entra no relatório do
+        // programa, nunca no dado que ele manipula.
+        if (notice) avisos.push(notice);
+        return output;
       }
     });
     const linhas = [
@@ -275,12 +292,27 @@ class TreeRunner {
     ];
     if (result.logs.length) linhas.push(`log:\n${result.logs.join("\n")}`);
     if (result.value !== null) linhas.push(`retorno: ${JSON.stringify(result.value)}`);
+    if (avisos.length) linhas.push(avisos.join("\n"));
     return formatToolResult(call, linhas.join("\n"));
   }
 
   /** Ferramenta comum — mesma aprovação do resto do app. */
   private async runTool(taskId: string, call: ToolCall): Promise<string> {
     if (call.tool === "run_program") return this.runCodeProgram(taskId, call);
+    const { output, notice } = await this.runToolRaw(taskId, call);
+    return formatToolResult(call, `${output}${notice}`);
+  }
+
+  /**
+   * A execução em si, devolvendo a saída como ela é.
+   *
+   * Quem fala com o MODELO embrulha depois (cabeçalho + teto de tamanho);
+   * quem fala com o code mode usa isto direto.
+   */
+  private async runToolRaw(
+    taskId: string,
+    call: ToolCall
+  ): Promise<{ output: string; notice: string }> {
     const task = this.tree.get().tasks[taskId];
     // Execução na estação é a única ação que vira trilha de auditoria: é a
     // que sai do app e toca a máquina de alguém.
@@ -291,7 +323,7 @@ class TreeRunner {
         // Recusa TAMBÉM é auditada: saber o que a IA tentou rodar e alguém
         // barrou vale tanto quanto saber o que rodou.
         if (auditable) await this.audit(task?.title ?? "", call, false, null, 0, true);
-        return formatToolResult(call, "recusada pelo usuário — siga sem esta ferramenta");
+        return { output: "recusada pelo usuário — siga sem esta ferramenta", notice: "" };
       }
     }
     // Computer use vai para a sessão isolada; o dispatch comum não conhece
@@ -306,15 +338,21 @@ class TreeRunner {
         task?.title ?? "",
         call,
         true,
-        result.ok ? 0 : 1,
+        // O código REAL do processo. `ok ? 0 : 1` transformava um comando
+        // morto com 137 num "1" — a trilha respondia errado a pergunta que
+        // ela existe para responder. Sem `run` (falha antes de executar) o
+        // código é desconhecido, e null diz isso melhor que um 1 inventado.
+        result.run ? result.run.exitCode : null,
         performance.now() - started,
-        !result.output.includes("SEM Job Object")
+        // Antes isto era farejado na prosa do resultado: um comando cujo
+        // stdout contivesse "SEM Job Object" era auditado como fora da caixa.
+        result.run ? result.run.jailed : true
       );
       // Falha de auditoria NÃO derruba a execução, mas também não passa em
       // silêncio: o modelo e o usuário veem que aquela linha não foi gravada.
       if (!outcome.recorded) aviso = `\n\n[auditoria] ${outcome.reason ?? "não registrada"}`;
     }
-    return formatToolResult(call, `${result.output}${aviso}`);
+    return { output: result.output, notice: aviso };
   }
 
   /** Manda a linha para a trilha do gateway. Nunca lança. */

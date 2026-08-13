@@ -126,24 +126,37 @@ export interface DiffLine {
   text: string;
 }
 
-/** Converte um diff unificado em linhas tipadas para renderização. */
+/**
+ * Converte um diff unificado em linhas tipadas para renderização.
+ *
+ * O que aparece aqui é EXATAMENTE o que `applyUnifiedDiff` vai gravar — as
+ * duas funções leem o corpo do hunk pela mesma regra. Antes esta descartava
+ * `+++`/`---` em qualquer posição, inclusive DENTRO do hunk, enquanto a
+ * aplicação tratava `+++i;` como adição de `++i;` e `--- senha` como remoção
+ * de `-- senha` (comentário SQL). A linha ficava invisível na revisão humana
+ * e ia para o disco assim mesmo: um furo no único gate da aba de segurança.
+ */
 export function parseUnifiedDiff(patch: string): DiffLine[] {
   const out: DiffLine[] = [];
+  let dentroDoHunk = false;
   for (const raw of patch.split(/\r?\n/)) {
     if (raw.startsWith("@@")) {
       out.push({ type: "hunk", text: raw });
+      dentroDoHunk = true;
       continue;
     }
-    // Cabeçalhos de arquivo e marcadores de metadado não viram linhas de diff.
+    // Cabeçalho de arquivo e metadado só existem FORA do corpo do hunk.
     if (
-      raw.startsWith("+++") ||
-      raw.startsWith("---") ||
-      raw.startsWith("diff ") ||
-      raw.startsWith("index ") ||
-      raw.startsWith("\\")
+      !dentroDoHunk &&
+      (raw.startsWith("+++") ||
+        raw.startsWith("---") ||
+        raw.startsWith("diff ") ||
+        raw.startsWith("index "))
     ) {
       continue;
     }
+    // "\ No newline at end of file" — a aplicação também ignora.
+    if (raw.startsWith("\\")) continue;
     if (raw.startsWith("+")) {
       out.push({ type: "add", text: raw.slice(1) });
       continue;
@@ -163,7 +176,16 @@ export function parseUnifiedDiff(patch: string): DiffLine[] {
  * Retorna null quando o patch não bate com o conteúdo (nada é escrito).
  */
 export function applyUnifiedDiff(source: string, patch: string): string | null {
-  const src = source.split("\n");
+  /**
+   * O arquivo do Windows chega com CRLF — `fs_read` devolve os bytes crus — e
+   * o patch nasce de um `split(/\r?\n/)`, sem o `\r`. Cortando o fonte só em
+   * "\n", cada linha ficava com um `\r` no fim e NENHUMA comparação batia: o
+   * auto-fix de segredo não aplicava nada na plataforma-alvo do app, com a
+   * mensagem falsa "o arquivo mudou desde o scan". A quebra original é
+   * preservada na volta para não reescrever o arquivo inteiro.
+   */
+  const crlf = source.includes("\r\n");
+  const src = source.split(/\r?\n/);
   const out: string[] = [];
   const lines = patch.split(/\r?\n/);
   let cursor = 0;
@@ -203,7 +225,7 @@ export function applyUnifiedDiff(source: string, patch: string): string | null {
   }
   if (!touched) return null;
   out.push(...src.slice(cursor));
-  return out.join("\n");
+  return out.join(crlf ? "\r\n" : "\n");
 }
 
 const MAX_FILE_CHARS = 6000;

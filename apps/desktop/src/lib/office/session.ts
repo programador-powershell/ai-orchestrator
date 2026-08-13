@@ -53,6 +53,17 @@ export const useOffice = create<OfficeSession>()((set) => ({
  */
 export function applyOfficeCommands(commands: OfficeCommand[]): { applied: number; touched: number } {
   const state = useOffice.getState();
+  /**
+   * Texto EXTRAÍDO de binário é leitura, não edição.
+   *
+   * Num .docx aberto pelo extrator, o adapter mudava o texto em memória, o
+   * change log registrava a alteração e a tela dizia "1 operação aplicada" —
+   * mas o `save()` recusa formato não editável e o binário no disco nunca
+   * mudava. A pessoa saía acreditando que o documento tinha sido editado e
+   * perdia o trabalho ao reabrir. Quem edita binário é o painel de
+   * substituição (que reescreve o OOXML de verdade).
+   */
+  if (state.extracted) return { applied: 0, touched: 0 };
   const adapter = new TextAdapter(state.format, state.content);
   adapter.setSelection(state.selection);
   let log = state.log;
