@@ -5,6 +5,7 @@ mod fsx;
 mod memory;
 mod jail;
 mod office;
+mod office_edit;
 mod policy;
 mod providers;
 mod research;
@@ -90,6 +91,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         fsx::fs_read,
         fsx::fs_write,
         office::office_extract,
+        office_edit::office_replace_text,
         research::research_fetch,
         sandbox::sandbox_execute,
         workspace::sandbox_open,
@@ -137,6 +139,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         fsx::fs_read,
         fsx::fs_write,
         office::office_extract,
+        office_edit::office_replace_text,
         research::research_fetch,
         sandbox::sandbox_execute,
         workspace::sandbox_open,

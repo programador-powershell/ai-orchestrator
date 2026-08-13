@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { EmptyHero, PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
+import { OfficeReplacePanel } from "../components/OfficeReplacePanel";
 import { collectFiles, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
 import { opsBus } from "../lib/ops";
 import { useApp } from "../lib/store";
@@ -136,6 +137,11 @@ export function OfficeView() {
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const editable = EDITABLE.includes(format);
+  // XLSX fica de fora: a célula é resolvida por tabela compartilhada e aba
+  // nomeada em workbook.xml — outro projeto. Recusar é melhor que errar.
+  const canReplace = format === "docx" || format === "pptx";
+  /** Relê o binário depois de editar, para o texto na tela bater com o disco. */
+  const reload = () => void openFile(path);
   const entries = useMemo(() => timeline(log), [log]);
 
   /**
@@ -254,14 +260,15 @@ export function OfficeView() {
                 <div className="offx-readonly">
                   {extracted ? (
                     <>
-                      {/* Texto REAL extraído do OOXML (docx/xlsx/pptx). Leitura:
-                          a IA lê e comenta; a edição ao vivo depende do motor
-                          externo do ADR. */}
+                      {/* Texto REAL extraído do OOXML. O painel abaixo edita o
+                          BINÁRIO por substituição — sem motor externo. */}
                       <p className="offx-note">
-                        <strong>{format.toUpperCase()}</strong> — texto extraído (somente leitura). O agente lê e
-                        comenta este conteúdo; a edição ao vivo do binário depende do motor descrito em{" "}
-                        <code>docs/adr-office-motor-wopi.md</code>.
+                        <strong>{format.toUpperCase()}</strong> — texto extraído do binário.{" "}
+                        {canReplace
+                          ? "Substituir texto reescreve o arquivo de verdade, preservando formatação, estilos e numeração."
+                          : "Edição de XLSX ainda não é suportada (a célula é resolvida por tabela compartilhada)."}
                       </p>
+                      {canReplace ? <OfficeReplacePanel root={root.trim() || "."} path={path} onDone={reload} /> : null}
                       <pre className="offx-extract">{content || "(sem texto extraível)"}</pre>
                     </>
                   ) : (
