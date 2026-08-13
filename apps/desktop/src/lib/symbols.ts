@@ -137,6 +137,16 @@ export function dialectOf(fileName: string): Dialect {
   return "none";
 }
 
+/**
+ * Remove os comentários de bloco que ABREM E FECHAM na mesma linha.
+ *
+ * Sem isto, `/* nota *\/ export function real() {}` seria descartada inteira —
+ * a linha começa com `/*` — e a declaração sumiria do índice.
+ */
+function stripInlineBlock(line: string): string {
+  return line.replace(/\/\*[^]*?\*\//g, " ");
+}
+
 /** Linha que só tem comentário — nomes ali não são símbolos. */
 function isComment(line: string, dialect: Dialect): boolean {
   const trimmed = line.trimStart();
@@ -166,7 +176,9 @@ export function extractSymbols(file: string, text: string): CodeSymbol[] {
 
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+    // Comentário de bloco fechado na própria linha sai antes de tudo; o que
+    // sobra é código de verdade.
+    const line = dialect === "ts" || dialect === "rs" ? stripInlineBlock(lines[i]) : lines[i];
 
     // Docstring Python: tudo dentro dela é texto, não código.
     if (dialect === "py") {

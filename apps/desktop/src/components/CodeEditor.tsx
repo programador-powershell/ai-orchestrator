@@ -27,7 +27,12 @@ export interface CodeEditorApi {
 export interface InlineSuggestionContext {
   text: string;
   cursor: number;
+  /** Abortado quando a pessoa continua digitando — cancele a requisição. */
+  signal?: AbortSignal;
 }
+
+/** Estado da sugestão por modelo, para a barra de status mostrar. */
+export type SuggestState = "idle" | "loading" | "ready";
 
 export interface CodeEditorProps {
   value: string;
@@ -41,10 +46,26 @@ export interface CodeEditorProps {
    * devolver só o trecho que falta (não o token inteiro) ou null.
    */
   inlineSuggestion?: (context: InlineSuggestionContext) => string | null;
+  /**
+   * Sugestão por MODELO (fill-in-the-middle). Só é chamada quando a sugestão
+   * síncrona não achou nada — a do buffer é instantânea e de graça, e trocar
+   * uma pela outra depois de exibida faria o fantasma piscar.
+   */
+  modelSuggestion?: (context: InlineSuggestionContext) => Promise<string | null>;
+  /** Avisa a UI que existe uma chamada de modelo em curso. */
+  onSuggestState?: (state: SuggestState) => void;
 }
 
 /** Acima disso a sugestão inline é desligada (custo por tecla). */
 const MAX_SUGGEST_DOC = 200_000;
+
+/**
+ * Silêncio antes de chamar o modelo.
+ *
+ * Sem esta pausa haveria uma requisição por tecla: caro, e a resposta chegaria
+ * sempre desatualizada em relação ao que já foi digitado.
+ */
+const MODEL_DELAY_MS = 400;
 
 /** Extensão de linguagem escolhida pela extensão do arquivo. */
 function languageFor(fileName: string) {
@@ -127,16 +148,22 @@ export function CodeEditor({
   onChange,
   readOnly = false,
   apiRef,
-  inlineSuggestion
+  inlineSuggestion,
+  modelSuggestion,
+  onSuggestState
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const suggestRef = useRef(inlineSuggestion);
+  const modelRef = useRef(modelSuggestion);
+  const stateRef = useRef(onSuggestState);
   valueRef.current = value;
   onChangeRef.current = onChange;
   suggestRef.current = inlineSuggestion;
+  modelRef.current = modelSuggestion;
+  stateRef.current = onSuggestState;
 
   // Recria a view quando o arquivo muda (linguagem e histórico novos).
   useEffect(() => {
@@ -149,6 +176,61 @@ export function CodeEditor({
     ghost.setAttribute("aria-hidden", "true");
     /** Sugestão viva — só ela habilita o Tab a interceptar. */
     let suggestion = "";
+    /** Estado da chamada ao modelo: timer, cancelamento e número de série. */
+    let modelTimer = 0;
+    let modelAbort: AbortController | null = null;
+    let modelToken = 0;
+
+    function setSuggestState(state: SuggestState) {
+      stateRef.current?.(state);
+    }
+
+    /**
+     * Pede a sugestão ao modelo depois de uma pausa na digitação.
+     *
+     * O número de série existe porque respostas voltam fora de ordem: sem ele,
+     * uma requisição lenta de dois caracteres atrás sobrescreveria a sugestão
+     * atual e o fantasma piscaria com código do passado.
+     */
+    function scheduleModel(target: EditorView) {
+      window.clearTimeout(modelTimer);
+      modelAbort?.abort();
+      modelAbort = null;
+      const ask = modelRef.current;
+      if (!ask || readOnly || !target.hasFocus) {
+        setSuggestState("idle");
+        return;
+      }
+      const range = target.state.selection.main;
+      if (!range.empty || target.state.doc.length > MAX_SUGGEST_DOC) {
+        setSuggestState("idle");
+        return;
+      }
+      const token = (modelToken += 1);
+      const text = target.state.doc.toString();
+      const cursor = range.head;
+      modelTimer = window.setTimeout(() => {
+        const controller = new AbortController();
+        modelAbort = controller;
+        setSuggestState("loading");
+        void ask({ text, cursor, signal: controller.signal })
+          .then((result) => {
+            // Chegou tarde, ou o documento andou: descartar em silêncio.
+            if (token !== modelToken || controller.signal.aborted) return;
+            const live = viewRef.current;
+            if (!live || live.state.doc.toString() !== text) return;
+            if (live.state.selection.main.head !== cursor) return;
+            if (!result) {
+              setSuggestState("idle");
+              return;
+            }
+            suggestion = result;
+            setSuggestState("ready");
+            placeGhost(live);
+          })
+          .catch(() => setSuggestState("idle"));
+      }, MODEL_DELAY_MS);
+    }
 
     function computeSuggestion(target: EditorView): string {
       const suggest = suggestRef.current;
@@ -203,6 +285,12 @@ export function CodeEditor({
             const head = target.state.selection.main.head;
             const accepted = suggestion;
             suggestion = "";
+            // Aceitar cancela o que estivesse a caminho: a sugestão seguinte
+            // sai do texto novo, não do de antes do Tab.
+            window.clearTimeout(modelTimer);
+            modelAbort?.abort();
+            modelToken += 1;
+            setSuggestState("idle");
             target.dispatch({
               changes: { from: head, insert: accepted },
               selection: { anchor: head + accepted.length },
@@ -217,6 +305,15 @@ export function CodeEditor({
           if (update.docChanged) onChangeRef.current?.(update.state.doc.toString());
           if (update.docChanged || update.selectionSet || update.focusChanged) {
             suggestion = computeSuggestion(update.view);
+            // A do buffer é instantânea e de graça; o modelo só entra quando
+            // ela não achou nada — que é justamente o caso de código novo.
+            if (suggestion) {
+              window.clearTimeout(modelTimer);
+              modelAbort?.abort();
+              setSuggestState("idle");
+            } else {
+              scheduleModel(update.view);
+            }
           }
           placeGhost(update.view);
         })
@@ -246,6 +343,11 @@ export function CodeEditor({
     }
     return () => {
       view.scrollDOM.removeEventListener("scroll", onScroll);
+      // Sem isto uma requisição em voo tentaria desenhar num editor destruído.
+      window.clearTimeout(modelTimer);
+      modelAbort?.abort();
+      modelToken += 1;
+      setSuggestState("idle");
       ghost.remove();
       view.destroy();
       viewRef.current = null;
