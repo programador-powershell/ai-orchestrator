@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use sqlx::Row;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -932,16 +932,22 @@ pub async fn design_replication(
 }
 
 async fn fetch_public_text(source: &str) -> Result<(reqwest::Url, String), ApiError> {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|error| ApiError::Internal(error.into()))?;
     let mut current = reqwest::Url::parse(source)
         .map_err(|_| ApiError::BadRequest("sourceUrl must be a valid HTTP(S) URL".into()))?;
 
     for _ in 0..5 {
-        validate_public_url(&current).await?;
+        let aprovados = validate_public_url(&current).await?;
+        // O cliente é montado a CADA salto com o IP aprovado fixado. Sem isto
+        // a checagem acima não valeria para a conexão: o reqwest resolveria o
+        // nome de novo e um DNS de TTL curto entregaria outro destino (o
+        // clássico rebinding). O nome continua valendo para SNI e certificado.
+        let host = current.host_str().unwrap_or_default().to_string();
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(20))
+            .resolve_to_addrs(&host, &aprovados)
+            .build()
+            .map_err(|error| ApiError::Internal(error.into()))?;
         let response = client
             .get(current.clone())
             .header(
@@ -1004,7 +1010,15 @@ async fn fetch_public_text(source: &str) -> Result<(reqwest::Url, String), ApiEr
     ))
 }
 
-async fn validate_public_url(url: &reqwest::Url) -> Result<(), ApiError> {
+/// Valida o destino e devolve os endereços APROVADOS.
+///
+/// Devolver a lista não é detalhe de implementação: é o que fecha o DNS
+/// rebinding. Antes esta função resolvia o nome, aprovava e ia embora — o
+/// `reqwest` resolvia de novo na hora de conectar, e um domínio do atacante
+/// com TTL 0 podia responder um IP público na validação e `169.254.169.254`
+/// na conexão. Quem chama fixa estes endereços no cliente, então a conexão
+/// acontece exatamente contra o que foi aprovado.
+async fn validate_public_url(url: &reqwest::Url) -> Result<Vec<SocketAddr>, ApiError> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(ApiError::BadRequest(
             "sourceUrl must use HTTP or HTTPS".into(),
@@ -1024,21 +1038,21 @@ async fn validate_public_url(url: &reqwest::Url) -> Result<(), ApiError> {
     let addresses = tokio::net::lookup_host((host, port))
         .await
         .map_err(|_| ApiError::BadRequest("source host could not be resolved".into()))?;
-    let mut found = false;
+    let mut aprovados = Vec::new();
     for address in addresses {
-        found = true;
         if !is_public_ip(address.ip()) {
             return Err(ApiError::BadRequest(
                 "local and private sources are not allowed".into(),
             ));
         }
+        aprovados.push(address);
     }
-    if !found {
+    if aprovados.is_empty() {
         return Err(ApiError::BadRequest(
             "source host could not be resolved".into(),
         ));
     }
-    Ok(())
+    Ok(aprovados)
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -1135,6 +1149,24 @@ fn extract_colors(source: &str) -> Vec<String> {
     colors.into_iter().collect()
 }
 
+/// Fim de fatia que nunca cai no meio de um caractere.
+///
+/// O HTML vem de uma página que o usuário aponta e é UTF-8 válido (passou por
+/// `from_utf8_lossy`), então um emoji ou um acento cruzando o índice fixo
+/// fazia o `&s[..n]` entrar em PANIC — derrubando a task da requisição, sem
+/// `CatchPanicLayer` no caminho. Um membro comum reproduzia isso à vontade
+/// apontando a captura para um servidor dele.
+fn corte_seguro(texto: &str, limite: usize) -> usize {
+    if limite >= texto.len() {
+        return texto.len();
+    }
+    let mut corte = limite;
+    while corte > 0 && !texto.is_char_boundary(corte) {
+        corte -= 1;
+    }
+    corte
+}
+
 fn extract_css_variables(source: &str) -> Vec<Value> {
     let mut values = Vec::new();
     let mut cursor = source;
@@ -1158,7 +1190,7 @@ fn extract_css_variables(source: &str) -> Vec<Value> {
         if colon > 4 {
             continue;
         }
-        let raw_value = &rest[colon + 1..rest.len().min(colon + 97)];
+        let raw_value = &rest[colon + 1..corte_seguro(rest, colon + 97)];
         let end = raw_value.find([';', '}']).unwrap_or(raw_value.len());
         let value = raw_value[..end].trim();
         if !value.is_empty()
@@ -1181,7 +1213,10 @@ fn extract_css_values(source: &str, marker: &str, limit: usize) -> Vec<String> {
     let mut offset = 0;
     while let Some(found) = lower[offset..].find(marker) {
         let start = offset + found + marker.len();
-        let tail = &source[start..source.len().min(start + 160)];
+        // `start` vem de um índice na versão em MINÚSCULAS: `to_ascii_lowercase`
+        // preserva o comprimento em bytes, então ele é válido no original —
+        // mas o fim continua precisando de fronteira de caractere.
+        let tail = &source[corte_seguro(source, start)..corte_seguro(source, start + 160)];
         let end = tail.find([';', '}']).unwrap_or(tail.len());
         let value = tail[..end].trim().trim_matches(['\'', '"']);
         if !value.is_empty() {
@@ -1253,6 +1288,35 @@ fn discover_pages(base: &reqwest::Url, html: &str, max_pages: u8) -> Vec<Value> 
         }
     }
     pages
+}
+
+#[cfg(test)]
+mod css_slice_tests {
+    use super::{extract_css_values, extract_css_variables};
+
+    #[test]
+    fn variavel_com_caractere_multibyte_no_corte_nao_estoura() {
+        // O HTML vem de uma página que o membro aponta: bastava um emoji
+        // cruzando o byte 97 para o handler entrar em panic (sem
+        // CatchPanicLayer no caminho) e derrubar a requisição.
+        let fonte = format!(":root {{ --marca: {}🙂; }}", "a".repeat(95));
+        let valores = extract_css_variables(&fonte);
+        assert_eq!(valores.len(), 1);
+    }
+
+    #[test]
+    fn valor_com_caractere_multibyte_no_corte_nao_estoura() {
+        let fonte = format!("body {{ font-family: {}é; }}", "b".repeat(159));
+        let valores = extract_css_values(&fonte, "font-family:", 4);
+        assert_eq!(valores.len(), 1);
+    }
+
+    #[test]
+    fn continua_extraindo_o_caso_comum() {
+        let valores = extract_css_variables(":root { --cor-primaria: #112233; }");
+        assert_eq!(valores[0]["name"], "--cor-primaria");
+        assert_eq!(valores[0]["value"], "#112233");
+    }
 }
 
 #[cfg(test)]

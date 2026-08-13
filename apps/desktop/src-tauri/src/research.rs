@@ -109,7 +109,19 @@ fn extract_links(html: &str) -> Vec<String> {
 /// e só enganava quem lesse o arquivo. É um guard interno, usado por qualquer
 /// comando que faça requisição com URL de fora.
 pub(crate) fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
-    use std::net::{IpAddr, ToSocketAddrs};
+    approved_addrs(url).map(|_| ())
+}
+
+/// A guarda, devolvendo os endereços APROVADOS.
+///
+/// Devolver a lista é o que fecha o DNS rebinding: quem chama fixa estes
+/// endereços no cliente (`resolve_to_addrs`), então a conexão acontece contra
+/// exatamente o que foi checado. Só validar e sair deixava o `reqwest`
+/// resolver o nome DE NOVO na hora de conectar — e um domínio do atacante com
+/// TTL curto responde um IP público na checagem e `169.254.169.254` na
+/// conexão.
+pub(crate) fn approved_addrs(url: &reqwest::Url) -> Result<Vec<std::net::SocketAddr>, String> {
+    use std::net::ToSocketAddrs;
     let host = url.host_str().ok_or_else(|| "URL sem host".to_string())?;
     let lowered = host.to_ascii_lowercase();
     if lowered == "localhost" || lowered.ends_with(".local") || lowered.ends_with(".internal") {
@@ -117,20 +129,76 @@ pub(crate) fn guard_public_host(url: &reqwest::Url) -> Result<(), String> {
     }
     let port = url.port_or_known_default().unwrap_or(80);
     // Resolve o nome: só assim um domínio apontando para IP interno é barrado.
-    let resolved: Vec<IpAddr> = (host, port)
+    let resolved: Vec<std::net::SocketAddr> = (host, port)
         .to_socket_addrs()
         .map_err(|_| "não foi possível resolver o host".to_string())?
-        .map(|addr| addr.ip())
         .collect();
     if resolved.is_empty() {
         return Err("host não resolvido".into());
     }
-    for ip in resolved {
-        if is_internal(ip) {
-            return Err(format!("host {ip} pertence à rede interna — bloqueado"));
+    for addr in &resolved {
+        if is_internal(addr.ip()) {
+            return Err(format!(
+                "host {} pertence à rede interna — bloqueado",
+                addr.ip()
+            ));
         }
     }
-    Ok(())
+    Ok(resolved)
+}
+
+/// Busca uma URL pública seguindo redirects **com o IP fixado a cada salto**.
+///
+/// O redirect é seguido À MÃO, e não pela política do reqwest, porque a
+/// política só consegue REAVALIAR a URL do salto — a conexão em si voltaria a
+/// resolver o nome. Aqui cada salto passa pelas duas guardas (rede pública e
+/// blocklist do admin) e conecta no endereço que acabou de ser aprovado.
+async fn fetch_guarded(
+    inicial: reqwest::Url,
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<(reqwest::Url, Vec<u8>), String> {
+    let mut atual = inicial;
+    for _ in 0..5 {
+        let aprovados = approved_addrs(&atual)?;
+        crate::blocklist::guard_blocklist(&atual)?;
+        let host = atual.host_str().unwrap_or_default().to_string();
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve_to_addrs(&host, &aprovados)
+            .build()
+            .map_err(|error| error.to_string())?;
+        let response = client
+            .get(atual.clone())
+            .header("User-Agent", user_agent)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        if response.status().is_redirection() {
+            let destino = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|valor| valor.to_str().ok())
+                .ok_or_else(|| "redirecionamento sem destino".to_string())?;
+            atual = atual
+                .join(destino)
+                .map_err(|_| "redirecionamento inválido".to_string())?;
+            if atual.scheme() != "http" && atual.scheme() != "https" {
+                return Err("redirecionamento para esquema não aceito".into());
+            }
+            continue;
+        }
+        let response = response.error_for_status().map_err(|error| error.to_string())?;
+        let mut body = response
+            .bytes()
+            .await
+            .map_err(|error| error.to_string())?
+            .to_vec();
+        body.truncate(MAX_BODY_BYTES);
+        return Ok((atual, body));
+    }
+    Err("redirecionamentos demais".into())
 }
 
 /// O IP pertence a uma rede que o app não pode alcançar?
@@ -172,7 +240,13 @@ pub(crate) fn is_internal(ip: std::net::IpAddr) -> bool {
     }
 }
 
-/// Política de redirect que reaplica `guard_public_host` a CADA salto.
+/// Política de redirect que reaplica as guardas a CADA salto.
+///
+/// Continua aqui para quem precise de um cliente reqwest comum, mas o
+/// `fetch_guarded` NÃO a usa: ela consegue reavaliar a URL do salto e não o
+/// endereço em que o reqwest vai conectar depois. Seguir o redirect à mão,
+/// fixando o IP a cada volta, é o que fecha o rebinding.
+#[allow(dead_code)]
 pub(crate) fn guarded_redirect() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= 5 {
@@ -196,31 +270,9 @@ pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     }
     // SSRF: a URL vem do MODELO. Sem esta guarda, uma resposta poderia fazer o
     // app buscar serviços internos (metadados de nuvem, admin em localhost).
-    guard_public_host(&parsed)?;
-    // Blocklist do admin: vale para pesquisa também, não só para conexão.
-    crate::blocklist::guard_blocklist(&parsed)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        // A guarda acima vale só para a PRIMEIRA URL. Com a política padrão do
-        // reqwest (até 10 saltos), um 302 para 169.254.169.254 furava tudo.
-        // Aqui cada salto é reavaliado — redirect legítimo continua funcionando.
-        .redirect(guarded_redirect())
-        .build()
-        .map_err(|error| error.to_string())?;
-    let response = client
-        .get(parsed)
-        .header("User-Agent", "AI Orchestrator Research/1.0")
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
-    let mut body = response
-        .bytes()
-        .await
-        .map_err(|error| error.to_string())?
-        .to_vec();
-    body.truncate(MAX_BODY_BYTES);
+    // As guardas (rede pública + blocklist do admin) rodam a CADA salto, e o
+    // IP aprovado é fixado antes de conectar.
+    let (_, body) = fetch_guarded(parsed, "AI Orchestrator Research/1.0", Duration::from_secs(15)).await?;
     let html = String::from_utf8_lossy(&body).into_owned();
     let title = extract_title(&html);
     let links = extract_links(&html);
@@ -246,32 +298,11 @@ pub async fn page_fetch(url: String) -> Result<FetchedPage, String> {
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("apenas URLs http(s) são aceitas".into());
     }
-    guard_public_host(&parsed)?;
-    crate::blocklist::guard_blocklist(&parsed)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .redirect(guarded_redirect())
-        .build()
-        .map_err(|error| error.to_string())?;
-    let response = client
-        .get(parsed.clone())
-        .header("User-Agent", "AI Orchestrator Design/1.0")
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
-
     // A URL FINAL importa: se houve redirect, os caminhos relativos do HTML
     // são relativos a ela, não à que o usuário digitou.
-    let final_url = response.url().to_string();
-    let mut body = response
-        .bytes()
-        .await
-        .map_err(|error| error.to_string())?
-        .to_vec();
-    body.truncate(MAX_BODY_BYTES);
+    let (url_final, body) =
+        fetch_guarded(parsed, "AI Orchestrator Design/1.0", Duration::from_secs(20)).await?;
+    let final_url = url_final.to_string();
     let html = String::from_utf8_lossy(&body).into_owned();
 
     Ok(FetchedPage {
