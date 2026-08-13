@@ -73,6 +73,29 @@ export function clampLimits(limits: Partial<DelegationLimits>): DelegationLimits
   };
 }
 
+/**
+ * Tetos efetivos = os do ADMIN, opcionalmente APERTADOS pelo cliente.
+ *
+ * A direção importa: o cliente pode querer rodar mais curto numa execução
+ * específica, mas jamais pode subir acima do que a política do grupo definiu —
+ * senão o teto do servidor seria decorativo, como era quando ele vivia aqui.
+ *
+ * `policy` ausente (offline sem cache, ou gateway legado) cai nos padrões
+ * conservadores, não em "sem limite".
+ */
+export function effectiveLimits(
+  policy: Partial<DelegationLimits> | null | undefined,
+  local?: Partial<DelegationLimits>
+): DelegationLimits {
+  const server = clampLimits(policy ?? {});
+  if (!local) return server;
+  return {
+    maxDepth: Math.min(server.maxDepth, clampLimits({ ...server, ...local }).maxDepth),
+    maxChildren: Math.min(server.maxChildren, clampLimits({ ...server, ...local }).maxChildren),
+    maxTotal: Math.min(server.maxTotal, clampLimits({ ...server, ...local }).maxTotal)
+  };
+}
+
 /* ------------------------------ construção --------------------------- */
 
 export function createTree(rootTitle: string, goal: string, now: number, id = "a1"): TreeState {

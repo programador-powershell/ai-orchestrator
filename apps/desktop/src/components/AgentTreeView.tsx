@@ -27,12 +27,13 @@ import {
 import type { EngineSelection } from "@ai-orchestrator/contracts";
 import { Markdown } from "./Markdown";
 import {
-  clampLimits,
+  effectiveLimits,
   flatten,
   summarize,
   type AgentTask,
   type TreeState,
 } from "../lib/agentTree";
+import { useApp } from "../lib/store";
 import { runAgentGoal } from "../lib/agentRuntime";
 import type { ToolCall } from "../lib/agent";
 import type { EngineContext } from "../lib/engine";
@@ -75,7 +76,15 @@ export function AgentTreeView({
   const [computerUse, setComputerUse] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const limits = clampLimits(limitsInput ?? {});
+  // Os tetos são do ADMIN (política do grupo). O prop local só APERTA.
+  const policy = useApp((state) => state.policy);
+  const limits = effectiveLimits(
+    policy
+      ? { maxDepth: policy.agentMaxDepth, maxChildren: policy.agentMaxChildren, maxTotal: policy.agentMaxTotal }
+      : null,
+    limitsInput
+  );
+  const computerUseAllowed = policy?.computerUseAllowed ?? false;
 
   async function start() {
     if (running || !goal.trim()) return;
@@ -91,7 +100,7 @@ export function AgentTreeView({
         limits,
         root,
         signal: controller.signal,
-        computerUse,
+        computerUse: computerUse && computerUseAllowed,
         hooks: {
           onTree: setTree,
           onStage: setStage,
@@ -161,9 +170,15 @@ export function AgentTreeView({
       </div>
 
       <label className="agtx-cu">
-        <input type="checkbox" checked={computerUse} onChange={(event) => setComputerUse(event.target.checked)} disabled={running} />
+        <input
+          type="checkbox"
+          checked={computerUse && computerUseAllowed}
+          onChange={(event) => setComputerUse(event.target.checked)}
+          disabled={running || !computerUseAllowed}
+        />
         <span>
           Área de trabalho isolada (escrever e executar código)
+          {!computerUseAllowed ? <em> — bloqueada pela política do seu grupo</em> : null}
           <small>
             O agente ganha uma pasta própria, apagada no fim, e roda comandos dentro de um Job Object. Cada execução
             pede sua aprovação. Não reduz privilégio: o comando roda com os <strong>seus</strong> direitos e alcança a rede.

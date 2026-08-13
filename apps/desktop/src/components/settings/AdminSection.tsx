@@ -26,6 +26,11 @@ interface AdminGroup {
     byokAllowed?: boolean;
     localRuntimeAllowed?: boolean;
     effortMax?: number;
+    /* Modelo de agente: tetos e computer use, definidos aqui e não no cliente. */
+    agentMaxDepth?: number;
+    agentMaxChildren?: number;
+    agentMaxTotal?: number;
+    computerUseAllowed?: boolean;
   };
   members: number;
 }
@@ -139,6 +144,16 @@ export function AdminSection() {
     }
   }
 
+  /** Grava um pedaço da política do grupo, preservando o resto. */
+  async function patchPolicy(group: AdminGroup, patch: Partial<AdminGroup["policy"]>) {
+    const response = await call(`/groups/${group.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ policy: { ...group.policy, ...patch } })
+    });
+    if (response.ok) await refresh();
+    else setNotice({ text: "não foi possível salvar a política do grupo", tone: "danger" });
+  }
+
   async function toggleMode(group: AdminGroup, mode: UiMode) {
     const modes = group.modes.includes(mode)
       ? group.modes.filter((item) => item !== mode)
@@ -202,6 +217,46 @@ export function AdminSection() {
                   {MODE_LABELS[mode]}
                 </button>
               ))}
+            </span>
+            {/* Modelo de agente do grupo. Fica aqui e não no cliente porque
+                define quanto uma execução pode custar — e quem paga é a
+                empresa. Vazio = usa o padrão do servidor. */}
+            <span className="admx-group__agent">
+              {(
+                [
+                  ["agentMaxDepth", "níveis", 5],
+                  ["agentMaxChildren", "filhos", 10],
+                  ["agentMaxTotal", "total", 60]
+                ] as const
+              ).map(([campo, rotulo, teto]) => (
+                <label key={campo} title={`Teto de ${rotulo} na delegação (máx. ${teto})`}>
+                  {rotulo}
+                  <input
+                    type="number"
+                    min={0}
+                    max={teto}
+                    value={group.policy[campo] ?? ""}
+                    placeholder="padrão"
+                    onChange={(event) => {
+                      const bruto = event.target.value.trim();
+                      void patchPolicy(group, {
+                        [campo]: bruto === "" ? undefined : Math.max(0, Math.min(Number(bruto) || 0, teto))
+                      });
+                    }}
+                  />
+                </label>
+              ))}
+              <label
+                className="admx-group__cu"
+                title="Permite ao agente escrever e EXECUTAR código na estação (área isolada). Ver docs/adr-computer-use.md"
+              >
+                <input
+                  type="checkbox"
+                  checked={group.policy.computerUseAllowed === true}
+                  onChange={(event) => void patchPolicy(group, { computerUseAllowed: event.target.checked })}
+                />
+                executa código
+              </label>
             </span>
             <button className="lg-button danger" onClick={() => void removeGroup(group)} title="Remover grupo">
               <Trash2 size={13} />
