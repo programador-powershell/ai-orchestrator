@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "desktop-web",
+      "name": "ai-bot",
       "runtimeExecutable": "corepack",
-      "runtimeArgs": ["pnpm", "--filter", "@multiplike/desktop", "dev"],
-      "port": 1420
+      "runtimeArgs": ["pnpm", "--dir", "ai-bot/apps/desktop", "dev"],
+      "port": 1421
     }
   ]
 }

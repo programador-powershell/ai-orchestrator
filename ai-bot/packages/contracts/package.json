@@ -1,0 +1,18 @@
+{
+  "name": "@aibot/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Espelho TypeScript do Canonical Agent Protocol (a fonte é o Go)",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

@@ -1,0 +1,1267 @@
+/* ==========================================================================
+   surfaces.css — a forma que o palco assume por especialista.
+
+   Dez superfícies (conversation, editor, document, canvas, schema, board,
+   findings, crew, flow, train) e UMA gramática:
+
+     section.surface
+       .surface-toolbar     barra fina de contexto (os BOTÕES vão para a barra
+                            superior do app, por portal — o palco não desenha
+                            barra própria)
+       .surface-body        corpo rolável
+       .surface-status      linha de estado, monoespaçada
+
+   O que muda entre as superfícies é o conteúdo, não a moldura: trocar de
+   especialista não pode parecer trocar de aplicativo.
+
+   Grafo (DAG, ERD, fluxo) é SVG escrito à mão — não há biblioteca de gráfico
+   aprovada. Cuidado ao mexer nas regras de SVG: CSS GANHA de atributo de
+   apresentação. Onde a superfície pinta `fill`/`stroke` inline (cor de estado
+   calculada em JS), este arquivo NÃO declara cor, senão todos os nós ficariam
+   iguais e o estado sumiria. Onde a superfície só põe `data-state`, a cor é
+   daqui — e as duas tabelas precisam concordar.
+   ========================================================================== */
+
+/* -------------------------- moldura da superfície ----------------------- */
+
+.surface {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.surface-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.surface-title {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.surface-toolbar-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.surface-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* Mesma reserva do `.stage-scroll`: o composer flutua sobre TODA superfície,
+     não só sobre a conversa. */
+  padding: 14px 16px calc(150px + var(--shell-gap));
+}
+
+.surface-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  min-height: 26px;
+  padding: 4px 14px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.surface-status b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.surface-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  padding: 24px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/*
+ * Superfície partida: trabalho à esquerda, conversa estreita à direita. As
+ * cinco usam a mesma proporção de propósito — quem trabalha em duas delas na
+ * mesma sessão não deve ter que reaprender onde a conversa fica.
+ */
+.board-split,
+.canvas-split,
+.schema-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  gap: 12px;
+  align-items: start;
+}
+
+.board-talk,
+.canvas-talk,
+.schema-sql {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+/* Em janela estreita a coluna lateral espremeria o trabalho; ela sai, e a
+   conversa continua inteira na superfície de conversa. */
+@media (max-width: 1100px) {
+  .board-split,
+  .canvas-split,
+  .schema-split,
+  .crew-split,
+  .flow-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .board-talk,
+  .canvas-talk,
+  .schema-sql {
+    display: none;
+  }
+}
+
+/* ------------------------------- utilidades ----------------------------- */
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--shell-gap);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+  text-align: left;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-title {
+  min-width: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-body {
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.card-eyebrow,
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.hint {
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  cursor: default;
+}
+
+button.chip {
+  cursor: pointer;
+}
+
+.chip[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+}
+
+.chip[data-active="false"] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/*
+ * Etiqueta de risco/estado: a cor é o aviso, a PALAVRA é a prova. Nunca só a
+ * cor — quem não distingue vermelho de verde precisa ler o mesmo conteúdo.
+ */
+.badge-risk,
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.badge-risk[data-risk="read"],
+.risk-badge[data-risk="read"] {
+  color: var(--ok);
+}
+
+.badge-risk[data-risk="write"],
+.risk-badge[data-risk="write"],
+.badge-risk[data-severity="medium"] {
+  color: var(--warn);
+}
+
+.badge-risk[data-risk="execute"],
+.badge-risk[data-risk="secret"],
+.risk-badge[data-risk="execute"],
+.risk-badge[data-risk="secret"],
+.badge-risk[data-severity="high"],
+.badge-risk[data-severity="critical"] {
+  color: var(--danger);
+}
+
+.badge-risk[data-risk="network"],
+.risk-badge[data-risk="network"],
+.badge-risk[data-severity="low"] {
+  color: var(--info);
+}
+
+/* O mesmo selo serve de estado de tarefa. Os valores acompanham o mapa de
+   estados do grafo (idle/running/done/failed). */
+.badge-risk[data-state="running"] {
+  color: var(--accent);
+}
+
+.badge-risk[data-state="done"] {
+  color: var(--ok);
+}
+
+.badge-risk[data-state="failed"] {
+  color: var(--danger);
+}
+
+/* Lista de chave e valor (propriedades de nó, parâmetros de treino). */
+.kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 0;
+  font-size: var(--fs-small);
+}
+
+.kv-row {
+  display: contents;
+}
+
+.kv-key {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.kv-value {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.code-block,
+.sql-block {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.meter,
+.progress-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.meter-fill,
+.progress-bar > * {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--t-base) var(--swift);
+}
+
+/* --------------------------- grafos em SVG puro ------------------------- */
+
+.dag,
+.erd,
+.flow {
+  display: block;
+  max-width: 100%;
+  /* A fonte do SVG não herda sozinha em todo motor. */
+  font-family: inherit;
+  font-size: 11.5px;
+}
+
+.dag text,
+.erd text,
+.flow text {
+  fill: var(--ink);
+  /* Rótulo de nó não é para arrastar seleção junto com o nó. */
+  user-select: none;
+}
+
+.crew-graph,
+.flow-canvas {
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--canvas);
+  /* Grade de pontos: dá escala ao desenho sem competir com ele. */
+  background-image: radial-gradient(var(--line) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/*
+ * Estados do nó. Esta tabela precisa concordar com o STATE_INK do CrewSurface
+ * (idle=faint, running=accent, done=ok, failed=danger): lá ela pinta o ícone e
+ * a aresta, que são atributos de SVG fora do alcance destas regras.
+ */
+.dag-node,
+.flow-node {
+  fill: var(--panel);
+  stroke: var(--faint);
+  stroke-width: 1.25;
+  cursor: pointer;
+  transition: stroke var(--t-fast) var(--swift), fill var(--t-fast) var(--swift);
+}
+
+.dag-node[data-state="running"],
+.flow-node[data-state="running"] {
+  stroke: var(--accent);
+}
+
+.dag-node[data-state="done"],
+.flow-node[data-state="done"] {
+  stroke: var(--ok);
+}
+
+.dag-node[data-state="failed"],
+.flow-node[data-state="failed"] {
+  stroke: var(--danger);
+}
+
+.dag-node:hover,
+.flow-node:hover {
+  fill: var(--panel-2);
+}
+
+/* O foco vai no GRUPO (é ele que tem tabIndex), não no retângulo. */
+.dag [role="button"]:focus-visible,
+.flow [role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A aresta do DAG recebe `stroke` inline (cor do estado); aqui só o resto. */
+.dag-edge {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.flow-edge {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.flow-edge[data-state="active"] {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.dag-label,
+.flow-label {
+  fill: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+/* ERD: a tabela é um cartão desenhado à mão. O cabeçalho recebe a matiz da
+   tabela por `style` inline — não declare fill nele. */
+.erd-table-name {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.erd-column {
+  fill: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.erd-key {
+  fill: var(--accent);
+}
+
+.erd-rel {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 3;
+}
+
+/* --------------------------------- quadro ------------------------------- */
+
+.board {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.board-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 200px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.board-column-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.board-column-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.board-column-empty {
+  padding: 10px 4px;
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  text-align: center;
+}
+
+/* O cartão de tarefa carrega a matiz do especialista dono — é a mesma regra da
+   linha da conversa, aplicada ao quadro. */
+.task-card {
+  gap: 6px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--accent);
+}
+
+.task-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.task-bar {
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+}
+
+/* -------------------------------- achados ------------------------------- */
+
+.findings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  /* A severidade fica na borda esquerda: dá para varrer a lista pela margem
+     sem ler nenhuma linha. */
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.finding[data-severity="critical"],
+.finding[data-severity="high"] {
+  border-left-color: var(--danger);
+}
+
+.finding[data-severity="medium"] {
+  border-left-color: var(--warn);
+}
+
+.finding[data-severity="low"] {
+  border-left-color: var(--info);
+}
+
+.finding[data-severity="info"] {
+  border-left-color: var(--faint);
+}
+
+.finding-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.finding-title {
+  min-width: 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.finding-where,
+.finding-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.finding-body {
+  font-size: var(--fs-small);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.finding-hint {
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.finding-patch {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--code-bg);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: pre;
+  user-select: text;
+}
+
+/* -------------------------------- equipe -------------------------------- */
+
+/* O grafo manda; o painel do trabalhador é o detalhe do que está selecionado. */
+.crew-split {
+  grid-template-columns: minmax(0, 1.6fr) minmax(240px, 1fr);
+}
+
+.crew-worker {
+  gap: 8px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.crew-worktree {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.crew-result {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.crew-result[data-ok="false"] {
+  color: var(--danger);
+}
+
+/* Escalonamento é alguém PARADO esperando resposta: cor de aviso, e no fim da
+   tela, que é para onde o olho vai depois do grafo. */
+.crew-escalation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.crew-escalation-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.crew-reply {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  user-select: text;
+}
+
+.crew-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  font-size: var(--fs-small);
+}
+
+/* --------------------------------- fluxo -------------------------------- */
+
+.flow-split {
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+}
+
+.flow-props {
+  gap: 10px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.flow-config {
+  margin: 0;
+}
+
+/* Defeito de fluxo (nó sem caminho de erro, ciclo, órfão): lista curta e
+   explícita, porque é isso que a superfície existe para mostrar. */
+.flow-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  font-size: var(--fs-micro);
+  color: var(--warn);
+}
+
+.flow-issue[data-severity="high"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* -------------------------------- treino -------------------------------- */
+
+/* Custo é a informação que mais dói descobrir tarde: fica no topo, com o
+   número grande, antes de qualquer parâmetro. */
+.train-cost {
+  border-left: 3px solid var(--accent);
+}
+
+.train-cost-value {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.train-cost-label,
+.train-cost-note,
+.train-dataset-meta {
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.train-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 20px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  user-select: text;
+}
+
+.train-params {
+  margin: 0;
+}
+
+.train-warning {
+  color: var(--warn);
+  font-size: var(--fs-micro);
+}
+
+.train-run-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-small);
+}
+
+.run-row:last-child {
+  border-bottom: 0;
+}
+
+.run-row:hover {
+  background: var(--hover);
+}
+
+.run-row-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.run-row[data-state="running"] .run-row-icon {
+  color: var(--accent);
+}
+
+.run-row[data-state="ok"] .run-row-icon,
+.run-row[data-state="done"] .run-row-icon {
+  color: var(--ok);
+}
+
+.run-row[data-state="failed"] .run-row-icon {
+  color: var(--danger);
+}
+
+.run-row-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-row-meta,
+.run-row-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------- editor ------------------------------- */
+
+.editor-pane {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--code-bg);
+}
+
+.editor-gutter {
+  flex: none;
+  overflow: hidden;
+  padding: 10px 8px 10px 12px;
+  border-right: 1px solid var(--line);
+  color: var(--faint);
+  text-align: right;
+  user-select: none;
+}
+
+.editor-linenums {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+
+.editor-area {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  /* A altura de linha do texto e a da régua PRECISAM ser a mesma; qualquer
+     diferença desalinha os números depois de algumas dezenas de linhas. */
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  user-select: text;
+}
+
+.editor-output {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40%;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+}
+
+.editor-output-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.editor-output-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.editor-output-text {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 180px;
+  overflow: auto;
+  background: var(--code-bg);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* ------------------------------- documento ------------------------------ */
+
+/*
+ * A folha. Margem generosa e medida de linha curta: aqui o conteúdo é texto
+ * longo para LER, não painel para varrer.
+ */
+.doc-page {
+  max-width: 78ch;
+  margin-inline: auto;
+  padding: 34px 40px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-soft);
+  font-size: var(--fs-body);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.doc-page h1,
+.doc-page h2,
+.doc-page h3 {
+  margin: 1.4em 0 0.5em;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.doc-page h1 {
+  font-size: calc(var(--fs-title) + 4px);
+}
+
+.doc-page h2 {
+  font-size: var(--fs-title);
+}
+
+.doc-page h3 {
+  font-size: calc(var(--fs-body) + 2px);
+}
+
+.doc-page > :first-child {
+  margin-top: 0;
+}
+
+.doc-page p {
+  margin: 0 0 0.9em;
+}
+
+.doc-page table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+
+.doc-page th,
+.doc-page td {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.doc-page th {
+  background: var(--panel-2);
+}
+
+/* Ocorrência encontrada pela busca. O sublinhado é o que sobrevive a fundo
+   claro, a fundo escuro e a impressão em preto e branco. */
+.doc-hit {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.doc-extract {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.doc-replace {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.doc-replace-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.doc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.doc-input {
+  height: 28px;
+  min-width: 160px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  letter-spacing: 0;
+  text-transform: none;
+  user-select: text;
+}
+
+.doc-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.doc-changes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  max-height: 150px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.doc-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+}
+
+/* Desfeita continua na lista, riscada: sumir com a linha esconderia que a
+   alteração existiu. */
+.doc-change[data-reverted="true"] {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.doc-change-terms {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------ tela de desenho ------------------------- */
+
+/* A grade de pontos dá escala ao que é desenhado por cima. */
+.canvas-frame {
+  position: relative;
+  min-height: 320px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--canvas);
+  background-image: radial-gradient(var(--line) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -1px -1px;
+  overflow: hidden;
+}
+
+.canvas-frame > svg,
+.canvas-frame > iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.canvas-caption {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.canvas-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.token-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-micro);
+}
+
+/* A amostra tem borda porque cor clara sobre painel claro desaparece — e a
+   amostra é justamente a prova do que a cor é. */
+.token-swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
+
+.token-sample {
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-text {
+  min-width: 0;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+
+.inline-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.inline-prompt-field {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  user-select: text;
+}

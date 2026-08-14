@@ -1,0 +1,2248 @@
+/* ==========================================================================
+   shell.css — o esqueleto da tela única.
+
+   Barra do topo, trilho da esquerda, palco e composer. Uma tela só: não há
+   aba nem menu de modos. O que muda quando o master roteia é o CONTEÚDO do
+   palco e do trilho, mais a matiz do acento — a grade abaixo fica parada.
+
+   A estrutura montada pelo App:
+
+     .app-shell[data-theme][data-specialist][data-surface][data-rail]
+       header.topbar
+       .app-body
+         aside.rail[data-collapsed]
+         main.app-stage > section.stage[data-surface] > (superfície)
+       .composer-wrap        (flutua sobre o palco)
+       .approval-backdrop    (cobre tudo enquanto houver pedido)
+       .alab-backdrop        (laboratório de avatares)
+   ========================================================================== */
+
+/* --------------------------------- base --------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* Fallback porque o body está FORA de .app-shell: os tokens não chegam aqui,
+     e sem isso a janela pisca branca antes do React montar. */
+  background: var(--bg, #fbfbf9);
+  color: var(--ink, #26241f);
+  font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  /* App de janela, não de página: a rolagem acontece dentro dos painéis. */
+  overflow: hidden;
+  /* Cromo de app não se seleciona; o texto da conversa liga isso de volta. */
+  user-select: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:where(button, a, select, textarea, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/*
+ * Ícone do lucide sem `size`: o padrão dele é 24px, grande demais dentro de
+ * chip, selo e botão de barra. Só os ícones DENTRO destes elementos são
+ * amarrados — o retrato do bot (.bot-avatar) recebe o tamanho por prop e não
+ * pode ser tocado por CSS, senão o laboratório mostra todos do mesmo tamanho.
+ */
+.chip svg,
+.badge-risk svg,
+.risk-badge svg,
+.card-eyebrow svg,
+.icon-button svg,
+.icon-btn svg,
+.pill-btn svg,
+.line-who svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+/* ------------------------------- a grade -------------------------------- */
+
+.app-shell {
+  position: relative; /* âncora do composer flutuante e das camadas cobertoras */
+  display: grid;
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: var(--fs-body);
+}
+
+/*
+ * O laboratório de avatares também roda em JANELA PRÓPRIA, com o mesmo bundle
+ * e o mesmo shell — só que sem barra, sem trilho e sem composer. Ali o shell
+ * é uma moldura vazia: uma linha só, sem respiro, e o laboratório ocupa tudo.
+ */
+.app-shell--lab {
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+}
+
+.app-shell--lab .alab-backdrop {
+  /* Numa janela dedicada não há o que escurecer atrás: o véu viraria um filtro
+     cinza permanente por cima da única coisa na tela. */
+  padding: 0;
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+.app-shell--lab .alab {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  gap: var(--shell-gap);
+  min-height: 0;
+  /* A largura do trilho anima; a matiz NÃO (ver tokens.css). */
+  transition: grid-template-columns var(--t-base) var(--spring-soft);
+}
+
+/* O App escreve "collapsed"; "closed" fica aceito para o dia em que a
+   convenção mudar de lado. */
+.app-shell[data-rail="collapsed"] .app-body,
+.app-shell[data-rail="closed"] .app-body {
+  grid-template-columns: var(--rail-w-collapsed) minmax(0, 1fr);
+}
+
+.app-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-body {
+    transition: none;
+  }
+}
+
+/* ------------------------------ barra do topo --------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 8px 0 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.topbar-title {
+  margin: 0;
+  max-width: 34ch;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Quem está atendendo agora. A cor é o acento ativo — é assim que a barra
+   "muda junto" com o especialista. */
+.specialist-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  flex: none;
+  border: 1px solid var(--accent-glow);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color var(--t-base) var(--swift), color var(--t-base) var(--swift),
+    border-color var(--t-base) var(--swift);
+}
+
+.topbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.topbar-status[data-status="offline"] {
+  color: var(--danger);
+}
+
+.topbar-status[data-status="connecting"] {
+  color: var(--warn);
+}
+
+/* O slot do portal. Fica no meio e encolhe primeiro: os botões da superfície
+   são úteis, mas quem manda na barra é a identidade da conversa. */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* Seletor de modelo — a escolha é do usuário, nunca do master. */
+.topbar-model {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* A seta é desenhada com bordas em vez de um data-URI de SVG: data-URI tem a
+   cor cozida dentro e sumiria no tema escuro. */
+.topbar-model::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+
+.topbar-model select,
+.model-select {
+  appearance: none;
+  height: 30px;
+  max-width: 200px;
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), border-color var(--t-fast) var(--swift);
+}
+
+.topbar-model select:hover,
+.model-select:hover {
+  background: var(--hover);
+}
+
+.topbar-model select:disabled,
+.model-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.topbar-model option,
+.model-select option {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+/* --------------------------------- trilho ------------------------------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.rail-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Colapsado, o topo vira uma coluna de ícones: o rótulo sai do fluxo em vez de
+   ficar cortado no meio de uma palavra, que lê como bug. */
+.rail[data-collapsed="true"] .rail-top {
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* O retrato do AI-BOT: clicar abre o laboratório de avatares. */
+.rail-bot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), border-color var(--t-fast) var(--swift);
+}
+
+.rail-bot:hover {
+  background: var(--hover);
+  border-color: var(--line);
+}
+
+.rail-bot-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 10px;
+  margin-left: auto;
+  border: 1px solid var(--accent-glow);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift);
+}
+
+.rail-new:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.rail[data-collapsed="true"] .rail-new {
+  margin-left: 0;
+  padding: 0;
+}
+
+.rail-collapse {
+  flex: none;
+}
+
+.rail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.rail-kind {
+  margin: 2px 0 0;
+  padding: 0 6px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift);
+}
+
+.rail-item:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rail-item[aria-current="true"],
+.rail-item[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.rail-item-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-item-meta {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 12px;
+  color: var(--faint);
+  text-align: center;
+}
+
+.rail-empty-title {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.rail-empty-hint,
+.rail-note {
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.rail-note {
+  margin: 0;
+  padding: 0 6px;
+}
+
+.rail-gate {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.rail-gate[data-decision="proceed"] {
+  border-left-color: var(--ok);
+}
+
+.rail-gate[data-decision="abort"] {
+  border-left-color: var(--danger);
+}
+
+.rail-task {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.rail-task-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+}
+
+.rail-task-state {
+  margin-left: auto;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rail-task[data-state="running"] .rail-task-state {
+  color: var(--accent);
+}
+
+.rail-task[data-state="done"] .rail-task-state {
+  color: var(--ok);
+}
+
+.rail-task[data-state="failed"] .rail-task-state {
+  color: var(--danger);
+}
+
+/* --------------------------------- palco -------------------------------- */
+
+.stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.stage-note,
+.stage-hint {
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.stage-empty,
+.stage-loading,
+.stage-unknown {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+/* Editor e Documento partem o palco: o trabalho à esquerda, a conversa
+   estreita à direita. É a MESMA conversa, só espremida — não é outra tela. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  flex: 1;
+  min-height: 0;
+}
+
+.split-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-aside {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+@media (max-width: 1100px) {
+  /* Abaixo disso a coluna da conversa espremeria o trabalho; a conversa some
+     do split e continua inteira na superfície de conversa. */
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .split-aside {
+    display: none;
+  }
+}
+
+/* ---------------------------- fio da conversa --------------------------- */
+
+.stage-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /*
+   * O composer FLUTUA sobre o palco. Sem esta reserva no fim, a última linha
+   * nasce escondida atrás dele — e a pessoa só descobre rolando.
+   */
+  padding: 20px 20px calc(150px + var(--shell-gap));
+  scroll-behavior: smooth;
+}
+
+.conversation-column {
+  padding: 14px 12px calc(150px + var(--shell-gap));
+}
+
+.thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(880px, 100%);
+  margin-inline: auto;
+}
+
+.conversation-column .thread {
+  width: 100%;
+  gap: 10px;
+}
+
+.line-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+/* A linha do usuário não tem retrato: o retrato marca quem ATENDEU, e do lado
+   de cá não há especialista para marcar. */
+.line[data-role="user"] {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: end;
+}
+
+.line[data-role="user"] .line-body {
+  max-width: 72ch;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-xs) var(--radius-md);
+}
+
+.line[data-role="system"] {
+  grid-template-columns: minmax(0, 1fr);
+  font-size: var(--fs-small);
+  color: var(--muted);
+  font-style: italic;
+}
+
+/*
+ * O retrato usa a matiz DA LINHA, e não a do especialista ativo: a conversa
+ * mistura especialistas e cada resposta continua sendo de quem respondeu. O
+ * `--accent` aqui já é o acento LOCAL, recalculado em tokens.css a partir do
+ * `--accent-h` que a linha traz inline.
+ *
+ * O tamanho do retrato vem por prop (BotAvatar), então este box só centraliza:
+ * declarar width/height no <svg> por CSS ganharia do atributo e todos os
+ * retratos do app sairiam do mesmo tamanho.
+ */
+.line-avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  overflow: hidden;
+}
+
+.line-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: var(--fs-body);
+  line-height: 1.62;
+  /* A conversa é para ler e copiar; o resto do app continua não-selecionável. */
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.line-body > :first-child {
+  margin-top: 0;
+}
+
+.line-body > :last-child {
+  margin-bottom: 0;
+}
+
+.line-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.line-meta {
+  user-select: none;
+}
+
+/* O cursor do streaming: a diferença entre "está vindo" e "travou no meio da
+   frase". É ::after do corpo para nascer colado no fim do texto. */
+.line[data-streaming="true"] .line-body::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.line-error {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--danger);
+  font-size: var(--fs-small);
+}
+
+.line-error b {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  user-select: text;
+}
+
+.line[data-error="true"] .line-body {
+  border-left: 2px solid var(--danger);
+  padding-left: 10px;
+}
+
+/* Ferramentas da linha: fechadas por padrão. O que a resposta FEZ importa
+   menos, na leitura, do que o que a resposta DIZ — mas continua a um clique. */
+.line-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.line-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ------------------------- faixa de troca de dono ----------------------- */
+
+/*
+ * "agora é X". Uma faixa fina, não um cartão: a troca precisa ser VISÍVEL sem
+ * virar o assunto da tela. O motivo da rota (route.reason) vai no `title` do
+ * elemento — quem passa o mouse descobre por que trocou.
+ */
+.handoff {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.handoff[title] {
+  cursor: help;
+}
+
+/* A régua sai do ::after e não de um elemento: ela é decoração pura, e um
+   <span> vazio no meio da conversa é ruído para quem lê por leitor de tela. */
+.handoff::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.handoff-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.handoff-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.handoff-name {
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+/* ------------------------------ primeira tela --------------------------- */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 46vh;
+  text-align: center;
+}
+
+.hero-avatar {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.hero-title {
+  margin: 0;
+  max-width: 20ch;
+  font-size: var(--fs-hero);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+}
+
+.hero-sub {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--muted);
+}
+
+.hero-examples {
+  width: min(620px, 100%);
+  margin-top: 8px;
+  text-align: left;
+}
+
+/* Cada exemplo carrega a matiz do especialista que o atenderia: a regra do
+   produto (cada linha tem dono) aparece antes da primeira linha existir. */
+.hero-example {
+  align-items: flex-start;
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--swift), background-color var(--t-fast) var(--swift),
+    transform var(--t-fast) var(--spring);
+}
+
+.hero-example:hover {
+  border-color: var(--accent-glow);
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+}
+
+.hero-example .card-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+}
+
+.hero-example .card-body {
+  text-align: left;
+}
+
+/* Na coluna estreita o herói viraria uma parede de texto. */
+.hero-compact {
+  flex-direction: row;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 4px;
+  text-align: left;
+}
+
+.hero-compact .hero-sub {
+  font-size: var(--fs-small);
+}
+
+/* -------------------------------- markdown ------------------------------ */
+
+.md-p {
+  margin: 0 0 0.7em;
+}
+
+.md-h1,
+.md-h2,
+.md-h3 {
+  margin: 1.1em 0 0.4em;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.md-h1 {
+  font-size: calc(var(--fs-body) + 5px);
+}
+
+.md-h2 {
+  font-size: calc(var(--fs-body) + 3px);
+}
+
+.md-h3 {
+  font-size: calc(var(--fs-body) + 1px);
+}
+
+.md-ul,
+.md-ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.35em;
+}
+
+.md-code {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+.md-fence {
+  margin: 0 0 0.8em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.md-fence-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.md-fence-lang {
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.md-fence-copy {
+  margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.md-fence-copy:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.md-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+  user-select: text;
+}
+
+/* ---------------------------- orbe de raciocínio ------------------------ */
+
+/*
+ * O ThinkingOrb é SVG com animação SMIL, que o `prefers-reduced-motion` do CSS
+ * não alcança — o componente lê a preferência em JS e não desenha o SVG quando
+ * ela está ligada, sobrando o rótulo. Aqui é só a moldura.
+ */
+.thinking-orb,
+.orb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.thinking-orb-svg {
+  flex: none;
+}
+
+.thinking-orb-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* `.orb` avulso (sem o SVG do componente): o ponto pulsante. */
+.orb::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: orb-pulse 1.6s var(--spring-soft) infinite;
+}
+
+@keyframes orb-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+    transform: scale(0.86);
+  }
+  60% {
+    box-shadow: 0 0 0 7px transparent;
+    transform: scale(1);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(0.86);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Pulso, giro e cursor são decoração; quem pediu menos movimento fica com o
+   estado parado e o rótulo, que já diz o que está acontecendo. */
+@media (prefers-reduced-motion: reduce) {
+  .orb::before,
+  .spin,
+  .line[data-streaming="true"] .line-body::after {
+    animation: none;
+  }
+}
+
+/* ---------------------------- cartão de aprovação ----------------------- */
+
+/*
+ * Cobre a tela porque é a única decisão do app que não pode ser respondida por
+ * distração: autorizar uma ferramenta a mexer na máquina da pessoa.
+ */
+.approval-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 6vh 6vw;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(2px);
+}
+
+.approval-card,
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-float);
+}
+
+.approval-card[data-risk="read"],
+.approval-card[data-risk="network"],
+.approval[data-risk="read"],
+.approval[data-risk="network"] {
+  border-left-color: var(--info);
+}
+
+.approval-card[data-risk="execute"],
+.approval-card[data-risk="secret"],
+.approval[data-risk="execute"],
+.approval[data-risk="secret"] {
+  border-left-color: var(--danger);
+}
+
+/* Expirado é pedido morto: perde a cor de alerta para não competir com o
+   próximo (os botões já são desabilitados pelo componente). */
+.approval-card[data-expired="true"] {
+  border-left-color: var(--faint);
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-tool {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  user-select: text;
+}
+
+.approval-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.approval-clock[data-expired="true"] {
+  color: var(--danger);
+}
+
+.approval-summary {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  user-select: text;
+}
+
+.approval-detail {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+}
+
+.approval-detail > summary {
+  padding: 6px 9px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.approval-detail pre {
+  margin: 0;
+  padding: 0 9px 9px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.approval-note,
+.approval-expired {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.approval-expired {
+  color: var(--danger);
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------------------------- configurações ----------------------------- */
+
+/*
+ * O painel de configurações usa a MOLDURA do cartão de aprovação (backdrop,
+ * cartão, cabeçalho, rodapé de ações): é a mesma interrupção, e ensinar dois
+ * formatos para "a tela parou e mostra uma coisa só" faria o segundo parecer
+ * menos importante. O que segue é só o que a moldura não resolve — as linhas de
+ * leitura e a lista de especialistas.
+ */
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-row,
+.settings-bot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-small);
+}
+
+.settings-key {
+  flex: none;
+  width: 74px;
+  color: var(--muted);
+}
+
+/* Endereço e id de modelo são para COPIAR (colar num relato de erro), então
+   escapam do `user-select: none` do cromo do app. */
+.settings-value {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-bot-tag {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}
+
+/* -------------------------------- composer ------------------------------ */
+
+/*
+ * Um campo só, flutuando sobre o palco. Placeholder, atalhos e rótulo do botão
+ * mudam por especialista — quem escreve isso é o React; aqui só há a moldura.
+ *
+ * O bloco é ancorado à COLUNA DO PALCO (left = trilho + gaps), e não ao centro
+ * da janela: centralizar no shell inteiro deixaria o campo visivelmente
+ * deslocado para a esquerda em relação à conversa que ele responde.
+ */
+.composer-wrap {
+  position: absolute;
+  z-index: 20;
+  left: calc(var(--shell-pad) + var(--rail-w) + var(--shell-gap));
+  right: var(--shell-pad);
+  bottom: calc(var(--shell-pad) + 8px);
+  width: var(--composer-w);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: left var(--t-base) var(--spring-soft);
+}
+
+.app-shell[data-rail="collapsed"] .composer-wrap,
+.app-shell[data-rail="closed"] .composer-wrap {
+  left: calc(var(--shell-pad) + var(--rail-w-collapsed) + var(--shell-gap));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-wrap {
+    transition: none;
+  }
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  transition: border-color var(--t-fast) var(--swift), box-shadow var(--t-fast) var(--swift);
+}
+
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-float), 0 0 0 3px var(--accent-glow);
+}
+
+.composer-field {
+  width: 100%;
+  min-height: 26px;
+  max-height: 180px;
+  padding: 6px 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  user-select: text;
+}
+
+.composer-field::placeholder {
+  color: var(--faint);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.composer-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.composer-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-status {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 4px;
+}
+
+.composer-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift);
+}
+
+.composer-chip:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+}
+
+.composer-chip-glyph {
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  opacity: 0.8;
+}
+
+.composer-pinned-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--accent-glow);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+}
+
+.composer-unpin {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.composer-unpin:hover {
+  border-color: currentcolor;
+}
+
+.composer-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  color: var(--danger);
+  font-size: var(--fs-small);
+}
+
+.composer-error-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+/* O seletor de especialista: "auto" (o master decide) ou um bot fixado. */
+.composer-picker {
+  position: relative;
+  flex: none;
+}
+
+.composer-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.composer-picker-button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* Fixado muda o COMPORTAMENTO do produto (o master para de rotear): precisa
+   ser visível, não sutil. */
+.composer-picker-button[data-pinned="true"] {
+  border-color: var(--accent-glow);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.composer-picker-label {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-picker-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 300px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-float);
+}
+
+.composer-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-picker-item:hover {
+  background: var(--hover);
+}
+
+.composer-picker-item[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.composer-picker-name {
+  font-weight: 600;
+}
+
+.composer-picker-tag {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.composer-picker-item svg:last-child {
+  margin-left: auto;
+}
+
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--fs-small);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), transform var(--t-fast) var(--spring);
+}
+
+.composer-send:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.composer-send:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.composer-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Parar não é enviar com outro rótulo: muda de cor para ninguém clicar em
+   "parar" achando que manda de novo. */
+.composer-send[data-stop="true"] {
+  background: var(--panel-2);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.composer-send[data-stop="true"]:hover {
+  background: var(--hover);
+}
+
+/* --------------------------------- botões ------------------------------- */
+
+/*
+ * Um só desenho de botão para todos os apelidos que o app usa (.btn, .action,
+ * .button-*, .pill-btn, .alab-btn). Vocabulário diferente entre superfícies é
+ * aceitável; botão com APARÊNCIA diferente entre superfícies, não.
+ */
+.btn,
+.action,
+.pill-btn,
+.button-primary,
+.button-secondary,
+.button-danger,
+.button-quiet,
+.icon-button,
+.icon-btn,
+.alab-btn,
+.alab-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift), transform var(--t-fast) var(--spring);
+}
+
+.btn:hover,
+.action:hover,
+.pill-btn:hover,
+.button-secondary:hover,
+.button-quiet:hover,
+.icon-button:hover,
+.icon-btn:hover,
+.alab-btn:hover,
+.alab-icon-btn:hover {
+  background: var(--hover);
+}
+
+.btn:active,
+.action:active,
+.pill-btn:active,
+.button-primary:active,
+.button-secondary:active,
+.button-danger:active,
+.icon-button:active,
+.icon-btn:active,
+.alab-btn:active {
+  transform: translateY(1px);
+}
+
+.btn:disabled,
+.action:disabled,
+.pill-btn:disabled,
+.button-primary:disabled,
+.button-secondary:disabled,
+.button-danger:disabled,
+.button-quiet:disabled,
+.icon-button:disabled,
+.icon-btn:disabled,
+.alab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-accent,
+.btn-primary,
+.action--primary,
+.button-primary,
+.pill-btn.is-primary,
+.alab-btn-primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.btn-accent:hover,
+.btn-primary:hover,
+.action--primary:hover,
+.button-primary:hover,
+.pill-btn.is-primary:hover,
+.alab-btn-primary:hover {
+  background: var(--accent-strong);
+}
+
+.btn-danger,
+.button-danger {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--danger);
+}
+
+.btn-danger:hover,
+.button-danger:hover {
+  background: var(--danger);
+  border-color: transparent;
+  color: #fff;
+}
+
+.btn-ghost,
+.action--ghost,
+.button-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.btn-ghost:hover,
+.action--ghost:hover,
+.button-quiet:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.pill-btn {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+}
+
+.pill-btn.is-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.icon-button,
+.icon-btn,
+.alab-icon-btn {
+  width: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.icon-button:hover,
+.icon-btn:hover,
+.alab-icon-btn:hover {
+  color: var(--ink);
+}
+
+/* ------------------------ laboratório de avatares ----------------------- */
+
+/*
+ * O retrato de cada bot é procedural (parâmetros, não arquivo). O laboratório
+ * é a única tela do app com layout de "janela dentro da janela": lista à
+ * esquerda, prévia no meio, controles à direita.
+ */
+.alab-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 26;
+  display: grid;
+  place-items: center;
+  padding: 4vh 4vw;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(2px);
+}
+
+.alab {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.alab-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.alab-head-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.alab-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.alab-sub {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.alab-head .alab-icon-btn {
+  margin-left: auto;
+}
+
+.alab-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(220px, 260px);
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  /* Três colunas numa janela estreita não sobra nada para a prévia, que é o
+     ponto da tela. */
+  .alab-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .alab-list {
+    display: none;
+  }
+}
+
+.alab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.alab-bot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift);
+}
+
+.alab-bot:hover {
+  background: var(--hover);
+}
+
+.alab-bot[aria-current="true"],
+.alab-bot[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+}
+
+.alab-bot-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.alab-bot-name {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alab-bot-tag {
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* O ponto diz "este bot foi personalizado" sem precisar de mais uma palavra na
+   lista. */
+.alab-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.alab-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--canvas);
+}
+
+/* Os tamanhos são mostrados juntos porque o mesmo retrato precisa funcionar
+   em 20px (linha da conversa) e em 96px (primeira tela). */
+.alab-sizes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.alab-size {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.alab-size-box {
+  display: grid;
+  place-items: center;
+}
+
+.alab-size-cap {
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* Prévia da linha real: é onde o retrato vai viver de verdade. */
+.alab-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.alab-line-text {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.alab-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+}
+
+.alab-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.alab-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.alab-value {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Segmentos: as opções são poucas e fixas (forma, olho, boca…), então cabem
+   todas na tela — menu suspenso aqui esconderia o que é a graça de mexer. */
+.alab-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.alab-seg-btn {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift);
+}
+
+.alab-seg-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.alab-seg-btn[aria-pressed="true"],
+.alab-seg-btn[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.alab-range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.alab-seed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.alab-num {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  user-select: text;
+}
+
+.alab-hint {
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.alab-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.alab-status {
+  margin-right: auto;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+/* --------------------------- utilidades e camadas ----------------------- */
+
+.visually-hidden,
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* O retrato procedural. O tamanho vem por atributo (prop `size`); aqui só o
+   que não briga com ele. */
+.bot-avatar {
+  display: block;
+  flex: none;
+  border-radius: 50%;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.status-dot[data-status="ready"] {
+  background: var(--ok);
+}
+
+.status-dot[data-status="connecting"] {
+  background: var(--warn);
+}
+
+.status-dot[data-status="offline"] {
+  background: var(--danger);
+}
+
+/* A superfície que quebrou. Ocupa o palco e nada mais: a conversa e o composer
+   continuam de pé. */
+.surface-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 16px;
+  padding: 14px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--danger);
+}
+
+.surface-error-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.surface-error-message {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.lab-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 28;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+  font-size: var(--fs-small);
+}
+
+/* Moldura genérica para outras camadas que cubram a tela (ajustes). Elas ficam
+   DENTRO de .app-shell — os tokens só existem lá. */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 26;
+  display: grid;
+  place-items: center;
+  padding: 4vh 4vw;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(2px);
+}
+
+.modal-card {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 100%);
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}

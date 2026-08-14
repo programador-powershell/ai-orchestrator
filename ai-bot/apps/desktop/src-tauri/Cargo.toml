@@ -1,0 +1,220 @@
+# AI-BOT — camada NATIVA do aplicativo desktop (Tauri 2).
+#
+# ===========================================================================
+# POR QUE ESTE CABEÇALHO EXISTE
+# ---------------------------------------------------------------------------
+# Neste projeto cada dependência passa por homologação de TI/SI, uma a uma.
+# Uma lista de crates sem justificativa é uma lista que NINGUÉM consegue
+# aprovar: o revisor não tem como separar "isto sustenta uma função do
+# produto" de "isto entrou de carona num copiar-colar". Por isso toda linha de
+# [dependencies] abaixo responde três perguntas — o que a crate faz, qual
+# arquivo do app depende dela, e o que quebraria sem ela.
+#
+# Regra de convivência: crate nova aqui SEM parágrafo de justificativa é
+# pendência aberta, não detalhe de build. Quem acrescentar, escreve o porquê.
+#
+# Divisão de responsabilidade do produto (para situar as escolhas):
+#   React -> interface        Rust -> integração nativa        Go -> cérebro
+# O Rust NÃO reimplementa o gateway Go: ele sobe o processo, faz a janela e
+# serve as ferramentas de MÁQUINA que o Go não pode executar. Toda dependência
+# abaixo cai em um desses três papéis.
+# ===========================================================================
+
+[package]
+name = "aibot-desktop"
+version = "0.1.0"
+description = "AI-BOT — cliente desktop"
+authors = ["Multiplike"]
+edition = "2021"
+
+[lib]
+# O nome da lib difere do nome do pacote de propósito: `main.rs` é uma casca de
+# cinco linhas e TODA a aplicação vive aqui, o que permite testar e futuramente
+# embarcar a mesma lib em outro alvo sem arrastar o executável junto.
+name = "aibot_desktop_lib"
+# staticlib/cdylib são os formatos que os alvos móveis do Tauri linkam; rlib é
+# o que o `main.rs` consome. Manter os três é o padrão do Tauri 2 — remover um
+# só aparece como erro de link no dia em que alguém tentar outro alvo.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+# tauri-build roda no build.rs: gera o `generate_context!`, embute o manifesto
+# de aplicação do Windows e o ícone, e — detalhe que só aparece quando falta —
+# calcula os hashes `sha256-` dos scripts INLINE do HTML para a CSP declarada
+# em tauri.conf.json. Sem ele, um app com CSP não-nula abre com a tela branca.
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+
+# --- 1) A janela e a ponte com o WebView -----------------------------------
+
+# O framework: cria a janela, hospeda o WebView2 (Windows), transporta o IPC
+# entre React e Rust e aplica as capabilities de capabilities/default.json.
+#
+# SEM a feature "protocol-asset", e isso é decisão, não esquecimento.
+#
+# Ela compila o protocolo `asset:`, que deixa o WebView carregar arquivo do
+# disco por URL. Duas razões para ficar de fora:
+#
+#  1. O tauri-build RECUSA a combinação "feature ligada, `app.security.
+#     assetProtocol` desligado no tauri.conf.json" e falha o build antes de
+#     compilar a primeira linha ("features does not match the allowlist"). Ligar
+#     a feature exige abrir o protocolo de verdade — não existe meio-termo.
+#  2. Abrir o protocolo significa dar ao WebView um caminho para ler arquivo do
+#     disco por URL, e a CSP precisaria ganhar `asset: http://asset.localhost`
+#     em img-src. Hoje nada no app precisa disso: o avatar é SVG procedural
+#     gerado no próprio React, e o texto de documento vem pelo IPC como string.
+#
+# No dia em que houver anexo grande de verdade, o caminho é: ligar a feature,
+# ligar `assetProtocol` COM escopo restrito à pasta do projeto, e ampliar a CSP.
+# Os três juntos — abrir um sem os outros não funciona ou não protege.
+tauri = { version = "2", features = [] }
+
+# Abre link e arquivo no aplicativo padrão do SO (o "abrir a pasta do
+# resultado", o link de documentação). Sem o plugin, a alternativa é montar
+# `cmd /C start <string>` na mão — execução de shell com string concatenada,
+# que é exatamente a classe de coisa que este produto existe para evitar.
+tauri-plugin-opener = "2"
+
+# Encerrar e reiniciar o processo a partir da interface. É obrigatório aqui, e
+# não conveniência: a janela principal roda com `decorations: false` (barra de
+# título própria), então o botão de fechar é um componente React. Sem
+# `process:allow-exit` o X da tela não fecha o aplicativo, e sem
+# `process:allow-restart` uma troca de configuração exige matar o app no
+# gerenciador de tarefas.
+tauri-plugin-process = "2"
+
+# --- 2) O protocolo (Canonical Agent Protocol) ------------------------------
+
+# Derive de (de)serialização dos structs que cruzam o IPC para o JS e dos
+# payloads do protocolo. Sem `derive` seria `impl Serialize` na mão em cada
+# struct — mais código para errar em silêncio num campo renomeado.
+serde = { version = "1", features = ["derive"] }
+
+# O envelope do protocolo É JSON, e o campo `payload` é JSON opaco que esta
+# camada às vezes só repassa. serde_json é o que permite carregar esse pedaço
+# sem interpretá-lo — reinterpretar o payload aqui criaria uma SEGUNDA verdade
+# ao lado do Go, que é o dono do contrato.
+serde_json = "1"
+
+# Runtime assíncrono. Sustenta os comandos `async` do Tauri (obrigatórios para
+# criar janela no Windows sem travar), o timeout do encerramento, os canais
+# entre a ponte e as ferramentas e a espera de processo filho.
+#
+# Sobre "full": liga o conjunto todo (process, fs, io-util, sync, time, net,
+# macros) e a camada nativa usa quase tudo isso. Vale notar para a análise que
+# tokio JÁ está na árvore como dependência do próprio `tauri` — a feature
+# "full" amplia o que se usa da mesma crate já homologada, não acrescenta
+# fornecedor novo.
+tokio = { version = "1", features = ["full"] }
+
+# --- 3) Segredo: o que não pode sair da máquina -----------------------------
+
+# Cofre de credenciais do SISTEMA OPERACIONAL (src/vault.rs). No Windows, o
+# Gerenciador de Credenciais — o segredo fica selado pela conta do usuário e
+# NUNCA cruza para o webview (regra 1 do produto).
+#
+# A feature não é opcional: o keyring 3 escolhe o armazenamento por feature, e
+# compilado sem nenhuma ele cai num store MOCK EM MEMÓRIA. O efeito é o pior
+# possível — a interface diz "chave salva", nada dá erro, e o segredo some ao
+# fechar o app. `windows-native` é o que manda a gravação para o Gerenciador de
+# Credenciais de verdade.
+keyring = { version = "3", features = ["windows-native"] }
+
+# --- 4) O fio com o gateway Go ----------------------------------------------
+
+# Cliente WebSocket (src/hostbridge.rs): conecta em `GET /v1/stream`,
+# autentica no primeiro frame `hello` e fica recebendo `tool.call` do Go para
+# devolver `tool.result`.
+#
+# Três escolhas para o revisor: (a) é o cliente SÍNCRONO, e não
+# tokio-tungstenite, porque a ponte vive numa thread própria cujo laço é
+# ler-envelope / executar-ferramenta / responder — bloqueante ali é menos
+# código e menos estado do que um `select!`; (b) as features padrão da crate
+# NÃO incluem TLS (`default = ["handshake"]`; `native-tls` e `rustls-tls-*` são
+# opcionais e ficam desligadas), e é assim que fica: a conexão é
+# `ws://127.0.0.1:8799`, em loopback, então nenhuma pilha de TLS entra na
+# árvore por causa dela.
+#
+# (c) POR QUE 0.27 E NÃO 0.24. As duas compilam o hostbridge.rs de hoje — isso
+# foi conferido com `cargo check --tests` nas duas versões, e nenhuma linha de
+# chamada muda (`client::client`, `read`, `send`, `flush`, `get_mut` e `close`
+# têm a mesma assinatura nas duas). O que decide é a forma do frame de texto:
+# até a 0.24 o `Message::Text` carrega uma `String`, e da 0.26 em diante ele
+# carrega `Utf8Bytes`, apoiado nos bytes JÁ lidos. A ponte lê o frame com
+# `text.as_str()` e o descarta assim que despacha a chamada — ela nunca fica
+# com a posse do texto —, então na 0.24 pagaria uma alocação por frame que
+# ninguém guarda. Some-se a isso a manutenção: a árvore tem o MESMO número de
+# pacotes nas duas (537), mas na 0.24 o `rand` que mascara os frames entra na
+# série 0.8 e na 0.27 na 0.9 — pinar a linha antiga seria levar para a
+# homologação uma versão que já nasce atrasada, sem nada em troca.
+tungstenite = "0.27"
+
+# Monta e VALIDA a URL do gateway antes de qualquer conexão. Concatenar
+# `"ws://" + bind + "/v1/stream"` funciona até o dia em que `AIBOT_BIND` vier
+# com um valor inesperado; um `Url` que se recusa a existir falha no lugar
+# certo, e não em uma conexão para um host que ninguém pretendia contatar.
+url = "2"
+
+# --- 5) Ferramentas de MÁQUINA (o que o Go não pode executar) ---------------
+
+# Erro tipado dentro dos módulos. Na borda do comando tudo vira
+# `Result<T, String>` com mensagem legível em português (regra de estilo do
+# projeto), mas ANTES da borda, em `tools`/`jail`, distinguir "caminho fora do
+# confinamento" de "o processo não iniciou" precisa ser um `enum` — com String
+# desde o início, quem chama só pode comparar texto, e comparação de texto de
+# erro quebra na primeira vez que alguém melhora a redação.
+thiserror = "2"
+
+# Terminal INTERATIVO de verdade (src/pty.rs): ConPTY no Windows, unix98 no
+# resto. É o que permite `vim`, um servidor de desenvolvimento e um prompt que
+# pergunta algo — coisas que uma execução "roda e devolve a saída no fim" não
+# atende. Aprovada pelo usuário em 2026-08-14 para a análise de TI/SI.
+# Escrever ConPTY à mão significaria reimplementar API do Windows sem revisão
+# de ninguém, que é uma superfície pior do que a da crate.
+portable-pty = "0.8"
+
+# Decodificação INCREMENTAL de texto. Duas razões, e as duas doem em produção:
+#   1. A saída de `cmd.exe` e de ferramenta antiga no Windows não é UTF-8: vem
+#      na code page do console (850/1252). Tratar como UTF-8 enche a tela de
+#      losango preto no primeiro acento.
+#   2. O decodificador guarda ESTADO entre leituras. Um caractere multibyte
+#      partido no limite do buffer é remontado na leitura seguinte; com
+#      `from_utf8_lossy` por bloco ele viraria U+FFFD — um `ls` numa pasta com
+#      acento já expõe isso.
+encoding_rs = "0.8"
+
+# DOCX/XLSX/PPTX são ZIP de XML: sem isto, "ler o anexo que a pessoa arrastou"
+# não existe. Usado pela extração de documento em src/tools.rs.
+#
+# Nota para a homologação: as features padrão do zip 2 arrastam bzip2, zstd,
+# lzma e deflate64 junto. O OOXML real só usa deflate, então `default-features
+# = false, features = ["deflate"]` (que foi o que a build anterior deste
+# produto adotou) corta várias transitivas sem perder função. Fica registrado
+# como a redução de superfície disponível caso TI/SI peça.
+zip = "2"
+
+# FlateDecode dos streams de PDF na extração de texto. JÁ está na árvore por
+# baixo do `zip` — declarar explicitamente não acrescenta superfície de
+# terceiros, só torna visível quem depende dela.
+flate2 = "1"
+
+# --- 6) Isolamento de processo (só Windows) ---------------------------------
+#
+# NÃO HÁ DEPENDÊNCIA AQUI, E É DE PROPÓSITO.
+#
+# src/jail.rs implementa o Job Object (o processo nasce SUSPENSO com
+# CREATE_SUSPENDED | CREATE_NO_WINDOW, é atribuído ao job e SÓ ENTÃO tem as
+# threads retomadas; KILL_ON_JOB_CLOSE é o que mata a ÁRVORE inteira, porque
+# matar só o filho deixa neto órfão vivo). Isso precisa do Win32, que não existe
+# na biblioteca padrão do Rust.
+#
+# A escolha foi declarar os dez símbolos do kernel32 à mão, com `extern "system"`
+# e structs `#[repr(C)]`, em vez de trazer windows-sys ou winapi: seria uma
+# dependência inteira — e uma superfície inteira a homologar na TI/SI — para uma
+# dúzia de símbolos estáveis desde os anos 90. O layout das structs está travado
+# por teste (`layout_das_structs_bate_com_o_win32`), e os testes de
+# comportamento provam contra o kernel de verdade que a árvore morre junto.
+#
+# Se algum outro módulo um dia precisar de Win32 em volume, aí sim vale reabrir
+# a conversa sobre um binding — mas com a homologação feita, não de carona.

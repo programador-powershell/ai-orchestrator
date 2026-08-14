@@ -1,0 +1,173 @@
+/* ==========================================================================
+   tokens.css — o vocabulário visual do AI-BOT.
+
+   Os tokens moram em `.app-shell`, e não em `:root`, porque o tema é um
+   ATRIBUTO do shell (`data-theme`). Com tudo no mesmo elemento, trocar de tema
+   é reescrever um atributo: nenhuma regra precisa saber quem está por cima.
+   A consequência prática: o que for renderizado FORA de `.app-shell` (portal
+   solto no body) fica sem token nenhum. Renderize dentro do shell.
+   ========================================================================== */
+
+.app-shell {
+  /* ------------------------------- geometria ---------------------------- */
+  --shell-pad: 10px;
+  --shell-gap: 10px;
+  --topbar-h: 54px;
+  --rail-w: 236px;
+  --rail-w-collapsed: 62px;
+  --composer-w: min(880px, calc(100% - 36px));
+
+  /* --------------------------------- raio ------------------------------- */
+  --radius-xl: 24px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --radius-xs: 8px;
+
+  /* ----------------------------- tipografia ----------------------------- */
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+  --fs-hero: clamp(30px, 3.4vw, 42px);
+  --fs-title: 20px;
+  --fs-body: 13px;
+  --fs-small: 11.5px;
+  --fs-micro: 10px;
+  --fs-eyebrow: 9px;
+
+  /* ------------------------------ movimento ----------------------------- */
+  --spring: cubic-bezier(0.3, 1.45, 0.32, 1);
+  --spring-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --swift: cubic-bezier(0.4, 0, 0.2, 1);
+  --t-fast: 180ms;
+  --t-base: 300ms;
+  --t-slow: 460ms;
+
+  /* --------------------------- tema claro (padrão) ---------------------- */
+  --bg: #fbfbf9;
+  --bg-deep: #f4f4f1;
+  --ink: #26241f;
+  --muted: #7a766d;
+  --faint: #a8a49a;
+  --line: rgba(30, 28, 24, 0.1);
+  --line-strong: rgba(30, 28, 24, 0.16);
+  --panel: #fff;
+  --panel-2: #f4f4f1;
+  --canvas: #f0f0ec;
+  --hover: #ececeb;
+  --shadow-soft: 0 1px 2px rgba(30, 28, 24, 0.04);
+  --shadow-float: 0 8px 28px rgba(30, 28, 24, 0.14);
+  --ok: #2f9e77;
+  --warn: #c08a2d;
+  --danger: #c4515f;
+  --info: #4c7fd6;
+  --code-bg: #f6f6f3;
+
+  /* --------------------------------- acento ----------------------------- */
+  /*
+   * O acento é DERIVADO: matiz do especialista + saturação fixa + luminosidade
+   * do tema. As luminosidades são tokens (`--accent-l`, `--accent-l-strong`)
+   * em vez de números escritos dentro do hsl() porque qualquer elemento que
+   * carregue uma matiz PRÓPRIA precisa refazer a conta sem saber qual tema
+   * está ativo — ver a nota no fim do arquivo.
+   */
+  --accent-h: 158; /* padrão até o master rotear a primeira linha */
+  --accent-s: 62%;
+  --accent-l: 40%;
+  --accent-l-strong: 32%;
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.12);
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) var(--accent-l-strong));
+  --accent-glow: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.24);
+  /* Texto e ícone POR CIMA de um fundo de acento. */
+  --accent-ink: #fff;
+
+  color-scheme: light;
+}
+
+/* ------------------------------- tema escuro ---------------------------- */
+.app-shell[data-theme="dark"] {
+  --bg: #181818;
+  --bg-deep: #141414;
+  --ink: #ececec;
+  --muted: #9a968e;
+  --faint: #6a665e;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --panel: #1f1f1f;
+  --panel-2: #1a1a1a;
+  --canvas: #161616;
+  --hover: #2e2e2e;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --ok: #46c194;
+  --warn: #d9a949;
+  --danger: #e07080;
+  --info: #6f9fe8;
+  --code-bg: #1c1c1c;
+
+  /* No escuro o acento sobe de luminosidade, o véu fica menos tímido e o texto
+     por cima do acento escurece. */
+  --accent-l: 52%;
+  --accent-l-strong: 64%;
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.18);
+  --accent-glow: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.3);
+  --accent-ink: #12130f;
+
+  color-scheme: dark;
+}
+
+/* ==========================================================================
+   Matiz por especialista.
+
+   ATENÇÃO — armadilha já paga neste projeto: NÃO declare `transition` sobre
+   `--accent-h` (nem um `transition: all` que a alcance). Custom property não
+   registrada não interpola; declarar a transição faz o valor ENCALHAR no
+   ponto de partida e o app inteiro fica com o matiz do PRIMEIRO especialista
+   — foi assim que as dez superfícies apareceram todas em verde. A matiz troca
+   seca, sem animar.
+
+   Se quiser suavidade na troca, anime as PROPRIEDADES que consomem o acento
+   (background-color, color, border-color, box-shadow) nos elementos: essas
+   interpolam de verdade e o efeito é o mesmo aos olhos.
+
+   O `App` também escreve `--accent-h` inline no shell, a partir do catálogo.
+   O inline ganha destas regras, e os valores são os mesmos — este bloco é a
+   rede de segurança para quando o React ainda não montou ou o catálogo veio
+   sem matiz.
+   ========================================================================== */
+.app-shell[data-specialist="chat"] { --accent-h: 158; }
+.app-shell[data-specialist="code"] { --accent-h: 210; }
+.app-shell[data-specialist="office"] { --accent-h: 26; }
+.app-shell[data-specialist="design"] { --accent-h: 282; }
+.app-shell[data-specialist="data"] { --accent-h: 190; }
+.app-shell[data-specialist="work"] { --accent-h: 340; }
+.app-shell[data-specialist="security"] { --accent-h: 4; }
+.app-shell[data-specialist="agent"] { --accent-h: 258; }
+.app-shell[data-specialist="fluxo"] { --accent-h: 174; }
+.app-shell[data-specialist="tune"] { --accent-h: 96; }
+/* O master não é escolhível, mas atende a primeira linha e precisa de cor. */
+.app-shell[data-specialist="master"] { --accent-h: 158; }
+
+/* ==========================================================================
+   Matiz LOCAL.
+
+   Uma linha da conversa carrega o especialista que a atendeu, e sobrescreve
+   `--accent-h` inline (`hueStyle()` em ConversationSurface). Só isso NÃO
+   muda a cor: `--accent` já foi calculado lá em cima, no shell, e desce
+   herdado como cor pronta — a matiz nova não recalcula nada.
+
+   Quem carrega matiz própria precisa REFAZER as derivadas. É o que este bloco
+   faz, e é por isso que as luminosidades são tokens: aqui não se sabe se o
+   tema é claro ou escuro, e não pode importar.
+   ========================================================================== */
+.line[data-role="assistant"],
+.handoff,
+.hero,
+.hero-example,
+.task-card,
+.specialist-chip,
+[data-hue] {
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.14);
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) var(--accent-l-strong));
+  --accent-glow: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.26);
+}
