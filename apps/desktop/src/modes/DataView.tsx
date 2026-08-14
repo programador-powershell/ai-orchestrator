@@ -110,6 +110,8 @@ interface DataStore {
   commitDoc: (next: SchemaDocExt | ((current: SchemaDocExt) => SchemaDocExt)) => void;
   /** Movimento ao vivo do arrasto — sem entrada de histórico por frame. */
   moveTable: (id: string, x: number, y: number) => void;
+  /** Várias de uma vez: com seleção múltipla o arrasto move um grupo. */
+  moveTables: (movidas: Array<{ id: string; x: number; y: number }>) => void;
   /** O arrasto inteiro vira UMA entrada de histórico (snapshot do início). */
   commitMove: (before: SchemaDocExt) => void;
   undo: () => void;
@@ -138,6 +140,19 @@ const useDataStore = create<DataStore>()((set, get) => ({
     set((state) => ({
       doc: { ...state.doc, tables: state.doc.tables.map((t) => (t.id === id ? { ...t, x, y } : t)) }
     })),
+  moveTables: (movidas) =>
+    set((state) => {
+      const posicoes = new Map(movidas.map((item) => [item.id, item]));
+      return {
+        doc: {
+          ...state.doc,
+          tables: state.doc.tables.map((table) => {
+            const nova = posicoes.get(table.id);
+            return nova ? { ...table, x: nova.x, y: nova.y } : table;
+          })
+        }
+      };
+    }),
   commitMove: (before) => set((state) => ({ past: [...state.past.slice(1 - HISTORY_LIMIT), before], future: [] })),
   undo: () => {
     const { past, doc } = get();
@@ -535,12 +550,54 @@ export function DataView() {
     setFieldReference(origem, indice, "");
   }
 
-  /** O arrasto inteiro vira UMA entrada de histórico (o estado do começo). */
-  function mover(id: string, x: number, y: number, antes: SchemaDocExt) {
-    const atual = useDataStore.getState().doc.tables.find((table) => table.id === id);
-    if (!atual || (atual.x === x && atual.y === y)) return;
-    useDataStore.getState().moveTable(id, x, y);
+  /**
+   * O arrasto inteiro vira UMA entrada de histórico (o estado do começo) —
+   * inclusive quando várias tabelas foram arrastadas juntas.
+   */
+  function mover(movidas: Array<{ id: string; x: number; y: number }>, antes: SchemaDocExt) {
+    const posicoes = new Map(movidas.map((item) => [item.id, item]));
+    const atual = useDataStore.getState().doc;
+    const mudou = atual.tables.some((table) => {
+      const nova = posicoes.get(table.id);
+      return nova && (table.x !== nova.x || table.y !== nova.y);
+    });
+    if (!mudou) return;
+    // `moveTables` grava sem histórico e `commitMove` empilha o estado do
+    // COMEÇO do gesto: as duas juntas fazem o arrasto inteiro — de uma ou de
+    // dez tabelas — caber num único Ctrl+Z.
+    useDataStore.getState().moveTables(movidas);
     useDataStore.getState().commitMove(antes);
+  }
+
+  /** Delete com seleção: tabelas e relações somem no MESMO passo de histórico. */
+  function apagar(tabelas: SchemaTable[], relationIds: string[]) {
+    if (!tabelas.length && !relationIds.length) return;
+    const nomes = new Set(tabelas.map((table) => table.name));
+    commitDoc((current) => {
+      const semTabelas = applyOps(
+        current,
+        tabelas.map((table) => ({ op: "drop_table", table: table.name }))
+      );
+      // Relação apagada sozinha (aresta selecionada) precisa limpar a FK do
+      // campo de origem; se a tabela toda foi embora, o drop_table já cuidou.
+      const alvos = new Set(relationIds);
+      return {
+        ...semTabelas,
+        tables: semTabelas.tables.map((table) => ({
+          ...table,
+          fields: table.fields.map((field) => {
+            const relacao = current.relations.find(
+              (item) => alvos.has(item.id) && item.fromTable === table.name && item.fromField === field.name
+            );
+            return relacao ? { ...field, references: undefined } : field;
+          })
+        })),
+        relations: semTabelas.relations.filter(
+          (relation) => !alvos.has(relation.id) && !nomes.has(relation.fromTable) && !nomes.has(relation.toTable)
+        )
+      };
+    });
+    select(null);
   }
 
   /* ----------------------------- Export/Import ---------------------------- */
@@ -639,7 +696,7 @@ export function DataView() {
                 onConnect={ligar}
                 onDisconnect={desligar}
                 onMove={mover}
-                onDeleteTable={removeTable}
+                onDelete={apagar}
               />
             ) : (
               <>

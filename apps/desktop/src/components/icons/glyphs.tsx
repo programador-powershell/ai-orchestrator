@@ -1,10 +1,10 @@
-/* GERADO — não edite à mão. Fonte: pacote de ícones do AI Orchestrator. */
+/* GERADO — não edite à mão. Rode `node scripts/gen-icons.mjs`. */
 /* eslint-disable */
 
 import type { ReactElement } from "react";
 
 /** Miolo de cada glifo, na chave `pasta/nome` do pacote. */
-export const glyphs: Record<string, ReactElement> = {
+export const glyphs = {
   "actions/approve": (
     <>
       <circle cx="12" cy="12" r="8.5" />
@@ -671,6 +671,25 @@ export const glyphs: Record<string, ReactElement> = {
       <path d="M9.5 4.5v15" />
     </>
   ),
-};
+} satisfies Record<string, ReactElement>;
 
 export type GlyphName = keyof typeof glyphs;
+
+/** Glifos de silhueta: preenchem com `currentColor`, sem contorno. */
+export const FILLED_GLYPHS: ReadonlySet<GlyphName> = new Set([
+  "filled/actions/approve",
+  "filled/actions/play",
+  "filled/status/error",
+  "filled/status/success",
+  "filled/status/warning",
+  "filled/tabs/agent",
+  "filled/tabs/chat",
+  "filled/tabs/code",
+  "filled/tabs/data",
+  "filled/tabs/design",
+  "filled/tabs/office",
+  "filled/tabs/security",
+  "filled/tabs/tune",
+  "filled/tabs/work",
+  "filled/ui/settings",
+]);

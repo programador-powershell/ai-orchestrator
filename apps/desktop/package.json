@@ -13,7 +13,6 @@
   "dependencies": {
     "@ai-orchestrator/contracts": "workspace:*",
     "@codemirror/lang-css": "^6.3.1",
-    "@codemirror/language": "^6.12.4",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
@@ -21,6 +20,7 @@
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-rust": "^6.0.2",
     "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.12.4",
     "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
@@ -32,6 +32,7 @@
     "next": "16.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "thinking-orbs": "^0.3.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

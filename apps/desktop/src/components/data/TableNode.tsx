@@ -23,7 +23,6 @@ import { TABLE_GEOMETRY } from "../../lib/schema";
 
 export interface TableNodeData extends Record<string, unknown> {
   table: SchemaTable;
-  selecionada: boolean;
 }
 
 /** Y da alça de um campo dentro do cartão — mesma conta do CSS. */
@@ -32,10 +31,13 @@ export function alturaDoCampo(indice: number): number {
 }
 
 export const TableNode = memo(function TableNode({ data }: NodeProps) {
-  const { table, selecionada } = data as unknown as TableNodeData;
+  const { table } = data as unknown as TableNodeData;
 
+  /* O realce de seleção vem do canvas (`.react-flow__node.selected`, em
+     data.css): assim ele acompanha a seleção múltipla, que é do React Flow
+     e não do store. */
   return (
-    <article className={`datax-table ${selecionada ? "selected" : ""}`} data-tone={table.tone}>
+    <article className="datax-table" data-tone={table.tone}>
       <header>
         <Table2 size={11} />
         <strong>{table.name}</strong>

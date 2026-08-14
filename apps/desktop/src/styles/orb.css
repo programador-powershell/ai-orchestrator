@@ -1,10 +1,15 @@
 /* ------------------------------------------------------------------ */
 /* Orbes de processamento — a forma diz O QUE está acontecendo         */
 /*                                                                     */
-/* Cada orbe é um SVG estático do pacote de ícones; o movimento vem     */
-/* daqui, selecionando os filhos do SVG por posição. Funciona porque o  */
-/* miolo dos glifos é gerado do pacote e não muda sozinho — se um       */
-/* desenho for trocado, o seletor correspondente precisa acompanhar.    */
+/* Nos tamanhos a partir de 20px quem desenha é o `thinking-orbs`, em   */
+/* canvas: o que este arquivo faz por ele é só a auréola na matiz do    */
+/* módulo (`.orb--tunado`). O canvas é monocromático por design, então  */
+/* a cor da aba entra pelo fundo, não pela tinta.                       */
+/*                                                                     */
+/* Abaixo de 20px o desenho é um SVG do pacote de ícones e o movimento  */
+/* vem daqui, selecionando os filhos do SVG por posição. Funciona       */
+/* porque o miolo dos glifos é gerado do pacote e não muda sozinho — se */
+/* um desenho for trocado, o seletor correspondente precisa acompanhar. */
 /*                                                                     */
 /* Regra herdada do motion.css: só transform e opacity animam. Nada de  */
 /* stroke-dashoffset, que força repaint a cada quadro em nove telas ao  */
@@ -21,18 +26,48 @@
   color: var(--accent);
   background: radial-gradient(circle, var(--accent-soft), transparent 72%);
 }
-/* Filhos de SVG giram/escalam em torno do PRÓPRIO centro, não do canto
-   do viewBox — sem isto todo dot sai voando para fora do círculo. */
-.orb svg * {
+
+/* O canvas traz o próprio tamanho; a auréola só o acompanha, com uma
+   folga para o brilho não terminar exatamente na borda do desenho. */
+.orb--tunado {
+  width: auto;
+  height: auto;
+  padding: 5px;
+}
+/* Nenhum seletor de animação vale aqui: o movimento é do canvas. */
+.orb--tunado canvas { display: block; }
+/*
+ * Filhos de SVG giram/escalam em torno do PRÓPRIO centro, não do canto do
+ * viewBox — sem isto todo dot sai voando para fora do círculo.
+ *
+ * Só vale para quem este arquivo ANIMA. Em SVG2 o atributo `transform` do
+ * elemento é a mesma propriedade CSS, então a regra genérica reinterpretava
+ * o `transform="rotate(-25 12 12)"` que o glifo `thinking/working` já traz —
+ * a elipse dele girava em torno de outro ponto e saía do lugar.
+ */
+.orb--breathing svg *,
+.orb--searching svg *,
+.orb--solving svg *,
+.orb--composing svg *,
+.orb--connecting svg *,
+.orb--weaving svg *,
+.orb--shaping svg *,
+.orb--listening svg * {
   transform-box: fill-box;
   transform-origin: center;
 }
-/* Dentro do avatar da conversa o orbe é só o desenho: o círculo já é do
-   avatar, e dois fundos redondos empilhados viram um borrão. */
+
+/*
+ * Encaixes sem auréola: o avatar da conversa já é um círculo de vidro, e o
+ * orbe inline vive dentro de uma linha de texto. Dois fundos redondos
+ * empilhados viram borrão, e a folga de 5px do `--tunado` estouraria os 26px
+ * úteis do avatar — por isso as duas regras vêm DEPOIS e zeram o padding.
+ */
 .orb--avatar,
 .orb--inline {
   width: auto;
   height: auto;
+  padding: 0;
   background: none;
 }
 .orb--avatar { color: inherit; }

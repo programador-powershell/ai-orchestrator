@@ -69,7 +69,7 @@
   transition: opacity var(--t-fast) ease, transform var(--t-fast) ease;
 }
 .datax-host .datax-table:hover .datax-h,
-.datax-host .datax-table.selected .datax-h,
+.datax-host .react-flow__node.selected .datax-h,
 .datax-host .react-flow__node.dragging .datax-h,
 .datax-host .datax-h:hover {
   opacity: 1;
@@ -100,10 +100,11 @@
   cursor: grabbing;
 }
 /* Seleção: anel de acento que pulsa ao selecionar e assenta como vidro. */
-.datax-table.selected {
+/* Quem manda na seleção é o canvas — inclusive na múltipla (Ctrl+clique ou
+   laço), que o store não acompanha e não deveria mesmo acompanhar. */
+.datax-host .react-flow__node.selected .datax-table {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-float);
-  z-index: 5;
   animation: datax-ring var(--t-slow) var(--spring) both;
 }
 @keyframes datax-ring {
