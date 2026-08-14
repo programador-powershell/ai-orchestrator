@@ -89,17 +89,24 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 /**
- * Busca em TODAS as abas, ignorando caixa e acentos. Ordena por relevância
+ * Busca nas conversas, ignorando caixa e acentos. Ordena por relevância
  * (mais ocorrências primeiro) e desempata pela conversa mais recente.
+ *
+ * `escopo` limita a UMA aba. É o padrão desde que a busca subiu para a barra
+ * superior: de lá ela é um campo só, sempre visível, e trazer resultado de
+ * outro módulo obrigaria a trocar de aba para abrir — um resultado que a
+ * pessoa não pediu, num lugar que ela não estava olhando. Sem `escopo`, varre
+ * tudo (é o que a exportação e os testes usam).
  */
 export function searchConversations(
   all: Partial<Record<UiMode, ExportConversation[]>>,
-  query: string
+  query: string,
+  escopo?: UiMode
 ): ConversationSearchResult[] {
   const needle = normalizeSearchText(query.trim());
   if (!needle) return [];
   const results: Array<ConversationSearchResult & { updatedAt: number }> = [];
-  for (const mode of UI_MODES) {
+  for (const mode of escopo ? [escopo] : UI_MODES) {
     for (const conversation of all[mode] ?? []) {
       const titleMatches = countOccurrences(normalizeSearchText(conversation.title), needle);
       const bodyMatches = conversation.messages.reduce(

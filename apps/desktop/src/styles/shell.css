@@ -712,6 +712,69 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 .engine-menu > button:hover { background: var(--accent-soft); }
 .engine-menu > button small { margin-left: auto; color: var(--faint); font-size: var(--fs-eyebrow); font-family: var(--font-mono); }
+
+/* -------------------- seletor de motor (chip do composer) ------------- */
+/* O menu abre PARA CIMA porque o chip vive no rodapé: aberto para baixo,
+   ele cairia fora da janela. */
+
+.model-select-wrap { position: relative; display: inline-flex; }
+.model-select:disabled { opacity: 0.55; cursor: default; }
+.model-select.aberto { color: var(--ink); border-color: var(--accent); }
+.model-select-seta { flex: none; opacity: 0.7; transition: transform var(--t-fast) var(--spring); }
+.model-select.aberto .model-select-seta { transform: rotate(180deg); }
+
+.engine-item {
+  min-height: 38px;
+  padding: 5px 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.engine-item:hover { background: var(--hover); }
+.engine-item.ativo { background: var(--accent-soft); }
+.engine-marca { width: 14px; flex: none; display: grid; place-items: center; color: var(--accent); }
+.engine-texto { display: grid; gap: 1px; min-width: 0; }
+.engine-texto strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.engine-texto small {
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engine-tag {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* O aviso de que a política do gateway ainda manda — o chip não concede
+   permissão nenhuma, e a lista não pode sugerir que concede. */
+.engine-rodape {
+  margin: 4px 4px 0;
+  padding: 6px 5px 2px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  line-height: 1.45;
+}
 .engine-custom { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px; padding: 2px 4px 4px; }
 .engine-custom input {
   min-width: 0;

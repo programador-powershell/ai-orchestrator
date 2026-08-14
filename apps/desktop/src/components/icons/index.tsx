@@ -66,6 +66,10 @@ export function Glyph({ name, size = 16, strokeWidth = 1.5, ...rest }: GlyphProp
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
+      /* O nome vai para o DOM: é o que deixa o CSS animar UM glifo em
+         particular (o nó do MCP piscando, a chave girando) sem que o
+         componente precise saber que existe animação. */
+      data-glyph={name}
       {...rest}
     >
       {conteudo}

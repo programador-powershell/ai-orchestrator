@@ -1,0 +1,141 @@
+/* ------------------------------------------------------------------ */
+/* Busca da barra superior                                             */
+/*                                                                     */
+/* Fica entre as abas de módulo e o slot de ações. Encolhe ANTES do    */
+/* slot: as ações da aba vivem num contêiner com `overflow: clip`, e   */
+/* espremer o campo custa um placeholder — espremer o slot custa um    */
+/* botão que some sem aviso.                                           */
+/* ------------------------------------------------------------------ */
+
+.tbsearch {
+  position: relative;
+  flex: 0 1 260px;
+  min-width: 0;
+}
+
+.tbsearch-campo {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--muted);
+  transition: border-color var(--t-fast) ease, background var(--t-fast) ease;
+}
+.tbsearch-campo:hover { background: var(--glass-strong); }
+.tbsearch-campo:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+}
+.tbsearch-campo svg { flex: none; }
+.tbsearch-campo input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-micro);
+  outline: none;
+}
+.tbsearch-campo input::placeholder { color: var(--faint); }
+
+.tbsearch-atalho {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+}
+/* Com o campo em foco o atalho vira ruído: quem está digitando já chegou. */
+.tbsearch-campo:focus-within .tbsearch-atalho { opacity: 0; }
+
+/* ------------------------------- resultados ------------------------- */
+
+.tbsearch-lista {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: max(320px, 100%);
+  max-height: 340px;
+  overflow-y: auto;
+  z-index: 60;
+  padding: 5px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-float);
+  animation: pop-in var(--t-fast) var(--spring) both;
+}
+
+.tbsearch-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-xs, 6px);
+  text-align: left;
+  cursor: pointer;
+}
+.tbsearch-item.ativo { background: var(--hover); }
+.tbsearch-item:disabled { opacity: 0.45; cursor: default; }
+.tbsearch-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.tbsearch-item span {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+.tbsearch-item em {
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  font-style: normal;
+}
+
+.tbsearch-vazio {
+  margin: 0;
+  padding: 8px 9px;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+}
+
+/* ------------------------------ estreitando ------------------------- */
+/* Os mesmos pontos de corte das abas de módulo, para o encolhimento
+   acontecer em uma ordem previsível: rótulo da aba → busca → rótulo da
+   ação → tudo em ícone. */
+
+@container topbar (max-width: 1259px) {
+  .tbsearch { flex-basis: 190px; }
+  .tbsearch-atalho { display: none; }
+}
+@container topbar (max-width: 929px) {
+  /* Vira botão redondo: o placeholder não caberia, e um campo de 60px
+     que não mostra o que foi digitado é pior que um ícone honesto. */
+  .tbsearch { flex-basis: 30px; }
+  .tbsearch-campo { padding: 0; justify-content: center; }
+  .tbsearch-campo input { display: none; }
+  .tbsearch-campo:focus-within { position: absolute; right: 0; width: 240px; padding: 0 10px; z-index: 61; }
+  .tbsearch-campo:focus-within input { display: block; }
+}
