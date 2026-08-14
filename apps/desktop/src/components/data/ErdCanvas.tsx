@@ -39,7 +39,7 @@ import {
   type Node
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { SchemaTable } from "@ai-orchestrator/contracts";
+import type { SchemaTable } from "@multiplike/contracts";
 
 import { alturaDoCampo, nodeTypes } from "./TableNode";
 import { alca, ladosDaLigacao, resolverLigacao } from "../../lib/erdLinks";

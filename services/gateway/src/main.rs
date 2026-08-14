@@ -5,13 +5,16 @@ mod auth;
 mod config;
 mod crypto;
 mod error;
+mod executor;
 mod finetune;
 mod models;
 mod policy;
 mod providers;
 mod routes;
+mod runs;
 mod state;
 mod usage;
+mod ws;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -45,6 +48,9 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(config.clone(), pool, redis);
     // Reconciliador de fine-tuning: sincroniza jobs não-terminais em background.
     tokio::spawn(finetune::reconciler(state.clone()));
+    // Ponte Redis → hub: uma por instância, alimenta todos os WebSockets desta
+    // instância com os eventos publicados por qualquer uma (ver ws.rs).
+    tokio::spawn(ws::hub_task(state.clone()));
 
     let api = Router::new()
         .route("/auth/config", get(routes::oidc_config))
@@ -159,7 +165,33 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/workspaces/{workspace}/finetune/models",
             get(finetune::models_list),
-        );
+        )
+        // ---- Sessões e runs duráveis (espinha do harness) ----
+        .route(
+            "/workspaces/{workspace}/sessions",
+            get(runs::sessions_list).post(runs::session_create),
+        )
+        .route("/workspaces/{workspace}/runs", post(runs::run_create))
+        .route("/workspaces/{workspace}/runs/{run}", get(runs::run_get))
+        .route(
+            "/workspaces/{workspace}/runs/{run}/events",
+            get(runs::run_events_get).post(runs::run_events_post),
+        )
+        .route(
+            "/workspaces/{workspace}/runs/{run}/approvals",
+            get(runs::approvals_pending),
+        )
+        .route(
+            "/workspaces/{workspace}/approvals",
+            post(runs::approval_ask),
+        )
+        .route(
+            "/workspaces/{workspace}/approvals/{approval}",
+            post(runs::approval_decide),
+        )
+        // Canal bidirecional. Autentica pelo PRIMEIRO frame, não por query
+        // string — bearer em URL entra em log de acesso e proxy (ver ws.rs).
+        .route("/workspaces/{workspace}/ws", get(ws::handler));
 
     let request_id = axum::http::HeaderName::from_static("x-request-id");
     let app = Router::new()
@@ -189,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!(address=%config.bind,"AI Orchestrator gateway listening");
+    tracing::info!(address=%config.bind,"Multiplike-AI gateway listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

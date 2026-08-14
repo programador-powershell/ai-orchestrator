@@ -14,7 +14,7 @@ import {
   Telescope,
   X
 } from "lucide-react";
-import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
+import type { EngineSelection, ExecutionPlan } from "@multiplike/contracts";
 import type { ChatMessage } from "../lib/gateway";
 import { chatOnce, type EngineContext } from "../lib/engine";
 import {

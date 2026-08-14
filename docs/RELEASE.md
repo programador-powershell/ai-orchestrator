@@ -1,4 +1,4 @@
-# Publicação do AI Orchestrator
+# Publicação do Multiplike-AI
 
 O workflow `.github/workflows/release.yml` não contém `owner/repo` fixo. Ele usa
 `GITHUB_REPOSITORY`, `GITHUB_REPOSITORY_OWNER` e, opcionalmente, as variáveis abaixo.
@@ -44,7 +44,7 @@ só é executado quando `RUNTIME_REPOSITORY` estiver configurado.
 Crie e envie uma tag `vX.Y.Z` ou `vX.Y.Z-beta.N`. O CI valida TypeScript e Rust,
 produz o NSIS por usuário, compila o bootstrapper remoto com no máximo 15 MiB, cria
 `installer-manifest.json` e publica os assets no GitHub Release. O único arquivo
-apresentado ao usuário como instalação inicial deve ser `AI-Orchestrator-Setup.exe`.
+apresentado ao usuário como instalação inicial deve ser `Multiplike-AI-Setup.exe`.
 
 O gateway é implantado separadamente. No OpenShip, importe `services/gateway` como a
 raiz do projeto, configure os secrets do ambiente e associe PostgreSQL, Redis e um

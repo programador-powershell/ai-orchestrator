@@ -4,7 +4,7 @@ Data: 2026-08-11 · Status: **aprovado pelo usuário** (brainstorm concluído)
 
 ## Problema
 
-O AI Orchestrator V2 embute clones completos de terceiros (`third_party/`: soup,
+O Multiplike-AI embute clones completos de terceiros (`third_party/`: soup,
 opencode, drawdb) e o fluxo de fine-tuning depende de um único job em
 localStorage, sem histórico nem backend. O usuário quer um **harness de LLM**
 com a **interface do Unsloth Studio**, reescrito por completo em tecnologia
@@ -47,7 +47,7 @@ telas do Studio — escopo inviável) e C (só motor, sem a interface pedida).
   `dynamic(() => import('../src/App'), { ssr: false })` — evita tocar nos ~14
   módulos com `window` no top-level.
 - `next.config.ts`: `output: 'export'`, `images.unoptimized: true`,
-  `transpilePackages: ['@ai-orchestrator/contracts']`, `reactStrictMode: true`.
+  `transpilePackages: ['@multiplike/contracts']`, `reactStrictMode: true`.
 - `tauri.conf.json`: `frontendDist: '../out'`; dev = `next dev -p 1420`
   (devUrl mantido); remover Vite/`index.html`/`main.tsx` (side-effects de boot
   migram para `useEffect` no shell); apagar `dist/` antigo. Vitest intocado.

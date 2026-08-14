@@ -5,7 +5,7 @@
  * para a UI permanecer 100% navegável.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { FsEntry } from "@ai-orchestrator/contracts";
+import type { FsEntry } from "@multiplike/contracts";
 import { currentRoute, ssh, toTarget, type SshTarget } from "./ssh";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
@@ -75,7 +75,7 @@ const demoTree: Record<string, FsEntry[]> = {
 
 const demoFiles: Record<string, string> = {
   "README.md":
-    "# AI Orchestrator\n\nConteúdo de demonstração — no aplicativo desktop o explorer lê os arquivos reais\n" +
+    "# Multiplike-AI\n\nConteúdo de demonstração — no aplicativo desktop o explorer lê os arquivos reais\n" +
     "através dos comandos nativos fs_list / fs_read / fs_write.\n",
   "packages/contracts/src/index.ts":
     'export const MODES = ["chat", "work", "design", "data", "agent", "code", "security"] as const;\n' +

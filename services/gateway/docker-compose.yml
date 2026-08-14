@@ -12,7 +12,7 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
       PROVIDER_MASTER_KEY: ${PROVIDER_MASTER_KEY}
-      RUST_LOG: ${RUST_LOG:-ai_orchestrator_gateway=info,tower_http=info}
+      RUST_LOG: ${RUST_LOG:-multiplike_ai_gateway=info,tower_http=info}
     depends_on:
       postgres:
         condition: service_healthy

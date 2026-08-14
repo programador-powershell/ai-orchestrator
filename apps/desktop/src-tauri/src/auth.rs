@@ -45,7 +45,7 @@ fn account(base_url: &str) -> String {
 
 fn store(base_url: &str, session: &OidcSession) -> Result<(), String> {
     let value = serde_json::to_string(session).map_err(|e| e.to_string())?;
-    keyring::Entry::new("AI Orchestrator", &account(base_url))
+    keyring::Entry::new("Multiplike-AI", &account(base_url))
         .map_err(|e| e.to_string())?
         .set_password(&value)
         .map_err(|e| e.to_string())
@@ -129,7 +129,7 @@ fn token_session(value: Value, previous_refresh: Option<String>) -> Result<OidcS
 /// Credencial que o IdP recusou de vez (refresh revogado) precisa SAIR do
 /// keyring: senão vira zumbi, retentada a cada reinício para sempre.
 fn discard(gateway_base_url: &str) {
-    if let Ok(entry) = keyring::Entry::new("AI Orchestrator", &account(gateway_base_url)) {
+    if let Ok(entry) = keyring::Entry::new("Multiplike-AI", &account(gateway_base_url)) {
         let _ = entry.delete_credential();
     }
 }
@@ -142,7 +142,7 @@ pub async fn oidc_restore(
     gateway_base_url: String,
     force: Option<bool>,
 ) -> Result<Option<OidcSession>, String> {
-    let entry = keyring::Entry::new("AI Orchestrator", &account(&gateway_base_url))
+    let entry = keyring::Entry::new("Multiplike-AI", &account(&gateway_base_url))
         .map_err(|e| e.to_string())?;
     let value = match entry.get_password() {
         Ok(value) => value,
@@ -170,7 +170,7 @@ pub async fn oidc_restore(
 
 #[tauri::command]
 pub async fn oidc_logout(gateway_base_url: String) -> Result<(), String> {
-    let entry = keyring::Entry::new("AI Orchestrator", &account(&gateway_base_url))
+    let entry = keyring::Entry::new("Multiplike-AI", &account(&gateway_base_url))
         .map_err(|e| e.to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -247,7 +247,7 @@ pub async fn oidc_login(gateway_base_url: String) -> Result<OidcSession, String>
             .cloned()
             .unwrap_or_else(|| "OIDC não retornou código".into())
     })?;
-    let page = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><title>AI Orchestrator</title><style>body{background:#071315;color:#eafff7;font:16px system-ui;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}p{color:#85a099}</style><div><h1>Login concluído</h1><p>Você já pode fechar esta janela.</p></div>";
+    let page = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><title>Multiplike-AI</title><style>body{background:#071315;color:#eafff7;font:16px system-ui;display:grid;place-items:center;height:100vh;margin:0}div{text-align:center}p{color:#85a099}</style><div><h1>Login concluído</h1><p>Você já pode fechar esta janela.</p></div>";
     socket
         .write_all(page.as_bytes())
         .await

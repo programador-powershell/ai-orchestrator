@@ -1,0 +1,46 @@
+Multiplike-AI
+Copyright (c) Multiplike
+
+Este produto inclui software desenvolvido por terceiros. As obrigações de
+atribuição de cada um estão abaixo.
+
+===============================================================================
+openship — https://github.com/oblien/openship
+Licenciado sob a Apache License, Version 2.0.
+Cópia da licença: licenses/openship-Apache-2.0.txt
+===============================================================================
+
+Referência: openship v0.6.5, commit 8443f1e.
+
+O upstream não publica arquivo NOTICE nem preenche o titular no apêndice do
+LICENSE; a atribuição aqui aponta para o repositório e a versão de origem, que
+é o que identifica a obra.
+
+ARQUIVOS DERIVADOS neste repositório (marcados também no próprio cabeçalho,
+como pede a §4b da licença):
+
+  apps/desktop/src/lib/ship/stacks.ts
+      Derivado de packages/core/src/stacks.ts.
+      Registro de 47 stacks e 11 linguagens: imagem de build e de runtime,
+      diretório de saída, porta, comando de build e de start, caminhos de
+      produção e regras de detecção.
+      Modificações: traduzido para os tipos deste projeto; reduzido ao que a
+      aba Code usa; REMOVIDA a constante STACK_ICONS, que apontava para
+      cdn.jsdelivr.net/gh/devicons/devicon@latest; comentários reescritos em
+      português.
+
+  apps/desktop/src/lib/ship/dockerfile.ts
+      Derivado de packages/adapters/src/runtime/docker-build-plan.ts.
+      Gerador de Dockerfile multi-estágio e os marcadores de progresso
+      impressos dentro do RUN.
+      Modificações: reescrito como função pura sem as dependências do
+      original; o prefixo do marcador de progresso passou a ser deste
+      produto; receitas de PHP/FrankenPHP e de site estático não foram
+      portadas; comentários reescritos em português.
+
+NÃO derivamos nada de resources/engine do instalador do openship (iRedMail,
+GPLv3) nem redistribuímos a base GeoLite2 que ele empacota.
+
+Logotipos de frameworks (Next.js, Nuxt, Svelte e demais) são marcas de seus
+titulares e NÃO foram embarcados: a interface usa os glifos próprios deste
+projeto ou o nome em texto.

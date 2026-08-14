@@ -1,4 +1,4 @@
-# AI Orchestrator V2 — "Liquid Glass" — Design Spec
+# Multiplike-AI — "Liquid Glass" — Design Spec
 
 Data: 2026-08-10 · Status: aprovado por execução autônoma (pedido detalhado do usuário)
 

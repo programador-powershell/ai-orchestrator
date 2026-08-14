@@ -84,7 +84,7 @@ export interface ReleaseComponent {
 
 export interface ReleaseManifest {
   schemaVersion: 1;
-  product: "AI Orchestrator";
+  product: "Multiplike-AI";
   channel: "stable" | "beta";
   version: string;
   minimumBootstrapperVersion: string;

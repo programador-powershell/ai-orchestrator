@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { SecurityFinding } from "@ai-orchestrator/contracts";
+import type { SecurityFinding } from "@multiplike/contracts";
 
 import {
   buildInvestigationPrompt,

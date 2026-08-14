@@ -10,7 +10,9 @@ mod office_edit;
 mod pdf;
 mod policy;
 mod providers;
+mod pty;
 mod research;
+mod runstore;
 mod runtime;
 mod sandbox;
 mod ssh;
@@ -24,7 +26,7 @@ use tokio::time::{timeout, Duration};
 
 #[tauri::command]
 fn credential_store(account: String, token: String) -> Result<(), String> {
-    keyring::Entry::new("AI Orchestrator", &account)
+    keyring::Entry::new("Multiplike-AI", &account)
         .map_err(|error| error.to_string())?
         .set_password(&token)
         .map_err(|error| error.to_string())
@@ -35,13 +37,13 @@ fn credential_store(account: String, token: String) -> Result<(), String> {
 #[tauri::command]
 fn credential_exists(account: String) -> Result<bool, String> {
     let entry =
-        keyring::Entry::new("AI Orchestrator", &account).map_err(|error| error.to_string())?;
+        keyring::Entry::new("Multiplike-AI", &account).map_err(|error| error.to_string())?;
     Ok(entry.get_password().is_ok())
 }
 
 #[tauri::command]
 fn credential_delete(account: String) -> Result<(), String> {
-    keyring::Entry::new("AI Orchestrator", &account)
+    keyring::Entry::new("Multiplike-AI", &account)
         .map_err(|error| error.to_string())?
         .delete_credential()
         .map_err(|error| error.to_string())
@@ -90,6 +92,33 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         memory::memory_delete,
         memory::memory_list,
         memory::memory_touch,
+        // Log local do run — fonte de verdade do local-first (src/runstore.rs).
+        // Vale nas DUAS edições: durabilidade não é porta de saída ao provedor,
+        // é o registro do que a máquina fez. Na edição managed o run continua
+        // sendo gravado aqui e sincronizado para o gateway auditar.
+        runstore::run_session_create,
+        runstore::run_sessions_list,
+        runstore::run_create,
+        runstore::run_append,
+        runstore::run_events_since,
+        runstore::run_get,
+        runstore::run_list,
+        runstore::run_set_status,
+        runstore::run_mark_synced,
+        runstore::run_pending_sync,
+        runstore::run_approval_ask,
+        runstore::run_approval_decide,
+        runstore::run_approvals_pending,
+        // Terminal interativo (src/pty.rs). `pty_write` é tecla de HUMANO —
+        // nenhum destes entra no registro de ferramentas do agente, senão o
+        // modelo escreveria num shell aberto e contornaria todo gate de
+        // aprovação de uma vez. Ver o cabeçalho de pty.rs.
+        pty::pty_spawn,
+        pty::pty_write,
+        pty::pty_resize,
+        pty::pty_kill,
+        pty::pty_kill_all,
+        pty::pty_list,
         fsx::fs_list,
         fsx::fs_read,
         fsx::fs_write,
@@ -146,6 +175,33 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         memory::memory_delete,
         memory::memory_list,
         memory::memory_touch,
+        // Log local do run — fonte de verdade do local-first (src/runstore.rs).
+        // Vale nas DUAS edições: durabilidade não é porta de saída ao provedor,
+        // é o registro do que a máquina fez. Na edição managed o run continua
+        // sendo gravado aqui e sincronizado para o gateway auditar.
+        runstore::run_session_create,
+        runstore::run_sessions_list,
+        runstore::run_create,
+        runstore::run_append,
+        runstore::run_events_since,
+        runstore::run_get,
+        runstore::run_list,
+        runstore::run_set_status,
+        runstore::run_mark_synced,
+        runstore::run_pending_sync,
+        runstore::run_approval_ask,
+        runstore::run_approval_decide,
+        runstore::run_approvals_pending,
+        // Terminal interativo (src/pty.rs). `pty_write` é tecla de HUMANO —
+        // nenhum destes entra no registro de ferramentas do agente, senão o
+        // modelo escreveria num shell aberto e contornaria todo gate de
+        // aprovação de uma vez. Ver o cabeçalho de pty.rs.
+        pty::pty_spawn,
+        pty::pty_write,
+        pty::pty_resize,
+        pty::pty_kill,
+        pty::pty_kill_all,
+        pty::pty_list,
         fsx::fs_list,
         fsx::fs_read,
         fsx::fs_write,
@@ -183,11 +239,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(RuntimeManager::default())
+        .manage(pty::PtyState::default())
         // Edição FULL: tudo registrado, inclusive as portas de saída direta
         // ao provedor (BYOK). A lista managed abaixo é a MESMA sem elas —
         // manter as duas em sincronia é intencional e explícito: um comando
         // novo obriga a decidir em qual edição ele existe.
         .invoke_handler(handlers())
         .run(tauri::generate_context!())
-        .expect("failed to run AI Orchestrator");
+        .expect("failed to run Multiplike-AI");
 }

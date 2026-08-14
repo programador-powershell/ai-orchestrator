@@ -30,7 +30,7 @@ import {
   Upload,
   X
 } from "lucide-react";
-import type { SchemaField, SchemaRelation, SchemaTable } from "@ai-orchestrator/contracts";
+import type { SchemaField, SchemaRelation, SchemaTable } from "@multiplike/contracts";
 import {
   EmptyHero,
   FloatingPulse,

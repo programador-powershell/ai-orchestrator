@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { MemoryItem, MemorySearchHit } from "@ai-orchestrator/contracts";
+import type { MemoryItem, MemorySearchHit } from "@multiplike/contracts";
 
 // memory.ts referencia `window` e importa @tauri-apps/api no topo do módulo.
 // Para testar as funções puras em ambiente node, mockamos o invoke e stubamos

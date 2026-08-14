@@ -10,8 +10,8 @@
     "OIDC_ISSUER": { "value": "", "secret": true },
     "OIDC_CLIENT_ID": { "value": "", "secret": true },
     "OIDC_CLIENT_SECRET": { "value": "", "secret": true },
-    "OIDC_AUDIENCE": { "value": "ai-orchestrator", "secret": false },
+    "OIDC_AUDIENCE": { "value": "multiplike-ai", "secret": false },
     "PROVIDER_MASTER_KEY": { "value": "", "secret": true },
-    "RUST_LOG": "ai_orchestrator_gateway=info,tower_http=info"
+    "RUST_LOG": "multiplike_ai_gateway=info,tower_http=info"
   }
 }

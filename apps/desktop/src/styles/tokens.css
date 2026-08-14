@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------ */
-/* AI Orchestrator V2 — tokens                                         */
+/* Multiplike-AI — tokens                                         */
 /* Toda cor/tamanho/curva vem daqui. Views não inventam valores.       */
 /* ------------------------------------------------------------------ */
 
@@ -162,6 +162,148 @@
 
 /* O acento é o MESMO verde em todas as abas (estilo Studio) — sem liquid hue. */
 
+/* ------------------------------------------------------------------ */
+/* TERMINAL — sistema de cores SEMÂNTICO da aba Code                   */
+/*                                                                     */
+/* O scrollback era monocromático (`--terminal-ink` em tudo): comando, */
+/* caminho, stdout, stderr, resposta do agente e `[exit …]` saíam na   */
+/* mesma cor, e falha era indistinguível de sucesso. Aqui cada PAPEL   */
+/* tem token próprio — a view escolhe o papel, nunca a cor.            */
+/*                                                                     */
+/* Ramp cinza neutra (sem viés azul/quente) + acentos da família       */
+/* TokyoNight, aprofundados no claro para contraste sobre fundo claro. */
+/* Levantamento funcional do TUI de referência (Apache-2.0) em         */
+/* docs/creditos-inspiracao.md — nenhum código copiado.                */
+/*                                                                     */
+/* `--terminal-bg`/`--terminal-ink` (acima) seguem intactos: outras    */
+/* abas os usam como bloco escuro sobre página clara.                  */
+/* ------------------------------------------------------------------ */
+
+/* Claro */
+.app-shell {
+  /* Superfícies — o terminal é a mais clara; o editor, um passo abaixo */
+  --term-bg: #f5f5f5;
+  --term-bg-base: #eeeeee;
+  --term-bg-dark: #e4e4e4;
+  --term-bg-highlight: #dedede;
+  --term-bg-hover: #d0d0d0;
+  --term-bg-visual: #c6c6c6;
+
+  /* Texto e cinzas */
+  --term-fg: #262626;
+  --term-fg-dim: #444444;
+  --term-gray-bright: #626262;
+  --term-gray: #767676;
+  --term-gray-dim: #a5a5a5;
+
+  /* Papéis do scrollback */
+  --term-command: #a27612;
+  --term-path: #c3691e;
+  --term-running: #0082aa;
+  --term-warning: #a27612;
+  --term-error: #cd3048;
+  --term-success: #378e23;
+  --term-agent: #7d4bc6;
+  --term-tool: #626262;
+  --term-system: #2f64d2;
+  --term-user: #444444;
+  --term-model: #0a8e70;
+
+  /* Cromo do prompt — a borda reage ao foco */
+  --term-prompt-border: #c8c8cd;
+  --term-prompt-border-active: #a5a5af;
+  --term-selection-border: #b9b9be;
+  --term-scrollbar: #dedede;
+  --term-link: #2f64d2;
+
+  /* Prévia do que foi colado e ainda NÃO executado */
+  --term-paste-bg: #dedede;
+  --term-paste-fg: #444444;
+  --term-paste-dim: #b2b2b2;
+
+  /* Diff dentro da aba Code */
+  --term-diff-add-bg: #daf2dc;
+  --term-diff-add-fg: #378e23;
+  --term-diff-del-bg: #f5dade;
+  --term-diff-del-fg: #cd3048;
+  --term-diff-eq-fg: #767676;
+
+  /* Sintaxe do editor (CodeMirror) */
+  --term-syn-keyword: #7d4bc6;
+  --term-syn-string: #378e23;
+  --term-syn-number: #c3691e;
+  --term-syn-comment: #767676;
+  --term-syn-func: #2f64d2;
+  --term-syn-type: #0f87a2;
+  --term-syn-prop: #0c947c;
+  --term-syn-operator: #0082aa;
+  --term-syn-punct: #626262;
+  --term-syn-tag: #cd3048;
+  --term-syn-attr: #a27612;
+  --term-syn-var: #262626;
+  --term-syn-meta: #0082aa;
+  --term-syn-invalid: #af2323;
+}
+
+/* Escuro */
+.app-shell[data-theme="dark"] {
+  --term-bg: #0a0a0a;
+  --term-bg-base: #141414;
+  --term-bg-dark: #1c1c1c;
+  --term-bg-highlight: #242424;
+  --term-bg-hover: #2c2c2c;
+  --term-bg-visual: #363636;
+
+  --term-fg: #e1e1e1;
+  --term-fg-dim: #c8c8c8;
+  --term-gray-bright: #787878;
+  --term-gray: #6c6c6c;
+  --term-gray-dim: #585858;
+
+  --term-command: #e0af68;
+  --term-path: #ff9e64;
+  --term-running: #7dcfff;
+  --term-warning: #e0af68;
+  --term-error: #f7768e;
+  --term-success: #9ece6a;
+  --term-agent: #bb9af7;
+  --term-tool: #787878;
+  --term-system: #7aa2f7;
+  --term-user: #c8c8c8;
+  --term-model: #1abc9c;
+
+  --term-prompt-border: #323237;
+  --term-prompt-border-active: #505058;
+  --term-selection-border: #3c3c41;
+  --term-scrollbar: #242424;
+  --term-link: #7aa6da;
+
+  --term-paste-bg: #111111;
+  --term-paste-fg: #c8c8c8;
+  --term-paste-dim: #414141;
+
+  --term-diff-add-bg: #063806;
+  --term-diff-add-fg: #9ece6a;
+  --term-diff-del-bg: #420e14;
+  --term-diff-del-fg: #f7768e;
+  --term-diff-eq-fg: #6c6c6c;
+
+  --term-syn-keyword: #bb9af7;
+  --term-syn-string: #9ece6a;
+  --term-syn-number: #ff9e64;
+  --term-syn-comment: #6c6c6c;
+  --term-syn-func: #7aa2f7;
+  --term-syn-type: #3a95ab;
+  --term-syn-prop: #73daca;
+  --term-syn-operator: #7dcfff;
+  --term-syn-punct: #787878;
+  --term-syn-tag: #f7768e;
+  --term-syn-attr: #e0af68;
+  --term-syn-var: #e1e1e1;
+  --term-syn-meta: #7dcfff;
+  --term-syn-invalid: #db4b4b;
+}
+
 /* Tons categóricos p/ diagramas (ERD, DAG, layers) */
 .app-shell {
   --tone-cyan: #4fb6cf;
@@ -198,9 +340,22 @@
   --accent-soft: hsl(var(--accent-h) var(--accent-s) 42% / 0.12);
   --accent-strong: hsl(var(--accent-h) var(--accent-s) 34%);
   --accent-glow: hsl(var(--accent-h) var(--accent-s) 45% / 0.25);
-  /* --accent-h é @property <number>: o navegador interpola e todos os
-     hsl() derivados acompanham. Sem isto a troca de aba seria corte seco. */
-  transition: --accent-h var(--t-slow) ease;
+  /*
+   * SEM `transition: --accent-h` aqui.
+   *
+   * A intenção era interpolar a matiz na troca de aba (é @property <number>,
+   * o navegador sabe interpolar) em vez de cortar seco. O efeito real era
+   * outro: a transição nascia junto com a mutação do `data-mode` e ENCALHAVA
+   * no valor de partida, sem nunca avançar. Resultado — `--accent-h` ficava
+   * fixo em 158 (o verde do Chat) em TODAS as nove abas, e a "cor própria por
+   * aba" anunciada no README nunca existiu: Code não era azul, Security não
+   * era vermelho, Design não era violeta. Só se resolvia quando algo forçava
+   * recálculo no elemento, o que não acontece na troca de aba.
+   *
+   * Sem a transição o cascade se aplica direto e cada aba fica com a matiz
+   * dela. O custo é a matiz trocar de uma vez — que é o que o resto do
+   * mercado faz.
+   */
 }
 
 /* Escuro mantém a luminosidade própria do tema. */
@@ -211,6 +366,4 @@
   --accent-glow: hsl(var(--accent-h) var(--accent-s) 52% / 0.3);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-shell[data-mode] { transition: none; }
-}
+/* (Não há mais transição de matiz para desligar em prefers-reduced-motion.) */

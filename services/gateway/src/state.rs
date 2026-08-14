@@ -22,7 +22,7 @@ impl Metrics {
         self.fallbacks.fetch_add(1, Ordering::Relaxed);
     }
     pub fn render(&self) -> String {
-        format!("# TYPE ai_orchestrator_requests_total counter\nai_orchestrator_requests_total {}\n# TYPE ai_orchestrator_provider_failures_total counter\nai_orchestrator_provider_failures_total {}\n# TYPE ai_orchestrator_fallbacks_total counter\nai_orchestrator_fallbacks_total {}\n",self.requests.load(Ordering::Relaxed),self.provider_failures.load(Ordering::Relaxed),self.fallbacks.load(Ordering::Relaxed))
+        format!("# TYPE multiplike_ai_requests_total counter\nmultiplike_ai_requests_total {}\n# TYPE multiplike_ai_provider_failures_total counter\nmultiplike_ai_provider_failures_total {}\n# TYPE multiplike_ai_fallbacks_total counter\nmultiplike_ai_fallbacks_total {}\n",self.requests.load(Ordering::Relaxed),self.provider_failures.load(Ordering::Relaxed),self.fallbacks.load(Ordering::Relaxed))
     }
 }
 
@@ -34,6 +34,9 @@ pub struct AppState {
     pub auth: AuthService,
     pub providers: ProviderClient,
     pub metrics: Arc<Metrics>,
+    /// Distribuidor de eventos de run para os WebSockets desta instância.
+    /// Alimentado pela ponte do Redis (`ws::hub_task`) — ver ws.rs.
+    pub hub: Arc<crate::ws::Hub>,
 }
 
 impl AppState {
@@ -50,6 +53,7 @@ impl AppState {
             pool,
             redis,
             metrics: Arc::new(Metrics::default()),
+            hub: Arc::new(crate::ws::Hub::default()),
         }
     }
 }

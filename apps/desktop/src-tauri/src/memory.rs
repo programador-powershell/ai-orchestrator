@@ -32,7 +32,7 @@ pub struct MemoryInput {
 fn database_path() -> Result<PathBuf, String> {
     let directory = dirs::data_dir()
         .ok_or_else(|| "pasta de dados do usuário indisponível".to_string())?
-        .join("AI Orchestrator");
+        .join("Multiplike-AI");
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory.join("memory.db"))
 }

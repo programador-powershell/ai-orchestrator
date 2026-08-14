@@ -8,7 +8,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   images: { unoptimized: true },
-  transpilePackages: ["@ai-orchestrator/contracts"],
+  transpilePackages: ["@multiplike/contracts"],
   reactStrictMode: true
 };
 

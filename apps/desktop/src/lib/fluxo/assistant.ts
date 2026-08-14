@@ -17,7 +17,7 @@ import { describeFlow, takeOps, type FlowOp } from "./ops";
 import type { FlowDefinition, FlowNodeData, NodeType } from "./types";
 
 export const SYSTEM = [
-  "Você monta fluxos de automação no editor visual do AI Orchestrator.",
+  "Você monta fluxos de automação no editor visual do Multiplike-AI.",
   "",
   "Responda SOMENTE com operações, UMA POR LINHA, cada uma um JSON completo.",
   "Nada de markdown, nada de texto explicativo, nada de cerca de código.",

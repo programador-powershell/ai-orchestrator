@@ -1,0 +1,121 @@
+/* ------------------------------------------------------------------ */
+/* Terminal (xterm.js)                                                 */
+/*                                                                     */
+/* A superfície do emulador tem PALETA PRÓPRIA — quem escreve `\e[31m` */
+/* está pedindo a cor 1 do ANSI, não o vermelho de erro do produto. As */
+/* cores vêm do `lib/termTheme.ts` e são injetadas em linha pelo       */
+/* componente, para o emulador e o interpretador do scrollback         */
+/* pintarem igual.                                                     */
+/*                                                                     */
+/* O que este arquivo faz é a MOLDURA: a barra de destino, a faixa de  */
+/* erro e o encaixe da tela. Isso acompanha o app.                     */
+/* ------------------------------------------------------------------ */
+
+.xterm-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+/* --------------------------------- barra ---------------------------- */
+
+.xterm-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+/*
+ * O destino vem primeiro e ocupa o espaço: um terminal que não diz em qual
+ * máquina está é um convite a rodar o comando certo no lugar errado.
+ */
+.xterm-alvo {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+/* Sessão morta: o rótulo do destino esmaece, porque ele não vale mais. */
+.xterm-host[data-alive="0"] .xterm-alvo { opacity: 0.55; }
+
+.xterm-shells { flex: none; }
+.xterm-shells button { font-size: var(--fs-eyebrow); }
+
+.xterm-erro {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--tone-red, #ef4444) 12%, var(--surface));
+  color: var(--ink);
+  font-size: var(--fs-eyebrow);
+}
+
+/* --------------------------------- tela ----------------------------- */
+
+/*
+ * O emulador mede a si mesmo: precisa de altura DEFINIDA para calcular a
+ * grade. Com `height: auto` ele nasce com uma linha e o `fit` não tem de
+ * onde tirar o número de linhas.
+ */
+.xterm-tela {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 4px 4px 8px;
+}
+.xterm-tela .xterm { height: 100%; }
+.xterm-tela .xterm-viewport {
+  /* A barra de rolagem do xterm é do app, não a do sistema. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.xterm-tela .xterm-viewport::-webkit-scrollbar { width: 9px; }
+.xterm-tela .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: var(--line-strong);
+}
+
+/* Foco: o terminal avisa que a tecla vai para ELE, e não para o editor. */
+.xterm-tela:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ------------------------------------------------------------------ */
+/* As duas metades do painel na aba Code                               */
+/* ------------------------------------------------------------------ */
+
+.codex-term-tabs {
+  flex: none;
+  align-self: flex-start;
+  margin: 5px 8px 0;
+}
+.codex-term-tabs button { font-size: var(--fs-eyebrow); }
+
+/* Com o shell à vista, o painel vira coluna e o emulador ocupa o resto. */
+.codex-term.is-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.codex-term.is-shell .xterm-host { flex: 1; min-height: 0; }
+.codex-term-assistido[hidden] { display: none; }

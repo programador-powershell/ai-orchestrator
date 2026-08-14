@@ -17,7 +17,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import type { UiMode } from "@ai-orchestrator/contracts";
+import type { UiMode } from "@multiplike/contracts";
 import {
   exportFileName,
   groupByProject,

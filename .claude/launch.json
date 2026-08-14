@@ -4,7 +4,7 @@
     {
       "name": "desktop-web",
       "runtimeExecutable": "corepack",
-      "runtimeArgs": ["pnpm", "--filter", "@ai-orchestrator/desktop", "dev"],
+      "runtimeArgs": ["pnpm", "--filter", "@multiplike/desktop", "dev"],
       "port": 1420
     }
   ]

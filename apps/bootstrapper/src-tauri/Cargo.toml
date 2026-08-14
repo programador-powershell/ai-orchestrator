@@ -1,8 +1,8 @@
 [package]
-name = "ai-orchestrator-bootstrapper"
+name = "multiplike-ai-bootstrapper"
 version = "0.1.0"
-description = "Small signed installer for AI Orchestrator"
-authors = ["AI Orchestrator"]
+description = "Small signed installer for Multiplike-AI"
+authors = ["Multiplike-AI"]
 edition = "2021"
 
 [build-dependencies]

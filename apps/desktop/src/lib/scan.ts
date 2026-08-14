@@ -5,7 +5,7 @@
  *
  * Política: valores de segredos NUNCA aparecem em findings — são mascarados.
  */
-import type { SecurityFinding } from "@ai-orchestrator/contracts";
+import type { SecurityFinding } from "@multiplike/contracts";
 import type { ChatMessage } from "./gateway";
 
 type Severity = SecurityFinding["severity"];
