@@ -60,6 +60,7 @@ const MODE_LABELS: Record<UiMode, string> = {
   work: "Work",
   security: "Security",
   agent: "Agent",
+  fluxo: "Fluxo",
   tune: "Tuning"
 };
 

@@ -10,6 +10,7 @@ pub enum Mode {
     Design,
     Data,
     Agent,
+    Fluxo,
     Code,
     Security,
     Office,
@@ -23,6 +24,7 @@ impl Mode {
             Self::Design => "design",
             Self::Data => "data",
             Self::Agent => "agent",
+            Self::Fluxo => "fluxo",
             Self::Code => "code",
             Self::Security => "security",
             Self::Office => "office",
@@ -31,12 +33,13 @@ impl Mode {
     }
 
     /// Todos os modos que o servidor conhece — a política itera por aqui.
-    pub const ALL: [Mode; 9] = [
+    pub const ALL: [Mode; 10] = [
         Mode::Chat,
         Mode::Work,
         Mode::Design,
         Mode::Data,
         Mode::Agent,
+        Mode::Fluxo,
         Mode::Code,
         Mode::Security,
         Mode::Office,

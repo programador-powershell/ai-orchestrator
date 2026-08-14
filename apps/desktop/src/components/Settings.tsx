@@ -122,6 +122,7 @@ const modeLabels: Record<UiMode, string> = {
   work: "Work",
   security: "Security",
   agent: "Agent",
+  fluxo: "Fluxo",
   office: "Office",
 
   tune: "Fine-Tuning"
@@ -2167,6 +2168,7 @@ const MODE_LABELS: Record<UiMode, string> = {
   work: "Work",
   security: "Security",
   agent: "Agent",
+  fluxo: "Fluxo",
   office: "Office",
 
   tune: "Fine-Tuning"

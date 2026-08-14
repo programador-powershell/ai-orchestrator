@@ -4,7 +4,18 @@
  * chamar o servidor — e aí o gateway não tinha como bloquear por módulo,
  * porque nunca via o módulo real.
  */
-export const MODES = ["chat", "work", "design", "data", "agent", "code", "security", "office", "tune"] as const;
+export const MODES = [
+  "chat",
+  "work",
+  "design",
+  "data",
+  "agent",
+  "fluxo",
+  "code",
+  "security",
+  "office",
+  "tune"
+] as const;
 export type Mode = (typeof MODES)[number];
 
 /** Abas expostas na UI — produto completo + Office e Fine-Tuning. */
@@ -17,6 +28,7 @@ export const UI_MODES = [
   "work",
   "security",
   "agent",
+  "fluxo",
   "tune"
 ] as const;
 export type UiMode = (typeof UI_MODES)[number];

@@ -63,6 +63,7 @@ const modePlaceholders: Record<string, string> = {
   work: "Descreva o objetivo ou a automação…",
   security: "Peça uma revisão, simulação ou correção…",
   agent: "Descreva o fluxo de agentes…",
+  fluxo: "Use o assistente do fluxo, à esquerda do canvas.",
   office: "Diga o que quer alterar no arquivo…",
   tune: "Peça exemplos de dataset, config de treino ou avaliação…"
 };
@@ -714,7 +715,9 @@ export function Composer() {
   }
 
   return (
-    <footer className={`composer-wrap ${mode === "code" ? "composer-hidden" : ""}`}>
+    /* A aba Fluxo tem o próprio assistente na coluna da esquerda; um segundo
+       campo de mensagem faria a mesma coisa por dois caminhos. */
+    <footer className={`composer-wrap ${mode === "code" || mode === "fluxo" ? "composer-hidden" : ""}`}>
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
