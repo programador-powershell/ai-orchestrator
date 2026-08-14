@@ -40,3 +40,7 @@ worktrees/
 Thumbs.db
 .idea/
 .vscode/
+
+# Logs de execução local (o gateway e o provedor de mentira escrevem aqui
+# quando rodados à mão para verificação).
+*.log
