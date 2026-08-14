@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fixtures from "./__fixtures__/wsFrames.json";
 import {
   MAX_BACKOFF_MS,
   authFrame,
@@ -144,5 +145,80 @@ describe("builders", () => {
       runId: "r1",
       fromSeq: 12
     });
+  });
+});
+
+describe("contrato com o servidor (fixture compartilhada)", () => {
+  /*
+   * O arquivo e ESCRITO pelo teste do gateway (`ws::contrato` em ws.rs) e
+   * LIDO aqui. Os dois lados olhando o mesmo arquivo e o que faltava: a
+   * divergencia que quebrou cinco dos sete comandos — o servidor esperando
+   * `run_id` enquanto o cliente mandava `runId` — passava nos testes dos
+   * dois lados, porque cada um so falava consigo mesmo.
+   *
+   * Quem mudar um frame no servidor reescreve a fixture, e este teste falha
+   * na hora.
+   */
+  const frames = fixtures as Record<string, { type?: string }>;
+
+  it("todo frame de saida do servidor e reconhecido pelo parseFrame", () => {
+    for (const [nome, frame] of Object.entries(frames)) {
+      const lido = parseFrame(JSON.stringify(frame));
+      expect(lido, `frame "${nome}" foi descartado pelo cliente`).not.toBeNull();
+    }
+  });
+
+  it("o lote do fanout ao vivo chega como 'events' — nao descartado", () => {
+    /*
+     * Este e o D2. O fanout publicava `{runId, events}` SEM `type`, o hub
+     * repassava verbatim e o `parseFrame` devolvia null: o tempo real ficava
+     * morto sem erro, sem log e sem socket fechado. Parecia "nao ha eventos".
+     */
+    const lido = parseFrame(JSON.stringify(frames.fanout));
+    expect(lido?.type).toBe("events");
+    if (lido?.type === "events") {
+      expect(lido.events).toHaveLength(1);
+      expect(lido.events[0].seq).toBe(1);
+      expect(lido.events[0].nodeId).toBe("a");
+    }
+  });
+
+  it("'replay' e normalizado para 'events' — a origem nao muda o tratamento", () => {
+    const lido = parseFrame(JSON.stringify(frames.replay));
+    expect(lido?.type).toBe("events");
+  });
+
+  it("os campos de cada frame batem um a um", () => {
+    const ack = parseFrame(JSON.stringify(frames.ack));
+    expect(ack).toMatchObject({ type: "ack", accepted: 1, lastSeq: 1 });
+
+    const decided = parseFrame(JSON.stringify(frames.decided));
+    expect(decided).toMatchObject({ type: "decided", status: "approved" });
+
+    const lagged = parseFrame(JSON.stringify(frames.lagged));
+    expect(lagged).toMatchObject({ type: "lagged", dropped: 3 });
+
+    const erro = parseFrame(JSON.stringify(frames.error));
+    expect(erro).toMatchObject({ type: "error", code: "BAD_FRAME" });
+
+    expect(parseFrame(JSON.stringify(frames.pong))?.type).toBe("pong");
+    expect(parseFrame(JSON.stringify(frames.hello))?.type).toBe("hello");
+    expect(parseFrame(JSON.stringify(frames.unsubscribed))?.type).toBe("unsubscribed");
+  });
+
+  it("a fixture cobre TODOS os frames de saida — nenhum ficou sem teste", () => {
+    // Se o servidor ganhar um frame novo e ninguem puser aqui, este teste
+    // acusa: a lista e o contrato.
+    expect(Object.keys(frames).sort()).toEqual([
+      "ack",
+      "decided",
+      "error",
+      "fanout",
+      "hello",
+      "lagged",
+      "pong",
+      "replay",
+      "unsubscribed"
+    ]);
   });
 });

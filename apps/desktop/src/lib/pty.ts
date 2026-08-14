@@ -1,8 +1,10 @@
 /**
  * Cliente do terminal interativo (comandos Rust `pty_*`).
  *
- * A parte pura (estado, contadores, log) está em `ptySession.ts`. Aqui só o
- * transporte: resolver a rota, abrir, assinar os eventos e encerrar.
+ * Aqui só o TRANSPORTE: resolver a rota, abrir, assinar os eventos e
+ * encerrar. O estado da sessão — status, contadores, log com horário — é o
+ * redutor puro de `ptySession.ts`, que o `Terminal` alimenta com as ações
+ * conforme os eventos chegam.
  *
  * ## O ambiente do rodapé é resolvido AQUI
  *

@@ -1,0 +1,64 @@
+{
+  "ack": {
+    "accepted": 1,
+    "lastSeq": 1,
+    "runId": "11111111-1111-4111-8111-111111111111",
+    "type": "ack"
+  },
+  "decided": {
+    "approvalId": "22222222-2222-4222-8222-222222222222",
+    "status": "approved",
+    "type": "decided"
+  },
+  "error": {
+    "code": "BAD_FRAME",
+    "message": "missing field",
+    "type": "error"
+  },
+  "fanout": {
+    "events": [
+      {
+        "kind": "node:start",
+        "nodeId": "a",
+        "payload": {
+          "ok": true
+        },
+        "seq": 1
+      }
+    ],
+    "runId": "11111111-1111-4111-8111-111111111111",
+    "type": "events"
+  },
+  "hello": {
+    "type": "hello",
+    "userId": "33333333-3333-4333-8333-333333333333",
+    "workspace": "11111111-1111-4111-8111-111111111111"
+  },
+  "lagged": {
+    "dropped": 3,
+    "runId": "11111111-1111-4111-8111-111111111111",
+    "type": "lagged"
+  },
+  "pong": {
+    "type": "pong"
+  },
+  "replay": {
+    "events": [
+      {
+        "kind": "node:start",
+        "nodeId": "a",
+        "payload": {
+          "ok": true
+        },
+        "seq": 1,
+        "ts": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "runId": "11111111-1111-4111-8111-111111111111",
+    "type": "replay"
+  },
+  "unsubscribed": {
+    "runId": "11111111-1111-4111-8111-111111111111",
+    "type": "unsubscribed"
+  }
+}

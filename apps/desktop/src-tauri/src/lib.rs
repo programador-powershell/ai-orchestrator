@@ -16,6 +16,7 @@ mod research;
 mod runstore;
 mod runtime;
 mod sandbox;
+mod sbx;
 mod ssh;
 mod terminal;
 mod webhook;
@@ -137,6 +138,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         research::research_fetch,
         research::page_fetch,
         sandbox::sandbox_execute,
+        sbx::sbx_status,
         workspace::sandbox_open,
         workspace::sandbox_close,
         workspace::sandbox_write,
@@ -221,6 +223,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         research::research_fetch,
         research::page_fetch,
         sandbox::sandbox_execute,
+        sbx::sbx_status,
         workspace::sandbox_open,
         workspace::sandbox_close,
         workspace::sandbox_write,
