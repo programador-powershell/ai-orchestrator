@@ -26,6 +26,7 @@ import {
 } from "./fusionPrompts";
 import { buildAdaptivePlanRequest, fallbackPlan, parseFusionPlan } from "./fusionPlan";
 import { resolvePresetForMode } from "./fusionResolve";
+import { selecaoEfetiva, type ContextoDePolitica } from "./enginePolicy";
 import { streamChat, type ChatMessage, type GatewaySession } from "./gateway";
 import { runtime } from "./runtime";
 import { parseSseLine } from "./sseDelta";
@@ -36,6 +37,14 @@ export interface EngineContext {
   session: GatewaySession | null;
   runtimeRunning: boolean;
   fusionPresets: FusionPreset[];
+  /**
+   * A política do admin, para o portão de `local` e `model`.
+   *
+   * Opcional porque nem todo chamador tem contexto de política (teste,
+   * caminho interno). Ausente = comporta-se como antes, sem restrição — o
+   * aperto só existe quando quem chama informa que HÁ um gateway.
+   */
+  politica?: ContextoDePolitica;
   /** Base URLs custom por provedor (compatíveis/self-hosted), vindas do Settings. */
   baseOverrides?: Record<string, string>;
 }
@@ -81,6 +90,13 @@ export interface EngineEvents {
   onReasoning?: (delta: string) => void;
   /** Plano do orquestrador: complexidade e executores escolhidos (cartão). */
   onFusionPlan?: (plan: { complexity: number; executors: Array<{ role: string; focus: string; model: string }> }) => void;
+  /**
+   * Aviso do MOTOR para a tela — hoje só a política que trocou a rota.
+   *
+   * Separado de `onStage`: estágio é progresso e some; isto é uma decisão que
+   * mudou o que a pessoa pediu, e precisa ficar visível.
+   */
+  onNotice?: (mensagem: string) => void;
   /** Executor terminou seu recorte (atualiza o cartão em tempo real). */
   onFusionExecutor?: (role: string, status: "running" | "ok" | "error") => void;
 }
@@ -599,6 +615,26 @@ export async function chatOnce(
   events: EngineEvents,
   signal?: AbortSignal
 ): Promise<string> {
+  /*
+   * O portão fica AQUI, e não só na lista suspensa.
+   *
+   * A escolha de motor é persistida em `settings.engines[aba]`: quem
+   * selecionou "chave própria" antes de o admin desligar o BYOK continuava
+   * usando a chave própria, porque o menu apenas escondia a opção e ninguém
+   * revalidava a que já estava gravada. E `local`/`model` não passam pelo
+   * gateway — sem esta checagem, as duas coisas que a política proíbe são
+   * justamente as que ficam sem portão nenhum.
+   *
+   * Recusar seria pior que corrigir: cai para a rota do workspace e avisa.
+   */
+  if (ctx.politica) {
+    const permitida = selecaoEfetiva(selection, ctx.politica);
+    if (permitida.aviso) {
+      events.onNotice?.(permitida.aviso);
+      selection = permitida.selection;
+    }
+  }
+
   switch (selection.kind) {
     case "workspace":
       return singleTurn("workspace", null, mode, messages, ctx, events, signal);

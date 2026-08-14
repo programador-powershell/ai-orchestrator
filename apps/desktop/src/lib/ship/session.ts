@@ -10,12 +10,23 @@ import { terminal } from "../terminal";
 import { buildRun, canRelease, runPipeline, suggestBump, type Exec, type RunState, type StepState } from "./pipeline";
 import { sourceLabel, type ProjectSource } from "./source";
 import { detectStacks, MANIFEST_FILES, type DetectedStack } from "./stack";
+import { detectarFrameworks, type FrameworkDetectado } from "./stacks";
 import { collectFiles, fsRead, isTauriFs } from "../fsx";
 
 interface ShipState {
   source?: ProjectSource;
   stacks: DetectedStack[];
   selected?: DetectedStack;
+  /**
+   * Framework identificado — a outra metade da resposta.
+   *
+   * `stacks` diz a LINGUAGEM e os comandos do pipeline (instalar, testar,
+   * empacotar). Isto diz o FRAMEWORK, que é quem sabe a porta, a pasta de
+   * saída, o comando de start e a imagem base — o que o `generateDockerfile`
+   * precisa para produzir uma imagem que sobe. As duas coisas convivem: um
+   * projeto é "node" para o pipeline e "Next.js" para o container.
+   */
+  frameworks: FrameworkDetectado[];
   detecting: boolean;
   run?: RunState;
   version: string;
@@ -25,6 +36,7 @@ interface ShipState {
 
 export const useShip = create<ShipState>()(() => ({
   stacks: [],
+  frameworks: [],
   detecting: false,
   version: window.localStorage.getItem("ship.version") ?? "V.1"
 }));
@@ -33,11 +45,18 @@ export const useShip = create<ShipState>()(() => ({
 const SCAN_LIMITS = { maxDepth: 3, maxEntries: 4000 };
 
 export async function detectFrom(source: ProjectSource, root: string): Promise<void> {
-  useShip.setState({ source, detecting: true, stacks: [], selected: undefined, run: undefined });
+  useShip.setState({
+    source,
+    detecting: true,
+    stacks: [],
+    frameworks: [],
+    selected: undefined,
+    run: undefined
+  });
 
   // Artefato pré-compilado não tem fonte para inspecionar — o formato já basta.
   if (source.kind === "artifact") {
-    useShip.setState({ detecting: false, stacks: [], selected: undefined });
+    useShip.setState({ detecting: false, stacks: [], frameworks: [], selected: undefined });
     return;
   }
 
@@ -53,7 +72,10 @@ export async function detectFrom(source: ProjectSource, root: string): Promise<v
   }
 
   const stacks = detectStacks({ files, manifests });
-  useShip.setState({ stacks, selected: stacks[0], detecting: false });
+  // Mesma varredura, mesmos manifestos: identificar o framework não custa
+  // nenhum IO a mais.
+  const frameworks = detectarFrameworks({ arquivos: files, manifestos: manifests });
+  useShip.setState({ stacks, frameworks, selected: stacks[0], detecting: false });
 }
 
 export function selectStack(stack: DetectedStack): void {

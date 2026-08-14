@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import {
   UI_MODES,
   type BootstrapPolicy,
@@ -11,6 +11,7 @@ import {
   type RuntimeStatus,
   type UiMode
 } from "@multiplike/contracts";
+import { criarArmazenamentoPersistido } from "./persistStorage";
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";
@@ -290,6 +291,61 @@ function syncConversation(state: {
   return { ...state.conversations, [mode]: next.slice(0, CONVERSATION_CAP) };
 }
 
+/*
+ * A gravação em disco passa por aqui — ver `persistStorage.ts` para o porquê.
+ *
+ * Os avisos entram pelo `error` do próprio store: quem descobre que o
+ * histórico não coube é a camada de gravação, e quem mostra é a tela. O
+ * `setTimeout(0)` evita chamar `set` de dentro do ciclo de `set` que
+ * disparou a gravação.
+ */
+const armazenamento = criarArmazenamentoPersistido(
+  typeof window === "undefined"
+    ? { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
+    : window.localStorage,
+  {
+    aoFalhar: (mensagem) => {
+      setTimeout(() => useApp.getState().setError(mensagem), 0);
+    },
+    aoPodar: (removidas) => {
+      setTimeout(
+        () =>
+          useApp
+            .getState()
+            .setError(
+              `O armazenamento local encheu: ${removidas} conversas antigas foram descartadas para ` +
+                "caber. Exporte o que precisar guardar."
+            ),
+        0
+      );
+    }
+  }
+);
+
+/*
+ * O `typeof window.addEventListener === "function"` não é paranoia: a
+ * exportação estática do Next avalia este módulo em Node, onde `window` não
+ * existe, e um teste que injeta uma janela falsa deixa o objeto sem os
+ * métodos. Testar só `typeof window !== "undefined"` quebrava a carga do
+ * módulo nos dois casos.
+ */
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  /*
+   * Fechar a janela não pode levar o último segundo junto.
+   *
+   * `pagehide` é o evento que o webview realmente entrega ao fechar (o
+   * `beforeunload` não é confiável fora do navegador), e `visibilitychange`
+   * cobre minimizar e trocar de app — momentos em que a pessoa pode nunca
+   * mais voltar a esta instância.
+   */
+  const descarregar = () => armazenamento.descarregar();
+  window.addEventListener("pagehide", descarregar);
+  window.addEventListener("beforeunload", descarregar);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") descarregar();
+  });
+}
+
 export const useApp = create<AppState>()(
   persist(
     (set) => ({
@@ -523,6 +579,7 @@ export const useApp = create<AppState>()(
     }),
     {
       name: "orchestrator.v2",
+      storage: createJSONStorage(() => armazenamento),
       partialize: (state) => ({
         theme: state.theme,
         railOpen: state.railOpen,

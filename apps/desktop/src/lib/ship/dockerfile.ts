@@ -83,6 +83,22 @@ export interface DockerfilePlan {
 const ENV_FORA = new Set(["FORCE_COLOR", "TERM"]);
 const NOME_DE_ENV_VALIDO = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/**
+ * Tira do VALOR o que quebraria o arquivo.
+ *
+ * O nome já era validado; o valor não era. Quebra de linha num valor encerra a
+ * instrução `RUN` no meio, e o que vem depois passa a ser lido como instrução
+ * Dockerfile por conta própria — na melhor hipótese um arquivo inválido, na
+ * pior uma diretiva que ninguém escreveu ali. Aspas simples não resolvem: o
+ * parser do Dockerfile corta a linha ANTES de o shell enxergar a aspa.
+ *
+ * Retorno de carro e caractere nulo saem pelo mesmo motivo. O resto do valor
+ * é preservado, com a aspa simples escapada para o shell.
+ */
+function valorDeEnvSeguro(valor: string): string {
+  return valor.replace(/[\r\n\0]+/g, " ").replace(/'/g, "'\\''");
+}
+
 function prefixoDeEnv(env: Readonly<Record<string, string>> | undefined): string {
   const entradas = Object.entries(env ?? {}).filter(
     ([chave]) => !ENV_FORA.has(chave) && NOME_DE_ENV_VALIDO.test(chave)
@@ -90,7 +106,7 @@ function prefixoDeEnv(env: Readonly<Record<string, string>> | undefined): string
   // `NO_COLOR` entra quando ninguém pediu o contrário: log de build é texto.
   if (!entradas.some(([chave]) => chave === "NO_COLOR")) entradas.push(["NO_COLOR", "1"]);
   if (!entradas.length) return "";
-  return `${entradas.map(([chave, valor]) => `export ${chave}='${valor.replace(/'/g, "'\\''")}'`).join(" && ")} && `;
+  return `${entradas.map(([chave, valor]) => `export ${chave}='${valorDeEnvSeguro(valor)}'`).join(" && ")} && `;
 }
 
 /**
@@ -156,6 +172,42 @@ export function generateDockerfile(plan: DockerfilePlan): string {
   }
 
   linhas.push(`EXPOSE ${porta}`);
-  if (start) linhas.push(`CMD ["sh", "-c", ${JSON.stringify(start)}]`);
+  /*
+   * `PORT` precisa EXISTIR no runtime.
+   *
+   * Três stacks portadas (dotnet, laravel, symfony) trazem `$PORT` dentro do
+   * comando de start — vindo do openship, onde a plataforma injeta a variável.
+   * Aqui ninguém injetava: o container subia com `ASPNETCORE_URLS=http://0.0.0.0:`
+   * e o servidor morria na largada, ou o FrankenPHP escutava em `:` e o deploy
+   * ficava "no ar" sem responder nada. Declarar aqui também dá o valor certo
+   * para quem lê `PORT` por conta própria (Node, Rails, Django), sem obrigar
+   * cada receita a saber disso.
+   */
+  linhas.push(`ENV PORT=${porta}`);
+
+  if (start) {
+    linhas.push(`CMD ["sh", "-c", ${JSON.stringify(start)}]`);
+  } else if (stack.category === "docker") {
+    /*
+     * O projeto tem Dockerfile próprio. Gerar um por cima seria substituir a
+     * decisão de quem escreveu o dele — quem chama deve usar o do repositório.
+     */
+    linhas.push("# Este projeto traz o próprio Dockerfile — use o do repositório.");
+  } else {
+    /*
+     * Stack sem comando de start é site ESTÁTICO (Vite, Angular, CRA, Vue,
+     * React, Blazor wasm, HTML solto): o build produz `outputDirectory` e não
+     * existe processo para subir. Antes o gerador simplesmente não emitia
+     * `CMD`, e a imagem terminava o `docker run` na hora — um deploy que
+     * "funciona" e não serve nada.
+     *
+     * `http-server` vem do npm no próprio build, então a imagem não depende de
+     * rede para subir. `-s` faz o fallback para `index.html`, sem o qual toda
+     * rota de SPA que não seja a raiz devolve 404 ao recarregar a página.
+     */
+    const pasta = stack.outputDirectory && stack.outputDirectory !== "." ? stack.outputDirectory : ".";
+    linhas.push("RUN npm install -g http-server@14");
+    linhas.push(`CMD ["sh", "-c", ${JSON.stringify(`http-server ${pasta} -p $PORT -s`)}]`);
+  }
   return `${linhas.join("\n")}\n`;
 }

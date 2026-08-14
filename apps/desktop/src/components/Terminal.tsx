@@ -37,8 +37,9 @@ import "../styles/terminal.css";
 import { Glyph } from "./icons";
 import {
   isPtyAvailable,
+  ptyAck,
   ptyKill,
-  ptyListen,
+  ptyListenPendente,
   ptyResize,
   ptySpawn,
   ptyWrite,
@@ -163,6 +164,16 @@ export function Terminal({ cwd }: { cwd: string }) {
 
     let cancelado = false;
     let desinscrever: (() => void) | undefined;
+    /*
+     * O id que ESTE efeito abriu — não o do ref.
+     *
+     * O `onExit` zera `idRef` (é o certo: teclar num shell morto não deve ir
+     * a lugar nenhum), e a limpeza lia justamente esse ref. Depois de uma
+     * saída espontânea ela via `null` e não chamava `ptyKill`, deixando a
+     * entrada no mapa do Rust — oito ciclos de "encerrou, reabri" e o painel
+     * batia no limite de sessões com nenhum shell vivo.
+     */
+    let idAberto: string | null = null;
 
     (async () => {
       setErro("");
@@ -171,6 +182,51 @@ export function Terminal({ cwd }: { cwd: string }) {
       } catch {
         // sem medida ainda: o spawn usa o padrão e o resize corrige depois
       }
+
+      /*
+       * A inscrição vem ANTES do spawn.
+       *
+       * A thread de leitura do Rust emite `pty-data` assim que o filho nasce,
+       * e evento do Tauri sem ouvinte é descartado — assinar depois do
+       * `await ptySpawn` perdia o começo da sessão (faixa do shell, primeiro
+       * prompt). `ptyListenPendente` guarda o que chegar e entrega ao
+       * `amarrar`, quando o id finalmente existe.
+       */
+      const inscricao = await ptyListenPendente({
+        /*
+         * O segundo argumento do `write` é o freio.
+         *
+         * Ele dispara quando o xterm.js processou ESTE bloco — não quando o
+         * enfileirou. Confirmando aí, o Rust volta a ler o PTY; sem
+         * confirmar, ele para na janela e o processo filho bloqueia na
+         * escrita, que é o comportamento certo. Antes não havia nada
+         * segurando o produtor, e o buffer do xterm descarta em silêncio
+         * acima de 5×10⁷ bytes pendentes: a saída não ficava lenta, ficava
+         * FALTANDO pedaço no meio.
+         */
+        onData: (evento) => term.write(evento.data, () => void ptyAck(evento.id)),
+        onExit: (evento) => {
+          setVivo(false);
+          idRef.current = null;
+          // O código de saída aparece na tela, como em terminal de verdade.
+          const codigo = evento.exitCode ?? 0;
+          term.write(
+            `
+[2m[processo encerrado · ${evento.reason}` +
+              `${evento.exitCode === undefined ? "" : ` · código ${codigo}`}][0m
+`
+          );
+        },
+        onError: (evento) => setErro(`${evento.code}: ${evento.message}`)
+      });
+      // A limpeza já pode desinscrever a partir daqui — antes desta linha ela
+      // via `undefined` e os três handlers de janela ficavam vivos para sempre.
+      desinscrever = inscricao.parar;
+      if (cancelado) {
+        inscricao.parar();
+        return;
+      }
+
       try {
         const { id, target } = await ptySpawn({
           cwd,
@@ -183,22 +239,10 @@ export function Terminal({ cwd }: { cwd: string }) {
           return;
         }
         idRef.current = id;
+        idAberto = id;
         setAlvo(target);
         setVivo(true);
-        desinscrever = await ptyListen(id, {
-          onData: (evento) => term.write(evento.data),
-          onExit: (evento) => {
-            setVivo(false);
-            idRef.current = null;
-            // O código de saída aparece na tela, como em terminal de verdade.
-            const codigo = evento.exitCode ?? 0;
-            term.write(
-              `\r\n\u001b[2m[processo encerrado \u00b7 ${evento.reason}` +
-                `${evento.exitCode === undefined ? "" : ` \u00b7 c\u00f3digo ${codigo}`}]\u001b[0m\r\n`
-            );
-          },
-          onError: (evento) => setErro(`${evento.code}: ${evento.message}`)
-        });
+        inscricao.amarrar(id);
       } catch (causa) {
         if (cancelado) return;
         // Rota bloqueada (VPS sem servidor) chega aqui com o motivo escrito —
@@ -211,11 +255,12 @@ export function Terminal({ cwd }: { cwd: string }) {
     return () => {
       cancelado = true;
       desinscrever?.();
-      const id = idRef.current;
       idRef.current = null;
       // Fechar a aba mata o shell: deixá-lo vivo sem tela seria um processo
-      // órfão consumindo a máquina sem ninguém para vê-lo.
-      if (id) void ptyKill(id);
+      // órfão consumindo a máquina sem ninguém para vê-lo. Em sessão que já
+      // encerrou, o `pty_kill` é idempotente e serve para tirar a entrada do
+      // mapa — por isso vai o id local, e não o do ref.
+      if (idAberto) void ptyKill(idAberto);
       setVivo(false);
     };
   }, [cwd, shell, environment, nonce]);

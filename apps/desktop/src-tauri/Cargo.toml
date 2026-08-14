@@ -1,6 +1,6 @@
 [package]
 name = "multiplike-ai-desktop"
-version = "0.1.0"
+version = "0.11.0"
 description = "Multiplike-AI desktop client"
 authors = ["Multiplike-AI"]
 edition = "2021"

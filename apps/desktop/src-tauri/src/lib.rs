@@ -9,6 +9,7 @@ mod office;
 mod office_edit;
 mod pdf;
 mod policy;
+mod rebrand;
 mod providers;
 mod pty;
 mod research;
@@ -36,14 +37,21 @@ fn credential_store(account: String, token: String) -> Result<(), String> {
 /// chave está configurada; ler o valor levaria o segredo para o heap do webview.
 #[tauri::command]
 fn credential_exists(account: String) -> Result<bool, String> {
-    let entry =
-        keyring::Entry::new("Multiplike-AI", &account).map_err(|error| error.to_string())?;
-    Ok(entry.get_password().is_ok())
+    // Passa pelo fallback do rebranding: chave gravada antes da 0.11.0 está
+    // sob o serviço antigo, e responder "não configurada" mandaria a pessoa
+    // recadastrar uma credencial que ela já tem. A primeira leitura também
+    // converte a entrada para o nome novo.
+    Ok(rebrand::segredo_com_fallback(&account).is_some())
 }
 
 #[tauri::command]
 fn credential_delete(account: String) -> Result<(), String> {
-    keyring::Entry::new("Multiplike-AI", &account)
+    // Apaga também sob o nome antigo: senão "remover a chave" removeria só a
+    // cópia nova e o fallback de leitura traria a velha de volta.
+    if let Ok(antiga) = keyring::Entry::new(rebrand::SERVICO_ANTIGO, &account) {
+        let _ = antiga.delete_credential();
+    }
+    keyring::Entry::new(rebrand::SERVICO, &account)
         .map_err(|error| error.to_string())?
         .delete_credential()
         .map_err(|error| error.to_string())
@@ -116,6 +124,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         pty::pty_spawn,
         pty::pty_write,
         pty::pty_resize,
+        pty::pty_ack,
         pty::pty_kill,
         pty::pty_kill_all,
         pty::pty_list,
@@ -199,6 +208,7 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
         pty::pty_spawn,
         pty::pty_write,
         pty::pty_resize,
+        pty::pty_ack,
         pty::pty_kill,
         pty::pty_kill_all,
         pty::pty_list,
@@ -228,6 +238,18 @@ fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    /*
+     * ANTES de qualquer coisa do Tauri.
+     *
+     * A pasta do WebView2 (%LOCALAPPDATA%<identifier>) nasce junto com a
+     * janela; renomear depois encontraria o destino já criado e não migraria
+     * nada — o usuário abriria a versão nova com o histórico zerado e os
+     * dados antigos intactos numa pasta que ninguém mais lê.
+     */
+    for item in rebrand::migrar_diretorios() {
+        eprintln!("[rebrand] migrado do nome anterior: {item}");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {

@@ -915,3 +915,148 @@ export function buildImageFor(stack: StackDefinition): string {
 export function runtimeImageFor(stack: StackDefinition): string {
   return stack.runtimeImage ?? getLanguage(stack.language)?.runtimeImage ?? "ubuntu:22.04";
 }
+
+/* ------------------------- detecção do framework ------------------------ */
+
+export interface FrameworkDetectado {
+  id: StackId;
+  stack: StackDefinition;
+  /** O que provou a detecção — a UI mostra o "por quê". */
+  evidencia: string;
+  /** 0..1. Marcador de raiz vale mais que dependência solta no manifesto. */
+  confianca: number;
+}
+
+export interface EntradaDeDeteccao {
+  /** Caminhos relativos à raiz, com "/" — como `collectFiles` devolve. */
+  arquivos: readonly string[];
+  /** Conteúdo dos manifestos já lidos, por nome de arquivo. */
+  manifestos?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Categorias mais específicas ganham no empate.
+ *
+ * `nextjs` e `react` casam no mesmo projeto: os dois veem `react` nas
+ * dependências. Quem responde a pergunta "como isto sobe?" é o framework
+ * (fullstack), não a biblioteca de UI (frontend) — por isso o peso.
+ */
+const PESO_DA_CATEGORIA: Readonly<Record<StackCategory, number>> = {
+  fullstack: 5,
+  backend: 4,
+  services: 3,
+  frontend: 2,
+  static: 1,
+  docker: 1,
+  generic: 0
+};
+
+/** Nomes de dependência declarados no manifesto, seja qual for o ecossistema. */
+function dependenciasDeclaradas(manifestos: Readonly<Record<string, string>>): Set<string> {
+  const nomes = new Set<string>();
+
+  const packageJson = manifestos["package.json"];
+  if (packageJson) {
+    try {
+      const parsed = JSON.parse(packageJson) as Record<string, Record<string, string> | undefined>;
+      for (const campo of ["dependencies", "devDependencies", "peerDependencies"]) {
+        for (const nome of Object.keys(parsed[campo] ?? {})) nomes.add(nome);
+      }
+    } catch {
+      // manifesto quebrado não derruba a detecção: os marcadores de raiz
+      // continuam valendo
+    }
+  }
+
+  /*
+   * Nos outros ecossistemas o manifesto não é JSON, e escrever um parser de
+   * TOML/YAML aqui seria desproporcional: o que interessa é se o NOME aparece
+   * declarado. A borda `[^\w-]` evita que "django" case dentro de
+   * "django-extensions" e vice-versa.
+   */
+  for (const [arquivo, conteudo] of Object.entries(manifestos)) {
+    if (arquivo === "package.json") continue;
+    for (const stack of Object.values(STACKS) as StackDefinition[]) {
+      for (const dep of stack.detection?.deps ?? []) {
+        if (nomes.has(dep)) continue;
+        const escapada = dep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (new RegExp(`(^|[^\\w-])${escapada}([^\\w-]|$)`, "m").test(conteudo)) nomes.add(dep);
+      }
+    }
+  }
+
+  return nomes;
+}
+
+/**
+ * Identifica o framework do projeto pelos sinais declarados em `STACKS`.
+ *
+ * Complementa `stack.ts`, não substitui: lá se descobre a LINGUAGEM e os
+ * comandos do pipeline (instalar, testar, empacotar); aqui se descobre o
+ * FRAMEWORK, que é quem sabe a porta, a pasta de saída, o comando de start e a
+ * imagem base — o que o `generateDockerfile` precisa. Um projeto é "node" para
+ * o pipeline e "Next.js" para o container ao mesmo tempo.
+ *
+ * Devolve a lista ordenada por confiança; vazia quando nada casa. `docker` e
+ * `static` só aparecem se nada mais casar — um projeto Next.js com Dockerfile
+ * é Next.js, e o marcador `index.html` existe em quase toda pasta `public`.
+ */
+export function detectarFrameworks(entrada: EntradaDeDeteccao): FrameworkDetectado[] {
+  const arquivos = entrada.arquivos.map((caminho) => caminho.replace(/\\/g, "/"));
+  const naRaiz = new Set(arquivos.filter((caminho) => !caminho.includes("/")));
+  const emQualquerLugar = new Set(arquivos);
+  const deps = dependenciasDeclaradas(entrada.manifestos ?? {});
+
+  const achados: FrameworkDetectado[] = [];
+  for (const [id, stack] of Object.entries(STACKS) as Array<[StackId, StackDefinition]>) {
+    const deteccao = stack.detection;
+    if (!deteccao) continue;
+
+    let confianca = 0;
+    let evidencia = "";
+
+    for (const marcador of deteccao.rootMarkers ?? []) {
+      const alvo = marcador.replace(/\\/g, "/");
+      // Marcador com barra (`config/routes.rb`) é caminho: aceita em qualquer
+      // nível. Sem barra, tem de estar na RAIZ — `index.html` dentro de
+      // `public/` não faz de um projeto React um site estático.
+      const bateu = alvo.includes("/")
+        ? emQualquerLugar.has(alvo) || arquivos.some((caminho) => caminho.endsWith(`/${alvo}`))
+        : naRaiz.has(alvo);
+      if (bateu) {
+        confianca = Math.max(confianca, 0.9);
+        evidencia ||= alvo;
+      }
+    }
+
+    for (const dep of deteccao.deps ?? []) {
+      if (deps.has(dep)) {
+        confianca = Math.max(confianca, 0.6);
+        evidencia ||= `dependência ${dep}`;
+      }
+    }
+
+    for (const [arquivo, padrao] of Object.entries(deteccao.contentPatterns ?? {})) {
+      const conteudo = entrada.manifestos?.[arquivo];
+      if (conteudo && new RegExp(padrao).test(conteudo)) {
+        // Padrão de conteúdo é o desempate fino (Spring Boot vs Quarkus, que
+        // compartilham `pom.xml`) — por isso soma em vez de só empatar.
+        confianca = Math.min(1, Math.max(confianca, 0.6) + 0.2);
+        evidencia ||= `${arquivo} (${padrao})`;
+      }
+    }
+
+    if (confianca > 0) achados.push({ id, stack, evidencia, confianca });
+  }
+
+  const genericas = new Set<StackId>(["docker", "static", "unknown"] as StackId[]);
+  const especificas = achados.filter((achado) => !genericas.has(achado.id));
+  const lista = especificas.length ? especificas : achados;
+
+  return lista.sort(
+    (a, b) =>
+      b.confianca - a.confianca ||
+      PESO_DA_CATEGORIA[b.stack.category] - PESO_DA_CATEGORIA[a.stack.category] ||
+      a.stack.name.localeCompare(b.stack.name)
+  );
+}

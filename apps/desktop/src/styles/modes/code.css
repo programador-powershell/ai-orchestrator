@@ -527,8 +527,8 @@
 /* ------------------- Diff — cores do tema do terminal --------------- */
 /*
  * Escopado em `.codex-surface`: `.diff-line` é COMPARTILHADO com a aba
- * Security e com o visualizador de ModeViews. Repintar a regra global levaria
- * a mudança para telas fora deste escopo.
+ * Security. Repintar a regra global levaria a mudança para telas fora deste
+ * escopo.
  */
 .codex-surface .diff-block {
   border: 1px solid var(--term-selection-border);

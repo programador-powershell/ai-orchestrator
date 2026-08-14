@@ -12,6 +12,8 @@ import { cancelRun, detectFrom, selectStack, setVersion, startRun, suggestedBump
 import { artifactRunHint, resolveSource, sourceLabel, type SourceKind } from "../lib/ship/source";
 import { bumpVersion, canRelease, planRelease, type StepStatus } from "../lib/ship/pipeline";
 import type { DetectedStack } from "../lib/ship/stack";
+import { generateDockerfile } from "../lib/ship/dockerfile";
+import type { FrameworkDetectado } from "../lib/ship/stacks";
 
 const KINDS: Array<{ id: SourceKind; label: string; placeholder: string }> = [
   { id: "github", label: "GitHub", placeholder: "owner/repo ou https://github.com/..." },
@@ -29,11 +31,14 @@ const STATUS_ICON: Record<StepStatus, string> = {
 };
 
 export function ShipPanel({ root }: { root: string }) {
-  const { source, stacks, selected, detecting, run, version } = useShip();
+  const { source, stacks, frameworks, selected, detecting, run, version } = useShip();
   const [kind, setKind] = useState<SourceKind>("folder");
   const [input, setInput] = useState(root);
   const [error, setError] = useState("");
   const [openStep, setOpenStep] = useState("");
+  /** Índice do framework escolhido — o primeiro é o de maior confiança. */
+  const [frameworkAtivo, setFrameworkAtivo] = useState(0);
+  const [verDockerfile, setVerDockerfile] = useState(false);
   /**
    * A pasta que foi CARREGADA — não a do editor.
    *
@@ -117,6 +122,46 @@ export function ShipPanel({ root }: { root: string }) {
         </section>
       ) : null}
 
+      {frameworks.length ? (
+        <section className="ship__stacks">
+          <h4 className="ship__title">Framework — como a imagem sobe</h4>
+          {/*
+            Isto é a outra metade da resposta. "Stack detectada" acima diz a
+            LINGUAGEM e os comandos do pipeline; aqui está o framework, que é
+            quem sabe a porta, a pasta de saída e o comando de start — os
+            valores de que o Dockerfile depende. Antes o catálogo das 47
+            stacks existia no código e não chegava a lugar nenhum.
+          */}
+          {frameworks.slice(0, 4).map((achado, indice) => (
+            <FrameworkChip
+              key={achado.id}
+              achado={achado}
+              active={indice === frameworkAtivo}
+              onPick={() => {
+                setFrameworkAtivo(indice);
+                setVerDockerfile(false);
+              }}
+            />
+          ))}
+          <button
+            type="button"
+            className="ship__go ship__dockerfile-toggle"
+            onClick={() => setVerDockerfile((valor) => !valor)}
+          >
+            {verDockerfile ? "Ocultar Dockerfile" : "Ver Dockerfile"}
+          </button>
+          {verDockerfile && frameworks[frameworkAtivo] ? (
+            <pre className="ship__out ship__out--plan">
+              {generateDockerfile({
+                stack: frameworks[frameworkAtivo].stack,
+                buildCommand: frameworks[frameworkAtivo].stack.defaultBuildCommand || undefined,
+                startCommand: frameworks[frameworkAtivo].stack.defaultStartCommand || undefined
+              })}
+            </pre>
+          ) : null}
+        </section>
+      ) : null}
+
       {run && run.steps.length ? (
         <section className="ship__run">
           <div className="ship__runhead">
@@ -174,6 +219,28 @@ export function ShipPanel({ root }: { root: string }) {
         ) : null}
       </section>
     </Surface>
+  );
+}
+
+function FrameworkChip({
+  achado,
+  active,
+  onPick
+}: {
+  achado: FrameworkDetectado;
+  active: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button type="button" className={`ship__stack${active ? " is-active" : ""}`} onClick={onPick}>
+      <span className="ship__stacklabel">
+        {achado.stack.name}
+        <em> · porta {achado.stack.defaultPort}</em>
+      </span>
+      <span className="ship__evidence">
+        detectado por {achado.evidencia} · saída em {achado.stack.outputDirectory}
+      </span>
+    </button>
   );
 }
 

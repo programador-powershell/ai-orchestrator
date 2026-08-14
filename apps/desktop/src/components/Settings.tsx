@@ -2311,7 +2311,7 @@ export function SettingsPanel() {
             </span>
             <div>
               <strong>Configurações</strong>
-              <small>ai orchestrator · v2</small>
+              <small>Multiplike-AI</small>
             </div>
           </div>
           <div className="setx-spacer" />
