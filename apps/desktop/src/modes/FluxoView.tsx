@@ -3,11 +3,15 @@
 /**
  * FLUXO — o editor visual de automações.
  *
- * Três colunas, como o editor que serviu de referência: o **assistente** à
- * esquerda, o **canvas** no centro e os **detalhes do nó** à direita. A aba
- * não tem composer: quem conversa aqui é o assistente do fluxo, e ele fala em
- * operações que viram nó na tela — um segundo campo de mensagem faria a mesma
- * coisa por dois caminhos.
+ * A aba segue o mesmo desenho de todas as outras: as ações no topo, o balão de
+ * prompt no rodapé e a área de trabalho no meio, sem toolbar interna comendo o
+ * canvas. Já teve barra própria e campo de texto próprio; virou exceção sem
+ * motivo, e uma exceção por aba é como um app deixa de parecer um app.
+ *
+ * Quem escreve no balão não está conversando: o texto vai pelo `goalBus` para
+ * a montagem, e cada operação aparece no canvas assim que chega. O histórico
+ * do que foi feito é uma coluna OPCIONAL — quem já sabe o que pediu não
+ * precisa dela ocupando um terço da tela.
  *
  * É diferente da aba Agent de propósito. Lá o modelo decide o caminho a cada
  * execução; aqui o caminho é DESENHADO e não muda: mesmo gatilho, mesmo
@@ -16,20 +20,24 @@
 
 import "../styles/modes/fluxo.css";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CircleAlert, Clock, GitBranch, Play, Plus, Save, Trash2, Workflow, Zap } from "lucide-react";
 
 import { FlowAssistant } from "../components/fluxo/FlowAssistant";
 import { FlowCanvas } from "../components/fluxo/FlowCanvas";
 import { NodePanel } from "../components/fluxo/NodePanel";
 import { RailConversations } from "../components/RailConversations";
-import { PanelScroll, PanelTitle, Surface, VBody, VCenter, VStatus } from "../components/Primitives";
+import { ThinkingOrb } from "../components/ThinkingOrb";
+import { Glyph } from "../components/icons";
+import { PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { addCard, makeCard } from "../lib/automations";
+import { montarDoPrompt } from "../lib/fluxo/build";
 import { findNode, lintFlow, runFlow } from "../lib/fluxo/engine";
 import { autoLayout } from "../lib/fluxo/layout";
 import { applyOp } from "../lib/fluxo/ops";
 import { useFluxo } from "../lib/fluxo/store";
 import type { NodeType, RunResult } from "../lib/fluxo/types";
+import { goalBus } from "../lib/ops";
 import { useApp } from "../lib/store";
 import { useWork } from "../lib/workEngine";
 
@@ -52,7 +60,7 @@ export function FluxoRail() {
         {flows.map((flow) => (
           <div key={flow.id} className={`fxr-item ${activeId === flow.id ? "active" : ""}`}>
             <button type="button" className="fxr-main" onClick={() => selectFlow(flow.id)} title={flow.name}>
-              <Workflow size={13} />
+              <Glyph name="features/dag" size={13} />
               <span>{flow.name}</span>
               <small>{flow.definition.nodes.length}</small>
             </button>
@@ -98,6 +106,8 @@ export function FluxoView() {
   const selectedNode = useFluxo((state) => state.selectedNode);
   const building = useFluxo((state) => state.building);
   const note = useFluxo((state) => state.note);
+  const assistantOpen = useFluxo((state) => state.assistantOpen);
+  const toggleAssistant = useFluxo((state) => state.toggleAssistant);
   const newFlow = useFluxo((state) => state.newFlow);
   const rename = useFluxo((state) => state.rename);
   const patchNode = useFluxo((state) => state.patchNode);
@@ -111,6 +121,34 @@ export function FluxoView() {
   const no = findNode(draft, selectedNode);
   const avisos = useMemo(() => lintFlow(draft), [draft]);
   const destaque = useMemo(() => new Set(resultado?.path ?? []), [resultado]);
+
+  /**
+   * O balão do app é a entrada desta aba.
+   *
+   * O handler lê tudo do store na hora de rodar (nada de fechar sobre o estado
+   * do render): o `goalBus` guarda UM ouvinte por modo, e um registro que
+   * mudasse a cada render abriria a janela em que o Enter chega para a versão
+   * antiga da função.
+   */
+  useEffect(
+    () =>
+      goalBus.register("fluxo", (texto) => {
+        void montarDoPrompt(texto, {
+          selection: useApp.getState().settings.engines.fluxo,
+          ctx: {
+            session: useApp.getState().session,
+            runtimeRunning: useApp.getState().runtimeStatus.running,
+            fusionPresets: useApp.getState().settings.fusionPresets,
+            baseOverrides: useApp.getState().settings.providerBaseOverrides
+          }
+        });
+      }),
+    []
+  );
+
+  // Sair da aba com uma montagem em curso deixaria a chamada correndo para uma
+  // tela morta — e o `building` preso em true.
+  useEffect(() => () => useFluxo.getState().stopBuild(), []);
 
   function adicionar(item: (typeof NOVOS)[number]) {
     const id = `${item.type[0]}${Date.now().toString(36).slice(-4)}`;
@@ -144,16 +182,38 @@ export function FluxoView() {
     }
   }
 
+  /** Botão do histórico — igual nos dois estados da aba, com ou sem fluxo. */
+  const botaoAssistente = (
+    <button
+      type="button"
+      className={`icon-button ${assistantOpen ? "active" : ""}`}
+      onClick={toggleAssistant}
+      title={assistantOpen ? "Ocultar histórico da montagem" : "Mostrar histórico da montagem"}
+      aria-pressed={assistantOpen}
+    >
+      <Glyph name="ui/panel-left" size={14} />
+    </button>
+  );
+
   if (!ativo) {
     return (
       <Surface className="fx-view">
+        {/* A topbar existe nos DOIS estados: sem isto, criar o primeiro fluxo
+            fazia a barra do topo aparecer do nada e a tela pular. */}
+        <TopbarActions>
+          <button type="button" className="lg-button primary" onClick={newFlow}>
+            <Plus size={13} />
+            <span className="tb-label">Novo fluxo</span>
+          </button>
+          {botaoAssistente}
+        </TopbarActions>
         <VBody>
           <VCenter>
             <div className="fx-hero">
               <Workflow size={26} />
               <strong>Fluxos de automação</strong>
               <p>
-                Desenhe o que acontece depois de um gatilho — ou descreva em uma frase e veja o fluxo ser montado na
+                Desenhe o que acontece depois de um gatilho — ou descreva no campo abaixo e veja o fluxo ser montado na
                 tela. Diferente da aba Agent, aqui o caminho é fixo: mesmo gatilho, mesmo percurso, sempre.
               </p>
               <button type="button" className="lg-button primary" onClick={newFlow}>
@@ -170,53 +230,57 @@ export function FluxoView() {
 
   return (
     <Surface className="fx-view">
+      <TopbarActions>
+        <input
+          className="fx-nome"
+          value={ativo.name}
+          onChange={(event) => rename(ativo.id, event.target.value)}
+          aria-label="Nome do fluxo"
+        />
+        {/* Os quatro tipos de nó ficam agrupados: são a mesma decisão ("o que
+            entra agora?"), e quatro botões soltos disputariam atenção com
+            Testar e Salvar, que são decisões de outra natureza. */}
+        <div className="segmented segmented--acoes">
+          {NOVOS.map((item) => (
+            <button
+              key={item.type}
+              type="button"
+              title={`Adicionar ${item.label.toLowerCase()}`}
+              disabled={building}
+              onClick={() => adicionar(item)}
+            >
+              <item.icone size={13} />
+              <span className="tb-label">{item.label}</span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="lg-button" onClick={testar} disabled={building}>
+          <Play size={13} />
+          <span className="tb-label">Testar</span>
+        </button>
+        <button type="button" className="lg-button primary" onClick={save} disabled={building}>
+          <Save size={13} />
+          <span className="tb-label">Salvar</span>
+        </button>
+        {botaoAssistente}
+      </TopbarActions>
+
       <VBody>
         <VCenter className="fx-center">
-          <div className="fx-shell">
-            <aside className="fx-left">
-              <FlowAssistant
-                selection={settings.engines.fluxo}
-                ctx={{
-                  session,
-                  runtimeRunning: runtimeStatus.running,
-                  fusionPresets: settings.fusionPresets,
-                  baseOverrides: settings.providerBaseOverrides
-                }}
-              />
-            </aside>
+          <div className={`fx-shell ${assistantOpen ? "" : "sem-assistente"}`}>
+            {assistantOpen ? (
+              <aside className="fx-left">
+                <FlowAssistant />
+              </aside>
+            ) : null}
 
             <div className="fx-main">
-              <div className="fx-bar">
-                <input
-                  className="fx-nome"
-                  value={ativo.name}
-                  onChange={(event) => rename(ativo.id, event.target.value)}
-                  aria-label="Nome do fluxo"
-                />
-                <span className="fx-sep" />
-                {NOVOS.map((item) => (
-                  <button
-                    key={item.type}
-                    type="button"
-                    className="lg-button ghost"
-                    title={`Adicionar ${item.label.toLowerCase()}`}
-                    disabled={building}
-                    onClick={() => adicionar(item)}
-                  >
-                    <item.icone size={13} />
-                    {item.label}
-                  </button>
-                ))}
-                <span className="fx-sep" />
-                <button type="button" className="lg-button" onClick={testar} disabled={building}>
-                  <Play size={13} />
-                  Testar
-                </button>
-                <button type="button" className="lg-button primary" onClick={save} disabled={building}>
-                  <Save size={13} />
-                  Salvar
-                </button>
-              </div>
+              {building ? (
+                <div className="fx-montando">
+                  <ThinkingOrb kind="weaving" size={16} />
+                  <span>Montando o fluxo…</span>
+                </div>
+              ) : null}
 
               {avisos.length > 0 ? (
                 <div className="fx-avisos">

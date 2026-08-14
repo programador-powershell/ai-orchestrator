@@ -19,6 +19,8 @@ import { applyOp, clearFresh, type FlowOp } from "./ops";
 import { emptyDefinition, type FlowDefinition, type SavedFlow } from "./types";
 
 const STORAGE_KEY = "aio.fluxo.v1";
+/** Preferência de tela, separada dos fluxos: some junto se o usuário limpar. */
+const ASSISTENTE_KEY = "aio.fluxo.assistente";
 /** Teto de fluxos guardados — a lista é para trabalhar, não para arquivar. */
 const MAX_FLOWS = 60;
 
@@ -49,6 +51,13 @@ function guardar(flows: SavedFlow[]): void {
 const novoId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `flow-${Date.now()}`;
 
+function assistenteAberto(): boolean {
+  if (typeof window === "undefined") return false;
+  // Fechado por padrão: o pedido é que a coluna só apareça quando alguém a
+  // chamar. O canvas ocupa a tela inteira até lá.
+  return window.localStorage.getItem(ASSISTENTE_KEY) === "1";
+}
+
 export interface FluxoState {
   flows: SavedFlow[];
   activeId: string | null;
@@ -60,6 +69,17 @@ export interface FluxoState {
   /** Última frase enviada ao assistente, para a UI mostrar o que ele fez. */
   lastPrompt: string;
   note: string;
+  /**
+   * O que a montagem fez, linha a linha. Vive no store e não no painel porque
+   * a coluna do assistente é opcional: abrir depois de montar precisa mostrar
+   * o que aconteceu, não uma lista vazia.
+   */
+  passos: string[];
+  erro: string;
+  /** Coluna do assistente visível — só quando o usuário pede. */
+  assistantOpen: boolean;
+  /** Montagem em curso, para o botão Parar alcançar a chamada de fora dela. */
+  abort: AbortController | null;
 
   newFlow: () => void;
   selectFlow: (id: string) => void;
@@ -75,6 +95,11 @@ export interface FluxoState {
   beginBuild: (prompt: string) => void;
   endBuild: (note?: string) => void;
   setNote: (note: string) => void;
+  pushPasso: (passo: string) => void;
+  setErro: (erro: string) => void;
+  setAbort: (controller: AbortController | null) => void;
+  stopBuild: () => void;
+  toggleAssistant: () => void;
   save: () => void;
 }
 
@@ -86,6 +111,10 @@ export const useFluxo = create<FluxoState>((set, get) => ({
   building: false,
   lastPrompt: "",
   note: "",
+  passos: [],
+  erro: "",
+  assistantOpen: assistenteAberto(),
+  abort: null,
 
   newFlow: () => {
     const flow: SavedFlow = {
@@ -163,12 +192,31 @@ export const useFluxo = create<FluxoState>((set, get) => ({
       return { draft: autoLayout(aplicado) };
     }),
 
-  beginBuild: (prompt) => set({ building: true, lastPrompt: prompt, note: "" }),
+  beginBuild: (prompt) => set({ building: true, lastPrompt: prompt, note: "", passos: [], erro: "" }),
 
   endBuild: (note) =>
     set((state) => ({ building: false, draft: clearFresh(state.draft), note: note ?? state.note })),
 
   setNote: (note) => set({ note }),
+
+  pushPasso: (passo) => set((state) => ({ passos: [...state.passos, passo] })),
+
+  setErro: (erro) => set({ erro }),
+
+  setAbort: (controller) => set({ abort: controller }),
+
+  stopBuild: () => get().abort?.abort(),
+
+  toggleAssistant: () =>
+    set((state) => {
+      const aberto = !state.assistantOpen;
+      try {
+        window.localStorage.setItem(ASSISTENTE_KEY, aberto ? "1" : "0");
+      } catch {
+        // Storage indisponível: a preferência vale só nesta sessão.
+      }
+      return { assistantOpen: aberto };
+    }),
 
   save: () => {
     const { activeId, draft, flows } = get();

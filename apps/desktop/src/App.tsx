@@ -12,15 +12,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
 import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
 import {
-  Bot,
-  Boxes,
-  Braces,
-  ChartNoAxesCombined,
-  FileText,
-  FlaskConical,
   LoaderCircle,
   Maximize2,
-  MessageCircle,
   Minus,
   Moon,
   PanelLeftClose,
@@ -28,13 +21,11 @@ import {
   Plus,
   Rocket,
   Settings,
-  ShieldCheck,
   Sparkles,
   Sun,
-  WandSparkles,
-  Workflow,
   X
 } from "lucide-react";
+import { Glyph, modeIcons, modeIconsFilled } from "./components/icons";
 import { listWorkspaces } from "./lib/gateway";
 import { runtime } from "./lib/runtime";
 import { effectiveModes, safeMode } from "./lib/policy";
@@ -80,17 +71,22 @@ const SettingsPanel = lazy(() => import("./components/Settings").then((m) => ({ 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 const appWindow = isTauriHost ? getCurrentWindow() : null;
 
-const modeMeta: Record<UiMode, { label: string; icon: typeof MessageCircle }> = {
-  chat: { label: "Chat", icon: MessageCircle },
-  code: { label: "Code", icon: Braces },
-  design: { label: "Design", icon: WandSparkles },
-  data: { label: "Data", icon: ChartNoAxesCombined },
-  work: { label: "Work", icon: Boxes },
-  security: { label: "Security", icon: ShieldCheck },
-  agent: { label: "Agent", icon: Bot },
-  fluxo: { label: "Fluxo", icon: Workflow },
-  office: { label: "Office", icon: FileText },
-  tune: { label: "Tuning", icon: FlaskConical }
+/**
+ * Rótulo de cada aba. O ícone vem do pacote próprio (`modeIcons`): dez glifos
+ * desenhados juntos deixam a barra de módulos com cara de um produto só, e não
+ * de dez escolhas avulsas feitas em dias diferentes.
+ */
+const modeMeta: Record<UiMode, { label: string }> = {
+  chat: { label: "Chat" },
+  code: { label: "Code" },
+  design: { label: "Design" },
+  data: { label: "Data" },
+  work: { label: "Work" },
+  security: { label: "Security" },
+  agent: { label: "Agent" },
+  fluxo: { label: "Fluxo" },
+  office: { label: "Office" },
+  tune: { label: "Tuning" }
 };
 
 const railAction: Record<UiMode, string> = {
@@ -181,7 +177,7 @@ class ModeErrorBoundary extends Component<{ children: ReactNode; mode: UiMode },
     if (this.state.error) {
       return (
         <div className="mode-render-error">
-          <ShieldCheck size={20} />
+          <Glyph name="status/warning" size={20} />
           <strong>Não foi possível renderizar {this.props.mode}</strong>
           <small>{this.state.error}</small>
         </div>
@@ -398,7 +394,9 @@ function App() {
           {/* Abas de MÓDULO no topo; a barra esquerda serve o módulo ativo. */}
           <nav className="mode-tabs" aria-label="Módulos">
             {visibleModes.map((item) => {
-              const Icon = modeMeta[item].icon;
+              // Preenchido na aba ativa, contornado nas demais: a aba corrente
+              // se distingue pelo PESO do ícone, não só pelo fundo do botão.
+              const Icon = mode === item ? modeIconsFilled[item] : modeIcons[item];
               return (
                 <button
                   key={item}
@@ -407,7 +405,7 @@ function App() {
                   title={modeMeta[item].label}
                   onClick={() => switchModeWithTransition(mode, item, () => setMode(item))}
                 >
-                  <Icon size={14} />
+                  <Icon size={15} />
                   <span className="mode-tab-label">{modeMeta[item].label}</span>
                 </button>
               );
@@ -451,7 +449,7 @@ function App() {
           ) : (
             // Política sem nenhum módulo liberado para o grupo do usuário.
             <div className="mode-render-error">
-              <ShieldCheck size={20} />
+              <Glyph name="features/policy" size={20} />
               <strong>Nenhum módulo liberado para o seu grupo</strong>
               <small>Fale com a administração para solicitar acesso.</small>
             </div>

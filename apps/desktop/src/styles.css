@@ -2,6 +2,8 @@
 @import "./styles/tokens.css";
 @import "./styles/glass.css";
 @import "./styles/motion.css";
+@import "./styles/orb.css";
+@import "./styles/canvas.css";
 @import "./styles/shell.css";
 @import "./styles/views.css";
 @import "./styles/conversations.css";

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="12" cy="12" r="8.5" opacity="0.35"/>
+  <circle cx="12" cy="5.5" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="17.2" cy="8.2" r="1" fill="currentColor" stroke="none"/>
+  <circle cx="18.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="15.5" cy="18" r="1" fill="currentColor" stroke="none"/>
+  <circle cx="8.5" cy="18" r="1.1" fill="currentColor" stroke="none"/>
+  <circle cx="5.5" cy="13.5" r="1" fill="currentColor" stroke="none"/>
+  <circle cx="6.8" cy="8.2" r="1.1" fill="currentColor" stroke="none"/>
+  <ellipse cx="12" cy="12" rx="7" ry="3.2" transform="rotate(-25 12 12)" opacity="0.5"/>
+</svg>

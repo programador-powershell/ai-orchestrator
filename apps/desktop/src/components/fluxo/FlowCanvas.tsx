@@ -187,7 +187,7 @@ function Canvas({ definition, destaque }: { definition: FlowDefinition; destaque
   }, []);
 
   return (
-    <div className="fx-host">
+    <div className="fx-host aio-canvas">
       <ReactFlow
         nodes={nodes}
         edges={edges}
