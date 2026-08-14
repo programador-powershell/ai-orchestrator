@@ -10,13 +10,13 @@ import {
   FileCode2,
   Paperclip,
   Send,
-  Sparkles,
+
   Telescope,
   X
 } from "lucide-react";
 import type { EngineSelection, ExecutionPlan } from "@ai-orchestrator/contracts";
 import type { ChatMessage } from "../lib/gateway";
-import { chatOnce, describeSelection, type EngineContext } from "../lib/engine";
+import { chatOnce, type EngineContext } from "../lib/engine";
 import {
   agentSystemInstruction,
   dispatchTool,
@@ -53,6 +53,7 @@ import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
 import { effortDirective, useApp, type Attachment } from "../lib/store";
 import { ApprovalSelect } from "./ApprovalSelect";
+import { ModelSelect } from "./ModelSelect";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
 
@@ -73,7 +74,7 @@ export function Composer() {
   const startTrajectory = useTrajectory((state) => state.begin);
   const publishTrajectory = useTrajectory((state) => state.publish);
   const userPluginsAllowed = policy?.userPluginsAllowed ?? false;
-  const setSettingsOpen = useApp((state) => state.setSettingsOpen);
+
   const settings = useApp((state) => state.settings);
   const updateSettings = useApp((state) => state.updateSettings);
   // Loop agentico: com politica do servidor presente, ELA decide; sem, vale a
@@ -834,16 +835,9 @@ export function Composer() {
           aria-label="Mensagem"
         />
         <div className="composer-row">
-          {/* Motor é definido pela TI por módulo — aqui só INFORMA qual está
-              valendo; a troca vive em Configurações → Motores & Fusion. */}
-          <button
-            className="model-select readonly"
-            onClick={() => setSettingsOpen(true)}
-            title="O modelo deste módulo é definido nas Configurações (administração)"
-          >
-            {selection.kind === "fusion" ? <span className="fusion-dot" /> : <Sparkles size={13} />}
-            {describeSelection(selection, settings.fusionPresets, settings.modelCatalog)}
-          </button>
+          {/* O chip abre a lista de motores para quem administra; para os
+              demais continua só informando e levando às Configurações. */}
+          <ModelSelect mode={mode} />
           <input
             ref={fileInputRef}
             type="file"

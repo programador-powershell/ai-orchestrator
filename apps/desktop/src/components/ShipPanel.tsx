@@ -34,6 +34,16 @@ export function ShipPanel({ root }: { root: string }) {
   const [input, setInput] = useState(root);
   const [error, setError] = useState("");
   const [openStep, setOpenStep] = useState("");
+  /**
+   * A pasta que foi CARREGADA — não a do editor.
+   *
+   * O painel detectava a stack na pasta digitada aqui e mandava o build rodar
+   * em `root`, que é a raiz aberta na aba Code. Carregar a pasta B com o
+   * editor em A analisava B e compilava A: o log dizia "Next.js" e o comando
+   * caía num projeto que podia nem ser Node. Agora as duas coisas usam o
+   * mesmo caminho.
+   */
+  const [carregado, setCarregado] = useState(root);
 
   const load = async () => {
     const result = resolveSource(kind, input);
@@ -44,6 +54,7 @@ export function ShipPanel({ root }: { root: string }) {
     setError("");
     // GitHub ainda precisa do clone; por ora detecta sobre a pasta corrente.
     const scanRoot = result.source.kind === "folder" ? result.source.path : root;
+    setCarregado(scanRoot);
     await detectFrom(result.source, scanRoot);
   };
 
@@ -115,7 +126,7 @@ export function ShipPanel({ root }: { root: string }) {
                 Parar
               </button>
             ) : (
-              <button type="button" className="ship__go" onClick={() => void startRun(root)} disabled={!selected}>
+              <button type="button" className="ship__go" onClick={() => void startRun(carregado)} disabled={!selected}>
                 Executar
               </button>
             )}
@@ -137,7 +148,7 @@ export function ShipPanel({ root }: { root: string }) {
           </ol>
         </section>
       ) : selected && selected.id !== "unknown" ? (
-        <button type="button" className="ship__go ship__go--wide" onClick={() => void startRun(root)}>
+        <button type="button" className="ship__go ship__go--wide" onClick={() => void startRun(carregado)}>
           Executar build
         </button>
       ) : null}

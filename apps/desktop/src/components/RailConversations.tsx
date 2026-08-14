@@ -59,10 +59,15 @@ function downloadText(fileName: string, text: string, type: string) {
 }
 
 /**
- * `searchable` agora é o PADRÃO: a busca sempre varreu todas as abas, mas
- * estava ligada só no Chat — para achar qualquer coisa era preciso ir até lá.
+ * O campo de busca saiu daqui e foi para a BARRA SUPERIOR.
+ *
+ * Ele ocupava uma linha inteira do rail em todas as dez abas, e o rail é
+ * estreito — é onde moram a árvore do projeto, o schema, a equipe. Em cima, o
+ * campo existe uma vez só, aparece em toda aba e devolve a altura para quem
+ * precisa dela. `searchable` continua no lugar para quem quiser o campo local,
+ * mas nasce desligado.
  */
-export function RailConversations({ mode, searchable = true }: { mode: UiMode; searchable?: boolean }) {
+export function RailConversations({ mode, searchable = false }: { mode: UiMode; searchable?: boolean }) {
   const conversations = useApp((state) => state.conversations[mode]);
   const allConversations = useApp((state) => state.conversations);
   const projects = useApp((state) => state.projects);
@@ -87,8 +92,8 @@ export function RailConversations({ mode, searchable = true }: { mode: UiMode; s
 
   const term = searchable ? query.trim() : "";
   const results = useMemo(
-    () => (term ? searchConversations(allConversations, term) : []),
-    [allConversations, term]
+    () => (term ? searchConversations(allConversations, term, mode) : []),
+    [allConversations, term, mode]
   );
   const groups = useMemo(() => groupByProject(conversations, projects), [conversations, projects]);
 

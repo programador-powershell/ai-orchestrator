@@ -8,6 +8,7 @@
  * nem exibidas de volta na interface.
  */
 import "../styles/settings.css";
+import "../styles/glyph-motion.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {

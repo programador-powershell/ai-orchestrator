@@ -1,0 +1,127 @@
+/* ------------------------------------------------------------------ */
+/* Glifos que reagem — nas Configurações                               */
+/*                                                                     */
+/* O `Glyph` injeta `<circle>/<path>/<rect>` DIRETO no DOM (sem `use`, */
+/* sem shadow root), então o CSS alcança as formas de dentro do ícone  */
+/* — a mesma técnica do `orb.css`. É o que permite o ícone de MCP      */
+/* pulsar no nó e o de política fechar o cadeado, em vez de todos      */
+/* fazerem o mesmo `scale`.                                            */
+/*                                                                     */
+/* Regras que valem em todo este arquivo:                              */
+/*  - só `transform`, `opacity` e `filter` (regra do motion.css);      */
+/*  - o movimento acontece no HOVER e no FOCO, e o item ativo ganha um */
+/*    repouso discreto — animar doze linhas o tempo todo transformaria */
+/*    um menu em vitrine;                                              */
+/*  - `transform-box: fill-box` fica RESTRITO ao que anima: aplicado a */
+/*    tudo, ele reinterpreta o atributo `transform` que alguns glifos  */
+/*    já trazem e desloca o desenho (armadilha registrada no orb.css). */
+/* ------------------------------------------------------------------ */
+
+.setx-nav button svg * {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform var(--t-base) var(--spring), opacity var(--t-base) ease;
+}
+
+/* O ícone inteiro se adianta um fio quando a linha recebe atenção. */
+.setx-nav button:hover svg,
+.setx-nav button:focus-visible svg {
+  transform: translateX(1px);
+  transition: transform var(--t-base) var(--spring);
+}
+
+/* --------------------------- Conexão (gateway) ---------------------- */
+/* Duas hastes e um miolo: o miolo pulsa como quem estabelece o enlace. */
+.setx-nav button:hover [data-glyph="features/gateway"] circle,
+.setx-nav button.active [data-glyph="features/gateway"] circle {
+  animation: gm-pulso 1.8s ease-in-out infinite;
+}
+
+/* ---------------------------- Fusão --------------------------------- */
+/* Dois círculos que se aproximam — é literalmente o que "fundir" faz. */
+.setx-nav button:hover [data-glyph="features/fusion"] circle:nth-of-type(1) { transform: translateX(1.4px); }
+.setx-nav button:hover [data-glyph="features/fusion"] circle:nth-of-type(2) { transform: translateX(-1.4px); }
+
+/* ---------------------------- Chaveiro (BYOK) ----------------------- */
+/* A chave gira no segredo. */
+.setx-nav button:hover [data-glyph="features/byok"] { transform: rotate(-12deg); }
+
+/* ---------------------------- Memória ------------------------------- */
+/* Respiração leve — memória é o que fica, não o que corre. */
+.setx-nav button:hover [data-glyph="features/memory"] path,
+.setx-nav button.active [data-glyph="features/memory"] path {
+  animation: gm-respira 2.6s ease-in-out infinite;
+}
+
+/* ---------------------------- MCP / conectores ---------------------- */
+/*
+ * Os quatro nós acendem em sequência: o pacote atravessando a ligação.
+ * São 2 `circle` e 2 `rect` — a contagem sai do asset, e é por isso que os
+ * seletores citam as duas formas em vez de um `nth-of-type` genérico.
+ */
+.setx-nav button:hover [data-glyph="features/mcp"] circle,
+.setx-nav button:hover [data-glyph="features/mcp"] rect {
+  animation: gm-no 1.6s ease-in-out infinite;
+}
+.setx-nav button:hover [data-glyph="features/mcp"] circle:nth-of-type(2) { animation-delay: -0.4s; }
+.setx-nav button:hover [data-glyph="features/mcp"] rect:nth-of-type(1) { animation-delay: -0.8s; }
+.setx-nav button:hover [data-glyph="features/mcp"] rect:nth-of-type(2) { animation-delay: -1.2s; }
+
+/* ---------------------------- Runtime ------------------------------- */
+/* O chip pulsa, não gira: girar um processador desenhado de frente só
+   deixaria o ícone tonto. */
+.setx-nav button:hover [data-glyph="features/runtime"] rect {
+  animation: gm-pulso 2s ease-in-out infinite;
+}
+
+/* ---------------------------- Ship ---------------------------------- */
+/* O foguete sobe um pouco. Sem exagero: é um menu, não um lançamento. */
+.setx-nav button:hover [data-glyph="actions/ship"] { transform: translate(1px, -2px); }
+
+/* ---------------------------- Ferramentas / plano ------------------- */
+.setx-nav button:hover [data-glyph="features/tools"] { transform: rotate(-10deg); }
+.setx-nav button:hover [data-glyph="features/plan"] path { animation: gm-linha 1.9s ease-in-out infinite; }
+.setx-nav button:hover [data-glyph="features/plan"] path:nth-of-type(2) { animation-delay: -0.25s; }
+.setx-nav button:hover [data-glyph="features/plan"] path:nth-of-type(3) { animation-delay: -0.5s; }
+.setx-nav button:hover [data-glyph="features/plan"] path:nth-of-type(4) { animation-delay: -0.75s; }
+
+/* ---------------------------- Política ------------------------------ */
+/* Assenta com firmeza — a política é o que fecha, não o que oscila. */
+.setx-nav button:hover [data-glyph="features/policy"] { transform: scale(1.06); }
+
+/* ---------------------------- VPS ----------------------------------- */
+.setx-nav button:hover [data-glyph="environments/vps"] rect { animation: gm-no 1.6s ease-in-out infinite; }
+.setx-nav button:hover [data-glyph="environments/vps"] rect:nth-of-type(2) { animation-delay: -0.4s; }
+
+/* ------------------------------ keyframes --------------------------- */
+
+@keyframes gm-pulso {
+  0%, 100% { transform: scale(1); opacity: 0.75; }
+  50% { transform: scale(1.22); opacity: 1; }
+}
+@keyframes gm-respira {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+@keyframes gm-no {
+  0%, 100% { transform: scale(0.88); opacity: 0.6; }
+  45% { transform: scale(1.15); opacity: 1; }
+}
+@keyframes gm-gira {
+  to { transform: rotate(360deg); }
+}
+@keyframes gm-linha {
+  0%, 100% { opacity: 0.4; }
+  45% { opacity: 1; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Cabeçalho de seção: o ícone acompanha o cartão, sem pedir atenção.  */
+/* ------------------------------------------------------------------ */
+
+.setx-card-title svg {
+  transition: transform var(--t-base) var(--spring);
+}
+.setx-card:hover > .setx-card-title svg {
+  transform: scale(1.08);
+}

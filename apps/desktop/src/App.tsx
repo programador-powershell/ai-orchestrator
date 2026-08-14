@@ -38,6 +38,7 @@ import { Composer } from "./components/Composer";
 import { ConnectionsPopover } from "./components/ConnectionsPopover";
 import { ShipModal } from "./components/ShipModal";
 import { ContextMeter } from "./components/ContextMeter";
+import { TopbarSearch } from "./components/TopbarSearch";
 import { EnvironmentBadge } from "./components/EnvironmentBadge";
 
 /**
@@ -411,6 +412,9 @@ function App() {
               );
             })}
           </nav>
+          {/* A busca vive aqui, e não no rail: em cima ela existe uma vez só,
+              vale para toda aba e devolve uma linha à coluna mais estreita. */}
+          <TopbarSearch />
           <div className="topbar-actions" id="topbar-actions" />
           <div className="topbar-right">
             {/* Build & deploy vale para Code e Agent; vive aqui e não no rail,

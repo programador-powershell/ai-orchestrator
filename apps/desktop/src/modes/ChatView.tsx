@@ -125,7 +125,10 @@ export function ChatRail() {
   return (
     <>
       <span className="eyebrow">CONVERSAS</span>
-      <RailConversations mode="chat" searchable />
+      {/* Sem `searchable`: a busca subiu para a barra do topo e vale para
+          todas as abas. Duas caixas para a mesma busca dariam dois lugares
+          para procurar a mesma coisa. */}
+      <RailConversations mode="chat" />
     </>
   );
 }
