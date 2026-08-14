@@ -10,6 +10,7 @@
 package store
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -287,6 +288,50 @@ func TestConcurrentAppendsProduceUniqueContinuousSeq(t *testing.T) {
 	}
 }
 
+// Ler enquanto se escreve é o caso normal: o replay da reconexão pagina o log
+// no meio de uma resposta que ainda está chegando. O índice de deslocamento é
+// preenchido pelos DOIS lados ao mesmo tempo, então um marco fora de ordem aqui
+// apareceria como envelope pulado no meio do replay.
+func TestReplayWhileWritingNeverSkipsAnEnvelope(t *testing.T) {
+	opened, _ := newStoreWithSession(t)
+
+	const total = indexStride * 6
+
+	var wait sync.WaitGroup
+	wait.Add(1)
+	go func() {
+		defer wait.Done()
+		for index := 0; index < total; index++ {
+			if _, err := opened.Append(testSession, userMessage(fmt.Sprintf("m%d", index))); err != nil {
+				t.Errorf("Append %d: esperava sucesso, obteve erro: %v", index, err)
+				return
+			}
+		}
+	}()
+
+	var delivered uint64
+	for delivered < total {
+		batch, err := opened.Since(testSession, delivered, indexStride/2)
+		if err != nil {
+			t.Fatalf("Since(%d): esperava sucesso, obteve erro: %v", delivered, err)
+		}
+		for _, envelope := range batch {
+			if envelope.Seq != delivered+1 {
+				t.Fatalf("replay concorrente: depois do %d esperava o %d, obteve %d",
+					delivered, delivered+1, envelope.Seq)
+			}
+			delivered = envelope.Seq
+		}
+	}
+	wait.Wait()
+
+	handle, err := opened.handle(testSession)
+	if err != nil {
+		t.Fatalf("handle: esperava sucesso, obteve erro: %v", err)
+	}
+	checkIndex(t, handle)
+}
+
 /* ------------------------------- corrupção ------------------------------- */
 
 // Queda de energia no meio de uma escrita deixa a ÚLTIMA linha partida. Abortar
@@ -314,6 +359,239 @@ func TestCorruptedTailLineDoesNotHideEarlierEvents(t *testing.T) {
 	}
 	if got := seqsOf(events); !sameSeqs(got, []uint64{1, 2}) {
 		t.Fatalf("Since com linha partida no fim: esperava [1 2] (as anteriores continuam legíveis), obteve %v", got)
+	}
+}
+
+/* ----------------------------- índice de leitura -------------------------- */
+
+// checkIndex confere marco por marco: posiciona o arquivo no deslocamento
+// guardado e exige encontrar ali o começo da linha do `seq` prometido.
+//
+// Sem esta conferência, um marco errado passaria despercebido — `Since` cai
+// para a varredura completa quando a promessa falha e devolveria a resposta
+// certa mesmo com o índice quebrado, ou seja, o teste de leitura passaria com o
+// índice inútil.
+func checkIndex(t *testing.T, handle *sessionHandle) int {
+	t.Helper()
+	file, err := os.Open(handle.path)
+	if err != nil {
+		t.Fatalf("abrir o log: esperava sucesso, obteve erro: %v", err)
+	}
+	defer file.Close()
+
+	handle.mu.Lock()
+	marks := append([]logOffset(nil), handle.index...)
+	handle.mu.Unlock()
+
+	previous := uint64(0)
+	for _, mark := range marks {
+		if mark.seq <= previous {
+			t.Fatalf("índice fora de ordem: %d veio depois de %d", mark.seq, previous)
+		}
+		previous = mark.seq
+		if _, err := file.Seek(mark.offset, 0); err != nil {
+			t.Fatalf("posicionar em %d: esperava sucesso, obteve erro: %v", mark.offset, err)
+		}
+		line, err := bufio.NewReader(file).ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("ler a linha do marco %d: esperava sucesso, obteve erro: %v", mark.seq, err)
+		}
+		got, ok := seqOfLine(line[:len(line)-1])
+		if !ok {
+			t.Fatalf("marco do seq %d: o byte %d não começa uma linha legível", mark.seq, mark.offset)
+		}
+		if got != mark.seq {
+			t.Fatalf("marco do seq %d: o byte %d começa a linha do seq %d", mark.seq, mark.offset, got)
+		}
+	}
+	return len(marks)
+}
+
+// O índice é o que impede o replay de ser quadrático: cada página relia tudo o
+// que as anteriores já tinham lido. Um marco errado, porém, é pior que marco
+// nenhum — entrega o pedaço errado da conversa.
+func TestOffsetIndexPointsToTheRightLines(t *testing.T) {
+	opened, _ := newStoreWithSession(t)
+
+	const total = indexStride*3 + 7
+	for index := 0; index < total; index++ {
+		if _, err := opened.Append(testSession, userMessage(fmt.Sprintf("m%d", index))); err != nil {
+			t.Fatalf("Append %d: esperava sucesso, obteve erro: %v", index, err)
+		}
+	}
+
+	handle, err := opened.handle(testSession)
+	if err != nil {
+		t.Fatalf("handle: esperava sucesso, obteve erro: %v", err)
+	}
+	if marks := checkIndex(t, handle); marks == 0 {
+		t.Fatalf("escrita de %d envelopes: esperava marcos no índice, obteve nenhum", total)
+	}
+
+	// Paginar de indexStride em indexStride passa por todos os marcos.
+	var delivered uint64
+	var got []uint64
+	for {
+		batch, err := opened.Since(testSession, delivered, indexStride)
+		if err != nil {
+			t.Fatalf("Since(%d): esperava sucesso, obteve erro: %v", delivered, err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		got = append(got, seqsOf(batch)...)
+		delivered = batch[len(batch)-1].Seq
+	}
+
+	want := make([]uint64, 0, total)
+	for seq := uint64(1); seq <= total; seq++ {
+		want = append(want, seq)
+	}
+	if !sameSeqs(got, want) {
+		t.Fatalf("replay paginado: esperava 1..%d sem buraco nem repetição, obteve %v", total, got)
+	}
+	checkIndex(t, handle)
+}
+
+// Marco furado (log mexido por fora, disco mentindo) tem de degradar para
+// varredura completa, nunca para replay entregando o envelope errado.
+func TestSinceIgnoresAnIndexMarkThatLies(t *testing.T) {
+	opened, _ := newStoreWithSession(t)
+	appendMessages(t, opened, "um", "dois", "tres", "quatro", "cinco")
+
+	handle, err := opened.handle(testSession)
+	if err != nil {
+		t.Fatalf("handle: esperava sucesso, obteve erro: %v", err)
+	}
+	handle.mu.Lock()
+	handle.index = []logOffset{{seq: 3, offset: 7}} // deslocamento no meio de uma linha
+	handle.mu.Unlock()
+
+	events, err := opened.Since(testSession, 2, 0)
+	if err != nil {
+		t.Fatalf("Since(2) com marco furado: esperava sucesso, obteve erro: %v", err)
+	}
+	if got := seqsOf(events); !sameSeqs(got, []uint64{3, 4, 5}) {
+		t.Fatalf("Since(2) com marco furado: esperava [3 4 5], obteve %v", got)
+	}
+}
+
+/* ---------------------------- cabeçalho em cache -------------------------- */
+
+// O cabeçalho é gravado em janela, não a cada envelope. Fechar o app TEM de
+// descarregar o pendente: senão a barra lateral abre com a conversa velha.
+func TestCloseFlushesThePendingHeader(t *testing.T) {
+	root := t.TempDir()
+	opened, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open: esperava sucesso, obteve erro: %v", err)
+	}
+	if _, err := opened.CreateSession(SessionMeta{ID: testSession, Title: "conversa de teste"}); err != nil {
+		t.Fatalf("CreateSession: esperava sucesso, obteve erro: %v", err)
+	}
+	appendMessages(t, opened, "um", "dois")
+	done := &protocol.Envelope{Kind: protocol.KindDone, From: protocol.Actor{Kind: protocol.ActorSpecialist, Specialist: "codigo"}}
+	if _, err := opened.Append(testSession, done); err != nil {
+		t.Fatalf("Append do done: esperava sucesso, obteve erro: %v", err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatalf("Close: esperava sucesso, obteve erro: %v", err)
+	}
+
+	var meta SessionMeta
+	if err := readJSON(sessionFile(root, "meta.json"), &meta); err != nil {
+		t.Fatalf("ler meta.json depois do Close: esperava sucesso, obteve erro: %v", err)
+	}
+	if meta.LastSeq != 3 {
+		t.Errorf("meta.json depois do Close: esperava LastSeq 3, obteve %d", meta.LastSeq)
+	}
+	if meta.Turns != 1 {
+		t.Errorf("meta.json depois do Close: esperava 1 turno, obteve %d", meta.Turns)
+	}
+	if meta.Specialist != "codigo" {
+		t.Errorf("meta.json depois do Close: esperava o especialista %q, obteve %q", "codigo", meta.Specialist)
+	}
+}
+
+// Enquanto a janela do debounce não fecha, o disco está atrás — e a listagem
+// não pode mostrar a conversa em andamento como se ela não tivesse andado.
+func TestListSessionsPrefersTheOpenSessionOverDisk(t *testing.T) {
+	opened, _ := newStoreWithSession(t)
+	appendMessages(t, opened, "um", "dois")
+
+	list, err := opened.ListSessions()
+	if err != nil {
+		t.Fatalf("ListSessions: esperava sucesso, obteve erro: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("ListSessions: esperava 1 sessão, obteve %d", len(list))
+	}
+	if list[0].LastSeq != 2 {
+		t.Errorf("ListSessions durante a conversa: esperava LastSeq 2, obteve %d", list[0].LastSeq)
+	}
+}
+
+// Uma gravação de cabeçalho já agendada não pode ressuscitar uma sessão
+// apagada.
+func TestDeleteSessionDoesNotResurrectTheHeader(t *testing.T) {
+	opened, root := newStoreWithSession(t)
+	appendMessages(t, opened, "um")
+
+	handle, err := opened.handle(testSession)
+	if err != nil {
+		t.Fatalf("handle: esperava sucesso, obteve erro: %v", err)
+	}
+	if err := opened.DeleteSession(testSession); err != nil {
+		t.Fatalf("DeleteSession: esperava sucesso, obteve erro: %v", err)
+	}
+
+	// Dispara à mão o que o agendamento faria se tivesse escapado da corrida.
+	handle.flushMetaAsync()
+
+	if _, err := os.Stat(filepath.Dir(sessionFile(root, "meta.json"))); !os.IsNotExist(err) {
+		t.Fatalf("depois de apagar a sessão: esperava o diretório inexistente, obteve %v", err)
+	}
+}
+
+/* ------------------------- último seq pelo fim do log --------------------- */
+
+// `lastSeqOnDisk` lê o FIM do log. Precisa continuar certo quando a última
+// linha é gigante (resposta de modelo passa dos 64 KiB lidos de sonda) e
+// quando a última linha está partida.
+func TestLastSeqOnDiskReadsTheTailOfBigAndBrokenLines(t *testing.T) {
+	opened, root := newStoreWithSession(t)
+	appendMessages(t, opened, "um", "dois")
+	if _, err := opened.Append(testSession, userMessage(strings.Repeat("g", 300*1024))); err != nil {
+		t.Fatalf("Append da resposta gigante: esperava sucesso, obteve erro: %v", err)
+	}
+
+	logPath := sessionFile(root, "log.jsonl")
+	got, err := lastSeqOnDisk(logPath)
+	if err != nil {
+		t.Fatalf("lastSeqOnDisk: esperava sucesso, obteve erro: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("lastSeqOnDisk com última linha gigante: esperava 3, obteve %d", got)
+	}
+
+	file, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("abrir o log para simular a linha partida: esperava sucesso, obteve erro: %v", err)
+	}
+	if _, err := file.WriteString(`{"v":1,"seq":4,"kind":"mess`); err != nil {
+		_ = file.Close()
+		t.Fatalf("gravar a linha partida: esperava sucesso, obteve erro: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("fechar o log: esperava sucesso, obteve erro: %v", err)
+	}
+
+	got, err = lastSeqOnDisk(logPath)
+	if err != nil {
+		t.Fatalf("lastSeqOnDisk com linha partida: esperava sucesso, obteve erro: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("lastSeqOnDisk com linha partida no fim: esperava 3 (a última COMPLETA), obteve %d", got)
 	}
 }
 

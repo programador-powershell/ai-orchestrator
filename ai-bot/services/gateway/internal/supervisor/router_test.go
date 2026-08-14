@@ -14,6 +14,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -46,6 +47,32 @@ type stubClassifier struct {
 }
 
 func (s *stubClassifier) Classify(_ context.Context, prompt string, candidates []specialist.Definition) (ClassifierVerdict, error) {
+	s.calls++
+	s.lastPrompt = prompt
+	s.lastIDs = s.lastIDs[:0]
+	for _, candidate := range candidates {
+		s.lastIDs = append(s.lastIDs, candidate.ID)
+	}
+	return s.verdict, s.err
+}
+
+// stubIntent é o degrau 2 (Needle) sem a biblioteca nativa.
+//
+// `ready` é campo e não constante porque os DOIS estados são cenário de teste:
+// pronto exercita o degrau, e não pronto é o build sem a tag `needle` — em que a
+// cascata tem de encurtar em vez de falhar.
+type stubIntent struct {
+	verdict    ClassifierVerdict
+	err        error
+	ready      bool
+	calls      int
+	lastPrompt string
+	lastIDs    []string
+}
+
+func (s *stubIntent) Ready() bool { return s.ready }
+
+func (s *stubIntent) Intent(_ context.Context, prompt string, candidates []specialist.Definition) (ClassifierVerdict, error) {
 	s.calls++
 	s.lastPrompt = prompt
 	s.lastIDs = s.lastIDs[:0]
@@ -90,6 +117,21 @@ func requireNoLexicalSignal(t *testing.T, text string) {
 	t.Helper()
 	if scores := Score(text, specialist.All()); len(scores) != 0 {
 		t.Fatalf("o texto %q deveria estar sem sinal léxico, mas pontuou: %s", text, describeScores(scores))
+	}
+}
+
+// requireUndecidedLexicon garante que o léxico TEM opinião sobre o texto e mesmo
+// assim não pode decidir sozinho. É o único cenário em que os degraus de IA são
+// consultados — e sem esta guarda, recalibrar um radical faria os testes da
+// cascata continuarem passando exercitando a heurística.
+func requireUndecidedLexicon(t *testing.T, text string) {
+	t.Helper()
+	scores := Score(text, specialist.All())
+	if len(scores) == 0 {
+		t.Fatalf("o cenário exige o léxico com opinião sobre %q, mas ele não pontuou ninguém", text)
+	}
+	if scores[0].Confidence >= MinConfidence {
+		t.Fatalf("o cenário exige léxico indeciso para %q, mas o ranking foi: %s", text, describeScores(scores))
 	}
 }
 
@@ -359,13 +401,206 @@ func TestRouteUsesHeuristicWhenLexiconIsDecisive(t *testing.T) {
 	}
 }
 
+/* ---------------------------- degrau 2: Needle --------------------------- */
+
+// O degrau local existe para NÃO ir à rede: o que o léxico não resolve, um modelo
+// de 14 MB resolve na máquina, em milissegundos e sem custo por token. Por isso o
+// modelo grande fica PROIBIDO aqui — se ele for consultado depois de um veredito
+// bom do Needle, a economia que justifica o degrau desapareceu.
+func TestRouteUsesNeedleWhenLexiconIsUndecided(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	// O limiar entra na lista: `>=` é a regra, e um veredito exatamente em
+	// NeedleMinConfidence tem de ser aceito. Trocar o `>=` por `>` passaria em
+	// qualquer teste que só usasse 0.9.
+	for _, reported := range []float64{NeedleMinConfidence, 0.9, 1} {
+		t.Run(fmt.Sprintf("confiança %v", reported), func(t *testing.T) {
+			local := &stubIntent{
+				ready:   true,
+				verdict: ClassifierVerdict{Specialist: "work", Confidence: reported, Why: "é uma rotina"},
+			}
+			router := NewRouter(local, forbiddenClassifier{t: t})
+
+			route := router.Route(context.Background(), RouteInput{Text: bugText})
+
+			if local.calls != 1 {
+				t.Fatalf("esperava 1 consulta ao roteador local, obteve %d", local.calls)
+			}
+			if local.lastPrompt != bugText {
+				t.Errorf("o roteador local recebeu o prompt %q, esperava %q", local.lastPrompt, bugText)
+			}
+			if route.Reason != protocol.RouteNeedle {
+				t.Fatalf("Route(%q): esperava o motivo %q, obteve %q", bugText, protocol.RouteNeedle, route.Reason)
+			}
+			if route.Specialist != "work" {
+				t.Errorf("Route(%q): esperava o especialista %q, obteve %q", bugText, "work", route.Specialist)
+			}
+			if route.Confidence != reported {
+				t.Errorf("Route(%q): esperava a confiança %v do veredito local, obteve %v",
+					bugText, reported, route.Confidence)
+			}
+			if want := string(specialist.GetOrDefault("work").Surface); route.Surface != want {
+				t.Errorf("Route pelo Needle: esperava a superfície %q, obteve %q", want, route.Surface)
+			}
+		})
+	}
+}
+
+// O que chega ao Needle é o que ele PODE escolher, e a lista é curta de propósito:
+// acima de cinco ferramentas ele liga a recuperação por embedding e escolhe as
+// cinco sozinho — uma heurística em cima da nossa, feita com menos informação.
+//
+// `shortlistFor` tem teste próprio; este cobre a LIGAÇÃO. Um Route que esquecesse
+// de encurtar passaria lá e falharia aqui.
+func TestRouteGivesNeedleAtMostTheToolBudget(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+	if len(specialist.All()) <= NeedleToolBudget {
+		t.Fatalf("o cenário exige um catálogo maior que o orçamento %d, mas ele tem %d especialistas",
+			NeedleToolBudget, len(specialist.All()))
+	}
+
+	local := &stubIntent{ready: true, verdict: ClassifierVerdict{Specialist: "work", Confidence: 0.9}}
+	NewRouter(local, forbiddenClassifier{t: t}).Route(context.Background(), RouteInput{Text: bugText})
+
+	if len(local.lastIDs) != NeedleToolBudget {
+		t.Fatalf("o roteador local recebeu %d candidatos (%s), esperava %d",
+			len(local.lastIDs), strings.Join(local.lastIDs, " "), NeedleToolBudget)
+	}
+	// E o mais pontuado pelo léxico precisa estar na frente: entregar cinco
+	// quaisquer tiraria do Needle justamente o candidato que o léxico já apontou.
+	scores := Score(bugText, specialist.All())
+	if local.lastIDs[0] != scores[0].ID {
+		t.Errorf("o roteador local recebeu %q em primeiro, esperava o mais pontuado %q. Lista: %s",
+			local.lastIDs[0], scores[0].ID, strings.Join(local.lastIDs, " "))
+	}
+}
+
+// Veredito abaixo do limiar SOBE para o modelo grande.
+//
+// O limiar é 0.70 e não 0.5 porque o modo é gravado na conversa e não se
+// reavalia: alguns segundos de rede custam uma vez, errar o modo custa a conversa
+// inteira.
+func TestRouteFallsToModelWhenNeedleIsNotConfident(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	for _, reported := range []float64{0, 0.4, NeedleMinConfidence - 0.01} {
+		t.Run(fmt.Sprintf("confiança %v", reported), func(t *testing.T) {
+			local := &stubIntent{ready: true, verdict: ClassifierVerdict{Specialist: "work", Confidence: reported}}
+			classifier := &stubClassifier{verdict: ClassifierVerdict{Specialist: "data", Confidence: 0.8}}
+
+			route := NewRouter(local, classifier).Route(context.Background(), RouteInput{Text: bugText})
+
+			if local.calls != 1 {
+				t.Fatalf("esperava 1 consulta ao roteador local, obteve %d", local.calls)
+			}
+			if classifier.calls != 1 {
+				t.Fatalf("o veredito local ficou abaixo de %v e o modelo grande não foi consultado (%d consultas)",
+					NeedleMinConfidence, classifier.calls)
+			}
+			if route.Reason != protocol.RouteModel {
+				t.Errorf("Route: esperava o motivo %q, obteve %q", protocol.RouteModel, route.Reason)
+			}
+			if route.Specialist != "data" {
+				t.Errorf("Route: esperava o especialista %q, do modelo grande, obteve %q", "data", route.Specialist)
+			}
+		})
+	}
+}
+
+// Veredito de quem está fora da política é DESCARTADO, e a decisão segue para o
+// degrau seguinte. Aceitá-lo faria o roteamento ser o caminho barato para sair da
+// lista do admin.
+func TestRouteIgnoresNeedleVerdictOutsideAllowed(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	local := &stubIntent{ready: true, verdict: ClassifierVerdict{Specialist: "security", Confidence: 0.99}}
+	classifier := &stubClassifier{verdict: ClassifierVerdict{Specialist: "code", Confidence: 0.8}}
+
+	route := NewRouter(local, classifier).Route(context.Background(), RouteInput{
+		Text:    bugText,
+		Allowed: []string{"chat", "code"},
+	})
+
+	if route.Specialist == "security" {
+		t.Fatalf("Route aceitou o veredito local %q, que está fora de Allowed", route.Specialist)
+	}
+	if route.Reason != protocol.RouteModel {
+		t.Fatalf("Route: esperava o motivo %q (o veredito local foi descartado), obteve %q",
+			protocol.RouteModel, route.Reason)
+	}
+	if route.Specialist != "code" {
+		t.Errorf("Route: esperava o especialista %q, obteve %q", "code", route.Specialist)
+	}
+}
+
+// Sem a biblioteca nativa — build sem a tag `needle`, ou DLL ausente — o degrau
+// NÃO EXISTE e a cascata encurta para léxico → modelo grande. Classificar num
+// Needle que não está pronto é o caminho para o gateway não abrir numa estação
+// que só tem o binário.
+func TestRouteSkipsNeedleWhenNotReady(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	local := &stubIntent{ready: false, verdict: ClassifierVerdict{Specialist: "work", Confidence: 1}}
+	classifier := &stubClassifier{verdict: ClassifierVerdict{Specialist: "data", Confidence: 0.8}}
+
+	route := NewRouter(local, classifier).Route(context.Background(), RouteInput{Text: bugText})
+
+	if local.calls != 0 {
+		t.Fatalf("o roteador local classificou %d vez(es) sem estar pronto", local.calls)
+	}
+	if route.Reason != protocol.RouteModel {
+		t.Fatalf("Route: esperava o motivo %q, obteve %q", protocol.RouteModel, route.Reason)
+	}
+	if route.Specialist != "data" {
+		t.Errorf("Route: esperava o especialista %q, obteve %q", "data", route.Specialist)
+	}
+}
+
+// Erro do degrau local não derruba a decisão: ele sobe para o modelo grande. A
+// biblioteca nativa é a peça mais frágil da cascata, e uma falha dela não pode
+// virar falha do turno.
+func TestRouteFallsToModelWhenNeedleFails(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	local := &stubIntent{ready: true, err: errors.New("a biblioteca nativa não respondeu")}
+	classifier := &stubClassifier{verdict: ClassifierVerdict{Specialist: "data", Confidence: 0.8}}
+
+	route := NewRouter(local, classifier).Route(context.Background(), RouteInput{Text: bugText})
+
+	if local.calls != 1 {
+		t.Fatalf("esperava 1 consulta ao roteador local, obteve %d", local.calls)
+	}
+	if route.Reason != protocol.RouteModel {
+		t.Fatalf("Route: esperava o motivo %q, obteve %q", protocol.RouteModel, route.Reason)
+	}
+	if route.Specialist != "data" {
+		t.Errorf("Route: esperava o especialista %q, obteve %q", "data", route.Specialist)
+	}
+}
+
+// Sem modelo grande, veredito local fraco cai no PADRÃO — não no veredito fraco.
+// Aceitar 0.3 "porque não havia melhor" é a mesma coisa que não ter limiar.
+func TestRouteFallsBackWhenNeedleIsWeakAndThereIsNoModel(t *testing.T) {
+	requireUndecidedLexicon(t, bugText)
+
+	local := &stubIntent{ready: true, verdict: ClassifierVerdict{Specialist: "work", Confidence: 0.3}}
+
+	route := NewRouter(local, nil).Route(context.Background(), RouteInput{Text: bugText})
+
+	if route.Reason != protocol.RouteFallback {
+		t.Fatalf("Route: esperava o motivo %q, obteve %q", protocol.RouteFallback, route.Reason)
+	}
+	if route.Specialist != specialist.DefaultID {
+		t.Errorf("Route: esperava o padrão %q, obteve %q", specialist.DefaultID, route.Specialist)
+	}
+}
+
+/* ------------------------- degrau 3: modelo grande ----------------------- */
+
 func TestRouteUsesClassifierWhenLexiconIsUndecided(t *testing.T) {
 	// Guarda do cenário: o léxico precisa ter opinião e mesmo assim ficar
 	// abaixo do limiar, senão este teste passaria exercitando a heurística.
-	scores := Score(bugText, specialist.All())
-	if len(scores) == 0 || scores[0].Confidence >= MinConfidence {
-		t.Fatalf("o cenário exige léxico indeciso para %q, mas o ranking foi: %s", bugText, describeScores(scores))
-	}
+	requireUndecidedLexicon(t, bugText)
 
 	classifier := &stubClassifier{verdict: ClassifierVerdict{Specialist: "work", Confidence: 0.8, Why: "é uma rotina"}}
 	// Sem Needle: a cascata encurta sozinha para léxico → modelo grande, que é

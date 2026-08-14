@@ -41,7 +41,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Kind classifica o item. O supervisor usa isso para montar o bloco de contexto
@@ -137,13 +136,85 @@ type fileContent struct {
 	Items   []Item `json:"items"`
 }
 
+// searchIndex é o texto de um item já quebrado em tokens, guardado para não ser
+// quebrado de novo.
+//
+// Sem ele, Search re-tokenizava o CONTEÚDO de todos os itens a cada consulta —
+// e Search roda antes de cada turno, para montar o prompt. Com algumas centenas
+// de memórias isso é trabalho puramente repetido: o texto do item só muda em
+// Add, Update e Delete, que acontecem uma vez cada, enquanto a leitura acontece
+// a cada mensagem.
+//
+// É estado mutável compartilhado, e por isso vive sob o MESMO mutex dos itens:
+// quem escreve segura s.mu para escrita e atualiza os dois juntos; Search
+// segura para leitura e enxerga os dois coerentes. Um índice com trava própria
+// abriria a janela em que o item já mudou e o índice ainda não.
+type searchIndex struct {
+	// title e content são conjuntos de tokens únicos — a mesma coisa que
+	// tokenSet devolvia por consulta.
+	title   map[string]bool
+	content map[string]bool
+	// tags guarda os tokens de cada tag ÚNICA. Fica como fatia de fatias, e não
+	// como conjunto, porque a regra de tag é "todos os termos dela têm de estar
+	// na consulta" — o que exige a tag inteira, não os tokens soltos.
+	tags [][]string
+}
+
 // Store é o dono do arquivo de memória.
 type Store struct {
 	mu    sync.RWMutex
 	path  string
 	items map[string]Item
+	// index acompanha items chave a chave: todo id em items tem entrada aqui.
+	index map[string]searchIndex
 	// counter desempata ids gerados no mesmo segundo.
 	counter uint64
+}
+
+// buildSearchIndex quebra o texto do item uma vez.
+func buildSearchIndex(item Item) searchIndex {
+	built := searchIndex{
+		title:   tokenSet(item.Title),
+		content: tokenSet(item.Content),
+	}
+	if len(item.Tags) == 0 {
+		return built
+	}
+	// A deduplicação de tag é feita AQUI, e não na consulta: duas tags que
+	// normalizam para a mesma coisa ("Code Review" e "code review") contariam
+	// dois acertos para o mesmo rótulo.
+	built.tags = make([][]string, 0, len(item.Tags))
+	counted := make(map[string]bool, len(item.Tags))
+	for _, tag := range item.Tags {
+		tokens := tokenize(tag)
+		if len(tokens) == 0 {
+			continue
+		}
+		key := strings.Join(tokens, " ")
+		if counted[key] {
+			continue
+		}
+		counted[key] = true
+		built.tags = append(built.tags, tokens)
+	}
+	return built
+}
+
+// put guarda o item E o índice dele. Assume o mutex de escrita já segurado.
+//
+// Toda escrita de item passa por aqui de propósito: `s.items[id] = x` solto em
+// algum caminho novo deixaria o índice para trás, e o defeito apareceria como
+// uma memória que existe na lista e não aparece na busca — o tipo de coisa que
+// ninguém consegue reproduzir.
+func (s *Store) put(item Item) {
+	s.items[item.ID] = item
+	s.index[item.ID] = buildSearchIndex(item)
+}
+
+// drop apaga o item e o índice. Assume o mutex de escrita já segurado.
+func (s *Store) drop(id string) {
+	delete(s.items, id)
+	delete(s.index, id)
 }
 
 // Open carrega o arquivo de memória, criando um vazio se ainda não existir.
@@ -155,7 +226,11 @@ func Open(path string) (*Store, error) {
 		return nil, errors.New("caminho da memória vazio")
 	}
 
-	store := &Store{path: path, items: make(map[string]Item)}
+	store := &Store{
+		path:  path,
+		items: make(map[string]Item),
+		index: make(map[string]searchIndex),
+	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -191,7 +266,7 @@ func Open(path string) (*Store, error) {
 		if item.ID == "" || item.Title == "" || item.Content == "" {
 			continue
 		}
-		store.items[item.ID] = item
+		store.put(item)
 	}
 	return store, nil
 }
@@ -228,12 +303,12 @@ func (s *Store) Add(item Item) (Item, error) {
 
 	stored = sanitize(stored, now)
 	stored.UpdatedAt = now
-	s.items[stored.ID] = stored
+	s.put(stored)
 
 	if err := s.persist(); err != nil {
 		// O que está em RAM não pode ficar à frente do disco: na próxima abertura
 		// o item sumiria e o usuário juraria ter salvado.
-		delete(s.items, stored.ID)
+		s.drop(stored.ID)
 		return Item{}, err
 	}
 	return cloneItem(stored), nil
@@ -277,9 +352,9 @@ func (s *Store) Update(item Item) error {
 	updated.LastUsedAt = previous.LastUsedAt
 	updated.UpdatedAt = now
 
-	s.items[id] = updated
+	s.put(updated)
 	if err := s.persist(); err != nil {
-		s.items[id] = previous
+		s.put(previous)
 		return err
 	}
 	return nil
@@ -294,9 +369,9 @@ func (s *Store) Delete(id string) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
-	delete(s.items, id)
+	s.drop(id)
 	if err := s.persist(); err != nil {
-		s.items[id] = previous
+		s.put(previous)
 		return err
 	}
 	return nil
@@ -340,6 +415,12 @@ func (s *Store) Touch(ids []string) error {
 		// itens compartilharem o ponteiro, e um dia alguém escreveria por ele.
 		stamp := now
 		item.LastUsedAt = &stamp
+		// Escrita direta, sem passar por put: Touch mexe em Uses e LastUsedAt, e
+		// nenhum dos dois entra no índice léxico — Title, Content e Tags saem
+		// daqui intactos. Reconstruir o índice aqui seria refazer a tokenização
+		// dos itens injetados a CADA turno, que é exatamente o desperdício que o
+		// índice existe para eliminar. O id já existe, então o pareamento entre
+		// items e index continua de pé.
 		s.items[id] = item
 	}
 	if len(backup) == 0 {
@@ -361,25 +442,103 @@ func (s *Store) Touch(ids []string) error {
 //
 // limit <= 0 devolve tudo o que casou.
 func (s *Store) Search(query string, limit int) []Hit {
+	return s.searchAt(query, limit, time.Now().UTC())
+}
+
+// searchAt é Search com o instante de referência injetado.
+//
+// O relógio entra por parâmetro porque o peso de recência classifica o item em
+// faixas de idade: para comparar duas implementações resultado a resultado (é o
+// que o teste contra oráculo faz), as duas precisam olhar para o MESMO agora,
+// senão um item na fronteira de sete dias muda de faixa entre uma chamada e a
+// seguinte e a divergência seria do relógio, não do código.
+func (s *Store) searchAt(query string, limit int, now time.Time) []Hit {
 	terms := tokenize(query)
 	if len(terms) == 0 {
 		return nil
+	}
+	// O conjunto dos termos da consulta é montado UMA vez, fora do laço: ele é o
+	// mesmo para todos os itens, e remontá-lo por item era construir o mesmo mapa
+	// quinhentas vezes por turno.
+	terminology := make(map[string]bool, len(terms))
+	for _, term := range terms {
+		terminology[term] = true
 	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	now := time.Now().UTC()
-	hits := make([]Hit, 0, len(s.items))
-	for _, item := range s.items {
-		score, why := scoreItem(item, terms, now)
+	// Duas passagens de propósito. A primeira só PONTUA, guardando o mínimo para
+	// ordenar; a segunda monta o Hit — que copia o item e escreve a frase do Why
+	// — apenas para os que sobreviveram ao limite.
+	//
+	// Numa memória com centenas de itens quase todos casam com alguma palavra da
+	// pergunta, e o supervisor pede cinco. Montar o Hit na primeira passagem era
+	// clonar tags e formatar texto para centenas de itens que seriam descartados
+	// na linha seguinte — e ainda obrigava a ordenação a arrastar structs de
+	// item inteiro em vez de chaves.
+	ranking := make([]ranked, 0, len(s.items))
+	for id, item := range s.items {
+		score, titleHits, contentHits, tagHits := scoreItem(s.index[id], terms, terminology, item, now)
 		if score <= 0 {
 			continue
 		}
-		hits = append(hits, Hit{Item: cloneItem(item), Score: score, Why: why})
+		ranking = append(ranking, ranked{
+			key:         rankKey{score: score, updatedAt: item.UpdatedAt, id: id},
+			titleHits:   titleHits,
+			contentHits: contentHits,
+			tagHits:     tagHits,
+		})
 	}
-	sortHits(hits)
-	return limitHits(hits, limit)
+
+	sort.SliceStable(ranking, func(i, j int) bool {
+		return ranking[i].key.before(ranking[j].key)
+	})
+	if limit > 0 && len(ranking) > limit {
+		ranking = ranking[:limit]
+	}
+
+	hits := make([]Hit, 0, len(ranking))
+	for _, entry := range ranking {
+		hits = append(hits, Hit{
+			Item:  cloneItem(s.items[entry.key.id]),
+			Score: entry.key.score,
+			Why:   explain(entry.titleHits, entry.contentHits, entry.tagHits),
+		})
+	}
+	return hits
+}
+
+// rankKey é a chave de ordenação de um resultado, e a ordem canônica vive no
+// método `before`. Busca léxica e busca vetorial ordenam pela MESMA regra; com
+// a regra escrita duas vezes, um dia uma delas mudaria e a lista da tela
+// passaria a se reordenar conforme o tipo de busca.
+type rankKey struct {
+	score     float64
+	updatedAt time.Time
+	id        string
+}
+
+// before é score desc, depois o mais recente, depois id asc. O desempate por id
+// fecha a ordem: sem ele, dois itens de mesmo score e mesmo instante trocariam
+// de lugar entre execuções.
+func (a rankKey) before(b rankKey) bool {
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if !a.updatedAt.Equal(b.updatedAt) {
+		return a.updatedAt.After(b.updatedAt)
+	}
+	return a.id < b.id
+}
+
+// ranked é uma linha da primeira passagem: a chave de ordenação mais a contagem
+// de acertos, que só vira frase depois do corte.
+type ranked struct {
+	key         rankKey
+	titleHits   int
+	contentHits int
+	tagHits     int
 }
 
 // SearchVector compara por cosseno com quem tem vetor.
@@ -431,20 +590,23 @@ func Cosine(a, b []float32) float64 {
 }
 
 // scoreItem pontua um item contra os termos já normalizados da consulta.
-func scoreItem(item Item, terms []string, now time.Time) (float64, string) {
-	titleTokens := tokenSet(item.Title)
-	contentTokens := tokenSet(item.Content)
-
+//
+// Recebe o índice do item pronto (ver searchIndex) em vez de tokenizar título e
+// conteúdo aqui: esta função roda uma vez POR ITEM a cada consulta, e a consulta
+// roda a cada turno.
+// Devolve a pontuação e as três contagens de acerto — não a frase do Why. A
+// frase é montada com fmt e só interessa para os poucos itens que passam do
+// limite; gerá-la aqui era formatar centenas de strings por turno para jogar
+// quase todas fora.
+func scoreItem(idx searchIndex, terms []string, terminology map[string]bool, item Item, now time.Time) (float64, int, int, int) {
 	titleHits, contentHits := 0, 0
-	terminology := make(map[string]bool, len(terms))
 	for _, term := range terms {
-		terminology[term] = true
 		// Cada termo conta UMA vez por campo. Contar ocorrência faria o item mais
 		// comprido ganhar sempre — relevância viraria contagem de páginas.
-		if titleTokens[term] {
+		if idx.title[term] {
 			titleHits++
 		}
-		if contentTokens[term] {
+		if idx.content[term] {
 			contentHits++
 		}
 	}
@@ -455,17 +617,7 @@ func scoreItem(item Item, terms []string, now time.Time) (float64, string) {
 	// qualquer tag com mais de uma palavra — nenhum termo tem espaço, porque a
 	// tokenização quebra justamente ali.
 	tagHits := 0
-	counted := make(map[string]bool, len(item.Tags))
-	for _, tag := range item.Tags {
-		tokens := tokenize(tag)
-		if len(tokens) == 0 {
-			continue
-		}
-		key := strings.Join(tokens, " ")
-		if counted[key] {
-			continue
-		}
-		counted[key] = true
+	for _, tokens := range idx.tags {
 		complete := true
 		for _, token := range tokens {
 			if !terminology[token] {
@@ -480,13 +632,13 @@ func scoreItem(item Item, terms []string, now time.Time) (float64, string) {
 
 	raw := weightTitle*float64(titleHits) + weightContent*float64(contentHits) + weightTag*float64(tagHits)
 	if raw == 0 {
-		return 0, ""
+		return 0, 0, 0, 0
 	}
 
 	// Importância de 1 a 5 vira multiplicador de 0.7 a 1.1: mexe no ranking sem
 	// nunca superar a diferença entre casar e não casar.
 	score := raw * (0.6 + 0.1*float64(clampImportance(item.Importance))) * recencyWeight(item, now)
-	return score, explain(titleHits, contentHits, tagHits)
+	return score, titleHits, contentHits, tagHits
 }
 
 // recencyWeight rebaixa devagar o que anda parado.
@@ -568,9 +720,21 @@ func Normalize(text string) string {
 	var builder strings.Builder
 	builder.Grow(len(text))
 	space := false
-	for _, symbol := range strings.ToLower(text) {
-		if folded, ok := fold[symbol]; ok {
-			symbol = folded
+	// unicode.ToLower rune a rune, e não strings.ToLower na frase inteira: o
+	// resultado é o mesmo (strings.ToLower é exatamente isto por dentro), mas a
+	// versão de frase materializa uma string intermediária que só existe para
+	// ser percorrida e jogada fora — uma alocação por item indexado.
+	for _, symbol := range text {
+		symbol = unicode.ToLower(symbol)
+		// A consulta ao mapa só acontece fora do ASCII. Toda chave de `fold` é
+		// uma letra acentuada, portanto acima de 0x7F: para 'a'..'z', espaço e
+		// pontuação — que são a esmagadora maioria dos bytes de qualquer texto —
+		// a busca no mapa era garantidamente um erro, e mesmo assim custava um
+		// hash por caractere. É o mesmo resultado, sem o pedágio.
+		if symbol > unicode.MaxASCII {
+			if folded, ok := fold[symbol]; ok {
+				symbol = folded
+			}
 		}
 		if unicode.IsSpace(symbol) {
 			space = true
@@ -596,15 +760,26 @@ func tokenize(text string) []string {
 
 	out := make([]string, 0, 8)
 	seen := make(map[string]bool, 8)
-	var current strings.Builder
 
-	flush := func() {
-		if current.Len() == 0 {
+	// O token é uma FATIA de `normalized`, não uma cópia montada rune a rune.
+	// Ele é sempre um trecho contíguo do texto já normalizado, então recortar
+	// devolve exatamente a mesma string sem alocar nada — a versão anterior
+	// remontava cada token num strings.Builder e pagava duas ou três alocações
+	// por palavra, num laço que roda sobre o conteúdo de cada item.
+	//
+	// A fatia mantém `normalized` vivo enquanto algum token existir. Isso é
+	// desejado aqui: os tokens vão para o índice de busca e, juntos, já pesariam
+	// o mesmo que o texto de onde saíram.
+	start := -1
+	runes := 0
+
+	flush := func(end int) {
+		if start < 0 {
 			return
 		}
-		token := current.String()
-		current.Reset()
-		if utf8.RuneCountInString(token) < minTokenRunes {
+		token := normalized[start:end]
+		start = -1
+		if runes < minTokenRunes {
 			return
 		}
 		if seen[token] {
@@ -614,14 +789,18 @@ func tokenize(text string) []string {
 		out = append(out, token)
 	}
 
-	for _, symbol := range normalized {
+	for offset, symbol := range normalized {
 		if unicode.IsLetter(symbol) || unicode.IsDigit(symbol) {
-			current.WriteRune(symbol)
+			if start < 0 {
+				start = offset
+				runes = 0
+			}
+			runes++
 			continue
 		}
-		flush()
+		flush(offset)
 	}
-	flush()
+	flush(len(normalized))
 	return out
 }
 
@@ -727,17 +906,16 @@ func (s *Store) sortedItems() []Item {
 	return out
 }
 
-// sortHits ordena por score desc, com desempate determinístico.
+// sortHits ordena por score desc, com desempate determinístico — a mesma regra
+// de rankKey.before, que é onde ela está escrita.
 func sortHits(hits []Hit) {
 	sort.SliceStable(hits, func(i, j int) bool {
-		if hits[i].Score != hits[j].Score {
-			return hits[i].Score > hits[j].Score
-		}
-		if !hits[i].Item.UpdatedAt.Equal(hits[j].Item.UpdatedAt) {
-			return hits[i].Item.UpdatedAt.After(hits[j].Item.UpdatedAt)
-		}
-		return hits[i].Item.ID < hits[j].Item.ID
+		return keyOf(hits[i]).before(keyOf(hits[j]))
 	})
+}
+
+func keyOf(hit Hit) rankKey {
+	return rankKey{score: hit.Score, updatedAt: hit.Item.UpdatedAt, id: hit.Item.ID}
 }
 
 func limitHits(hits []Hit, limit int) []Hit {

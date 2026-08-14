@@ -855,6 +855,95 @@ mod tests {
         assert!(PathBuf::from(&caminho).is_file(), "{caminho} não é arquivo");
     }
 
+    /* ---------------------- medição (ver src/bench.rs) --------------------- */
+
+    /// Saída de terminal REALISTA: `cargo build` verboso, com as cores ANSI que
+    /// o `TERM=xterm-256color` liga, os caminhos com acento das nossas estações
+    /// e um emoji de vez em quando.
+    ///
+    /// A mistura é o ponto. Corpus só de ASCII nunca exercita a remontagem e
+    /// mediria o caso que não dói; corpus só de emoji exagera o custo dela e
+    /// mediria um terminal que ninguém tem.
+    fn corpus_terminal(total_bytes: usize) -> Vec<u8> {
+        const LINHAS: [&str; 8] = [
+            "\u{1b}[1m\u{1b}[32m   Compiling\u{1b}[0m aibot-desktop v0.11.0 (C:\\Users\\usuário\\Documents\\Código\\ai-bot)\n",
+            "\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m: unused variable: `configuração`\n",
+            "  \u{1b}[1m\u{1b}[34m-->\u{1b}[0m src\\ferramentas\\extração.rs:142:9\n",
+            "   \u{1b}[1m\u{1b}[34m|\u{1b}[0m\n",
+            "\u{1b}[1m\u{1b}[32m    Finished\u{1b}[0m `release` profile [optimized] em 41,08s 🚀\n",
+            "test módulo::testes::acentuação_não_quebra ... \u{1b}[32mok\u{1b}[0m\n",
+            "     Running unittests src\\lib.rs (target\\release\\deps\\aibot-3f2a1b9c.exe)\n",
+            "info: relatório salvo em C:\\Users\\usuário\\AppData\\Local\\Temp\\saída.log ✔\n",
+        ];
+        let mut out = Vec::with_capacity(total_bytes + 256);
+        let mut indice = 0usize;
+        while out.len() < total_bytes {
+            out.extend_from_slice(LINHAS[indice % LINHAS.len()].as_bytes());
+            indice += 1;
+        }
+        out
+    }
+
+    /// 4 MB de saída em blocos de `READ_BUF` — exatamente o que a thread de
+    /// leitura faz num `cargo build` verboso, milhares de vezes por segundo.
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_decode_stream_4mb_em_blocos_de_8192() {
+        let corpus = corpus_terminal(4 * 1024 * 1024);
+        let blocos = corpus.len().div_ceil(READ_BUF);
+        let (tempo, caracteres) = crate::bench::median(|| {
+            let mut carry: Vec<u8> = Vec::new();
+            let mut total = 0usize;
+            for bloco in corpus.chunks(READ_BUF) {
+                // `.len()` é o que impede o otimizador de apagar a chamada
+                // inteira por "resultado não observado".
+                total += decode_stream(&mut carry, bloco).len();
+            }
+            total
+        });
+        // O corpus é UTF-8 válido: o texto que sai tem de ter todos os bytes que
+        // entraram. Um benchmark que mede a função errada não mede nada.
+        assert_eq!(caracteres, corpus.len(), "a decodificação perdeu bytes");
+        crate::bench::report(
+            "pty::decode_stream",
+            &format!("4 MiB / {blocos} blocos"),
+            tempo,
+            corpus.len() as f64 / (1024.0 * 1024.0),
+            "MiB",
+        );
+    }
+
+    /// O pior caso da remontagem: TODO bloco termina no meio de um caractere.
+    ///
+    /// Mede o ramo do `carry` sem a diluição do caso feliz — é o cenário do
+    /// terminal que despeja texto acentuado em rajada.
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_decode_stream_multibyte_partido_em_toda_borda() {
+        // Só caracteres de 3 bytes: 8192 não é múltiplo de 3, então toda borda
+        // de bloco cai dentro de um caractere.
+        let corpus: Vec<u8> = "áéíóú€—…✔"
+            .repeat(4 * 1024 * 1024 / 24)
+            .into_bytes();
+        let blocos = corpus.len().div_ceil(READ_BUF);
+        let (tempo, caracteres) = crate::bench::median(|| {
+            let mut carry: Vec<u8> = Vec::new();
+            let mut total = 0usize;
+            for bloco in corpus.chunks(READ_BUF) {
+                total += decode_stream(&mut carry, bloco).len();
+            }
+            total
+        });
+        assert_eq!(caracteres, corpus.len(), "a remontagem perdeu bytes");
+        crate::bench::report(
+            "pty::decode_stream (partido)",
+            &format!("{} MiB / {blocos} blocos", corpus.len() / (1024 * 1024)),
+            tempo,
+            corpus.len() as f64 / (1024.0 * 1024.0),
+            "MiB",
+        );
+    }
+
     /// Nenhuma variante pode devolver caminho que não existe.
     ///
     /// Não exige que TODAS resolvam — uma estação sem Git legitimamente não tem

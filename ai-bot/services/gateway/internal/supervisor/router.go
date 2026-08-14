@@ -12,8 +12,8 @@
 //
 // Só duas coisas mudam o modo de uma conversa em andamento:
 //
-//	1. `/mode <id>` escrito pela pessoa;
-//	2. a escolha manual no seletor da interface (que chega como Explicit).
+//  1. `/mode <id>` escrito pela pessoa;
+//  2. a escolha manual no seletor da interface (que chega como Explicit).
 //
 // No primeiro input, a decisão desce uma CASCATA, e o barato vem primeiro:
 //
@@ -329,6 +329,44 @@ type Scored struct {
 	Signals    []string
 }
 
+// normalizedTriggers é a forma já dobrada de cada radical do catálogo.
+//
+// Os radicais são CONSTANTES: o catálogo não muda em tempo de execução. Dobrar
+// os ~150 a cada chamada de Score era refazer para sempre um trabalho cujo
+// resultado nunca muda — e Score roda no primeiro input de toda conversa.
+//
+// O mapa é montado na inicialização do pacote e só é LIDO depois, então não
+// precisa de trava: ninguém escreve nele depois que o programa começa a
+// atender.
+var normalizedTriggers = buildNormalizedTriggers()
+
+func buildNormalizedTriggers() map[string]string {
+	index := make(map[string]string, 256)
+	for _, definition := range catalogCandidates {
+		for _, trigger := range definition.Triggers {
+			if _, done := index[trigger]; done {
+				continue
+			}
+			index[trigger] = Normalize(trigger)
+		}
+	}
+	return index
+}
+
+// normalizedTrigger devolve o radical dobrado, do cache quando ele é do
+// catálogo.
+//
+// O caminho de fora do cache não é sobra: Score é exportada e recebe qualquer
+// []specialist.Definition — os testes montam especialistas à mão para exercitar
+// desempate. Cair para Normalize mantém esses casos com o MESMO resultado, só
+// sem o atalho.
+func normalizedTrigger(trigger string) string {
+	if needle, cached := normalizedTriggers[trigger]; cached {
+		return needle
+	}
+	return Normalize(trigger)
+}
+
 // Score pontua cada candidato contra o texto, do maior para o menor.
 //
 // Exportada porque é o coração do roteamento e precisa de teste próprio: um
@@ -345,7 +383,7 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 		raw := 0.0
 		var signals []string
 		for _, trigger := range definition.Triggers {
-			needle := Normalize(trigger)
+			needle := normalizedTrigger(trigger)
 			if needle == "" {
 				continue
 			}
@@ -361,6 +399,15 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 				weight *= 1.5
 			}
 			raw += weight
+			if signals == nil {
+				// Capacidade só no PRIMEIRO sinal, e não antes do laço: a maioria
+				// dos especialistas não casa com radical nenhum, e reservar espaço
+				// para todos eles alocaria dez fatias por chamada para descartar
+				// oito. Medido: 10 alocações por Score contra 15, e ~9% menos
+				// tempo. Oito cabe folgado no maior conjunto de sinais que um
+				// especialista do catálogo produz.
+				signals = make([]string, 0, 8)
+			}
 			signals = append(signals, trigger)
 		}
 		if raw == 0 {
@@ -416,9 +463,19 @@ func Normalize(text string) string {
 	var builder strings.Builder
 	builder.Grow(len(text))
 	space := false
-	for _, symbol := range strings.ToLower(text) {
-		if folded, ok := fold[symbol]; ok {
-			symbol = folded
+	// unicode.ToLower rune a rune, e não strings.ToLower na frase inteira: dá o
+	// mesmo resultado (strings.ToLower é exatamente isto por dentro) sem
+	// materializar uma string intermediária que só existe para ser percorrida.
+	for _, symbol := range text {
+		symbol = unicode.ToLower(symbol)
+		// O mapa só é consultado fora do ASCII. Toda chave de `fold` é letra
+		// acentuada, portanto acima de 0x7F: para 'a'..'z', espaço e pontuação —
+		// a esmagadora maioria dos bytes de qualquer texto — a consulta era
+		// garantidamente um erro e mesmo assim custava um hash por caractere.
+		if symbol > unicode.MaxASCII {
+			if folded, ok := fold[symbol]; ok {
+				symbol = folded
+			}
 		}
 		if unicode.IsSpace(symbol) {
 			space = true
@@ -435,17 +492,30 @@ func Normalize(text string) string {
 
 /* ------------------------------ candidatos ------------------------------ */
 
+// catalogCandidates é o catálogo inteiro, materializado UMA vez.
+//
+// specialist.All() devolve uma fatia nova a cada chamada, e Route chama
+// candidatesFor em TODA mensagem — inclusive no caminho sticky, que é o de
+// quase todas elas e que a arquitetura promete custar zero. Como Definition
+// carrega prompt, ações e ferramentas, essa cópia dava 4 KB alocados por
+// mensagem só para depois perguntar se um id está na lista.
+//
+// Daqui para baixo a fatia é tratada como SOMENTE LEITURA. Isso não afrouxa
+// nenhuma garantia: a cópia de All() sempre foi rasa — Triggers, Tools e
+// Actions já eram compartilhados com o catálogo —, então quem escrevesse nela
+// já corrompia o registro global. O que muda é só o custo.
+var catalogCandidates = specialist.All()
+
 func candidatesFor(allowed []string) []specialist.Definition {
-	all := specialist.All()
 	if len(allowed) == 0 {
-		return all
+		return catalogCandidates
 	}
 	permitted := make(map[string]bool, len(allowed))
 	for _, id := range allowed {
 		permitted[id] = true
 	}
-	out := make([]specialist.Definition, 0, len(all))
-	for _, definition := range all {
+	out := make([]specialist.Definition, 0, len(catalogCandidates))
+	for _, definition := range catalogCandidates {
 		if permitted[definition.ID] {
 			out = append(out, definition)
 		}

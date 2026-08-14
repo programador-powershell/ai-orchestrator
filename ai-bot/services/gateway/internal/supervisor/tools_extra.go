@@ -41,6 +41,16 @@ func (t *Toolbox) InstallExtraTools(registry *Registry) {
 		"consulta vulnerabilidade conhecida de uma dependência. args: {ecosystem, name, version}", t.osvQuery)
 	registry.Register("webhook.post",
 		"dispara um webhook pela REFERÊNCIA no cofre. args: {secretRef, body}", t.webhookPost)
+
+	// web.search e design.replicate — ver tools_web.go.
+	registry.Register("web.search",
+		"pesquisa na web pelo motor configurado. args: {query, limit?}", t.webSearch)
+	registry.Register("design.replicate",
+		"extrai a linguagem visual (cores, variáveis, fontes, animações, layout) de uma URL. args: {url, maxPages?}",
+		t.designReplicate)
+
+	// image.generate, finetune.submit e finetune.status — ver tools_provider.go.
+	t.providerToolsInstall(registry)
 }
 
 /* ---------------------------- varredura de segredo ---------------------------- */

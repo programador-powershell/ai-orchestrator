@@ -83,12 +83,12 @@ type Avatar struct {
 
 // Definition é o especialista completo.
 type Definition struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	Tagline string  `json:"tagline"`
-	Glyph   string  `json:"glyph"`
-	Hue     int     `json:"hue"`
-	Surface Surface `json:"surface"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Tagline string   `json:"tagline"`
+	Glyph   string   `json:"glyph"`
+	Hue     int      `json:"hue"`
+	Surface Surface  `json:"surface"`
 	Rail    RailKind `json:"rail"`
 
 	// System é o prompt que define o comportamento. Entra SEMPRE depois do
@@ -307,7 +307,11 @@ var catalog = []Definition{
 			{ID: "tarefa", Label: "Tarefa", Insert: "/tarefa ", Glyph: "plan"},
 			{ID: "automacao", Label: "Automação", Insert: "/automacao ", Glyph: "dag"},
 		},
-		Tools:           []string{"fs.read", "fs.write", "memory.read", "memory.write", "webhook.post", "schedule.create"},
+		// schedule.list e schedule.remove andam junto com o create: quem pode
+		// agendar e não pode conferir nem desfazer monta automação que a pessoa
+		// só descobre quando ela dispara.
+		Tools: []string{"fs.read", "fs.write", "memory.read", "memory.write", "webhook.post",
+			"schedule.create", "schedule.list", "schedule.remove"},
 		Triggers:        []string{"tarefa", "automa", "rotina", "lembr", "agend", "prazo", "quadro", "kanban", "checklist", "processo", "fluxo de trabalho", "workflow", "notific", "webhook"},
 		PreferredSkills: []string{"chat"},
 		Avatar: Avatar{

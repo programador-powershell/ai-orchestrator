@@ -15,16 +15,10 @@
 > viraram **especialistas de um bot só**: você escreve, o roteador decide quem
 > atende, e a tela se transforma na superfície daquele especialista.
 >
-> **Estado desta versão.** A interface compila (`tsc` limpo), passa nos testes e
-> roda. O gateway Go **não foi compilado aqui** — não há toolchain Go nesta
-> estação, e instalá-la depende de aprovação da TI. O código foi revisado
-> símbolo a símbolo, mas o primeiro `go build` é o teste que falta.
-> **Sete ferramentas** (`web.search`, `image.generate`, `design.replicate`,
-> `flow.validate`, `finetune.submit`, `finetune.status`, `schedule.create`) estão
-> no catálogo e **recusam com motivo** em vez de existir — é de propósito: uma
-> ferramenta ausente faz o modelo inventar outra saída, uma recusa explícita ele
-> lê e contorna. O **Needle** está atrás da tag de build `needle` e depende de
-> análise de TI/SI antes de virar padrão.
+> **Estado desta versão.** As três camadas compilam e passam: `go build`, `go vet`
+> e `gofmt` limpos com **173 testes** no gateway; `cargo check`/`clippy` limpos com
+> **81 testes** no nativo; `tsc` limpo com **32 testes** na interface. O **Needle**
+> está atrás da tag de build `needle` — o build padrão não o referencia.
 
 - **Tela única dinâmica** — sem abas, sem menu de modos. A barra lateral
   esquerda, a barra superior, o campo de texto e a cor de acento do app mudam
@@ -111,7 +105,15 @@
   com menos informação.
 - **O modo é da conversa, não da linha.** Decidido no primeiro input, gravado, e
   trocado só por `/mode <id>` ou pelo seletor. As mensagens seguintes custam zero de
-  roteamento.
+  roteamento — e agora isso é **medido**: o caminho sticky é 99,8 ns e **zero
+  alocação**.
+- **As sete ferramentas que recusavam agora existem**, todas em Go: `web.search`
+  (SearXNG, Brave ou Tavily — o SearXNG é o padrão recomendado porque é
+  auto-hospedado e a consulta não sai para terceiro), `design.replicate`,
+  `image.generate`, `finetune.submit`/`finetune.status`, `flow.validate` e
+  `schedule.create` (com `list` e `remove` juntos — criar sem poder listar nem
+  apagar é armadilha). São **36 ferramentas** no catálogo; no host ficaram só as
+  seis que precisam da máquina de verdade (processo, ConPTY, binário de documento).
 
 ### :pushpin: Fixes
 
@@ -122,9 +124,52 @@
   isso de novo.
 - **O especialista `fluxo` tem matiz própria** (174). No CSS anterior ele era o
   único sem regra `[data-mode=fluxo]` e caía no verde do Chat.
+- **Mandar outra mensagem no meio da resposta não deixa a sessão fantasma.** O
+  turno substituído limpava o registro de execução sem conferir de quem ele era, e
+  apagava o cancelamento do turno que o substituiu: dali em diante a sessão se
+  dizia livre com um turno correndo dentro dela, e o botão de parar não parava
+  nada. Agora o registro tem a identidade do turno, e só o dono se desregistra.
+- **`worker.done` traz o CAMINHO da cópia isolada.** O supervisor pedia a cópia
+  pela ferramenta do modelo e guardava o que ela devolve — a frase "cópia isolada
+  criada em C:\… (ramo aibot/x)" — num campo documentado como caminho. Quem fosse
+  usar o campo (a tela, um diff) recebia uma frase. O isolamento da equipe agora
+  fala com o `worktree.Manager` direto, que devolve caminho e ramo tipados; a
+  ferramenta continua em texto, porque ela é para o modelo ler.
+- **Escalar não conta como falha da onda.** O trabalhador que se recusa a adivinhar
+  e escreve `ESCALAR:` entrava na contagem de falhas e abria o portão da onda junto
+  com quem falhou de verdade — e o portão pergunta "seguir, refazer ou abortar?",
+  que não é o que se responde a quem pediu esclarecimento. A pergunta já tem o
+  caminho dela: o evento `escalate`, com o campo de resposta ao lado na tela.
 
 ### :construction_worker: Refactors
 
+- **Desempenho medido, não achado.** Todo ganho abaixo saiu de um A/B **intercalado
+  no mesmo processo**, e não de "antes" e "depois" em execuções separadas — esta
+  máquina faz *throttling* térmico, e o mesmo código chegou a medir 21 µs numa
+  rodada e 58 µs na seguinte. Medir errado teria vendido ruído como otimização. Os
+  benchmarks ficaram no repositório: regressão que ninguém mede volta.
+
+  | caminho | antes | depois | ganho |
+  | --- | --- | --- | --- |
+  | streaming de 800 pedaços (markdown) | 298,5 ms | 15,8 ms | **18,9x** |
+  | fio de 10 linhas + 200 deltas | 141,0 ms | 4,2 ms | **33,7x** |
+  | `office.edit` — 3001 trocas em 2,8 MiB | 600,4 ms | 17,0 ms | **35x** |
+  | `store.Append` (envelope durável) | 3,15 ms | 0,36 ms | **8,7x** |
+  | `store.Append` (delta de streaming) | 2,14 ms | 0,011 ms | **193x** |
+  | replay completo de 5.000 envelopes | 210 ms | 41,9 ms | **5,0x** |
+  | abrir sessão com log de 5.000 | 21,6 ms | 2,5 ms | **8,5x** |
+  | roteamento sticky (90% das mensagens) | 1623 ns · 4096 B | 99,8 ns · **0 B** | **16x** |
+  | `pdf.extract` — 2 MiB | 14,8 ms | 5,4 ms | **2,7x** |
+
+  As causas, em uma linha cada: o markdown reparseava a resposta inteira a cada
+  token (agora só o bloco em aberto, e os fechados voltam por referência, então o
+  React nem entra na subárvore); o `office.edit` aplicava cada troca com
+  `replace_range`, que **move o resto da string** — quadrático no número de trocas;
+  o `store` dava `fsync` no cabeçalho a cada envelope, **inclusive nos deltas** que
+  o próprio código tinha o cuidado de não sincronizar; o replay relia o log do
+  começo a cada página, e abrir sessão varria tudo só para achar o último `seq`; e
+  o caminho sticky — o que a arquitetura promete custar zero — copiava o catálogo
+  inteiro de especialistas só para perguntar se um id estava na lista.
 - **Um protocolo, cinco transportes.** REST, WebSocket, SSE, MCP e CLI serializam o
   mesmo envelope; nenhum decide nada. No produto anterior cada caminho tinha sua
   mensagem, e foi assim que a aprovação de ferramenta valia na interface e não valia

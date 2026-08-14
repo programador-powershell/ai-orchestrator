@@ -16,6 +16,7 @@
  */
 
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -39,7 +40,7 @@ import type {
 import { BotAvatar } from "../avatar/BotAvatar";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { useApp } from "../lib/store";
-import { renderMarkdown } from "../lib/markdown";
+import { createMarkdownStream, renderMarkdown, type MarkdownStream } from "../lib/markdown";
 
 /* -------------------------------- auxiliares ------------------------------ */
 
@@ -223,7 +224,59 @@ function ErrorNote({ error }: { error: ProtocolError }): ReactNode {
   );
 }
 
-function Row({
+/**
+ * O corpo em markdown de UMA linha — o caminho quente do app inteiro.
+ *
+ * Isolado e memoizado porque um delta re-renderiza o fio todo: sem isto, cada
+ * token reparseia o markdown de TODAS as linhas da conversa, e o custo por token
+ * vira o tamanho da conversa em vez do tamanho do delta. Com o `memo`, um delta
+ * toca uma linha só — as outras têm `text` idêntico e nem entram no render.
+ *
+ * A linha que está sendo escrita usa o parse INCREMENTAL: reparsear o próprio
+ * texto inteiro a cada token é O(m²) na resposta, e é esse o custo que aparece
+ * numa resposta longa. Quando o `message` final chega (streaming = false), o
+ * parse volta a ser o de uma vez só — é ele a fonte da verdade da árvore.
+ */
+const LineMarkdown = memo(function LineMarkdown({
+  id,
+  text,
+  streaming
+}: {
+  id: string;
+  text: string;
+  streaming: boolean;
+}): ReactNode {
+  const held = useRef<{ id: string; parser: MarkdownStream } | null>(null);
+
+  return useMemo(() => {
+    if (!streaming) {
+      // Terminou: o acumulador do stream só ocuparia memória (ele guarda uma
+      // cópia do texto) por uma linha que não recebe mais nada.
+      held.current = null;
+      return renderMarkdown(text);
+    }
+    const current = held.current;
+    /*
+     * O stream é uma CACHE, não estado: ele só vale enquanto for o mesmo id e o
+     * texto continuar sendo uma continuação do que ele já viu. Se qualquer uma
+     * das duas coisas mudar (linha reciclada, texto substituído pelo `message`,
+     * replay), ele é jogado fora e refeito — por isso escrever nele durante o
+     * render não torna o resultado dependente da ordem: para um mesmo `text` a
+     * árvore devolvida é sempre a mesma.
+     */
+    const usable = current !== null && current.id === id && text.startsWith(current.parser.text);
+    const parser = usable && current !== null ? current.parser : createMarkdownStream();
+    if (!usable) held.current = { id, parser };
+    return parser.push(text.slice(parser.text.length));
+  }, [id, text, streaming]);
+});
+
+/**
+ * A linha inteira também é memoizada: `patchLine` troca a identidade só da linha
+ * que mudou, então as demais recebem exatamente as mesmas props e o React pula a
+ * subárvore inteira — inclusive a faixa de ferramentas e o retrato.
+ */
+const Row = memo(function Row({
   line,
   spec,
   avatar
@@ -256,13 +309,13 @@ function Row({
             `::after` do corpo, e com o nome no fim ele piscaria embaixo da
             assinatura em vez de no fim da fala. */}
         {isAssistant ? <div className="line-who line-meta">{spec.name}</div> : null}
-        {renderMarkdown(line.text)}
+        <LineMarkdown id={line.id} text={line.text} streaming={line.streaming === true} />
         <ToolStrip calls={line.toolCalls} results={line.toolResults} />
         {line.error ? <ErrorNote error={line.error} /> : null}
       </div>
     </div>
   );
-}
+});
 
 /* --------------------------------- exemplos ------------------------------- */
 

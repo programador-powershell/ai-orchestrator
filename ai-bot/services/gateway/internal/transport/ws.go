@@ -379,14 +379,54 @@ func (c *Conn) readFrame() (bool, byte, []byte, error) {
 		if _, err := io.ReadFull(c.rw, payload); err != nil {
 			return false, 0, nil, fmt.Errorf("lendo payload do frame: %w", err)
 		}
-		// A máscara é cíclica de 4 bytes e o índice é o do payload INTEIRO —
-		// em frame fragmentado cada frame tem a sua máscara e recomeça em 0.
-		for i := range payload {
-			payload[i] ^= mask[i%4]
-		}
+		unmask(payload, mask)
 	}
 
 	return fin, opcode, payload, nil
+}
+
+// unmask aplica a máscara do frame sobre o payload, no lugar.
+//
+// A máscara é cíclica de 4 bytes e o índice é o do payload INTEIRO — em frame
+// fragmentado cada frame tem a sua máscara e recomeça em 0.
+//
+// Função separada (e não um laço embutido em readFrame) porque este é o único
+// trecho do transporte que toca CADA byte que entra no gateway: isolada, ela
+// pode ser medida por si — e é medida, em internal/transport/ws_bench_test.go.
+//
+// O laço trabalha em palavras de 8 bytes porque byte a byte o processador gasta
+// uma leitura, um XOR e uma escrita para cada 8 bits, enquanto o mesmo trio
+// resolve 64 de uma vez. Medido (ver ws_bench_test.go): ~2,0 GB/s na forma
+// ingênua contra ~15 GB/s aqui, ou seja 6,7x em 8 KiB e 7,8x em 1 MiB. Numa
+// mensagem pequena isso some no ruído do turno; num anexo de alguns MiB vira
+// milissegundos antes do primeiro token, e é para esse caso que vale.
+//
+// A cauda é segura porque o laço só avança de 8 em 8: o que sobra começa num
+// índice múltiplo de 8 — portanto múltiplo de 4 —, e o ciclo da máscara
+// recomeça exatamente em mask[0]. Um laço que avançasse em passo não múltiplo
+// de 4 precisaria carregar o deslocamento junto, e é onde essa otimização
+// costuma virar corrupção silenciosa de payload.
+func unmask(payload []byte, mask [4]byte) {
+	if len(payload) >= 8 {
+		// A máscara de 4 bytes repetida duas vezes cobre a palavra inteira.
+		// LittleEndian na leitura E na escrita: o XOR é bit a bit, então basta
+		// as duas pontas usarem a mesma convenção para o resultado ser o mesmo
+		// em qualquer arquitetura.
+		var doubled [8]byte
+		copy(doubled[0:4], mask[:])
+		copy(doubled[4:8], mask[:])
+		word := binary.LittleEndian.Uint64(doubled[:])
+
+		block := payload
+		for len(block) >= 8 {
+			binary.LittleEndian.PutUint64(block, binary.LittleEndian.Uint64(block)^word)
+			block = block[8:]
+		}
+		payload = block
+	}
+	for i := range payload {
+		payload[i] ^= mask[i%4]
+	}
 }
 
 // fail fecha a conexão com o código dado e devolve o erro correspondente.

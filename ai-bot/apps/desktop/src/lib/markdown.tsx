@@ -160,11 +160,27 @@ function heading(level: number, content: ReactNode[], key: string): ReactNode {
   );
 }
 
-export function renderMarkdown(text: string): ReactNode {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+/** CRLF e CR soltos viram LF antes de qualquer coisa; o resto do parser só vê `\n`. */
+function normalize(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
+/**
+ * O laço de blocos, com o contador de chave vindo de FORA.
+ *
+ * `firstKey` existe para o parse incremental: um trecho parseado depois, em
+ * separado, precisa continuar a numeração de onde o anterior parou — senão as
+ * chaves se repetem e o React remonta os blocos (perdendo, entre outras coisas,
+ * o "copiado" do bloco de código) a cada token.
+ *
+ * Invariante que o parse incremental depende: cada volta do laço empurra
+ * EXATAMENTE um nó e incrementa a chave uma vez, então `nodes.length` é quantas
+ * chaves o trecho consumiu.
+ */
+function parseBlocks(lines: string[], firstKey: number): ReactNode[] {
   const blocks: ReactNode[] = [];
   let i = 0;
-  let k = 0;
+  let k = firstKey;
 
   while (i < lines.length) {
     const raw = lines[i] ?? "";
@@ -256,7 +272,138 @@ export function renderMarkdown(text: string): ReactNode {
     k += 1;
   }
 
-  return <>{blocks}</>;
+  return blocks;
+}
+
+export function renderMarkdown(text: string): ReactNode {
+  return <>{parseBlocks(normalize(text).split("\n"), 0)}</>;
+}
+
+/* ------------------------------ parse incremental ------------------------- */
+
+/**
+ * Um parse que cresce com o texto, para o caminho de streaming.
+ *
+ * O PORQUÊ: chamar `renderMarkdown` sobre o acumulado a cada token é O(m²) no
+ * tamanho da resposta — a última fatia reparseia os 8 KB inteiros, e o custo por
+ * token cresce junto com a resposta, que é exatamente quando a interface precisa
+ * ficar leve. Aqui o custo por token passa a depender só do bloco em curso.
+ *
+ * O truque: markdown é feito de BLOCOS, e um bloco já fechado não muda mais
+ * quando chega texto novo. Os nós dos blocos fechados ficam guardados (as MESMAS
+ * referências de elemento, então o React nem os revisita) e só a CAUDA — o bloco
+ * ainda sendo escrito — é reparseada.
+ *
+ * A ARMADILHA DO FORMATO, e a razão de o selo ser uma máquina de estado em vez
+ * de um `split("\n\n")`: uma cerca de código aberta ENGOLE linha em branco. Se
+ * linha em branco valesse como fim de bloco dentro da cerca, um bloco de código
+ * com parágrafos sairia partido em vários `<pre>` no meio do streaming e voltaria
+ * a ser um só quando a cerca fechasse — o texto piscando enquanto o modelo
+ * escreve. Por isso a cauda só fecha quando a cerca fecha.
+ */
+export interface MarkdownStream {
+  /** Aplica mais um pedaço e devolve a árvore do acumulado. */
+  push(chunk: string): ReactNode;
+  /** O texto já entregue, como veio (sem normalizar) — o chamador compara com ele. */
+  readonly text: string;
+}
+
+/**
+ * Até onde a cauda pode ser considerada fechada, em caracteres.
+ *
+ * Só três lugares são fronteira segura, e cada um por um motivo diferente:
+ *
+ *  - linha em branco: todo bloco de texto (parágrafo, lista, item) PARA nela, então
+ *    o que veio antes não muda mais, aconteça o que acontecer depois;
+ *  - linha que fecha uma cerca: o bloco de código termina ali, por definição;
+ *  - título: consome uma linha e só.
+ *
+ * O que NÃO é fronteira: uma linha comum. "A\nB" é um parágrafo só com quebra no
+ * meio — selar depois de "A" partiria o parágrafo em dois e a árvore deixaria de
+ * bater com a do parse de uma vez.
+ *
+ * Só linha TERMINADA (com o `\n` presente) conta: a última linha ainda pode
+ * crescer e virar outra coisa.
+ */
+function sealPoint(tail: string): number {
+  let cut = 0;
+  let at = 0;
+  let inFence = false;
+
+  for (;;) {
+    const eol = tail.indexOf("\n", at);
+    if (eol < 0) break;
+    const line = tail.slice(at, eol);
+    at = eol + 1;
+
+    // A ordem espelha a do parser: cerca antes de tudo. Uma linha só é título
+    // ou linha em branco se não estiver dentro de uma cerca.
+    if (inFence) {
+      if (RE_FENCE_END.test(line)) {
+        inFence = false;
+        cut = at;
+      }
+      continue;
+    }
+    if (RE_FENCE.test(line)) {
+      inFence = true;
+      continue;
+    }
+    if (line.trim() === "" || RE_HEADING.test(line)) cut = at;
+  }
+
+  return cut;
+}
+
+export function createMarkdownStream(): MarkdownStream {
+  /** O que foi entregue, cru — é o que o `text` devolve. */
+  let raw = "";
+  /** O mesmo texto com as quebras normalizadas; é sobre ele que o parse anda. */
+  let normalized = "";
+  /**
+   * Um `\r` no fim do pedaço fica retido: ele pode ser a primeira metade de um
+   * CRLF partido entre dois deltas, e normalizar cedo viraria DUAS quebras onde
+   * o parse de uma vez só veria uma. Se o texto acabar num `\r` solto, ele se
+   * perde — e não muda nada, porque quebra no fim do texto não gera bloco.
+   */
+  let heldCR = false;
+
+  /** Os nós dos blocos já fechados, na ordem. */
+  const sealed: ReactNode[] = [];
+  /** Onde a cauda começa dentro de `normalized`. */
+  let sealedAt = 0;
+  /** Próxima chave livre — continua a numeração do parse de uma vez só. */
+  let nextKey = 0;
+
+  return {
+    get text(): string {
+      return raw;
+    },
+
+    push(chunk: string): ReactNode {
+      if (chunk !== "") {
+        raw += chunk;
+        let piece = heldCR ? `\r${chunk}` : chunk;
+        heldCR = piece.endsWith("\r");
+        if (heldCR) piece = piece.slice(0, -1);
+        normalized += normalize(piece);
+      }
+
+      const tail = normalized.slice(sealedAt);
+      const cut = sealPoint(tail);
+      if (cut > 0) {
+        const closed = parseBlocks(tail.slice(0, cut).split("\n"), nextKey);
+        for (const node of closed) sealed.push(node);
+        nextKey += closed.length;
+        sealedAt += cut;
+      }
+
+      const open = parseBlocks(normalized.slice(sealedAt).split("\n"), nextKey);
+      // Os nós selados entram por REFERÊNCIA: elemento idêntico faz o React
+      // pular a subárvore inteira na reconciliação, sem nem chamar o componente.
+      return <>{[...sealed, ...open]}</>;
+    }
+  };
 }
 
 /** O último bloco cercado de um texto — o editor usa para "aplicar sugestão". */
