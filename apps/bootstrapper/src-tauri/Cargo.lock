@@ -18,26 +18,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multiplike-ai-bootstrapper"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "dirs",
- "ed25519-dalek",
- "fs2",
- "futures-util",
- "hex",
- "reqwest 0.12.28",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tokio",
-]
-
-[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1912,6 +1892,26 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "multiplike-ai-bootstrapper"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs",
+ "ed25519-dalek",
+ "fs2",
+ "futures-util",
+ "hex",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tokio",
 ]
 
 [[package]]
