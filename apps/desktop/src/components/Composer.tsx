@@ -47,6 +47,7 @@ import { pluginPrompt } from "../lib/plugins";
 import { usePlugins } from "../lib/pluginStore";
 import { useTrajectory } from "../lib/trajectoryStore";
 import { composerBus, goalBus, opsBus, opsInstruction, type ComposerSendOptions } from "../lib/ops";
+import { MODE_PLACEHOLDERS, composerHidden } from "../lib/composerModes";
 import { DEFAULT_COMMANDS, expandCommand } from "../lib/commands";
 import { opsCatalogs, opsChannelForMode } from "../lib/opsCatalogs";
 import { buildExecuteRequest, buildPlanRequest, parsePlan } from "../lib/planner";
@@ -55,18 +56,6 @@ import { ApprovalSelect } from "./ApprovalSelect";
 import { EffortSlider } from "./EffortSlider";
 import { PlanCard } from "./PlanCard";
 
-const modePlaceholders: Record<string, string> = {
-  chat: "Pergunte, pesquise ou pense junto…",
-  code: "Descreva a mudança de código…",
-  design: "Descreva a interface ou cole uma URL para replicar…",
-  data: "Peça tabelas, relações ou migrações…",
-  work: "Descreva o objetivo ou a automação…",
-  security: "Peça uma revisão, simulação ou correção…",
-  agent: "Descreva o fluxo de agentes…",
-  fluxo: "Use o assistente do fluxo, à esquerda do canvas.",
-  office: "Diga o que quer alterar no arquivo…",
-  tune: "Peça exemplos de dataset, config de treino ou avaliação…"
-};
 
 export function Composer() {
   const mode = useApp((state) => state.mode);
@@ -565,8 +554,11 @@ export function Composer() {
     // chat: quem responde é a equipe escalada pelo orquestrador. A mensagem
     // aparece no thread do mesmo jeito, para a conversa não ficar com buraco.
     if (options?.echoUser !== false) appendMessage(mode, { role: "user", content: text });
-    if (goalBus.deliver(mode, text)) return;
+    // Limpa ANTES do desvio: nas abas que assumem o envio (Agent, Fluxo) o
+    // `deliver` retorna aqui mesmo, e o anexo ficava preso no balão — para
+    // reaparecer, sem que ninguém pedisse, no próximo envio de outro assunto.
     if (currentAttachments.length) setAttachments([]);
+    if (goalBus.deliver(mode, text)) return;
     setSending(mode, true);
     const abort = new AbortController();
     abortRef.current = abort;
@@ -715,9 +707,7 @@ export function Composer() {
   }
 
   return (
-    /* A aba Fluxo tem o próprio assistente na coluna da esquerda; um segundo
-       campo de mensagem faria a mesma coisa por dois caminhos. */
-    <footer className={`composer-wrap ${mode === "code" || mode === "fluxo" ? "composer-hidden" : ""}`}>
+    <footer className={`composer-wrap ${composerHidden(mode) ? "composer-hidden" : ""}`}>
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
@@ -840,7 +830,7 @@ export function Composer() {
             }
           }}
           onPaste={(event) => void handlePaste(event)}
-          placeholder={modePlaceholders[mode]}
+          placeholder={MODE_PLACEHOLDERS[mode]}
           aria-label="Mensagem"
         />
         <div className="composer-row">

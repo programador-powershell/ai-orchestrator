@@ -1,8 +1,14 @@
 /* ------------------------------------------------------------------ */
 /* Fluxo — editor visual (prefixo .fx- na aba, .fxn- no nó do canvas). */
-/* Três colunas: assistente · canvas · detalhes do nó.                 */
+/* Canvas em tela cheia; assistente e detalhes do nó são colunas       */
+/* opcionais, que só aparecem quando alguém as pede.                   */
 /* Toda cor vem de var(--…), inclusive as do React Flow.               */
 /* ------------------------------------------------------------------ */
+
+/* A matiz do módulo. Mora aqui, e não junto das outras nove em
+   tokens.css, porque a aba nasceu depois — e a folha só carrega quando
+   o Fluxo monta, que é exatamente quando a cor importa. */
+.app-shell[data-mode=fluxo] { --accent-h: 172; } /* turquesa */
 
 .fx-view .fx-center {
   padding: 0;
@@ -16,6 +22,9 @@
   height: 100%;
   min-height: 0;
 }
+/* Sem a coluna do histórico o canvas ocupa tudo — é o estado padrão da aba. */
+.fx-shell.sem-assistente { grid-template-columns: minmax(0, 1fr) auto; }
+.fx-shell.sem-assistente .fx-main { border-inline-start: none; }
 
 /*
  * Flex e não grid de linhas fixas.
@@ -33,40 +42,42 @@
   min-height: 0;
   border-inline: 1px solid var(--line);
 }
-.fx-bar,
 .fx-avisos,
 .fx-trilha {
   flex: none;
 }
 
-/* ------------------------------- barra ------------------------------- */
+/* ------------------------- nome do fluxo (topbar) ---------------------- */
+/* Vive no slot de ações, junto de Testar e Salvar. Largura limitada porque
+   ali o espaço é dividido com os controles da janela: um nome comprido não
+   pode empurrar o resto da barra. */
 
-.fx-bar {
+.fx-nome {
+  width: clamp(90px, 18vw, 190px);
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--glass);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.fx-nome:hover { border-color: var(--glass-border); }
+.fx-nome:focus { border-color: var(--accent); background: var(--surface); outline: none; }
+
+/* Faixa de montagem em curso — some sozinha quando o stream acaba. */
+.fx-montando {
+  flex: none;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
-}
-.fx-nome {
-  flex: 1;
-  min-width: 140px;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-xs, 6px);
-  background: transparent;
-  color: var(--ink);
-  font-size: var(--fs-small);
-  font-weight: 600;
-}
-.fx-nome:hover { border-color: var(--line); }
-.fx-nome:focus { border-color: var(--accent); background: var(--surface); outline: none; }
-.fx-sep {
-  width: 1px;
-  height: 18px;
-  background: var(--line);
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
 }
 
 .fx-avisos {
@@ -123,6 +134,8 @@
   min-height: 0;
   background: var(--panel);
 }
+/* Linhas por AUTO com o corpo em 1fr: o erro e o rodapé do Parar são
+   condicionais, e linhas fixas fariam a lista cair na faixa errada. */
 .fxa {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
@@ -202,23 +215,12 @@
   color: var(--tone-red, #ef4444);
   font-size: var(--fs-eyebrow);
 }
+/* Só o botão Parar mora aqui — o campo de texto é o balão do app. */
 .fxa-foot {
   display: grid;
-  gap: 6px;
   padding: 10px 12px;
   border-top: 1px solid var(--line);
 }
-.fxa-foot textarea {
-  resize: vertical;
-  padding: 8px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--fs-micro);
-}
-.fxa-foot textarea:focus { border-color: var(--accent); outline: none; }
 
 /* ---------------------------- painel do nó ---------------------------- */
 
@@ -348,40 +350,9 @@
 .fxh--yes { background: var(--tone-green, #22c55e); }
 .fxh--no { background: var(--tone-red, #ef4444); }
 
-/* --------------------------- React Flow ---------------------------- */
-/* O tema do pacote é claro por padrão; aqui ele passa a ler os tokens. */
-
-.fx-canvas .react-flow__background { background: var(--surface); }
-.fx-canvas .react-flow__background-pattern { color: var(--line); }
-.fx-canvas .react-flow__edge-path { stroke: var(--line-strong, var(--line)); stroke-width: 1.6; }
-.fx-canvas .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+/* A pele do React Flow mora em styles/canvas.css, compartilhada com o Data.
+   Aqui fica só o que é do fluxo: o ramo "não" da condição em vermelho. */
 .fx-canvas .fxe--no .react-flow__edge-path { stroke: color-mix(in srgb, var(--tone-red, #ef4444) 60%, var(--line)); }
-.fx-canvas .react-flow__edge-text { fill: var(--muted); font-size: 9px; }
-.fx-canvas .react-flow__edge-textbg { fill: var(--panel); }
-.fx-canvas .react-flow__controls {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs, 6px);
-  overflow: hidden;
-  box-shadow: none;
-}
-.fx-canvas .react-flow__controls-button {
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
-  fill: currentColor;
-}
-.fx-canvas .react-flow__controls-button:hover { background: var(--glass); }
-.fx-canvas .react-flow__minimap {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs, 6px);
-  background: var(--panel);
-}
-.fx-canvas .react-flow__attribution {
-  background: transparent;
-  color: var(--faint);
-  font-size: 9px;
-}
-.fx-canvas .react-flow__attribution a { color: var(--faint); }
 
 /* --------------------------------- rail -------------------------------- */
 

@@ -2,9 +2,11 @@
  * Primitivos de superfície — TODA aba compõe a tela com estes blocos.
  * É isto que garante geometria idêntica entre os modos.
  */
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles } from "lucide-react";
+
+import { ThinkingOrb, type ThinkingKind } from "./ThinkingOrb";
 
 /**
  * Slot dinâmico na barra superior do app (antes do status de conexão).
@@ -157,25 +159,21 @@ export function PromptCards({ prompts, onPrompt }: { prompts: string[]; onPrompt
   );
 }
 
-export function ProcessPulse({ label, detail }: { label: string; detail: string }) {
+/**
+ * Estado de processamento — o orbe carrega a informação, o texto confirma.
+ *
+ * O desenho vem do `label` que a aba já escreve ("Pesquisa profunda: coletando
+ * fontes…", "Aplicando operações…"): quem busca vê um globo varrendo, quem
+ * executa vê a engrenagem girar. Uma esfera de partículas idêntica em toda
+ * tela dizia só "ocupado", que a pessoa já sabia.
+ *
+ * `kind` existe para quando a aba conhece a etapa melhor que o texto — o
+ * padrão é deduzir, para nenhuma tela ficar de fora por esquecimento.
+ */
+export function ProcessPulse({ label, detail, kind }: { label: string; detail: string; kind?: ThinkingKind }) {
   return (
     <div className="process-pulse" role="status" aria-live="polite">
-      <span className="particle-sphere" aria-hidden="true">
-        <i className="particle-core" />
-        {Array.from({ length: 24 }, (_, index) => (
-          <i
-            className="burst-particle"
-            key={index}
-            style={
-              {
-                "--angle": `${index * 15}deg`,
-                "--distance": `${17 + (index % 6) * 3}px`,
-                "--delay": `${-(index % 8) * 95}ms`
-              } as CSSProperties
-            }
-          />
-        ))}
-      </span>
+      <ThinkingOrb kind={kind} label={label} size={22} />
       <span className="process-copy">
         <strong>
           {label}
@@ -190,10 +188,10 @@ export function ProcessPulse({ label, detail }: { label: string; detail: string 
 }
 
 /** Pulse flutuante padronizado no topo do centro da superfície. */
-export function FloatingPulse({ label, detail }: { label: string; detail: string }) {
+export function FloatingPulse({ label, detail, kind }: { label: string; detail: string; kind?: ThinkingKind }) {
   return (
     <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 40 }}>
-      <ProcessPulse label={label} detail={detail} />
+      <ProcessPulse label={label} detail={detail} kind={kind} />
     </div>
   );
 }

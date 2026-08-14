@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- circle dots -->
+  <circle cx="12" cy="4.8" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="17.2" cy="7.2" r="0.85" fill="currentColor" stroke="none"/>
+  <circle cx="19.2" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="17.2" cy="16.8" r="0.85" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="19.2" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="6.8" cy="16.8" r="0.85" fill="currentColor" stroke="none"/>
+  <circle cx="4.8" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="6.8" cy="7.2" r="0.85" fill="currentColor" stroke="none"/>
+  <!-- subtle triangle hint -->
+  <path d="M12 7.5l4.5 7.5h-9l4.5-7.5z" opacity="0.25"/>
+</svg>

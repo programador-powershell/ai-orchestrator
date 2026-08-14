@@ -345,7 +345,11 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 @container topbar (max-width: 929px) {
   .topbar-actions .lg-button span.tb-label { display: none; }
-  .topbar-actions .segmented > button:not(.active) { display: none; }
+  /* Segmentado de ESCOLHA (uma opção acesa) encolhe para a opção atual —
+     as outras voltam ao clicar. Segmentado de AÇÃO não tem opção acesa e
+     sumiria inteiro por esta regra; ele só perde o rótulo (`.segmented--acoes`). */
+  .topbar-actions .segmented:not(.segmented--acoes) > button:not(.active) { display: none; }
+  .topbar-actions .segmented span.tb-label { display: none; }
 }
 @container topbar (max-width: 719px) {
   .status-pill { max-width: 132px; }

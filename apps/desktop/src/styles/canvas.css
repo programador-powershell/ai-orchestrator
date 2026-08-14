@@ -1,0 +1,55 @@
+/* ------------------------------------------------------------------ */
+/* Pele do canvas — vale para TODA área de trabalho do app             */
+/*                                                                     */
+/* Fluxo e Data desenham em cima do mesmo motor (React Flow), que vem  */
+/* com tema claro próprio. Aqui ele passa a ler os tokens do app, uma  */
+/* vez só: duas cópias desta folha divergiriam no primeiro ajuste de   */
+/* contraste, e o usuário veria duas áreas de trabalho com a mesma     */
+/* mecânica e cores diferentes.                                        */
+/* ------------------------------------------------------------------ */
+
+.aio-canvas { width: 100%; height: 100%; }
+
+.aio-canvas .react-flow__background { background: var(--surface); }
+.aio-canvas .react-flow__background-pattern { color: var(--line); }
+
+.aio-canvas .react-flow__edge-path { stroke: var(--line-strong, var(--line)); stroke-width: 1.6; }
+.aio-canvas .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+.aio-canvas .react-flow__edge-text { fill: var(--muted); font-size: 9px; }
+.aio-canvas .react-flow__edge-textbg { fill: var(--panel); }
+/* Alvo de clique da aresta: 1.6px de traço é fino demais para acertar
+   com o mouse, e sem isso não dá para selecionar e apagar uma ligação. */
+.aio-canvas .react-flow__edge-interaction { stroke-width: 14; }
+
+.aio-canvas .react-flow__controls {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 6px);
+  overflow: hidden;
+  box-shadow: none;
+}
+.aio-canvas .react-flow__controls-button {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  fill: currentColor;
+}
+.aio-canvas .react-flow__controls-button:hover { background: var(--glass); }
+
+.aio-canvas .react-flow__minimap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 6px);
+  background: var(--panel);
+}
+
+.aio-canvas .react-flow__attribution {
+  background: transparent;
+  color: var(--faint);
+  font-size: 9px;
+}
+.aio-canvas .react-flow__attribution a { color: var(--faint); }
+
+/* Retângulo de seleção múltipla (Shift + arrasto). */
+.aio-canvas .react-flow__selection {
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}

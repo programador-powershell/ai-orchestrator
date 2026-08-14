@@ -1,0 +1,198 @@
+/* ------------------------------------------------------------------ */
+/* Orbes de processamento — a forma diz O QUE está acontecendo         */
+/*                                                                     */
+/* Cada orbe é um SVG estático do pacote de ícones; o movimento vem     */
+/* daqui, selecionando os filhos do SVG por posição. Funciona porque o  */
+/* miolo dos glifos é gerado do pacote e não muda sozinho — se um       */
+/* desenho for trocado, o seletor correspondente precisa acompanhar.    */
+/*                                                                     */
+/* Regra herdada do motion.css: só transform e opacity animam. Nada de  */
+/* stroke-dashoffset, que força repaint a cada quadro em nove telas ao  */
+/* mesmo tempo.                                                        */
+/* ------------------------------------------------------------------ */
+
+.orb {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--accent);
+  background: radial-gradient(circle, var(--accent-soft), transparent 72%);
+}
+/* Filhos de SVG giram/escalam em torno do PRÓPRIO centro, não do canto
+   do viewBox — sem isto todo dot sai voando para fora do círculo. */
+.orb svg * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* Dentro do avatar da conversa o orbe é só o desenho: o círculo já é do
+   avatar, e dois fundos redondos empilhados viram um borrão. */
+.orb--avatar,
+.orb--inline {
+  width: auto;
+  height: auto;
+  background: none;
+}
+.orb--avatar { color: inherit; }
+
+/* ------------------------------- breathing ------------------------- */
+/* Três anéis concêntricos fora de fase: o repouso atento do app. */
+.orb--breathing circle:nth-of-type(1) { animation: orb-breathe 2.6s ease-in-out infinite; }
+.orb--breathing circle:nth-of-type(2) { animation: orb-breathe 2.6s ease-in-out -0.55s infinite; }
+.orb--breathing circle:nth-of-type(3) { animation: orb-breathe 2.6s ease-in-out -1.1s infinite; }
+
+/* ------------------------------- searching ------------------------- */
+/* O meridiano achata e volta: lê como um globo girando, sem rotação 3D. */
+.orb--searching ellipse { animation: orb-meridiano 2.8s ease-in-out infinite; }
+.orb--searching path { animation: orb-meridiano 2.8s ease-in-out -0.7s infinite; }
+.orb--searching circle:nth-of-type(n + 2) { animation: orb-cintila 2.2s ease-in-out infinite; }
+.orb--searching circle:nth-of-type(3) { animation-delay: -0.25s; }
+.orb--searching circle:nth-of-type(4) { animation-delay: -0.5s; }
+.orb--searching circle:nth-of-type(5) { animation-delay: -0.75s; }
+.orb--searching circle:nth-of-type(6) { animation-delay: -1s; }
+.orb--searching circle:nth-of-type(7) { animation-delay: -1.25s; }
+.orb--searching circle:nth-of-type(8) { animation-delay: -1.5s; }
+.orb--searching circle:nth-of-type(9) { animation-delay: -1.75s; }
+
+/* ------------------------------- working --------------------------- */
+/* Gira inteiro: trabalho braçal em curso, sem sutileza nenhuma. */
+.orb--working svg { animation: orb-gira 3.4s linear infinite; transform-origin: center; }
+
+/* ------------------------------- solving --------------------------- */
+/* As linhas acendem em cascata e o "certo" aparece no fim da volta. */
+.orb--solving path:nth-of-type(1) { animation: orb-linha 2.4s ease-in-out infinite; }
+.orb--solving path:nth-of-type(2) { animation: orb-linha 2.4s ease-in-out -0.2s infinite; }
+.orb--solving path:nth-of-type(3) { animation: orb-linha 2.4s ease-in-out -0.4s infinite; }
+.orb--solving path:nth-of-type(4) { animation: orb-confere 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite; }
+
+/* ------------------------------- composing ------------------------- */
+/* Ondas subindo em fila — a cadência de quem está escrevendo. */
+.orb--composing path:nth-of-type(1) { animation: orb-onda 1.9s ease-in-out infinite; }
+.orb--composing path:nth-of-type(2) { animation: orb-onda 1.9s ease-in-out -0.28s infinite; }
+.orb--composing path:nth-of-type(3) { animation: orb-onda 1.9s ease-in-out -0.56s infinite; }
+
+/* ------------------------------- connecting ------------------------ */
+/* Os nós pulsam em sequência e as arestas piscam atrás: pacote em trânsito. */
+.orb--connecting circle:nth-of-type(n + 2) { animation: orb-no 1.8s ease-in-out infinite; }
+.orb--connecting circle:nth-of-type(3) { animation-delay: -0.3s; }
+.orb--connecting circle:nth-of-type(4) { animation-delay: -0.6s; }
+.orb--connecting circle:nth-of-type(5) { animation-delay: -0.9s; }
+.orb--connecting circle:nth-of-type(6) { animation-delay: -1.2s; }
+.orb--connecting path { animation: orb-aresta 1.8s ease-in-out infinite; }
+.orb--connecting path:nth-of-type(2) { animation-delay: -0.3s; }
+.orb--connecting path:nth-of-type(3) { animation-delay: -0.6s; }
+.orb--connecting path:nth-of-type(4) { animation-delay: -0.9s; }
+
+/* ------------------------------- weaving --------------------------- */
+/* Fios deslizando um sobre o outro — várias linhas virando uma coisa só. */
+.orb--weaving path:nth-of-type(1) { animation: orb-fio 3s ease-in-out infinite; }
+.orb--weaving path:nth-of-type(2) { animation: orb-fio 3s ease-in-out -1s infinite; }
+.orb--weaving path:nth-of-type(3) { animation: orb-fio 3s ease-in-out -2s infinite; }
+
+/* ------------------------------- shaping --------------------------- */
+/* O ponto aceso dá a volta no anel; a forma no meio insinua e some. */
+.orb--shaping circle { animation: orb-ponto 2.4s ease-in-out infinite; }
+.orb--shaping circle:nth-of-type(2) { animation-delay: -0.3s; }
+.orb--shaping circle:nth-of-type(3) { animation-delay: -0.6s; }
+.orb--shaping circle:nth-of-type(4) { animation-delay: -0.9s; }
+.orb--shaping circle:nth-of-type(5) { animation-delay: -1.2s; }
+.orb--shaping circle:nth-of-type(6) { animation-delay: -1.5s; }
+.orb--shaping circle:nth-of-type(7) { animation-delay: -1.8s; }
+.orb--shaping circle:nth-of-type(8) { animation-delay: -2.1s; }
+.orb--shaping path { animation: orb-forma 2.4s ease-in-out infinite; }
+
+/* ------------------------------- listening ------------------------- */
+/* Ondas abrindo do centro para fora, como quem está captando algo. */
+.orb--listening path:nth-of-type(1) { animation: orb-eco 2.2s ease-out infinite; }
+.orb--listening path:nth-of-type(2) { animation: orb-eco 2.2s ease-out -0.35s infinite; }
+.orb--listening path:nth-of-type(3) { animation: orb-eco 2.2s ease-out -0.7s infinite; }
+
+/* --------------------------------- keyframes ------------------------ */
+
+@keyframes orb-meridiano {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(0.12); }
+}
+@keyframes orb-cintila {
+  0%, 100% { opacity: 0.25; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes orb-gira { to { transform: rotate(360deg); } }
+@keyframes orb-linha {
+  0%, 100% { opacity: 0.3; }
+  45% { opacity: 1; }
+}
+@keyframes orb-confere {
+  0%, 55% { opacity: 0; transform: scale(0.5); }
+  75% { opacity: 1; transform: scale(1.12); }
+  90%, 100% { opacity: 1; transform: scale(1); }
+}
+@keyframes orb-onda {
+  0%, 100% { transform: translateY(1.4px); opacity: 0.45; }
+  50% { transform: translateY(-1.4px); opacity: 1; }
+}
+@keyframes orb-no {
+  0%, 100% { transform: scale(0.75); opacity: 0.4; }
+  40% { transform: scale(1.3); opacity: 1; }
+}
+@keyframes orb-aresta {
+  0%, 100% { opacity: 0.2; }
+  45% { opacity: 1; }
+}
+@keyframes orb-fio {
+  0%, 100% { transform: translateX(-1.6px); opacity: 0.45; }
+  50% { transform: translateX(1.6px); opacity: 1; }
+}
+@keyframes orb-ponto {
+  0%, 100% { transform: scale(0.65); opacity: 0.3; }
+  35% { transform: scale(1.35); opacity: 1; }
+}
+@keyframes orb-forma {
+  0%, 100% { opacity: 0.08; transform: scale(0.9); }
+  50% { opacity: 0.45; transform: scale(1); }
+}
+@keyframes orb-eco {
+  0% { transform: scale(0.55); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Indicador completo: orbe + texto. Usado fora do balão flutuante —   */
+/* dentro de listas, painéis e barras laterais.                        */
+/* ------------------------------------------------------------------ */
+
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.thinking .orb { width: 28px; height: 28px; }
+.thinking-copy { display: grid; gap: 1px; min-width: 0; }
+.thinking-copy strong {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  letter-spacing: -0.2px;
+  color: var(--ink);
+}
+.thinking-copy strong i {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typing-dots 1.2s infinite;
+}
+.thinking-copy strong i:nth-child(2) { animation-delay: 0.15s; }
+.thinking-copy strong i:nth-child(3) { animation-delay: 0.3s; }
+.thinking-copy small {
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
