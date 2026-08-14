@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { ArrowRight, ShieldCheck, Wand2 } from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { SurfaceStatus } from "../shell/StatusBar";
 
 /* ------------------------------ severidade ------------------------------ */
 
@@ -364,6 +365,28 @@ export function FindingsSurface() {
 
   return (
     <section className="surface findings-surface">
+      {/*
+        O rodapé do app, por portal (ver shell/StatusBar).
+
+        Sem achado nenhum o rodapé fica VAZIO de propósito. "0 achados" seria
+        lido como "está limpo", e o que a tela sabe é outra coisa: que nenhuma
+        varredura devolveu resultado ainda. As duas frases parecem iguais e só
+        uma delas é verdade.
+      */}
+      {findings.length > 0 ? (
+        <SurfaceStatus>
+          <span className="statusbar-item">
+            <ShieldCheck aria-hidden />
+            <b>{findings.length}</b> {findings.length === 1 ? "achado" : "achados"}
+          </span>
+          {SEVERITIES.filter((severity) => counts[severity] > 0).map((severity) => (
+            <span className="statusbar-item" key={severity}>
+              {SEVERITY_LABEL[severity].toLowerCase()}: <b>{counts[severity]}</b>
+            </span>
+          ))}
+        </SurfaceStatus>
+      ) : null}
+
       <div className="surface-toolbar">
         <span className="surface-title">Achados</span>
         <span className="surface-toolbar-spacer" />

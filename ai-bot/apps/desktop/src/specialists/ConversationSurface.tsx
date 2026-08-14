@@ -22,10 +22,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode
 } from "react";
-import { Bot, Check, ChevronRight, Wrench, X } from "lucide-react";
+import { Bot, Check, ChevronRight, MessagesSquare, Wrench, X } from "lucide-react";
 import { MASTER_ID } from "@aibot/contracts";
 import type {
   Avatar,
@@ -38,26 +37,19 @@ import type {
   ToolResult
 } from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
-import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
+import { MASTER, SPECIALIST_ICON, hueStyle, specialistById } from "../lib/specialists";
 import { useApp } from "../lib/store";
 import { createMarkdownStream, renderMarkdown, type MarkdownStream } from "../lib/markdown";
+import { SurfaceStatus } from "../shell/StatusBar";
 
 /* -------------------------------- auxiliares ------------------------------ */
 
 /**
- * O matiz do especialista aplicado ao pedaço de interface que fala por ele.
- *
- * Vai como custom property porque o tema deriva tudo de `--accent-h`, e a linha
- * precisa manter a cor de QUEM RESPONDEU mesmo depois de a conversa trocar de
- * especialista. ARMADILHA JÁ PAGA NESTE PROJETO: não declare `transition` sobre
- * `--accent-h`. A transição encalha no valor de partida e todas as linhas
- * terminam com o matiz da primeira.
+ * O matiz por especialista mora em `lib/specialists` — o shell também precisa
+ * dele. Continua exportado daqui porque é por este caminho que as outras
+ * superfícies já o importam.
  */
-export function hueStyle(hue: number): CSSProperties {
-  // `CSSProperties` não declara custom properties; a asserção dupla é o caminho
-  // sem `any` para escrever uma.
-  return { "--accent-h": String(hue) } as unknown as CSSProperties;
-}
+export { hueStyle };
 
 /**
  * O master não está na lista de escolhíveis e `specialistById` derruba id
@@ -392,6 +384,7 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   const lines = useApp((state) => state.lines);
   const specialists = useApp((state) => state.specialists);
   const avatars = useApp((state) => state.avatars);
+  const activeSpecialist = useApp((state) => state.activeSpecialist);
 
   const scroller = useRef<HTMLDivElement | null>(null);
   /**
@@ -434,27 +427,53 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   }, [lines.length, tailLength]);
 
   return (
-    <div
-      className={compact ? "stage-scroll conversation-column" : "stage-scroll"}
-      ref={scroller}
-      onScroll={handleScroll}
-    >
-      <div className="thread">
-        {items.length === 0 ? (
-          <Hero compact={compact} />
-        ) : (
-          items.map(({ line, handoff }) => {
-            const spec = resolveSpecialist(specialists, line.specialist ?? "");
-            return (
-              <div className="line-group" key={line.id}>
-                {handoff ? <Handoff route={handoff.route} spec={handoff.spec} /> : null}
-                <Row line={line} spec={spec} avatar={avatarOf(avatars, spec)} />
-              </div>
-            );
-          })
-        )}
+    <>
+      {/*
+        O rodapé do app recebe o status desta superfície por portal.
+        Só no modo cheio: em modo coluna quem manda no rodapé é a superfície
+        hospedeira (editor, documento, canvas, quadro), e dois portais no mesmo
+        slot escreveriam um por cima do outro.
+
+        Nada de contagem inventada — o especialista só aparece DEPOIS de o
+        master rotear; antes disso não há especialista, e escrever "Conversa"
+        prometeria um atendimento que ainda não começou.
+      */}
+      {compact ? null : (
+        <SurfaceStatus>
+          <span className="statusbar-item">
+            <MessagesSquare aria-hidden />
+            <b>{lines.length}</b> {lines.length === 1 ? "linha" : "linhas"}
+          </span>
+          {activeSpecialist === "" ? null : (
+            <span className="statusbar-item">
+              atendendo: <b>{resolveSpecialist(specialists, activeSpecialist).name}</b>
+            </span>
+          )}
+        </SurfaceStatus>
+      )}
+
+      <div
+        className={compact ? "stage-scroll conversation-column" : "stage-scroll"}
+        ref={scroller}
+        onScroll={handleScroll}
+      >
+        <div className="thread">
+          {items.length === 0 ? (
+            <Hero compact={compact} />
+          ) : (
+            items.map(({ line, handoff }) => {
+              const spec = resolveSpecialist(specialists, line.specialist ?? "");
+              return (
+                <div className="line-group" key={line.id}>
+                  {handoff ? <Handoff route={handoff.route} spec={handoff.spec} /> : null}
+                  <Row line={line} spec={spec} avatar={avatarOf(avatars, spec)} />
+                </div>
+              );
+            })
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

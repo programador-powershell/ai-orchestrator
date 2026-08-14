@@ -37,6 +37,7 @@ import (
 	"aibot/gateway/internal/memory"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/netguard"
+	"aibot/gateway/internal/sandbox"
 	"aibot/gateway/internal/schedule"
 	"aibot/gateway/internal/worktree"
 )
@@ -121,7 +122,7 @@ func (r *Registry) Call(ctx context.Context, name, sessionID string, args json.R
 	}
 	if entry.host {
 		if bridge == nil {
-			return "", fmt.Errorf("a ferramenta %s roda na máquina e o aplicativo não está conectado", name)
+			return "", errHostDisconnected(name)
 		}
 		return bridge.Call(ctx, sessionID, name, args)
 	}
@@ -129,6 +130,28 @@ func (r *Registry) Call(ctx context.Context, name, sessionID string, args json.R
 		return "", fmt.Errorf("a ferramenta %s não tem implementação", name)
 	}
 	return entry.fn(ctx, sessionID, args)
+}
+
+// CallHost despacha ao aplicativo nativo uma ferramenta que NÃO está declarada
+// como de host.
+//
+// Existe por causa do `proc.run`: ele deixou de ser uma ferramenta de host fixa
+// e virou uma que decide o destino pelo ambiente ativo da sessão (ver
+// tools_process.go). No ambiente `local` o destino continua sendo o Rust, e é
+// por aqui que ele chega lá — sem isto, a ferramenta teria de existir duas
+// vezes no catálogo, com dois nomes, e o modelo escolheria um deles.
+func (r *Registry) CallHost(ctx context.Context, sessionID, tool string, args json.RawMessage) (string, error) {
+	r.mu.RLock()
+	bridge := r.bridge
+	r.mu.RUnlock()
+	if bridge == nil {
+		return "", errHostDisconnected(tool)
+	}
+	return bridge.Call(ctx, sessionID, tool, args)
+}
+
+func errHostDisconnected(tool string) error {
+	return fmt.Errorf("a ferramenta %s roda na máquina e o aplicativo não está conectado", tool)
 }
 
 /* ------------------------------- toolbox -------------------------------- */
@@ -155,6 +178,10 @@ type Toolbox struct {
 	// sem pasta de dados gravável — e aí as ferramentas de agenda RECUSAM com
 	// motivo, em vez de aceitar o gatilho e perdê-lo quando o processo morrer.
 	Schedule *schedule.Store
+	// Environments é o registro de ambientes de execução (local, docker, wsl,
+	// vps, nuvem) e guarda qual deles está ativo em cada sessão. Nil = tudo roda
+	// no local, que é o comportamento de antes de este seletor existir.
+	Environments *sandbox.Registry
 	// Search é o motor de busca contratado pelo cliente — searxng auto-hospedado,
 	// Brave ou Tavily. Zerado significa NÃO CONFIGURADO, e web.search recusa
 	// dizendo o que preencher e onde; um motor padrão embutido mandaria a
@@ -186,9 +213,24 @@ func (t *Toolbox) Install(registry *Registry) {
 	registry.Register("worktree.create", "cria uma cópia isolada do repositório. args: {id, base?}", t.worktreeCreate)
 	registry.Register("worktree.remove", "descarta uma cópia isolada. args: {id, force?}", t.worktreeRemove)
 
+	// `proc.run` NÃO está na lista de host abaixo, e a ausência é a mudança: ela
+	// olha o ambiente ativo da sessão antes de decidir o destino. Ver
+	// tools_process.go.
+	t.installProcessTools(registry)
+
 	// Ferramentas de MÁQUINA — despachadas ao host Tauri.
-	registry.RegisterHost("proc.run", "roda um comando único na máquina, com aprovação. args: {command, cwd?}")
-	registry.RegisterHost("term.open", "abre um terminal para a PESSOA usar. args: {cwd?}")
+	//
+	// `term.open` NÃO ESTÁ MAIS AQUI, e a ausência é a correção. Ela abria um
+	// ConPTY de verdade no host e respondia "terminal aberto para a pessoa
+	// usar" — só que a interface não tem painel de terminal, então não havia
+	// para quem mostrar. O modelo lia sucesso e seguia raciocinando sobre uma
+	// janela que a pessoa não tem, enquanto cada chamada deixava um shell
+	// invisível vivo até o teto de oito sessões do host recusar tudo para
+	// sempre. Ferramenta ausente é melhor: sem ela o modelo cai no `proc.run`,
+	// que passa pela aprovação e cuja saída a pessoa lê.
+	//
+	// Ela volta — com esta linha e o braço correspondente no `tools::execute` do
+	// Rust — quando a interface tiver painel de terminal.
 	registry.RegisterHost("diagnostics.run", "roda o verificador do projeto. args: {}")
 	registry.RegisterHost("office.open", "lê o texto de um DOCX/PPTX/XLSX/PDF. args: {path}")
 	registry.RegisterHost("office.edit", "substitui texto dentro do binário do documento. args: {path, find, replace}")

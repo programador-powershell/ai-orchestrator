@@ -32,6 +32,8 @@ import { ApprovalCard } from "./shell/ApprovalCard";
 import { AskCard } from "./shell/AskCard";
 import { SettingsPanel } from "./shell/SettingsPanel";
 import { Composer } from "./shell/Composer";
+import { StatusBar } from "./shell/StatusBar";
+import { DelegationPopup } from "./shell/DelegationPopup";
 
 /** Igual ao carregador das superfícies: aceita `export default` ou o nomeado, e
  *  mantém o laboratório fora do bundle inicial — ele só abre quando alguém
@@ -218,6 +220,19 @@ function App() {
 
       <SurfaceBoundary name="O campo de texto">
         <Composer />
+      </SurfaceBoundary>
+
+      {/* Abaixo do composer, e por isso o último da grade: o rodapé diz ONDE o
+          próximo comando roda, e é a linha que a pessoa procura depois de
+          escrever o pedido, não antes. */}
+      <SurfaceBoundary name="O rodapé">
+        <StatusBar />
+      </SurfaceBoundary>
+
+      {/* Não é interrupção: a delegação não pede permissão (ver o arquivo). Fica
+          ao lado dos cartões, e não dentro deles, porque não bloqueia nada. */}
+      <SurfaceBoundary name="O aviso de delegação">
+        <DelegationPopup />
       </SurfaceBoundary>
 
       <SurfaceBoundary name="O pedido de aprovação">

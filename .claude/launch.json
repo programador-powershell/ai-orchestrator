@@ -6,6 +6,12 @@
       "runtimeExecutable": "corepack",
       "runtimeArgs": ["pnpm", "--dir", "ai-bot/apps/desktop", "dev"],
       "port": 1421
+    },
+    {
+      "name": "original",
+      "runtimeExecutable": "corepack",
+      "runtimeArgs": ["pnpm", "--dir", "apps/desktop", "dev"],
+      "port": 1420
     }
   ]
 }

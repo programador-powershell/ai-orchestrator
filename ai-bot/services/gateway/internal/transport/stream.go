@@ -85,6 +85,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 	// 3. ready — tudo o que a tela precisa para se montar sem uma segunda chamada.
 	lastSeq, _ := s.store.LastSeq(sessionID)
+	activeEnvironment, environments := s.environmentState(r.Context(), sessionID)
 	_ = connection.SetWriteDeadline(time.Now().Add(writeDeadline))
 	if err := writeEnvelope(connection, sessionID, protocol.KindReady, protocol.Ready{
 		Session:          sessionID,
@@ -93,6 +94,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		Models:           s.models.Catalog(),
 		ActiveSpecialist: meta.Specialist,
 		ActiveModel:      meta.Model,
+		Environment:      activeEnvironment,
+		Environments:     environments,
 		Sessions:         s.sessionSummaries(),
 	}); err != nil {
 		return
@@ -272,6 +275,25 @@ func (s *Server) handleInbound(ctx context.Context, sessionID string, envelope p
 }
 
 /* --------------------------------- apoio --------------------------------- */
+
+// environmentState devolve o ambiente ativo da sessão e o catálogo com a
+// disponibilidade JÁ medida.
+//
+// A medição roda aqui, no handshake, e não na primeira vez que a pessoa abre o
+// seletor: abrir uma lista e ver as opções acenderem uma a uma parece defeito.
+// O custo é contido pelo cache curto do registro — sem ele, cada janela
+// dispararia um `sbx version` e um `wsl -l -q` antes do primeiro quadro.
+func (s *Server) environmentState(
+	ctx context.Context,
+	sessionID string,
+) (protocol.Environment, []protocol.EnvironmentInfo) {
+	if s.environments == nil {
+		// Gateway montado sem ambientes: a tela recebe lista vazia e some com o
+		// seletor, em vez de oferecer opções que este processo não tem.
+		return "", nil
+	}
+	return s.environments.Active(sessionID), s.environments.Describe(ctx)
+}
 
 // sessionSummaries monta a lista de conversas que vai no `ready`.
 //

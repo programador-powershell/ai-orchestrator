@@ -118,7 +118,9 @@ type Router struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
 	models    []Entry
-	// allowed limita o catálogo ao que a política liberou. Vazio = tudo.
+	// allowed limita o catálogo ao que a política liberou. nil = ninguém
+	// configurou (tudo passa); mapa vazio = a política liberou NADA. Ver
+	// SetAllowed para o porquê de os dois não serem a mesma coisa.
 	allowed map[string]bool
 }
 
@@ -160,17 +162,30 @@ func (r *Router) SetModels(list []Entry) {
 	})
 }
 
-// SetAllowed limita o catálogo. Lista vazia libera tudo.
+// SetAllowed limita o catálogo ao que a política liberou.
+//
+// A diferença entre `nil` e lista VAZIA é deliberada, e é a mesma que
+// config.allowOrigins faz com a variável de ambiente: `nil` é "ninguém
+// configurou política" e libera tudo; uma lista vazia DECLARADA é a política
+// dizendo "nenhum modelo", e aí nenhum passa.
+//
+// Tratar as duas como "tudo" tem um caso concreto de falha: na edição
+// gerenciada a lista permitida é o catálogo MENOS o BYOK local, e um catálogo
+// só de modelos locais produz legitimamente uma lista vazia — que, com a regra
+// antiga, abriria de volta o catálogo inteiro. Indisponibilidade de política
+// não pode virar liberação.
 func (r *Router) SetAllowed(ids []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(ids) == 0 {
+	if ids == nil {
 		r.allowed = nil
 		return
 	}
 	r.allowed = make(map[string]bool, len(ids))
 	for _, id := range ids {
-		r.allowed[id] = true
+		if id = strings.TrimSpace(id); id != "" {
+			r.allowed[id] = true
+		}
 	}
 }
 
@@ -311,6 +326,14 @@ func (f sinkFunc) Reasoning(string) error  { return nil }
 // resolveExact acha o modelo pelo id, sem cair em substituto: quem chegou aqui
 // já passou por Resolve e mandar outro modelo silenciosamente faria o `state`
 // mentir sobre quem respondeu.
+//
+// O portão é o MESMO `usable` do Catalog, e é aqui que ele precisa estar: este
+// é o ponto em que o modelo é USADO, enquanto o Catalog é só onde ele é
+// listado. Um id chega até aqui sem ter passado pela lista de três maneiras
+// normais — gravado numa conversa antiga, mandado direto no campo `model` do
+// protocolo, ou vindo de um caminho interno como o classificador. Conferir só
+// `provider.Enabled`, como esta função fazia, deixava a política do admin
+// valendo apenas para o que a tela desenha: decorativa.
 func (r *Router) resolveExact(id string) (Entry, Provider, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -318,11 +341,14 @@ func (r *Router) resolveExact(id string) (Entry, Provider, error) {
 		if entry.ID != id {
 			continue
 		}
-		provider, ok := r.providers[entry.ProviderID]
-		if !ok || !provider.Enabled {
-			return Entry{}, Provider{}, fmt.Errorf("%w: provedor de %s indisponível", ErrNoModel, id)
+		if !r.usable(entry) {
+			// A frase é uma só para os três motivos (política, provedor
+			// desligado, chave ausente) de propósito: dizer qual deles reprovou
+			// conta ao chamador o que o admin bloqueou, e quem pergunta pelo
+			// modelo pelo id não precisa dessa informação.
+			return Entry{}, Provider{}, fmt.Errorf("%w: %s não está disponível nesta estação", ErrNoModel, id)
 		}
-		return entry, provider, nil
+		return entry, r.providers[entry.ProviderID], nil
 	}
 	return Entry{}, Provider{}, fmt.Errorf("%w: %s", ErrNoModel, id)
 }

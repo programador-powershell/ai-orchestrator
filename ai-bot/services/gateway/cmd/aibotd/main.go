@@ -34,7 +34,9 @@ import (
 	"aibot/gateway/internal/needle"
 	"aibot/gateway/internal/netguard"
 	"aibot/gateway/internal/permissions"
+	"aibot/gateway/internal/policy"
 	"aibot/gateway/internal/protocol"
+	"aibot/gateway/internal/sandbox"
 	"aibot/gateway/internal/schedule"
 	"aibot/gateway/internal/secrets"
 	"aibot/gateway/internal/specialist"
@@ -123,14 +125,14 @@ func serve() error {
 
 	/* ------------------------------ política ----------------------------- */
 
-	policy := permissions.DefaultPolicy()
+	sessionPolicy := permissions.DefaultPolicy()
 	if cfg.Managed {
 		// Na edição gerenciada a política do servidor manda. Enquanto ela não
 		// chega, o padrão é o MAIS restritivo — não o mais permissivo: subir
 		// aberto "só até sincronizar" é subir aberto.
-		policy.Mode = permissions.ModeAsk
+		sessionPolicy.Mode = permissions.ModeAsk
 	}
-	gate := permissions.NewGate(policy)
+	gate := permissions.NewGate(sessionPolicy)
 
 	/* ------------------------------- modelos ----------------------------- */
 
@@ -139,14 +141,50 @@ func serve() error {
 	if err != nil {
 		return err
 	}
+	if cfg.Managed {
+		// A outra metade da edição gerenciada, que faltava: "sem BYOK direto e
+		// sem runtime local" precisa DERRUBAR o BYOK local, não só trocar o modo
+		// de aprovação. O corte é o padrão enquanto não há política remota — e
+		// continua sendo o padrão sempre que a busca dela falhar.
+		providers, sessionPolicy.AllowedModels = policy.RestrictManaged(providers, catalog)
+		gate.SetPolicy(sessionPolicy)
+		log.Info("edição gerenciada: o runtime local está desligado e só os modelos de provedor remoto ficam disponíveis",
+			"modelos_liberados", len(sessionPolicy.AllowedModels))
+	}
 	models.SetProviders(providers)
 	models.SetModels(catalog)
+	// O portão do catálogo. Sem esta linha, `AllowedModels` seria mais uma
+	// política que existe em struct e não tem chamador — que é como a anterior
+	// virou decoração.
+	models.SetAllowed(sessionPolicy.AllowedModels)
 	log.Info("catálogo carregado", "provedores", len(providers), "modelos", len(catalog),
 		"utilizaveis", len(models.Catalog()))
 
 	/* ----------------------------- ferramentas --------------------------- */
 
 	guard := netguard.New(func() []string { return gate.Policy().BlockedDomains })
+
+	/* --------------------------- política remota ------------------------- */
+
+	// AIBOT_POLICY_URL é endereço de FORA, então a busca sai pelo netguard como
+	// qualquer outra: um servidor de política apontado para 169.254.169.254 seria
+	// SSRF com crachá.
+	//
+	// A busca é em segundo plano e NÃO bloqueia o boot porque o app precisa abrir
+	// offline — no notebook em viagem, na VPN caída, no dia da manutenção do
+	// servidor de política. O preço é a janela entre subir e sincronizar, e é
+	// exatamente por isso que o padrão gerenciado acima já sobe restritivo.
+	// Falhar na busca mantém esse padrão: indisponibilidade não é liberação.
+	policyCtx, stopPolicy := context.WithCancel(context.Background())
+	defer stopPolicy()
+	policy.Start(policyCtx, policy.Options{
+		URL:     cfg.PolicyURL,
+		Base:    sessionPolicy,
+		Fetcher: guard,
+		Gate:    gate,
+		Models:  models,
+		Log:     log,
+	})
 
 	hub := mcphub.NewHub(&http.Client{Timeout: 60 * time.Second},
 		func(secretRef string, request *http.Request) error {
@@ -164,6 +202,21 @@ func serve() error {
 	// disputar o index.lock — o erro de trava que ele existe para não acontecer.
 	worktrees := openWorktrees(cfg, log)
 
+	// Os ambientes de execução, na ORDEM em que a tela os mostra. O local vem
+	// primeiro porque é o padrão e o único que não depende de nada instalado;
+	// VPS e nuvem ficam por último, declarados e ainda sem executor — eles
+	// aparecem cinza com o motivo, em vez de sumir e a pessoa procurar.
+	//
+	// Nada do Docker é distribuído com o AI-BOT: o `sbx` é dirigido de onde
+	// estiver instalado. Ver o cabeçalho de internal/sandbox/sandbox.go.
+	environments := sandbox.NewRegistry(
+		sandbox.NewLocalRunner(),
+		sandbox.NewDockerRunner(sandbox.DockerOptions{EnvFile: sandboxEnvFile(log)}),
+		sandbox.NewWSLRunner(),
+		sandbox.NewVPSRunner(),
+		sandbox.NewCloudRunner(),
+	)
+
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{
 		Root:      func(sessionID string) string { return sessionRoot(durable, sessionID) },
@@ -173,6 +226,10 @@ func serve() error {
 		Worktrees: worktrees,
 		Secrets:   vault,
 		Schedule:  agenda,
+		// O MESMO registro que o transporte publica no `ready`: se fossem dois,
+		// a tela mostraria um ambiente e o `proc.run` rodaria em outro — que é
+		// exatamente a falha que este seletor existe para não repetir.
+		Environments: environments,
 		// O mesmo roteador do turno: imagem e fine-tuning falam com o provedor
 		// pela credencial que já está configurada, sem um segundo caminho.
 		Models: models,
@@ -230,7 +287,7 @@ func serve() error {
 
 	/* ------------------------------ transporte --------------------------- */
 
-	server := transport.NewServer(cfg, durable, bus, sup, models, gate, log)
+	server := transport.NewServer(cfg, durable, bus, sup, models, gate, environments, log)
 	// A ponte fecha o ciclo: as ferramentas de máquina saem daqui para o
 	// aplicativo nativo e voltam pelo mesmo protocolo.
 	registry.SetBridge(server)
@@ -299,6 +356,41 @@ func sessionRoot(durable *store.Store, sessionID string) string {
 		return ""
 	}
 	return meta.CWD
+}
+
+// sandboxEnvFile acha o `.sbxenv.yaml` — a declaração do nosso sandbox do
+// Docker (workspace, rede, limites, e nenhum segredo).
+//
+// Ele é NOSSO e mora no repositório; o que não mora aqui é qualquer arquivo do
+// Docker. A busca começa pelo que a estação mandou (AIBOT_SBX_ENV_FILE), passa
+// pela raiz do repositório e termina na pasta corrente.
+//
+// Não achar NÃO é erro: sem o arquivo, o `sbx` usa a configuração que ele mesmo
+// encontrar, e o ambiente continua utilizável. O aviso vai para o log porque
+// rodar sem a nossa declaração significa rodar sem os limites que ela impõe —
+// silenciar isso seria o pior dos dois mundos.
+func sandboxEnvFile(log *slog.Logger) string {
+	if declared := os.Getenv("AIBOT_SBX_ENV_FILE"); declared != "" {
+		if _, err := os.Stat(declared); err == nil {
+			return declared
+		}
+		log.Warn("AIBOT_SBX_ENV_FILE aponta para um arquivo que não existe", "caminho", declared)
+	}
+
+	candidates := make([]string, 0, 2)
+	if repoRoot := os.Getenv("AIBOT_REPO_ROOT"); repoRoot != "" {
+		candidates = append(candidates, filepath.Join(repoRoot, ".sbxenv.yaml"))
+	}
+	if current, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(current, ".sbxenv.yaml"))
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	log.Info("sem .sbxenv.yaml — o ambiente Docker roda com a configuração padrão do sbx, sem os nossos limites")
+	return ""
 }
 
 // openWorktrees liga o gerenciador de cópias isoladas quando o gateway roda

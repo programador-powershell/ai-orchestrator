@@ -13,6 +13,10 @@
   --shell-pad: 10px;
   --shell-gap: 10px;
   --topbar-h: 54px;
+  /* O rodapé é uma linha da grade E o piso do composer, que flutua: os dois
+     precisam da mesma medida, e escrevê-la duas vezes é como o campo de texto
+     acaba por cima do seletor de ambiente. */
+  --statusbar-h: 24px;
   --rail-w: 236px;
   --rail-w-collapsed: 62px;
   --composer-w: min(880px, calc(100% - 36px));

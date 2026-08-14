@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   Ask,
+  Delegate,
   Delta,
   Done,
   Envelope,
@@ -168,6 +169,98 @@ describe("applyEnvelope", () => {
       envelope<Ready>("ready", { session: "sessao-1", seq: 13, specialists: [], models: [] })
     );
     expect(again.sessions).toHaveLength(2);
+  });
+
+  /**
+   * O ambiente é do GATEWAY, não da tela.
+   *
+   * Quem executa é ele, então é ele quem diz onde o próximo comando cai e quais
+   * ambientes existem nesta máquina. Se o `ready` não preenchesse isto, o rodapé
+   * mostraria para sempre a reserva local — e um rodapé que diz "Local" enquanto
+   * o gateway executa em contêiner é pior que rodapé nenhum.
+   */
+  it("ready preenche o ambiente em vigor e o catálogo medido na máquina", () => {
+    const state = applyEnvelope(
+      initialAppData(),
+      envelope<Ready>("ready", {
+        session: "sessao-1",
+        seq: 3,
+        specialists: ["chat"],
+        models: [],
+        environment: "docker",
+        environments: [
+          { id: "local", label: "Local", hint: "na sua estação", available: true },
+          { id: "docker", label: "Docker", hint: "contêiner descartável", available: true },
+          {
+            id: "vps",
+            label: "VPS",
+            hint: "servidor remoto",
+            available: false,
+            detail: "nenhum servidor cadastrado"
+          }
+        ]
+      })
+    );
+
+    expect(state.environment).toBe("docker");
+    expect(state.environments.map((item) => item.id)).toEqual(["local", "docker", "vps"]);
+    // O motivo da indisponibilidade atravessa — é ele que vai para o `title` do
+    // item desabilitado, e sem ele o menu apaga a opção sem explicar nada.
+    expect(state.environments[2]?.available).toBe(false);
+    expect(state.environments[2]?.detail).toBe("nenhum servidor cadastrado");
+
+    // Gateway antigo (sem os campos) não pode APAGAR o que já está na tela.
+    const again = applyEnvelope(
+      state,
+      envelope<Ready>("ready", { session: "sessao-1", seq: 4, specialists: ["chat"], models: [] })
+    );
+    expect(again.environment).toBe("docker");
+    expect(again.environments).toHaveLength(3);
+  });
+
+  /**
+   * A delegação não tem id — o par de bots mais o objetivo é a identidade.
+   *
+   * O modo de falha que este teste tranca: o `done` entrar como entrada NOVA. A
+   * lista passaria a ter duas delegações, o popup leria a última (aberta, porque
+   * a de cima nunca fechou) e ficaria de pé para sempre sobre a conversa.
+   */
+  it("delegate abre a entrada e o done conclui a mesma em vez de duplicar", () => {
+    const call: Delegate = {
+      from: "code",
+      to: "data",
+      goal: "modelar o esquema de cobrança",
+      reason: "o pedido virou modelagem de dados",
+      depth: 1
+    };
+
+    const opened = applyEnvelope(initialAppData(), envelope<Delegate>("delegate", call, { specialist: "code" }));
+    expect(opened.delegations).toHaveLength(1);
+    expect(opened.delegations[0]?.to).toBe("data");
+    expect(opened.delegations[0]?.done).toBeUndefined();
+
+    const closed = applyEnvelope(
+      opened,
+      envelope<Delegate>(
+        "delegate",
+        { ...call, done: true, result: "esquema com 4 tabelas" },
+        { specialist: "data" }
+      )
+    );
+
+    expect(closed.delegations).toHaveLength(1);
+    expect(closed.delegations[0]?.done).toBe(true);
+    expect(closed.delegations[0]?.result).toBe("esquema com 4 tabelas");
+    // O motivo da abertura sobrevive à conclusão: é ele que explica a troca.
+    expect(closed.delegations[0]?.reason).toBe("o pedido virou modelagem de dados");
+
+    // Outro par não fecha esta: a identidade é o trio inteiro.
+    const other = applyEnvelope(
+      opened,
+      envelope<Delegate>("delegate", { ...call, to: "design", done: true }, { specialist: "design" })
+    );
+    expect(other.delegations).toHaveLength(2);
+    expect(other.delegations[0]?.done).toBeUndefined();
   });
 
   it("guarda a pergunta do supervisor no ask e a limpa no reply", () => {

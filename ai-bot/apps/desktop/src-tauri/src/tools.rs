@@ -12,8 +12,11 @@
 //! `pty_write` NÃO é ferramenta. Escrever num terminal interativo é execução
 //! sem portão de aprovação: bastaria o modelo mandar `rm -rf .\n` e nenhuma
 //! política teria sido consultada. Quem precisa de shell usa `proc.run`, que
-//! passa pelo gate do gateway. `term.open` abre o painel PARA A PESSOA — quem
-//! digita continua sendo ela.
+//! passa pelo gate do gateway.
+//!
+//! `term.open` também não é — não por risco, mas por honestidade: ela abria um
+//! terminal que a interface não mostra em lugar nenhum. Ver o bloco no fim deste
+//! arquivo, que explica o defeito e como religá-la.
 //!
 //! ## Três superfícies de execução, separadas de propósito
 //!
@@ -35,7 +38,7 @@ use serde_json::Value;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::jail::Jail;
@@ -102,11 +105,12 @@ pub fn execute(tool: &str, args: &Value) -> Result<String, String> {
         "office.export" => office_export(args),
         "pdf.extract" => pdf_extract(args),
         "runtime.status" => runtime_status(),
-        "term.open" => term_open(args),
+        // `term.open` FOI TIRADA DAQUI DE PROPÓSITO — ver o bloco no fim deste
+        // arquivo. Ela volta no dia em que a interface tiver painel de terminal.
         other => Err(format!(
             "a ferramenta {other} não é servida por esta máquina. \
 As ferramentas de máquina são: proc.run, diagnostics.run, office.open, office.edit, \
-office.export, pdf.extract, runtime.status e term.open."
+office.export, pdf.extract e runtime.status."
         )),
     }
 }
@@ -1350,57 +1354,30 @@ Os modelos locais ficam indisponíveis até ele subir; os modelos de provedor se
     }
 }
 
-/* -------------------------------- term.open ------------------------------- */
+/* ------------------- term.open: por que ela NÃO está aqui ----------------- */
 
-/// Quem sabe abrir um terminal de verdade é o módulo `pty`, que precisa do
-/// `AppHandle` para mandar os bytes à janela. O gancho evita que as ferramentas
-/// (que são código puro, chamado de uma thread qualquer) passem a depender do
-/// Tauri: o `lib.rs` registra o abridor no boot.
-type TerminalOpener = dyn Fn(Option<&Path>) -> Result<String, String> + Send + Sync + 'static;
-
-static TERMINAL_OPENER: OnceLock<Box<TerminalOpener>> = OnceLock::new();
-
-/// Registra quem abre terminal. Chamado uma vez, no boot.
-pub fn set_terminal_opener<F>(opener: F)
-where
-    F: Fn(Option<&Path>) -> Result<String, String> + Send + Sync + 'static,
-{
-    // Segunda chamada é ignorada de propósito: trocar o abridor com a janela no
-    // ar deixaria sessões de terminal vivas apontando para um dono que já foi.
-    let _ = TERMINAL_OPENER.set(Box::new(opener));
-}
-
-/// Abre uma sessão de terminal e devolve o id.
-///
-/// ISTO NÃO DÁ AO MODELO ACESSO AO TECLADO. O que a ferramenta faz é abrir o
-/// painel; quem digita é a PESSOA. `pty_write` continua fora do registro de
-/// ferramentas do agente, e precisa continuar: um shell interativo aceitando
-/// texto do modelo é execução sem portão de aprovação — bastaria escrever
-/// `rm -rf .` seguido de Enter. Quando o modelo precisa executar algo, ele usa
-/// `proc.run`, que passa pelo gate do gateway.
-fn term_open(args: &Value) -> Result<String, String> {
-    let opener = TERMINAL_OPENER
-        .get()
-        .ok_or_else(|| "o terminal não está disponível nesta janela".to_string())?;
-
-    let directory = match arg_opt_str(args, "cwd") {
-        Some(cwd) => {
-            let root = project_root()?;
-            let resolved = resolve_inside(&root, cwd)?;
-            if !resolved.is_dir() {
-                return Err(format!("a pasta {cwd:?} não existe dentro do projeto"));
-            }
-            Some(resolved)
-        }
-        None => None,
-    };
-
-    let id = opener(directory.as_deref())?;
-    Ok(format!(
-        "terminal aberto para a pessoa usar (sessão {id}). \
-Quem digita nele é o usuário: para executar um comando, use proc.run."
-    ))
-}
+// A ferramenta existia e foi RETIRADA — junto com o gancho `set_terminal_opener`
+// que o `lib.rs` preenchia no boot.
+//
+// O motivo é o mesmo do cabeçalho deste arquivo, virado do avesso: ela devolvia
+// "terminal aberto para a pessoa usar (sessão pty-3)" e NÃO EXISTE painel de
+// terminal na interface. Ninguém via nada. O sucesso era verdadeiro do lado do
+// sistema (o ConPTY abria, o shell subia) e mentira do lado do produto: o modelo
+// lia "abri o terminal" e seguia raciocinando em cima de uma janela que a pessoa
+// não tem. Pior, cada chamada deixava um `powershell.exe` invisível vivo e uma
+// sessão no mapa; como o teto é de oito, na nona chamada a ferramenta passava a
+// recusar para sempre, sem que nada na tela explicasse por quê.
+//
+// Ferramenta ausente é melhor que ferramenta que promete o que não entrega: o
+// modelo que não a encontra usa `proc.run`, que passa pelo portão de aprovação e
+// cuja saída a pessoa realmente lê.
+//
+// COMO ELA VOLTA: quando a interface tiver painel de terminal (xterm.js ligado
+// em `pty-data`/`pty_write`), volta o gancho no `lib.rs`, volta o `term_open`
+// aqui, volta o braço no `execute` e volta o `RegisterHost("term.open")` no
+// gateway Go. Os comandos `pty_*` continuam todos de pé — não é preciso
+// reescrever nada do PTY, só religar as pontas. E a regra que não muda em
+// nenhuma dessas voltas: `pty_write` NÃO é ferramenta.
 
 /* -------------------------------- argumentos ------------------------------ */
 
@@ -1435,6 +1412,25 @@ mod tests {
         let erro = execute("fs.write", &json!({})).expect_err("deveria recusar");
         assert!(erro.contains("não é servida por esta máquina"), "veio: {erro}");
         assert!(erro.contains("proc.run"), "o erro deveria listar o que existe");
+    }
+
+    /// `term.open` abria um terminal que a interface não mostra: sucesso de
+    /// mentira, um shell invisível por chamada e, na nona, recusa permanente
+    /// pelo teto de sessões. Enquanto não houver painel de terminal na tela, a
+    /// resposta certa é RECUSAR — e a recusa não pode citar a ferramenta na
+    /// lista do que existe, senão o modelo tenta de novo achando que errou o
+    /// nome.
+    #[test]
+    fn term_open_nao_e_servida_enquanto_nao_houver_painel_de_terminal() {
+        let erro = execute("term.open", &json!({})).expect_err(
+            "term.open não pode responder sucesso: não existe painel de terminal na interface",
+        );
+        assert!(erro.contains("não é servida por esta máquina"), "veio: {erro}");
+        let lista = erro.split("são:").nth(1).unwrap_or_default();
+        assert!(
+            !lista.contains("term.open"),
+            "a lista do que esta máquina serve não pode oferecer term.open: {lista}"
+        );
     }
 
     #[test]

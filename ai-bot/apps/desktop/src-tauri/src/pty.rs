@@ -19,15 +19,20 @@
 //! | Ferramenta        | Quem digita | Portão de aprovação |
 //! |-------------------|-------------|---------------------|
 //! | `proc.run`        | o modelo    | SIM — é por aí que o agente roda comando |
-//! | `term.open`       | o modelo    | SIM — mas só ABRE o terminal PARA A PESSOA |
+//! | `term.open`       | —           | **retirada** — ver abaixo |
 //! | `pty_write`       | **a pessoa**| **não existe como ferramenta** |
 //!
-//! Repare que `term.open` é ferramenta e mapeia para [`pty_spawn`]: abrir um
-//! terminal para a pessoa usar é inofensivo, porque o que entra nele depois vem
-//! do teclado dela. O que não pode existir é o caminho que faz o modelo digitar
-//! dentro dele. Se algum dia alguém registrar `pty_write` como host tool, o
-//! modelo de aprovação inteiro cai junto — e cai em silêncio, porque tudo
-//! continua funcionando.
+//! `term.open` mapeava para [`pty_spawn`] e era inofensiva pelo modelo de
+//! aprovação — abrir um terminal para a pessoa usar não executa nada, porque o
+//! que entra nele depois vem do teclado dela. Ela saiu por outro motivo: **não
+//! existe painel de terminal na interface**, então ela abria um shell que
+//! ninguém via e respondia sucesso ao modelo. Ver o bloco correspondente em
+//! `tools.rs`. Enquanto isso, os comandos `pty_*` abaixo só são alcançáveis pela
+//! janela, e é ela quem os religa quando o painel existir.
+//!
+//! O que NÃO muda com essa retirada: se algum dia alguém registrar `pty_write`
+//! como host tool, o modelo de aprovação inteiro cai junto — e cai em silêncio,
+//! porque tudo continua funcionando.
 //!
 //! Esta é a regra 2 do `CLAUDE.md` e a regra 4 (três superfícies de execução
 //! separadas: `proc.run`, sandbox com Job Object, e `pty_*`). Fundi-las desfaz
@@ -54,7 +59,7 @@ use std::{
     },
     thread,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Teto de sessões vivas. ConPTY custa processo e handle; abrir dezenas sem
 /// querer (uma por troca de aba, por exemplo) degradaria a máquina.
@@ -359,6 +364,25 @@ fn lock_sessions(
     })
 }
 
+/// Tira a sessão do mapa.
+///
+/// Quem chama é a thread de espera, depois do `wait()`. A entrada não some
+/// sozinha: o `pty_spawn` varre as mortas antes de conferir o teto, então o
+/// LIMITE não trava — o que fica é resíduo. E o resíduo aqui não é uma linha
+/// esquecida num `HashMap`: a `Session` segura o master do ConPTY, o writer e o
+/// killer, ou seja, HANDLES do sistema operacional presos até alguém abrir outro
+/// terminal. Numa sessão em que a pessoa abre um terminal, usa e fecha, esse
+/// "alguém" pode não vir nunca.
+///
+/// Falha de lock é ignorada de propósito: isto é limpeza de quem já terminou, e
+/// entrar em pânico dentro da thread de espera trocaria um handle vazando por um
+/// `pty-exit` que nunca chega.
+fn forget_session(state: &PtyState, id: &str) {
+    if let Ok(mut sessions) = state.sessions.lock() {
+        sessions.remove(id);
+    }
+}
+
 fn valid_cwd(cwd: Option<String>) -> Result<PathBuf, String> {
     let raw = cwd.filter(|value| !value.trim().is_empty());
     let candidato = match raw {
@@ -558,6 +582,16 @@ pub async fn pty_spawn(
                     reason: reason.into(),
                 },
             );
+
+            // A sessão morreu: tirá-la do mapa é parte do fim, não tarefa do
+            // próximo `pty_spawn`. `try_state` e NÃO `state`: esta thread
+            // sobrevive à janela (o `wait()` pode voltar durante o
+            // encerramento), e `state` entra em PÂNICO quando o estado já não
+            // existe — o app morreria no caminho de saída, que é onde ninguém
+            // olha o log.
+            if let Some(terminals) = app.try_state::<PtyState>() {
+                forget_session(&terminals, &id);
+            }
         });
     }
 
@@ -841,6 +875,112 @@ mod tests {
         }
         assert!(carry.len() <= MAX_CARRY, "carry passou da guarda de 8 bytes");
         assert!(saida.contains('\u{FFFD}'));
+    }
+
+    /* --------------------- ciclo de vida no mapa -------------------------- */
+
+    /// Abre um PTY de VERDADE e registra a sessão no mapa, do mesmo jeito que o
+    /// `pty_spawn` faz.
+    ///
+    /// Fabricar uma `Session` falsa exigiria imitar `MasterPty`, `Write` e
+    /// `ChildKiller` — três traits do sistema implementadas à mão para provar
+    /// uma remoção de `HashMap`, e nenhuma delas provaria que o que sai do mapa
+    /// é o mesmo tipo que entra em produção. Abrir um ConPTY real custa menos.
+    fn sessao_real(state: &PtyState) -> (String, Box<dyn portable_pty::Child + Send + Sync>) {
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("abrir o PTY");
+        // `Cmd` é o shell mais barato de subir nas duas plataformas (cmd.exe no
+        // Windows, /bin/sh fora dele): o teste é sobre o mapa, não sobre o
+        // shell.
+        let (programa, argumentos) = resolve_shell(ShellKind::Cmd).expect("resolver o shell");
+        let mut cmd = CommandBuilder::new(&programa);
+        for argumento in argumentos {
+            cmd.arg(argumento);
+        }
+        let child = pair.slave.spawn_command(cmd).expect("iniciar o shell");
+        let killer = child.clone_killer();
+        let writer = pair.master.take_writer().expect("writer do PTY");
+
+        let id = next_session_id();
+        let mut sessions = lock_sessions(state).expect("mapa de sessões");
+        sessions.insert(
+            id.clone(),
+            Session {
+                writer: Mutex::new(writer),
+                master: Mutex::new(pair.master),
+                killer: Mutex::new(killer),
+                cwd: ".".into(),
+                cols: 80,
+                rows: 24,
+                // Já nasce morta: é o estado em que a thread de espera encontra
+                // a sessão quando chama a limpeza.
+                alive: Arc::new(AtomicBool::new(false)),
+                killed: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        drop(sessions);
+        (id, child)
+    }
+
+    /// O defeito que este teste trava: a thread de espera emitia `pty-exit` e ia
+    /// embora deixando a entrada no mapa. O teto de sessões não travava (o
+    /// `pty_spawn` varre as mortas antes de conferir), mas o master do ConPTY, o
+    /// writer e o killer ficavam presos até alguém abrir OUTRO terminal — o que
+    /// pode não acontecer nunca.
+    #[test]
+    fn sessao_encerrada_sai_do_mapa() {
+        let state = PtyState::default();
+        let (id, mut child) = sessao_real(&state);
+        assert_eq!(
+            lock_sessions(&state).expect("mapa").len(),
+            1,
+            "a sessão precisa estar no mapa antes de a espera terminar"
+        );
+
+        // É exatamente o que a thread de espera faz depois do `wait()`.
+        forget_session(&state, &id);
+
+        assert!(
+            lock_sessions(&state).expect("mapa").is_empty(),
+            "a sessão encerrada continuou no mapa segurando ConPTY, writer e killer"
+        );
+
+        // Idempotente: o `pty_kill` já remove a entrada antes de matar, então a
+        // thread de espera chega depois num id que não existe mais.
+        forget_session(&state, &id);
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// `forget_session` correto não vale nada se ninguém o chamar — que era
+    /// justamente o defeito. A thread de espera precisa de um `AppHandle` para
+    /// alcançar o estado, e não há como montar um sem subir uma janela de
+    /// verdade; o que dá para travar num teste é a presença da fiação.
+    #[test]
+    fn a_thread_de_espera_limpa_o_mapa() {
+        // Só o código de produção: as agulhas aparecem literalmente aqui dentro,
+        // e procurar no arquivo inteiro faria o teste encontrar a si mesmo.
+        let fonte = include_str!("pty.rs");
+        let producao = fonte.split("mod tests {").next().unwrap_or_default();
+        let espera = producao
+            .split("thread de ESPERA")
+            .nth(1)
+            .expect("a thread de espera precisa continuar existindo");
+        assert!(
+            espera.contains("try_state::<PtyState>()"),
+            "a thread de espera tem de alcançar o estado por try_state (state entra em pânico no encerramento)"
+        );
+        assert!(
+            espera.contains("forget_session("),
+            "a thread de espera tem de tirar a sessão do mapa quando o processo morre"
+        );
     }
 
     /* ------------------------------- shell -------------------------------- */

@@ -30,6 +30,17 @@ export interface Transport {
   stop(): void;
   send<P>(kind: EnvelopeKind, payload: P): void;
   resumeFrom(seq: number): void;
+  /**
+   * Um POST autenticado no MESMO gateway.
+   *
+   * Mora aqui, e não no store, por causa do token: ele já vive nesta closure, e
+   * uma segunda cópia (em estado, em variável de módulo, em prop) seria um
+   * segundo lugar de onde o segredo pode vazar para devtools, log ou `persist`.
+   * Rejeita com o MOTIVO que o gateway escreveu no corpo, e não só com o
+   * status: quem chama repassa essa frase para a tela, e "409" sozinho não diz
+   * a ninguém o que fazer.
+   */
+  post(path: string, body: unknown): Promise<void>;
 }
 
 export interface TransportOptions {
@@ -69,6 +80,28 @@ function backoffDelay(attempt: number): number {
 type HelloFrame = Hello & { token: string };
 
 /**
+ * O endereço REST a partir do endereço do socket.
+ *
+ * `ws://127.0.0.1:8799/v1/stream` → `http://127.0.0.1:8799`. Derivar em vez de
+ * configurar os dois separadamente é o que impede o app de falar WebSocket com
+ * um gateway e REST com outro depois de alguém mudar a porta em um lugar só.
+ */
+export function httpBase(wsUrl: string): string {
+  try {
+    const parsed = new URL(wsUrl);
+    parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
+    parsed.pathname = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    // Endereço inválido é erro de configuração, e quem chama trata: devolver
+    // uma base inventada faria o POST sair para um host qualquer.
+    return "";
+  }
+}
+
+/**
  * Conferência estrutural do que chegou do fio.
  *
  * Não valida campo a campo de propósito: o dono do contrato é o Go, e repetir a
@@ -85,6 +118,40 @@ function isEnvelope(value: unknown): value is Envelope {
     typeof candidate.from === "object" &&
     candidate.from !== null
   );
+}
+
+/**
+ * A frase acionável dentro do corpo de erro do gateway.
+ *
+ * O contrato é `{"error":{"code":…,"message":…}}` (ver `fail` em
+ * `internal/transport/http.go`). É ali que mora o texto que a pessoa precisa
+ * ler — "o Docker Sandboxes não está instalado — instale o Docker Desktop e o
+ * sbx…" —, e ele não pode morrer no `response.status`: "409" não diz a ninguém
+ * o que fazer a seguir.
+ *
+ * Devolve "" para corpo vazio, corpo que não é JSON ou JSON de outro formato:
+ * inventar uma frase a partir de um corpo desconhecido seria pior que o status.
+ */
+export function gatewayReason(body: string): string {
+  if (body === "") return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return "";
+  }
+  if (typeof parsed !== "object" || parsed === null) return "";
+  const failure = (parsed as { error?: unknown }).error;
+  if (typeof failure !== "object" || failure === null) return "";
+  const message = (failure as { message?: unknown }).message;
+  return typeof message === "string" ? message.trim() : "";
+}
+
+/** O que quem chamou o POST vai ler — e mostrar. O status vai junto para o log. */
+export function failureMessage(path: string, status: number, body: string): string {
+  const reason = gatewayReason(body);
+  if (reason === "") return `o gateway recusou ${path} com ${status}`;
+  return `${reason} (${status})`;
 }
 
 export function createTransport(options: TransportOptions): Transport {
@@ -169,6 +236,33 @@ export function createTransport(options: TransportOptions): Transport {
     writeEnvelope(target, "hello", hello);
   }
 
+  /**
+   * Entrega o envelope à tela e diz se ele foi mesmo APLICADO.
+   *
+   * `onEnvelope` é a redução do store, e uma exceção lá dentro (payload que a
+   * redução não esperava, seletor que quebrou) subiria por `receive` e por
+   * `onmessage`, onde ninguém a trata. O envelope então não é aplicado — e é
+   * justamente por isso que o marco do replay não pode ter andado antes: com o
+   * marco à frente, `resumeFrom` na reconexão pede a PARTIR de um ponto depois
+   * do que se perdeu, e a linha some da conversa para sempre.
+   *
+   * Falhar aqui é anormal e vai para o console: perder o envelope de uma vez
+   * seria trocar um defeito visível por um silencioso.
+   */
+  function deliver(envelope: Envelope): boolean {
+    try {
+      onEnvelope(envelope);
+      return true;
+    } catch (cause) {
+      console.error(
+        `[transport] envelope ${envelope.kind}#${envelope.seq} não pôde ser aplicado; ` +
+          "o marco do replay fica onde estava para ele voltar na reconexão",
+        cause
+      );
+      return false;
+    }
+  }
+
   function receive(data: unknown): void {
     // O protocolo é texto. Binário aqui é engano de quem escreveu do outro lado.
     if (typeof data !== "string") return;
@@ -203,12 +297,16 @@ export function createTransport(options: TransportOptions): Transport {
       // O `ready` é uma FOTOGRAFIA do estado, não uma entrada do log: o `seq`
       // dele é o do fim da sessão, e adotá-lo como marco pularia justamente o
       // replay que vem logo atrás.
-      onEnvelope(parsed);
+      deliver(parsed);
       return;
     }
 
+    // A ORDEM é a garantia do replay: aplica PRIMEIRO, avança o marco DEPOIS.
+    // Invertido, um envelope que a redução recusa fica sem ser aplicado com o
+    // marco já adiantado, e o `resumeFrom` da próxima reconexão nunca mais pede
+    // aquele pedaço de volta.
+    if (!deliver(parsed)) return;
     if (parsed.seq > lastSeq) lastSeq = parsed.seq;
-    onEnvelope(parsed);
   }
 
   function open(): void {
@@ -283,6 +381,29 @@ export function createTransport(options: TransportOptions): Transport {
 
     resumeFrom(seq: number): void {
       lastSeq = Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
+    },
+
+    async post(path: string, body: unknown): Promise<void> {
+      const base = httpBase(url);
+      if (base === "") throw new Error("endereço do gateway inválido");
+      const response = await fetch(`${base}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        // O corpo é lido ANTES de lançar: o gateway responde 409 com a frase
+        // que diz o que falta na máquina, e descartá-la deixava a pessoa com um
+        // número na tela e nenhuma ação possível.
+        let body = "";
+        try {
+          body = await response.text();
+        } catch {
+          // Conexão cortada no meio do corpo: fica o status, que ainda é melhor
+          // que transformar a recusa em sucesso.
+        }
+        throw new Error(failureMessage(path, response.status, body));
+      }
     }
   };
 }

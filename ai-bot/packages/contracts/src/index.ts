@@ -129,6 +129,7 @@ export type EnvelopeKind =
   | "ask"
   | "reply"
   | "gate"
+  | "delegate"
   | "state";
 
 export type ActorKind = "user" | "supervisor" | "specialist" | "worker" | "tool" | "system";
@@ -183,6 +184,37 @@ export interface Hello {
   liveOnly?: boolean;
 }
 
+/* -------------------------- ambiente de execução ------------------------- */
+
+/**
+ * ONDE o próximo comando roda.
+ *
+ * Não é preferência de exibição: é o destino real da execução. O produto
+ * anterior tinha este seletor no rodapé e roteava SÓ o terminal — o agente
+ * compilava no servidor e lia os arquivos na estação, e ninguém percebia que
+ * eram duas máquinas. Aqui o gateway consulta o ambiente antes de despachar
+ * `proc.run`, e a tela apenas escolhe.
+ */
+export const ENVIRONMENTS = ["local", "docker", "wsl", "vps", "cloud"] as const;
+export type Environment = (typeof ENVIRONMENTS)[number];
+
+/**
+ * Um ambiente como a tela precisa vê-lo, com a disponibilidade JÁ medida pelo
+ * gateway.
+ *
+ * `available` e `detail` andam juntos: uma opção que não funciona não some da
+ * lista — ela aparece cinza com o motivo. Esconder faz a pessoa procurar pela
+ * função que leu que existe; mostrar sem motivo faz ela clicar e receber erro
+ * sem saber o que fazer.
+ */
+export interface EnvironmentInfo {
+  id: Environment;
+  label: string;
+  hint: string;
+  available: boolean;
+  detail?: string;
+}
+
 export interface ModelInfo {
   id: string;
   provider: string;
@@ -217,6 +249,10 @@ export interface Ready {
   models: ModelInfo[];
   activeSpecialist?: string;
   activeModel?: string;
+  /** Ambiente em vigor para o PRÓXIMO comando desta sessão. */
+  environment?: Environment;
+  /** O catálogo medido nesta máquina; o cliente tem um de reserva para abrir. */
+  environments?: EnvironmentInfo[];
   /**
    * As outras conversas guardadas no gateway. Vem no `ready` porque a lista é
    * a primeira coisa que a barra lateral desenha: buscá-la depois, numa segunda
@@ -384,6 +420,29 @@ export interface Gate {
   reason?: string;
 }
 
+/**
+ * Um especialista chamou OUTRO no meio do próprio turno.
+ *
+ * Não confundir com `task.dispatch`: aquilo é o supervisor abrindo um plano com
+ * trabalhadores; isto é o bot que está atendendo decidindo, sozinho, que a
+ * próxima parte não é com ele. A delegação NÃO pede permissão — quem decide de
+ * quem é o assunto é o bot. O que o delegado FAZ (as ferramentas dele) continua
+ * passando pelo portão de aprovação de sempre.
+ *
+ * Não tem id: o par `from`+`to`+`goal` é o que identifica a delegação, e é por
+ * ele que o `done` reencontra a entrada aberta.
+ */
+export interface Delegate {
+  from: string;
+  to: string;
+  goal: string;
+  reason?: string;
+  /** Quantos níveis abaixo do turno original — o limite que evita o laço. */
+  depth: number;
+  done?: boolean;
+  result?: string;
+}
+
 export interface State {
   specialist?: string;
   model?: string;
@@ -391,6 +450,8 @@ export interface State {
   busy: boolean;
   promptTokens?: number;
   outputTokens?: number;
+  /** Trocou o ambiente (por esta janela ou por outra). */
+  environment?: Environment;
 }
 
 export interface ProtocolError {

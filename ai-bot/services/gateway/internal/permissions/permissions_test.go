@@ -345,3 +345,42 @@ func TestPolicyReturnsACopyOfTheLists(t *testing.T) {
 	assertDecision(t, gate, "code", "proc.run", protocol.RiskExecute, "", DecisionDeny)
 	assertDecision(t, gate, "code", "fs.read", protocol.RiskRead, "", DecisionAllow)
 }
+
+// AllowedModels é o único campo em que lista VAZIA e lista AUSENTE querem dizer
+// coisas opostas: vazia é "nenhum modelo", nil é "todos". A cópia da política é
+// a travessia mais banal que existe, e colapsar vazia em nil ali liberaria o
+// catálogo inteiro justamente na estação gerenciada, cuja lista permitida é
+// calculada e pode ser legitimamente vazia.
+func TestPolicyPreservaListaVaziaDeModelos(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.AllowedModels = []string{}
+	gate := NewGate(policy)
+
+	got := gate.Policy()
+	if got.AllowedModels == nil {
+		t.Fatalf("lista vazia virou nil na cópia — isso é o catálogo inteiro liberado")
+	}
+	if len(got.AllowedModels) != 0 {
+		t.Fatalf("AllowedModels: esperava lista vazia, obteve %v", got.AllowedModels)
+	}
+
+	// E o outro lado: ausente continua ausente, sem alocar por nada.
+	if aberta := NewGate(DefaultPolicy()).Policy(); aberta.AllowedModels != nil {
+		t.Fatalf("política sem modelos declarados: esperava nil, obteve %v", aberta.AllowedModels)
+	}
+}
+
+// A cópia também precisa isolar a fatia: quem chamou Policy() não pode reescrever
+// a lista de modelos por fora do SetPolicy.
+func TestPolicyIsolaAFatiaDeModelos(t *testing.T) {
+	policy := DefaultPolicy()
+	policy.AllowedModels = []string{"gpt-5"}
+	gate := NewGate(policy)
+
+	copied := gate.Policy()
+	copied.AllowedModels[0] = "qualquer-um"
+
+	if got := gate.Policy(); got.AllowedModels[0] != "gpt-5" {
+		t.Fatalf("a lista de modelos foi reescrita por fora: %v", got.AllowedModels)
+	}
+}
