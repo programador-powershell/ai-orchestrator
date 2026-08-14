@@ -22,7 +22,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CircleAlert, LoaderCircle, Square, Users, Wand2 } from "lucide-react";
+import { CircleAlert, Square, Users, Wand2 } from "lucide-react";
+
+import { ThinkingOrb } from "./ThinkingOrb";
 import type { EngineSelection } from "@ai-orchestrator/contracts";
 
 import { Markdown } from "./Markdown";
@@ -288,7 +290,7 @@ export function CrewView({
             </span>
           ) : (
             <span className="crwx-decision">
-              <LoaderCircle size={11} className="spin" />
+              <ThinkingOrb kind="weaving" size={13} className="orb--inline" />
               orquestrando…
             </span>
           )}
@@ -366,8 +368,12 @@ export function CrewView({
                   >
                     <span className="crwx-role">{ROLE_LABEL[member.role]}</span>
                     <strong>{member.model}</strong>
+                    {/* O orbe sai da ETAPA do agente: quem revisa mostra a
+                        conferência, quem planeja mostra os fios se
+                        entrelaçando. Um spinner igual em todos dizia só que
+                        alguém estava ocupado — mas a equipe inteira está. */}
                     {member.status === "working" || member.status === "hired" ? (
-                      <LoaderCircle size={11} className="spin" />
+                      <ThinkingOrb label={roleStageLabel(member.role)} size={13} className="orb--inline" />
                     ) : null}
                     <span className="crwx-badge">{STATUS_LABEL[member.status]}</span>
                   </button>

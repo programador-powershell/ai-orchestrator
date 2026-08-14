@@ -4,13 +4,34 @@
  * busca, chips de fonte com o domínio.
  */
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Circle, Globe, LoaderCircle, TriangleAlert, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, Globe, TriangleAlert, Check } from "lucide-react";
 import { runningCount, toolLabel, type ToolCard, type ToolEdit } from "../lib/toolcard";
 import { editLabel } from "../lib/toolEdit";
+import { ThinkingOrb, type ThinkingKind } from "./ThinkingOrb";
 
-function StatusIcon({ status }: { status: ToolCard["status"] }) {
-  if (status === "running") return <LoaderCircle size={11} className="spin" />;
-  if (status === "error") return <TriangleAlert size={11} />;
+/**
+ * Qual orbe cada ferramenta acende.
+ *
+ * Aqui o mapa é EXPLÍCITO, e não deduzido do rótulo como no resto do app: o
+ * conjunto de ferramentas é fechado e os rótulos são em inglês ("Searched",
+ * "Ran"), então adivinhar pelo texto erraria em quase todos.
+ */
+const ORBE_DA_FERRAMENTA: Record<string, ThinkingKind> = {
+  fs_read: "searching",
+  fs_list: "searching",
+  search: "searching",
+  web_search: "searching",
+  fs_write: "composing",
+  generate_image: "shaping",
+  terminal: "working",
+  fusion_executor: "working"
+};
+
+function StatusIcon({ card }: { card: ToolCard }) {
+  if (card.status === "running") {
+    return <ThinkingOrb kind={ORBE_DA_FERRAMENTA[card.tool] ?? "working"} size={12} className="orb--inline" />;
+  }
+  if (card.status === "error") return <TriangleAlert size={11} />;
   return <Check size={11} />;
 }
 
@@ -68,7 +89,7 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
     <div className={`toolgroup ${running ? "running" : ""}`}>
       <button className="toolgroup-head" onClick={() => setOpenOverride(!open)} aria-expanded={open}>
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        {running ? <LoaderCircle size={11} className="spin" /> : <Circle size={9} />}
+        {running ? <ThinkingOrb kind="working" size={12} className="orb--inline" /> : <Circle size={9} />}
         <span>
           {cards.length} tool call{cards.length === 1 ? "" : "s"}
         </span>
@@ -78,7 +99,7 @@ export function ToolGroup({ cards }: { cards: ToolCard[] }) {
           {cards.map((card, index) => (
             <div key={index} className={`toolcall ${card.status}`}>
               <div className="toolcall-head">
-                <StatusIcon status={card.status} />
+                <StatusIcon card={card} />
                 <span className="toolcall-label">
                   <em>Used tool:</em> {toolLabel(card)}
                 </span>

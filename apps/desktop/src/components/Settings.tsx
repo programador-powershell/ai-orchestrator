@@ -49,14 +49,10 @@ import {
   Plug,
   Plus,
   Puzzle,
-  Rocket,
   Search,
   Server,
-  UsersRound,
 
-  ServerCog,
   Settings2,
-  Waypoints,
   ShieldCheck,
   Sparkles,
   Square,
@@ -77,6 +73,7 @@ import { memory, parseClaudeMemoryMarkdown, parseOpenAiMemoryExport, rankMemorie
 import { runtime } from "../lib/runtime";
 import { terminal } from "../lib/terminal";
 import { AdminSection } from "./settings/AdminSection";
+import { glyph, type IconComponent } from "./icons";
 import { PluginsPanel } from "./PluginsPanel";
 import { ShipSection, VpsServerSection } from "./settings/ShipSections";
 import { useApp, type CatalogModel } from "../lib/store";
@@ -99,18 +96,27 @@ type SectionId =
 
 type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
 
-const NAV: Array<{ id: SectionId; label: string; icon: typeof Plug }> = [
-  { id: "conexao", label: "Conexão", icon: Plug },
-  { id: "motores", label: "Motores & Fusion", icon: Merge },
-  { id: "provedores", label: "Provedores (BYOK)", icon: KeyRound },
-  { id: "memoria", label: "Memória", icon: Brain },
-  { id: "extensoes", label: "Extensões", icon: Puzzle },
-  { id: "plugins", label: "Plugins & trilha", icon: Waypoints },
-  { id: "conectores", label: "Conectores (MCP)", icon: Cable },
-  { id: "runtime", label: "Runtime local", icon: Cpu },
-  { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
-  { id: "vps", label: "Servidor VPS", icon: ServerCog },
-  { id: "administracao", label: "Administração", icon: UsersRound },
+/**
+ * A navegação das Configurações usa os glifos próprios.
+ *
+ * É onde o pacote mais ganha de um ícone genérico: MCP, fusão, chaveiro,
+ * política e runtime são conceitos DESTE produto, e um cadeado ou um plugue
+ * emprestados não distinguem "Conectores (MCP)" de "Extensões" na lista.
+ * "Aparência" fica com a paleta do lucide — para essa o pacote não tem nada
+ * melhor a dizer.
+ */
+const NAV: Array<{ id: SectionId; label: string; icon: IconComponent }> = [
+  { id: "conexao", label: "Conexão", icon: glyph("features/gateway") },
+  { id: "motores", label: "Motores & Fusion", icon: glyph("features/fusion") },
+  { id: "provedores", label: "Provedores (BYOK)", icon: glyph("features/byok") },
+  { id: "memoria", label: "Memória", icon: glyph("features/memory") },
+  { id: "extensoes", label: "Extensões", icon: glyph("features/tools") },
+  { id: "plugins", label: "Plugins & trilha", icon: glyph("features/plan") },
+  { id: "conectores", label: "Conectores (MCP)", icon: glyph("features/mcp") },
+  { id: "runtime", label: "Runtime local", icon: glyph("features/runtime") },
+  { id: "ship", label: "Ship (build & deploy)", icon: glyph("actions/ship") },
+  { id: "vps", label: "Servidor VPS", icon: glyph("environments/vps") },
+  { id: "administracao", label: "Administração", icon: glyph("features/policy") },
   { id: "aparencia", label: "Aparência", icon: Palette }
 ];
 

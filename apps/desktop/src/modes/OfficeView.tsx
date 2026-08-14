@@ -22,7 +22,17 @@ import {
   Save,
   Undo2
 } from "lucide-react";
-import { EmptyHero, PanelScroll, PanelTitle, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
+import {
+  EmptyHero,
+  FloatingPulse,
+  PanelScroll,
+  PanelTitle,
+  Surface,
+  TopbarActions,
+  VBody,
+  VCenter,
+  VStatus
+} from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
 import { OfficeReplacePanel } from "../components/OfficeReplacePanel";
 import { collectFiles, fsRead, fsWrite, isTauriFs } from "../lib/fsx";
@@ -135,6 +145,8 @@ export function OfficeView() {
   const pending = useOffice((state) => state.pending);
   const root = useOffice((state) => state.root);
   const messages = useApp((state) => state.threads.office.messages);
+  const sending = useApp((state) => state.threads.office.sending);
+  const stage = useApp((state) => state.stage);
   const [note, setNote] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -234,6 +246,10 @@ export function OfficeView() {
 
       <VBody>
         <VCenter>
+          {/* A única aba que ficava MUDA durante a resposta: o documento
+              continuava igual na tela e não havia sinal de que o modelo
+              estava trabalhando nele. */}
+          {sending && <FloatingPulse label={stage || "Processando"} detail="Aplicando operações ao documento aberto" />}
           {!path ? (
             <EmptyHero
               icon={<FileText size={26} />}
