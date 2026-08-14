@@ -130,7 +130,8 @@ export type EnvelopeKind =
   | "reply"
   | "gate"
   | "delegate"
-  | "state";
+  | "state"
+  | "notice";
 
 export type ActorKind = "user" | "supervisor" | "specialist" | "worker" | "tool" | "system";
 
@@ -443,6 +444,41 @@ export interface Delegate {
   result?: string;
 }
 
+/**
+ * Aviso EFÊMERO de execução — o supervisor contando, ANTES de fazer, onde um
+ * passo vai rodar. Espelha `protocol.Notice` do gateway.
+ *
+ * Nasceu para o Docker: "este passo vai rodar num container" (ou "sem sbx
+ * nesta máquina — vai para o ai-jail da VPS") aparece como popup animado por
+ * alguns segundos e some sozinho. Não pede decisão nenhuma — não confundir com
+ * `ApprovalRequest` — e não sobrevive ao replay: o gateway o publica fora do
+ * log durável, porque reencenar o aviso de ontem ao abrir a conversa seria
+ * defeito.
+ */
+export interface Notice {
+  /** O desenho ao lado do bot ("docker" → contêiner). */
+  icon: string;
+  title: string;
+  /** O porquê, em uma frase. */
+  detail?: string;
+  /** O especialista ativo — é o avatar dele que desliza no popup. */
+  specialist?: string;
+}
+
+/**
+ * A trilha de uma atualização — o "o que muda" de `docs/atualizacao.md`.
+ *
+ * Espelha `update.Track` do gateway. A divisão existe porque o CUSTO para a
+ * pessoa é diferente em cada uma, e é esse custo que a tela precisa dizer:
+ *
+ * - `data`    catálogo de especialistas, de modelos e política — aplica a
+ *             quente, então nunca chega a virar aviso;
+ * - `ui`      o bundle web — trocado na próxima abertura: pede reabrir;
+ * - `gateway` o `aibotd` — é sidecar, reinicia sozinho: não pede nada;
+ * - `shell`   a casca Tauri/Rust — só troca por instalador: pede instalar.
+ */
+export type UpdateTrack = "data" | "ui" | "gateway" | "shell";
+
 export interface State {
   specialist?: string;
   model?: string;
@@ -452,6 +488,17 @@ export interface State {
   outputTokens?: number;
   /** Trocou o ambiente (por esta janela ou por outra). */
   environment?: Environment;
+  /**
+   * Há publicação nova PENDENTE — já baixada e verificada, esperando um
+   * reinício, uma reabertura ou o instalador.
+   *
+   * "Pendente" e não "existe versão nova": o que aplica sozinho (a trilha de
+   * dados) não aparece aqui. Avisar sobre o que já está valendo faria o aviso
+   * da atualização que realmente pede algo virar ruído.
+   */
+  updateAvailable?: boolean;
+  updateVersion?: string;
+  updateTracks?: UpdateTrack[];
 }
 
 export interface ProtocolError {

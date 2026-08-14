@@ -13,6 +13,9 @@
     "gateway:build": "go build -C services/gateway -o ../../dist/aibotd ./cmd/aibotd",
     "gateway:build:needle": "go build -C services/gateway -tags needle -o ../../dist/aibotd ./cmd/aibotd",
     "gateway:test": "go test -C services/gateway ./...",
-    "gateway:vet": "go vet -C services/gateway ./..."
+    "gateway:vet": "go vet -C services/gateway ./...",
+    "manifesto:gerar": "node scripts/gerar-manifesto.mjs",
+    "manifesto:verificar": "node scripts/gerar-manifesto.mjs --verificar",
+    "manifesto:test": "node --test \"scripts/*.test.mjs\""
   }
 }

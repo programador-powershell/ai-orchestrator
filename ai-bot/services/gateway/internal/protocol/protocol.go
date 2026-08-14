@@ -111,6 +111,18 @@ const (
 
 	// KindState publica uma mudança de estado observável (sessão, especialista, modelo).
 	KindState Kind = "state"
+
+	// --- aviso ---
+
+	// KindNotice é o supervisor contando, ANTES de fazer, onde um passo vai
+	// rodar — o popup animado de alguns segundos na tela.
+	//
+	// Não é KindApprovalRequest: não pede decisão nenhuma e não para o turno.
+	// Não é KindState: não muda o ambiente da sessão — anuncia UM passo. Nasceu
+	// para o Docker: decidir "isto vai para um container" (ou "o sbx não está
+	// instalado, vai para o ai-jail da VPS") sem contar é exatamente o silêncio
+	// de execução que o seletor de ambiente existe para acabar.
+	KindNotice Kind = "notice"
 )
 
 // validKinds existe para que um envelope malformado morra na borda, e não três
@@ -124,6 +136,7 @@ var validKinds = map[Kind]bool{
 	KindEscalate: true, KindAsk: true, KindReply: true, KindGate: true,
 	KindDelegate: true,
 	KindState:    true,
+	KindNotice:   true,
 }
 
 // Valid diz se o verbo é conhecido.
@@ -553,6 +566,11 @@ type Ask struct {
 	AskID    string   `json:"askId"`
 	Question string   `json:"question"`
 	Options  []string `json:"options,omitempty"`
+	// Detail é o corpo da decisão (o plano proposto, por exemplo), separado da
+	// pergunta pelo mesmo motivo do ApprovalRequest: a pergunta é a frase que se
+	// lê antes de decidir, e afogá-la num texto longo faria o botão ser apertado
+	// no automático.
+	Detail string `json:"detail,omitempty"`
 	// Blocking=false permite seguir sem resposta (aviso, não pergunta).
 	Blocking bool `json:"blocking"`
 }
@@ -610,6 +628,38 @@ type State struct {
 	// Tokens gastos no turno, para o medidor de contexto.
 	PromptTokens int `json:"promptTokens,omitempty"`
 	OutputTokens int `json:"outputTokens,omitempty"`
+
+	// UpdateAvailable diz que há publicação nova PENDENTE — algo que já foi
+	// baixado e verificado e que ainda espera um reinício, uma reabertura ou o
+	// instalador.
+	//
+	// Pendente, e não "existe versão nova": a trilha de DADOS (catálogo de
+	// especialistas, prompts) aplica a quente e não aparece aqui. Avisar a
+	// pessoa sobre o que já está valendo faria o aviso da atualização que
+	// realmente pede algo dela virar ruído (ver internal/update).
+	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
+	UpdateVersion   string `json:"updateVersion,omitempty"`
+	// UpdateTracks são as trilhas pendentes: "gateway", "ui", "shell". A tela
+	// escolhe a frase pelo que cada uma custa — o gateway reinicia sozinho, a
+	// interface pede reabrir, a casca pede instalador.
+	UpdateTracks []string `json:"updateTracks,omitempty"`
+}
+
+// Notice é o payload do KindNotice — o aviso animado de execução.
+//
+// Viaja EFÊMERO (PublishEphemeral), nunca no log durável: o aviso "este passo
+// vai rodar num container" só faz sentido antes de o passo rodar, e um replay
+// que reencenasse o popup de ontem ao abrir a conversa seria defeito.
+type Notice struct {
+	// Icon é o desenho que a tela põe ao lado do bot ("docker" → contêiner).
+	Icon string `json:"icon"`
+	// Title é a frase principal do popup.
+	Title string `json:"title"`
+	// Detail é o porquê, em uma frase — a parte que evita o aviso críptico.
+	Detail string `json:"detail,omitempty"`
+	// Specialist é o especialista ativo: é o avatar DELE que desliza no popup,
+	// e a tela não tem como deduzir isso de um envelope efêmero fora de turno.
+	Specialist string `json:"specialist,omitempty"`
 }
 
 // Error encerra o turno com motivo.

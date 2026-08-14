@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"aibot/gateway/internal/pack"
 )
 
 // SecretUser é o cofre visto por este arquivo: dá para USAR o segredo, não para
@@ -48,6 +50,12 @@ func (t *Toolbox) InstallExtraTools(registry *Registry) {
 	registry.Register("design.replicate",
 		"extrai a linguagem visual (cores, variáveis, fontes, animações, layout) de uma URL. args: {url, maxPages?}",
 		t.designReplicate)
+
+	// O inventário dos pacotes corporativos (internal/pack). Registrado AQUI, e
+	// não no main, porque toda ferramenta que um especialista promete tem de
+	// nascer da Toolbox — é a invariante que tools_host_test.go verifica.
+	registry.Register("pack.list",
+		"lista os pacotes corporativos instalados neste gateway. args: {}", packList)
 
 	// image.generate, finetune.submit e finetune.status — ver tools_provider.go.
 	t.providerToolsInstall(registry)
@@ -459,4 +467,22 @@ func (t *Toolbox) webhookPost(ctx context.Context, _ string, raw json.RawMessage
 		return "", err
 	}
 	return summary, nil
+}
+
+/* ------------------------------ pacotes ------------------------------- */
+
+// packList é a ferramenta `pack.list`: o inventário do que a TI instalou.
+//
+// Ela lê o registro do próprio pacote pack (estado de processo, como o
+// catálogo de especialistas) em vez de receber injeção pela Toolbox: o
+// inventário é um só por gateway, e um campo a mais na Toolbox seria uma
+// segunda fonte para o mesmo dado. Só metadado sai por aqui — nome, versão e
+// contagens; o CONTEÚDO dos prompts não, porque ele pode carregar contexto
+// interno da empresa e esta ferramenta é de leitura livre.
+func packList(context.Context, string, json.RawMessage) (string, error) {
+	packs := pack.Installed()
+	if len(packs) == 0 {
+		return "nenhum pacote corporativo instalado neste gateway — a TI instala com `aibotd pack install <caminho>`", nil
+	}
+	return pack.Describe(packs), nil
 }

@@ -1,0 +1,77 @@
+Multiplike-AI (AI-BOT)
+Copyright (c) Multiplike
+
+Este produto inclui software desenvolvido por terceiros. As obrigações de
+atribuição de cada um estão abaixo.
+
+===============================================================================
+openship — https://github.com/oblien/openship
+Licenciado sob a Apache License, Version 2.0.
+Cópia da licença: licenses/openship-APACHE-2.0.txt
+===============================================================================
+
+Referência: openship v0.6.5, commit 8443f1e.
+
+O upstream não publica arquivo NOTICE nem preenche o titular no apêndice do
+LICENSE; a atribuição aqui aponta para o repositório e a versão de origem, que
+é o que identifica a obra.
+
+A porta é em GO e vive no gateway (services/gateway/internal/ship). Ela chegou
+aqui via a porta TypeScript feita no repositório pai deste produto
+(apps/desktop/src/lib/ship), da qual herda as correções listadas abaixo.
+
+ARQUIVOS DERIVADOS neste repositório (marcados também no próprio cabeçalho,
+como pede a §4b da licença):
+
+  services/gateway/internal/ship/stacks.go
+      Derivado de packages/core/src/stacks.ts.
+      Registro de 47 stacks e 11 linguagens: imagem de build e de runtime,
+      diretório de saída, porta, comando de build e de start, caminhos de
+      produção e regras de detecção.
+      Modificações: portado de TypeScript para Go (somente biblioteca padrão);
+      reduzido ao que o gateway usa; a constante STACK_ICONS continua FORA
+      (apontava para cdn.jsdelivr.net/gh/devicons/devicon@latest — buscar logo
+      em CDN entrega a um terceiro a lista de frameworks do usuário e quebra o
+      app offline); acrescentado DefaultInstallCommand (o passo de install que
+      a origem preenchia no fluxo de deploy); comentários reescritos em
+      português do Brasil.
+
+  services/gateway/internal/ship/detect.go
+      Derivado da metade de detecção de packages/core/src/stacks.ts e do
+      stack-detector do openship (via detectarFrameworks da porta TS).
+      Modificações: portado para Go; Detect(root) agora varre a árvore e lê os
+      manifestos sozinho (a versão TS recebia a lista de arquivos pronta de
+      quem chama), pulando pastas de dependência e lendo .csproj/.fsproj da
+      raiz como manifesto; a conjunção do Rails (Gemfile E bin/rails ou
+      config/routes.rb) voltou a ser aplicada como no stack-detector original
+      — a porta TS tratava os marcadores como OU e um Gemfile solto virava
+      Rails; o "deps gate" do detector original também voltou: marcador
+      compartilhado entre stacks (go.mod, Cargo.toml, requirements.txt,
+      vite.config.ts…) só conta para a stack que declara dependência ou padrão
+      de conteúdo quando um deles confirma — na porta TS um go.mod sem nada
+      virava "Echo" e todo projeto Vite virava "TanStack Start"; no empate de
+      confiança, as stacks de linguagem (node, python, go, rust) perdem para o
+      framework confirmado — na porta TS "Node.js" vencia Angular e Vite
+      porque backend pesa mais que frontend; comentários em português.
+
+  services/gateway/internal/ship/dockerfile.go
+      Derivado de packages/adapters/src/runtime/docker-build-plan.ts (via a
+      porta TS dockerfile.ts).
+      Gerador de Dockerfile multi-estágio e os marcadores de progresso
+      impressos dentro do RUN.
+      Modificações: portado para Go como função pura de string; o prefixo do
+      marcador de progresso é deste produto; site estático ganha CMD com
+      http-server (antes a imagem terminava o docker run na hora); ENV PORT
+      declarado no runtime (antes o start com $PORT escutava em ":" e morria
+      na largada); valor de variável de build com quebra de linha é RECUSADO
+      com erro (a porta TS trocava por espaço em silêncio); quando o servidor
+      de arquivos é necessário e a imagem de runtime não tem npm (Blazor/
+      aspnet, site solto/ubuntu), o estágio de runtime passa a ser node:22 —
+      antes o RUN npm install quebrava o build; comentários em português.
+
+NÃO derivamos nada de resources/engine do instalador do openship (iRedMail,
+GPLv3) nem redistribuímos a base GeoLite2 que ele empacota.
+
+Logotipos de frameworks (Next.js, Nuxt, Svelte e demais) são marcas de seus
+titulares e NÃO foram embarcados: a interface usa os glifos próprios deste
+projeto ou o nome em texto.

@@ -97,6 +97,21 @@ func (r *Registry) Describe(name string) string {
 	return r.tools[name].description
 }
 
+// Has diz se a ferramenta existe no catálogo.
+//
+// Existe para a validação do catálogo publicado (trilha A de
+// docs/atualizacao.md): um especialista que declara uma ferramenta inexistente
+// promete ao modelo uma permissão que ninguém executa, e o turno vira uma
+// sequência de pedidos recusados. Perguntar `Describe() != ""` funcionaria por
+// acidente — descrição é texto, e o dia em que uma ferramenta nascer sem
+// descrição a checagem passaria a mentir.
+func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.tools[name]
+	return ok
+}
+
 // Names lista o catálogo em ordem.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
@@ -187,6 +202,13 @@ type Toolbox struct {
 	// dizendo o que preencher e onde; um motor padrão embutido mandaria a
 	// consulta do usuário para um terceiro que ninguém aprovou.
 	Search SearchBackend
+	// Notices publica os avisos animados de execução (KindNotice, efêmeros) —
+	// "este passo vai rodar num container" ANTES de o container subir. Nil =
+	// sem aviso, nunca sem execução. Ver tools_process.go.
+	Notices NoticePublisher
+	// Specialist devolve o especialista ativo da sessão, para o aviso desenhar
+	// o avatar certo. Nil ou vazio = o popup sai com o bot padrão.
+	Specialist func(sessionID string) string
 }
 
 // gitTimeout limita cada chamada ao git.
@@ -238,9 +260,23 @@ func (t *Toolbox) Install(registry *Registry) {
 	registry.RegisterHost("pdf.extract", "extrai o texto de um PDF. args: {path}")
 	registry.RegisterHost("runtime.status", "estado do runtime local. args: {}")
 
-	// E as que o gateway resolve sozinho — ver tools_extra.go e tools_flow.go.
+	// Vídeo — o ffmpeg DA ESTAÇÃO (aprovado pela TI, instalado por winget),
+	// executado pelo host. O gateway não linka nada de mídia: quem tem o
+	// binário é a máquina da pessoa, e sem ele a ferramenta recusa com a
+	// instrução de instalação em vez de fingir que funcionou. A implementação
+	// e as regras (confinamento, timeout de 10 min com kill da árvore, escape
+	// do drawtext via textfile) moram em apps/desktop/src-tauri/src/video.rs.
+	registry.RegisterHost("video.probe", "duração, resolução e faixas de um vídeo. args: {path}")
+	registry.RegisterHost("video.trim", "corta um trecho do vídeo — sem reencodar quando o corte cai em keyframe. args: {path, start, end, output}")
+	registry.RegisterHost("video.concat", "emenda vídeos de MESMO codec na ordem dada. args: {paths[], output}")
+	registry.RegisterHost("video.text", "grava um texto sobre o vídeo. args: {path, text, output, position?}")
+	registry.RegisterHost("video.export", "transcodifica o vídeo (mp4, webm, gif, mp3). args: {path, output, format}")
+
+	// E as que o gateway resolve sozinho — ver tools_extra.go, tools_flow.go e
+	// tools_ship.go.
 	t.InstallExtraTools(registry)
 	t.InstallFlowTools(registry)
+	t.installShipTools(registry)
 }
 
 /* --------------------------- confinamento de fs -------------------------- */

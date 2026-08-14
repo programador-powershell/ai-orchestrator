@@ -237,6 +237,35 @@ select {
   color: var(--warn);
 }
 
+/* O aviso de atualização.
+
+   DISCRETO por decisão: a atualização já foi baixada e verificada e não espera
+   resposta nenhuma — ela espera a próxima abertura. Por isso ele tem o peso de
+   um rótulo, e não o de um alerta. Só quando há instalador a rodar (a trilha da
+   casca, que é a única que a pessoa precisa mesmo executar) o chip sobe para a
+   cor de atenção. */
+.update-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  /* `cursor: help` porque o conteúdo real do aviso está no `title`: sem a
+     dica, um chip que não responde ao clique parece um botão quebrado. */
+  cursor: help;
+}
+
+.update-chip[data-action="instalar"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 /* O slot do portal. Fica no meio e encolhe primeiro: os botões da superfície
    são úteis, mas quem manda na barra é a identidade da conversa.
 
@@ -523,6 +552,51 @@ select {
   font-size: var(--fs-micro);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* A linha da conversa com o botão de ramificar ao lado. O fork é irmão do
+   botão principal (botão dentro de botão é HTML inválido) e só ganha presença
+   no hover da linha: um ícone permanente por conversa viraria uma coluna de
+   ruído numa lista que vive de títulos. */
+.rail-item-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rail-item-row .rail-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-item-fork {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--swift), background-color var(--t-fast) var(--swift),
+    color var(--t-fast) var(--swift);
+}
+
+/* Visível no hover da linha E no foco por teclado — esconder de quem navega
+   por Tab seria esconder a função, não o ruído. */
+.rail-item-row:hover .rail-item-fork,
+.rail-item-fork:focus-visible {
+  opacity: 1;
+}
+
+.rail-item-fork:hover {
+  background: var(--hover);
+  color: var(--ink);
 }
 
 .rail-empty {
@@ -1365,6 +1439,114 @@ select {
 .settings-bot-tag {
   color: var(--muted);
   font-size: var(--fs-micro);
+}
+
+/*
+ * A seção de modelos e provedores. O cartão ganha um teto próprio porque esta
+ * seção CRESCE com o catálogo — sem o max-height o modal passaria da janela e
+ * o botão de fechar sumiria da tela.
+ */
+.settings-card {
+  width: min(640px, 100%);
+  max-height: min(720px, 86vh);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-input {
+  flex: 1 1 140px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.settings-input::placeholder {
+  color: var(--muted);
+}
+
+.settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-small);
+}
+
+.settings-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Endereço e resultado de teste são para COPIAR num chamado, como o
+   .settings-value: escapam do user-select: none do cromo. */
+.settings-item-sub {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-chip {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.settings-chip[data-ok="true"] {
+  color: var(--ok);
+  border-color: currentcolor;
+}
+
+.settings-feedback {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--ok);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-feedback[data-ok="false"] {
+  color: var(--danger);
 }
 
 /* -------------------------------- composer ------------------------------ */
@@ -2702,4 +2884,64 @@ select {
   padding: 12px 14px;
   border-top: 1px solid var(--line);
   background: var(--panel-2);
+}
+
+/* ------------------------------ anexos do composer ------------------------ */
+/* O anexo é referência (nome), não upload — o chip diz o arquivo e o X tira.
+   A lista fica ACIMA do campo para não competir com os atalhos do especialista. */
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: var(--composer-w);
+  margin: 0 auto 6px;
+  padding: 0;
+  list-style: none;
+}
+.composer-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: var(--fs-small);
+  color: var(--ink);
+}
+.composer-attachment-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-attachment-remove {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  padding: 2px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.composer-attachment-remove:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.composer-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.composer-icon-button:hover {
+  color: var(--ink);
+  background: var(--hover);
 }

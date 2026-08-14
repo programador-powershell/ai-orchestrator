@@ -105,12 +105,21 @@ pub fn execute(tool: &str, args: &Value) -> Result<String, String> {
         "office.export" => office_export(args),
         "pdf.extract" => pdf_extract(args),
         "runtime.status" => runtime_status(),
+        // Vídeo mora em módulo próprio (video.rs): é o ffmpeg DA ESTAÇÃO, com
+        // regras próprias de timeout e de escape que não se misturam com o
+        // resto deste arquivo.
+        "video.probe" => crate::video::probe(args),
+        "video.trim" => crate::video::trim(args),
+        "video.concat" => crate::video::concat(args),
+        "video.text" => crate::video::text(args),
+        "video.export" => crate::video::export(args),
         // `term.open` FOI TIRADA DAQUI DE PROPÓSITO — ver o bloco no fim deste
         // arquivo. Ela volta no dia em que a interface tiver painel de terminal.
         other => Err(format!(
             "a ferramenta {other} não é servida por esta máquina. \
 As ferramentas de máquina são: proc.run, diagnostics.run, office.open, office.edit, \
-office.export, pdf.extract e runtime.status."
+office.export, pdf.extract, runtime.status, video.probe, video.trim, video.concat, \
+video.text e video.export."
         )),
     }
 }
@@ -162,7 +171,10 @@ pub fn set_project_root(root: Option<PathBuf>) -> Result<(), String> {
 /// Recusar é melhor que cair na pasta do processo: a pasta do processo é onde
 /// mora o executável do AI-BOT, e um `proc.run` ali roda dentro da instalação
 /// do aplicativo — o lugar mais errado possível.
-fn project_root() -> Result<PathBuf, String> {
+///
+/// `pub(crate)` porque `video.rs` confina caminhos à MESMA raiz — uma segunda
+/// cópia deste estado seria duas verdades sobre qual pasta está aberta.
+pub(crate) fn project_root() -> Result<PathBuf, String> {
     let slot = PROJECT_ROOT
         .lock()
         .map_err(|_| "o estado da pasta de projeto ficou inconsistente".to_string())?;
@@ -1381,8 +1393,9 @@ Os modelos locais ficam indisponíveis até ele subir; os modelos de provedor se
 
 /* -------------------------------- argumentos ------------------------------ */
 
-/// Argumento de texto obrigatório e não vazio.
-fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+/// Argumento de texto obrigatório e não vazio. `pub(crate)` para `video.rs`
+/// validar argumentos com as MESMAS mensagens que o resto das ferramentas.
+pub(crate) fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     let value = args
         .get(key)
         .and_then(Value::as_str)
@@ -1395,7 +1408,7 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 /// Argumento de texto opcional; branco conta como ausente.
-fn arg_opt_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+pub(crate) fn arg_opt_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key)
         .and_then(Value::as_str)
         .map(str::trim)

@@ -65,6 +65,12 @@ type Deps struct {
 	Worktrees *worktree.Manager
 	// PromptMaster devolve o prompt do admin. Pode ser nil.
 	PromptMaster func() string
+	// Hooks são os ganchos declarativos dos pacotes corporativos (ver hooks.go).
+	// Nil = nenhum pacote com gancho, que é o caso de quem não instalou nada.
+	Hooks *HookRunner
+	// PackPrompt devolve o texto que os pacotes corporativos anexam ao prompt de
+	// sistema de um especialista (internal/pack.PromptFor). Pode ser nil.
+	PackPrompt func(specialistID string) string
 }
 
 // turnHandle é o cancelamento de UM turno, com IDENTIDADE.
@@ -89,6 +95,12 @@ type Supervisor struct {
 	running map[string]turnHandle
 	waiting map[string]chan protocol.ApprovalDecision
 	gates   map[string]chan protocol.Gate
+	// asks são as perguntas bloqueantes abertas, UMA por sessão. Diferente de
+	// `waiting`, aqui não há goroutine esperando: o turno que perguntou JÁ
+	// terminou, e a resposta (KindReply) inicia a continuação. É o mesmo
+	// mecanismo para a clarificação do master e para a aprovação de plano —
+	// pergunta → resposta → continuação.
+	asks    map[string]pendingAsk
 	counter uint64
 }
 
@@ -99,6 +111,7 @@ func New(deps Deps) *Supervisor {
 		running: make(map[string]turnHandle),
 		waiting: make(map[string]chan protocol.ApprovalDecision),
 		gates:   make(map[string]chan protocol.Gate),
+		asks:    make(map[string]pendingAsk),
 	}
 }
 
@@ -116,6 +129,32 @@ func (s *Supervisor) nextID(prefix string) string {
 // Prompt executa um turno inteiro. Bloqueia até o fim (quem quiser assíncrono
 // chama numa goroutine); o progresso sai todo pelo barramento.
 func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt protocol.Prompt) error {
+	// Mensagem normal MATA a pergunta pendente da sessão: quem ignorou o cartão
+	// e seguiu escrevendo já respondeu — a mensagem nova É a resposta. Guardar a
+	// pendência prenderia a conversa a um cartão que a pessoa dispensou.
+	s.dropAsk(sessionID)
+	return s.runTurn(parent, sessionID, prompt, turnOptions{logQuestion: true, clarify: true})
+}
+
+// turnOptions ajusta como runTurn trata a fala da pessoa.
+//
+// Existe por causa das CONTINUAÇÕES (ver Reply em clarify.go): a resposta de um
+// `ask` roda um turno novo, mas a fala original já está no log — regravá-la
+// duplicaria a mensagem na conversa — e um primeiro input que já foi clarificado
+// uma vez não pode voltar a perguntar, senão a pergunta vira laço.
+type turnOptions struct {
+	// logQuestion grava prompt.Text (sem o /mode) como mensagem da pessoa.
+	logQuestion bool
+	// userLine, quando preenchido, é gravado NO LUGAR do texto do prompt: a
+	// continuação de texto livre roteia pelo texto composto (resposta + pedido
+	// original), mas só a resposta é fala nova — o pedido original já está lá.
+	userLine string
+	// clarify permite transformar o primeiro input incerto em pergunta.
+	clarify bool
+}
+
+// runTurn é o turno de verdade; Prompt e as continuações de Reply chegam aqui.
+func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt protocol.Prompt, opts turnOptions) error {
 	if strings.TrimSpace(prompt.Text) == "" {
 		return errors.New("prompt vazio")
 	}
@@ -160,14 +199,20 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 	// Sem comando não há o que repor: `ParseModeCommand` devolve o texto intacto.
 	_, question, hadCommand := ParseModeCommand(prompt.Text)
 
-	// 1. A pergunta entra no log ANTES de qualquer decisão. Se o roteamento ou
-	// o modelo falharem, a pessoa ainda vê o que perguntou — perder o próprio
-	// texto por causa de um erro do servidor é a pior forma de falhar aqui.
-	if strings.TrimSpace(question) != "" {
+	// 1. A fala da pessoa entra no log ANTES de qualquer decisão. Se o
+	// roteamento ou o modelo falharem, a pessoa ainda vê o que perguntou —
+	// perder o próprio texto por causa de um erro do servidor é a pior forma de
+	// falhar aqui. Nas continuações de Reply a fala já está no log (ou é a linha
+	// nova em userLine), por isso o que se grava é escolhido pelas opções.
+	userLine := opts.userLine
+	if opts.logQuestion {
+		userLine = question
+	}
+	if strings.TrimSpace(userLine) != "" {
 		if err := s.emit(sessionID, turn, protocol.KindMessage,
 			protocol.Actor{Kind: protocol.ActorUser}, protocol.Message{
 				Role: "user",
-				Text: question,
+				Text: userLine,
 			}); err != nil {
 			return err
 		}
@@ -177,10 +222,11 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 	// (fast router → Needle → modelo grande); depois disso a conversa tem modo
 	// e vai direto ao mesmo executor. Ver o cabeçalho de router.go.
 	route := s.deps.Router.Route(ctx, RouteInput{
-		Text:     prompt.Text,
-		Explicit: prompt.Specialist,
-		Current:  session.Specialist,
-		Allowed:  s.deps.Gate.Policy().AllowedSpecialists,
+		Text:        prompt.Text,
+		Explicit:    prompt.Specialist,
+		Current:     session.Specialist,
+		Allowed:     s.deps.Gate.Policy().AllowedSpecialists,
+		Attachments: attachmentNames(prompt.Attachments),
 	})
 	definition := specialist.GetOrDefault(route.Specialist)
 
@@ -199,6 +245,21 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 		}
 		s.done(sessionID, turn, definition.ID, modelrouter.Usage{}, false)
 		return nil
+	}
+
+	// 2b. PRIMEIRO input incerto não vira chute: vira pergunta. Quando a cascata
+	// caiu no fallback (ou devolveu confiança rasteira) e nenhum anexo decidiu —
+	// anexo decisivo sai com confiança 1 e nunca chega aqui —, o supervisor
+	// pergunta O QUE a pessoa quer, com opções objetivas montadas do shortlist
+	// do fast router, e ENCERRA o turno sem chamar modelo nenhum. A resposta
+	// chega como `reply` e roda o turno original com a escolha explícita (ver
+	// Reply em clarify.go). Conversa em andamento nunca passa por aqui: com modo
+	// gravado a rota é sticky, confiança 1.
+	if opts.clarify && session.Specialist == "" &&
+		(route.Reason == protocol.RouteFallback || route.Confidence < ClarifyMaxConfidence) {
+		if s.askClarification(sessionID, turn, question, prompt) {
+			return nil
+		}
 	}
 
 	// 3. O modelo. A escolha do usuário vence a preferência do especialista.
@@ -247,6 +308,12 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 	// árvore que elas abrem.
 	budget := &delegationBudget{}
 
+	// O plano só é reconhecido de quem foi CONVIDADO a planejar (ver
+	// planContract): um bloco aibot:plan ecoado por um especialista sem
+	// ferramenta de escrita — a pessoa colou um exemplo, o modelo repetiu — não
+	// pode congelar o turno esperando aprovação de nada.
+	planExpected := s.planContract(definition) != ""
+
 	var totalUsage modelrouter.Usage
 	for round := 0; round < maxToolRounds; round++ {
 		s.thinking(sessionID, turn, actor, thinkingLabel(definition, round), false)
@@ -267,6 +334,32 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 
 		calls := parseToolCalls(answer)
 		delegations := parseDelegations(answer)
+
+		// Plano aprovável: o modelo propôs um plano e o turno PARA aqui, antes
+		// de qualquer execução — inclusive das ferramentas que vieram no mesmo
+		// texto: um modelo que propõe o plano e já sai executando não propôs
+		// nada. A aprovação chega como `reply` e a continuação roda com "plano
+		// aprovado" (ver Reply em clarify.go). Mesma pendência da clarificação:
+		// pergunta → resposta → continuação.
+		if planExpected {
+			if plan, proposed := parsePlan(answer); proposed {
+				// O texto vai para a conversa COM o bloco do plano: é ele que a
+				// pessoa lê para decidir. stripBlocks só tira ferramenta e
+				// delegação, que são protocolo de máquina.
+				if err := s.emit(sessionID, turn, protocol.KindMessage, actor, protocol.Message{
+					Role:       "assistant",
+					Text:       stripBlocks(answer),
+					Specialist: definition.ID,
+					Model:      entry.Model.ID,
+				}); err != nil {
+					return err
+				}
+				s.askPlan(sessionID, turn, definition, plan)
+				s.done(sessionID, turn, definition.ID, totalUsage, false)
+				return nil
+			}
+		}
+
 		if len(calls) == 0 && len(delegations) == 0 {
 			// A resposta final entra no log inteira. Os deltas já foram
 			// entregues, mas eles são EFÊMEROS: quem abrir a conversa amanhã lê
@@ -417,11 +510,13 @@ func (s *Supervisor) runModel(
 //
 //  1. prompt master do admin  (nenhum especialista o remove)
 //  2. prompt do especialista
-//  3. contrato de ferramentas (só se ele tiver ferramentas liberadas)
-//  4. contrato de delegação (só se sobrar alguém para chamar)
-//  5. memórias relevantes
-//  6. histórico da conversa
-//  7. arquivos citados com @
+//  3. prompt dos pacotes corporativos (complementa o especialista; nunca o master)
+//  4. contrato de ferramentas (só se ele tiver ferramentas liberadas)
+//  5. contrato de plano (só para quem tem ferramenta de escrita)
+//  6. contrato de delegação (só se sobrar alguém para chamar)
+//  7. memórias relevantes
+//  8. histórico da conversa
+//  9. arquivos citados com @
 func (s *Supervisor) buildMessages(
 	sessionID string,
 	definition specialist.Definition,
@@ -436,7 +531,20 @@ func (s *Supervisor) buildMessages(
 	}
 	messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: definition.System})
 
+	// O prompt de PACOTE entra colado ao system do especialista — depois dele,
+	// porque complementa (o plano de contas da empresa, o tom do jurídico), e
+	// depois do master, porque pacote nenhum passa por cima da política do
+	// admin. Vem por função para o supervisor não importar internal/pack.
+	if s.deps.PackPrompt != nil {
+		if extra := strings.TrimSpace(s.deps.PackPrompt(definition.ID)); extra != "" {
+			messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: extra})
+		}
+	}
+
 	if contract := s.toolContract(definition); contract != "" {
+		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
+	}
+	if contract := s.planContract(definition); contract != "" {
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
 	}
 	if contract := s.delegateContract(definition, firstDelegationDepth); contract != "" {
@@ -641,9 +749,40 @@ func (s *Supervisor) executeTool(
 		}
 	}
 
+	// Ganchos de ANTES (before_tool / before_edit), depois de todas as
+	// aprovações: o deny de pacote é o último portão antes do efeito colateral,
+	// e as ações observadoras registram exatamente o que está prestes a rodar.
+	// Recusa de gancho volta ao modelo como qualquer recusa — com o motivo.
+	if s.deps.Hooks != nil {
+		if denied, why := s.deps.Hooks.Before(ctx, HookInfo{
+			Event: HookBeforeTool, TS: time.Now().UTC(),
+			Session: sessionID, Turn: turn, Specialist: definition.ID,
+			Tool: call.Tool, Digest: digest,
+		}); denied {
+			s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", why, 0)
+			return fmt.Sprintf("RECUSADO PELA POLÍTICA DE PACOTE (%s): %s", call.Tool, why)
+		}
+	}
+
 	started := time.Now()
 	output, err := s.deps.Tools.Call(ctx, call.Tool, sessionID, call.Args)
 	elapsed := time.Since(started).Milliseconds()
+
+	// Ganchos de DEPOIS (after_tool / after_edit): observam o desfecho — ok ou
+	// erro — e nunca mudam o rumo do turno. Rodam antes do retorno ao modelo
+	// para a auditoria ficar na ordem em que as coisas aconteceram.
+	if s.deps.Hooks != nil {
+		failure := ""
+		if err != nil {
+			failure = err.Error()
+		}
+		s.deps.Hooks.Notify(ctx, HookInfo{
+			Event: HookAfterTool, TS: time.Now().UTC(),
+			Session: sessionID, Turn: turn, Specialist: definition.ID,
+			Tool: call.Tool, Digest: digest, OK: err == nil, Error: failure,
+		})
+	}
+
 	if err != nil {
 		s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", err.Error(), elapsed)
 		return fmt.Sprintf("ERRO em %s: %s", call.Tool, err.Error())
@@ -772,6 +911,14 @@ func (s *Supervisor) done(sessionID, turn, specialistID string, usage modelroute
 			OutputTokens: usage.OutputTokens,
 			Interrupted:  interrupted,
 		})
+	// on_complete dos pacotes. Contexto de fundo porque o turno pode ter sido
+	// CANCELADO — e o fim do turno é exatamente o que a auditoria quer ver.
+	if s.deps.Hooks != nil {
+		s.deps.Hooks.Notify(context.Background(), HookInfo{
+			Event: HookOnComplete, TS: time.Now().UTC(),
+			Session: sessionID, Turn: turn, Specialist: specialistID, OK: !interrupted,
+		})
+	}
 }
 
 func (s *Supervisor) fail(sessionID, turn, specialistID, code, message string, retryable bool) {
@@ -781,6 +928,15 @@ func (s *Supervisor) fail(sessionID, turn, specialistID, code, message string, r
 			Message:   message,
 			Retryable: retryable,
 		})
+	// on_error dos pacotes — o evento que a SI mais pede para receber por
+	// webhook. Falha do gancho não muda nada aqui: o turno já falhou.
+	if s.deps.Hooks != nil {
+		s.deps.Hooks.Notify(context.Background(), HookInfo{
+			Event: HookOnError, TS: time.Now().UTC(),
+			Session: sessionID, Turn: turn, Specialist: specialistID,
+			Error: code + ": " + message,
+		})
+	}
 }
 
 /* -------------------------------- apoio --------------------------------- */

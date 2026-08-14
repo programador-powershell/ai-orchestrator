@@ -55,6 +55,12 @@
 //!   existia. Ele saiu junto com a ferramenta: ver o porquê em `tools.rs`.
 //! - `jail`       — Job Object do Windows (isolamento de árvore de processo).
 //!   Serve o `tools`; sem comando próprio.
+//! - `overlay`    — a TRILHA B da atualização: `install(&mut Context)`, que põe o
+//!   provedor de assets do disco na frente do embutido; `choose(&data_dir)`,
+//!   chamado UMA vez no `setup` antes de existir janela; `watch(handle)`, o
+//!   relógio de rollback; e o comando `ui_ready`, o único sinal de que a janela
+//!   realmente abriu. Enquanto `choose` não achar uma interface verificada, o
+//!   módulo é inerte e tudo vem do bundle embutido, como sempre veio.
 //! - `pdf`        — extrator de texto de PDF, escrito na casa por não haver
 //!   crate homologada. Serve o `tools`; sem comando próprio.
 //! - `pty`        — `PtyState: Default` e os seis comandos `pty_*`. Hoje eles só
@@ -62,6 +68,9 @@
 //!   de terminal na interface, ninguém os chama — nem o agente, que perdeu o
 //!   `term.open` justamente por isso.
 //! - `vault`      — os três comandos `credential_*`.
+//! - `video`      — as cinco ferramentas `video.*` sobre o ffmpeg da estação.
+//!   Serve o `tools` (mesmo confinamento de caminho, mesmo Job Object); sem
+//!   comando próprio, pelo mesmo motivo das outras ferramentas de máquina.
 //! - `windows`    — o comando `open_avatar_lab`.
 //!
 //! # As três superfícies de execução, e por que continuam separadas
@@ -113,16 +122,18 @@ mod bench;
 mod gateway;
 mod hostbridge;
 mod jail;
+mod overlay;
 mod pdf;
 mod pty;
 mod tools;
 mod vault;
+mod video;
 mod windows;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{App, AppHandle, Manager, WebviewWindowBuilder, WindowEvent};
 use tokio::time::timeout;
 
 /// Quanto o encerramento espera o gateway sair por conta própria.
@@ -249,8 +260,43 @@ fn set_project_root(path: String) -> Result<(), String> {
     tools::set_project_root(Some(candidate))
 }
 
+/// Cria as janelas declaradas no `tauri.conf.json`.
+///
+/// # Por que isto não é trabalho do Tauri, como era até ontem
+///
+/// O Tauri cria as janelas do arquivo de configuração ANTES de rodar o `setup`.
+/// Isso é o que se quer no caso comum — a janela aparece enquanto o resto do boot
+/// acontece —, mas atropela a decisão da TRILHA B: quando a janela nasce, ela já
+/// começa a pedir `index.html`, e a escolha entre a interface baixada e a
+/// embutida ainda não foi feita. O resultado seria o pior dos dois mundos: a
+/// primeira janela com o bundle velho e a segunda com o novo.
+///
+/// Por isso as duas janelas levam `"create": false` no `tauri.conf.json` — que
+/// significa "não nasça sozinha", e não "não exista" — e quem as cria é esta
+/// função, no primeiro passo do `setup`, depois da decisão. O teste
+/// `as_janelas_do_conf_nao_nascem_sozinhas` amarra as duas pontas: `create:
+/// false` sem esta chamada é um aplicativo que abre sem janela nenhuma.
+///
+/// Ela é o PRIMEIRO passo do setup também por um motivo de percepção: o gateway
+/// pode levar até quinze segundos para responder `/health` numa estação fria, e
+/// esses quinze segundos precisam acontecer com a janela na tela.
+fn create_windows(app: &App) -> tauri::Result<()> {
+    for window in &app.config().app.windows {
+        WebviewWindowBuilder::from_config(app.handle(), window)?.build()?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A sobreposição entra ANTES do builder porque o provedor de assets é parte
+    // do contexto, não do aplicativo: depois que o `run` começa, o `Arc` interno
+    // já foi distribuído e não há mais onde trocá-lo. Instalar aqui não muda
+    // nada por si só — enquanto `overlay::choose` não escolher uma pasta, todo
+    // arquivo continua saindo do bundle embutido.
+    let mut context = tauri::generate_context!();
+    overlay::install(&mut context);
+
     let outcome = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -260,6 +306,44 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // --- TRILHA B: qual interface esta janela vai carregar ---
+            //
+            // Antes de tudo, porque a resposta precisa estar decidida quando o
+            // primeiro pedido de `index.html` chegar. A falha ao descobrir a
+            // pasta de dados NÃO aborta o boot: sem ela não há sobreposição
+            // possível, e "não sei onde ficam meus dados" tem de virar "abro no
+            // embutido", não "não abro".
+            let downloaded_ui = match gateway::data_dir(&handle) {
+                Ok(data_dir) => overlay::choose(&data_dir),
+                Err(error) => {
+                    eprintln!("[aibot] interface embutida (não achei a pasta de dados): {error}");
+                    None
+                }
+            };
+            if let Some(receipt) = &downloaded_ui {
+                eprintln!(
+                    "[aibot] interface {} carregada do disco (sha256 {})",
+                    receipt.version, receipt.sha256
+                );
+            }
+
+            // Agora, sim, as janelas — ver o porquê em `create_windows`.
+            create_windows(app)?;
+
+            // O relógio de rollback só existe quando há o que reverter. Armado
+            // DEPOIS da janela para que os vinte segundos contem a partir do
+            // momento em que ela realmente teve chance de abrir.
+            if downloaded_ui.is_some() {
+                overlay::watch(handle.clone());
+            }
+
+            // --- TRILHA C: o binário do gateway que foi baixado ---
+            //
+            // A troca acontece dentro de `gateway::start`, entre achar o binário
+            // e subi-lo: é o único instante em que o `aibotd` não está rodando e
+            // o arquivo pode ser substituído (no Windows, executável em uso não
+            // se renomeia).
 
             // Falha aqui ABORTA o boot, e isso é deliberado. `start` já tenta o
             // caminho gentil: se alguém já está escutando em 8799 — um
@@ -365,6 +449,11 @@ pub fn run() {
             windows::open_avatar_lab,
             // --- ciclo de vida ---
             app_shutdown,
+            // O front chama isto no primeiro render. É o que impede uma
+            // interface baixada que abre em branco de virar um app que não abre
+            // nunca mais: sem esta chamada em 20 s, a pasta vai para quarentena
+            // e o app reinicia no bundle embutido (ver overlay.rs).
+            overlay::ui_ready,
             // Move a raiz a que as ferramentas ficam confinadas. Não executa
             // nada e não abre arquivo nenhum — por isso pode estar aqui sem
             // contrariar a regra de que ferramenta de máquina não vira comando.
@@ -380,7 +469,7 @@ pub fn run() {
             pty::pty_kill_all,
             pty::pty_list
         ])
-        .run(tauri::generate_context!());
+        .run(context);
 
     // `expect` aqui despejaria um panic do Rust na cara de quem só queria abrir
     // o programa — texto que não ajuda o usuário nem o suporte. Falha de boot
@@ -460,6 +549,60 @@ mod tests {
         assert!(
             producao.contains("shutdown(&app)"),
             "o gancho tem de chamar o MESMO corpo de encerramento do comando"
+        );
+    }
+
+    /// `create: false` no `tauri.conf.json` e `create_windows` no setup são UMA
+    /// decisão em dois arquivos — e a metade que falta não dá erro nenhum: o app
+    /// compila, roda e simplesmente não mostra janela. O teste amarra as duas
+    /// pontas nos dois sentidos.
+    ///
+    /// A razão de `create: false` existir está em `create_windows`: a escolha
+    /// entre a interface baixada e a embutida acontece no setup, e janela criada
+    /// antes disso pediria `index.html` antes de haver resposta.
+    #[test]
+    fn as_janelas_do_conf_nao_nascem_sozinhas() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json precisa ser JSON válido");
+        for window in config["app"]["windows"]
+            .as_array()
+            .expect("app.windows precisa ser uma lista")
+        {
+            assert_eq!(
+                window["create"],
+                serde_json::json!(false),
+                "a janela {:?} nasceria antes da decisão da interface",
+                window["label"]
+            );
+        }
+
+        let fonte = include_str!("lib.rs");
+        let producao = fonte.split("mod tests {").next().unwrap_or_default();
+        assert!(
+            producao.contains("create_windows(app)?"),
+            "com create:false e sem create_windows, o aplicativo abre sem janela nenhuma"
+        );
+        assert!(
+            producao.contains("WebviewWindowBuilder::from_config"),
+            "as janelas têm de sair do MESMO tauri.conf.json, senão tamanho e moldura divergem"
+        );
+    }
+
+    /// A ordem do setup é o que faz a TRILHA B funcionar: escolher a interface
+    /// DEPOIS de a janela existir seria escolher com a página já pedida.
+    #[test]
+    fn a_interface_e_escolhida_antes_de_a_janela_nascer() {
+        let fonte = include_str!("lib.rs");
+        let producao = fonte.split("mod tests {").next().unwrap_or_default();
+        let escolha = producao
+            .find("overlay::choose(")
+            .expect("o setup precisa escolher a interface");
+        let janela = producao
+            .find("create_windows(app)?")
+            .expect("o setup precisa criar as janelas");
+        assert!(
+            escolha < janela,
+            "a escolha da interface tem de vir ANTES da criação da janela"
         );
     }
 }

@@ -15,10 +15,25 @@
 > viraram **especialistas de um bot só**: você escreve, o roteador decide quem
 > atende, e a tela se transforma na superfície daquele especialista.
 >
-> **Estado desta versão.** As três camadas compilam e passam: `go build`, `go vet`
-> e `gofmt` limpos com **173 testes** no gateway; `cargo check`/`clippy` limpos com
-> **81 testes** no nativo; `tsc` limpo com **32 testes** na interface. O **Needle**
-> está atrás da tag de build `needle` — o build padrão não o referencia.
+> **O que este app é.** A suíte corporativa de IA que substitui as ferramentas
+> avulsas da empresa. O quadro abaixo diz o que já substitui DE VERDADE e o que
+> ainda não — porque prometer o que não entrega é o defeito que este produto não
+> pode ter:
+>
+> | Substitui | Pelo quê | Estado |
+> | --- | --- | --- |
+> | ChatGPT | conversa multi-modelo com pesquisa, memória e chaves no cofre | **substitui** |
+> | Cursor / opencode | especialista de código: lê, edita, roda e revisa com aprovação | **substitui** (terminal visual ainda não) |
+> | drawDB | schema por conversa, ERD e SQL em 3 dialetos | **substitui** |
+> | Canva (docs/slides) | edição do binário DOCX/PPTX/XLSX e leitura de PDF | **substitui** para texto; layout visual parcial |
+> | OpenCut | corte, concatenação, texto e export de vídeo pelo ffmpeg aprovado | **substitui** o essencial |
+> | Grok Build | app por conversa com plano aprovável e execução em sandbox | parcial — preview/publicar em um clique no roteiro |
+> | openship | detecção de 47 stacks + Dockerfile correto (porta Apache-2.0) | **substitui** a geração; deploy automático no roteiro |
+> | Slate/Salte | templates por Capability Pack | parcial |
+>
+> **Verificado nesta versão**: gateway Go com build/vet/gofmt limpos e 17 pacotes
+> de teste verdes; Rust com clippy limpo e 136 testes; interface com tsc limpo e
+> 75 testes. Roteamento exercitado de ponta a ponta com provedor SSE de mentira.
 
 - **Tela única dinâmica** — sem abas, sem menu de modos. A barra lateral
   esquerda, a barra superior, o campo de texto e a cor de acento do app mudam
@@ -81,8 +96,62 @@
 
 ## :new: Releases Notes
 
-### :up: V.1
+### :up: V.1.1
 ### :warning: Latest Changes
+
+- **Configuração de modelos LLM e chaves de API na tela.** Provedores e modelos
+  agora se cadastram nas Configurações: a chave vai DIRETO para o cofre
+  AES-256-GCM do gateway (o catalog.json guarda só a referência), tem teste de
+  conexão com resposta legível, e o campo zera após o envio. Cadastrar não
+  libera: a política do admin continua mandando no que aparece.
+- **Anexo roteia.** Mandar um .docx é dizer "documentos" sem saber que existe um
+  especialista de documentos: a extensão vence o radical do texto ("corrige isso"
+  + contrato.docx vai para office, não para code). O anexo é referência — o app é
+  desktop e o arquivo já está no disco; quem o lê é o especialista, pela pasta do
+  projeto.
+- **Clarification Engine.** Quando a cascata NÃO consegue decidir o primeiro
+  input (fallback ou confiança abaixo de 0,4), o master não adivinha: pergunta,
+  com 2 a 4 opções objetivas tiradas do shortlist, e a resposta roda o pedido
+  original. A conversa continua a mesma, com o mesmo dono. Mensagem nova mata a
+  pendência — quem ignorou a pergunta e seguiu já respondeu.
+- **Plano aprovável.** Especialista com ferramenta de escrita propõe plano em
+  bloco cercado e espera: Aprovar executa, Ajustar volta ao modelo com a
+  instrução. Mesmo mecanismo de pergunta e resposta da clarificação.
+- **A VPS é o padrão de trabalho.** Configurada no catálogo (host, usuário,
+  fingerprint FIXADA e conferida a cada uso, chamando o OpenSSH do sistema —
+  nunca biblioteca embutida), ela vira o ambiente padrão da sessão. Todo comando
+  na VPS roda dentro do **ai-jail**: nice + timeout + ulimit + diretório
+  confinado. O comentário no código diz o que ele é e o que não é — cinto de
+  segurança, não jaula de kernel; jaula é o Docker.
+- **Docker anunciado, nunca silencioso.** Quando o passo precisa de container, o
+  bot AVISA na conversa (popup animado com o boneco) e roda pelo Docker
+  Sandboxes; sem o sbx instalado, cai no ai-jail da VPS dizendo o downgrade.
+- **Vídeo de verdade** (o que o OpenCut fazia): probe, corte sem reencode quando
+  possível, concatenação, texto (drawtext via textfile — a armadilha do escape
+  já foi paga neste projeto) e export, pelo ffmpeg aprovado pela TI.
+- **Backup com redundância.** Snapshot tar de 6 em 6 horas (sessões, memória,
+  agenda, catálogo e o cofre — que é selado, então o backup dele é seguro),
+  retenção de 14, espelho opcional em segundo disco ou rede, e um restore que
+  NUNCA sobrescreve o dado vivo.
+- **openship portado para Go** (Apache-2.0, atribuição em NOTICE): as 47 stacks,
+  a detecção por marcador mais dependência e o gerador de Dockerfile
+  multi-estágio, com os consertos recentes (site estático com CMD, PORT definido
+  no container, env com quebra de linha recusado).
+- **Corporate Capability Packs.** Um diretório com manifest: overlay de
+  especialistas, servidores MCP, prompts, políticas (que só SOMAM restrição,
+  nunca afrouxam), templates e hooks declarativos. A TI instala uma vez, todo
+  mundo ganha.
+- **Hooks de ciclo de vida** declarativos (before/after de ferramenta e edição,
+  on_error, on_complete) com três ações: audit (log rotacionado), webhook (pela
+  referência do cofre) e deny (política de pack). Falha de hook nunca derruba o
+  turno; o deny é o ponto dele.
+- **Fork de conversa.** Ramifica a sessão em qualquer ponto (PostgreSQL numa,
+  SQL Server noutra) — o log é copiado por streaming e os cursores continuam
+  válidos porque o prefixo é idêntico.
+- **Atualização em trilhas** (docs/atualizacao.md): dado (catálogo de
+  especialistas) chega em segundos sem build; a interface troca na reabertura
+  com rollback; o gateway se atualiza como sidecar; só a casca exige instalador.
+  Manifesto Ed25519 verificado no Go, chave pública embutida no build.
 
 - **Projeto novo, em Tauri + Go.** React para a interface, Rust para a integração
   nativa, Go para o cérebro. O gateway anterior (Rust/Axum + PostgreSQL + Redis)
@@ -126,6 +195,33 @@
   aqui — a licença dele não permite —, e o que é nosso é o `.sbxenv.yaml`
   (workspace só na pasta do projeto, rede restrita, limites de CPU/memória e
   nenhum segredo dentro do container).
+- **A atualização é dividida por O QUE MUDA, não por "o app".** Recompilar
+  Rust, instalador, assinatura e distribuição para trocar uma frase de prompt é
+  caro — e quase tudo o que é "funcionalidade nova" no AI-BOT é **dado**. Então
+  são quatro trilhas: **dados** (especialistas, modelos, política) aplicam a
+  quente, em segundos; a **interface** (o bundle web) é trocada na próxima
+  abertura; o **cérebro** (`aibotd`) é sidecar e basta reiniciá-lo; a **casca**
+  (Tauri/Rust) continua sendo instalador. A tela avisa com um chip discreto que
+  diz o que muda e o que a pessoa precisa fazer — nada de modal: atualização não
+  interrompe trabalho.
+  A **cadeia de confiança** é o centro: instalador assinado → casca → `aibotd`
+  lançado do diretório de instalação → **manifesto Ed25519**, verificado no Go
+  com `crypto/ed25519` da biblioteca padrão, com a chave pública **embutida em
+  tempo de compilação**. Cada artefato tem SHA-256 conferido em streaming,
+  gravado em `.part` e só então renomeado; toda busca passa pelo `netguard`
+  (HTTPS, IP fixado no dial). **Nenhuma dependência nova em nenhuma das três
+  linguagens** — e a CSP, o portão de permissão e a casca Rust NUNCA são
+  atualizados por este caminho, porque quem pode trocar o portão por rede não
+  tem portão. O bundle da interface roda com acesso a `invoke()`: um bundle
+  adulterado é uma máquina comprometida, no mesmo grau que um instalador
+  adulterado, e por isso ele tem o mesmo rigor de assinatura — sem "é só o
+  front-end".
+  Nada disso é atualização sem volta: a interface baixada tem **20 segundos**
+  para reportar saúde (`ui_ready`) ou a pasta vai para `ui/quarantine-<hora>` e
+  o app reinicia no bundle embutido; o gateway novo que não responde `/health`
+  volta para a versão anterior, que fica no disco justamente para isso.
+  Publicar é `pnpm manifesto:gerar`, e o release se autotesta com
+  `pnpm manifesto:verificar`. Ver `docs/atualizacao.md`.
 
 ### :pushpin: Fixes
 
@@ -309,20 +405,24 @@ corepack pnpm --filter @aibot/desktop tauri build
 │   │   └── gateway         # Go: o cérebro (binário aibotd)
 │   │       ├── cmd
 │   │       └── internal    # protocol, specialist, supervisor, needle, store…
-│   └── docs                # arquitetura e créditos de inspiração
+│   ├── scripts             # release: manifesto assinado e par de chaves Ed25519
+│   └── docs                # arquitetura, atualização e créditos de inspiração
 └── main
 ```
 
 ## :rocket: Executáveis
 
-| Nome                | Descrição                                                                       |
-| ------------------- | ------------------------------------------------------------------------------- |
-| AI-BOT.exe          | Aplicativo desktop (Tauri); sobe o gateway como sidecar                          |
-| aibotd              | Gateway Go: `aibotd` sobe o servidor; `serve`, `token`, `specialists`, `version` |
-| aibotd -tags needle | Mesmo gateway com o roteador local ligado (exige a biblioteca nativa)            |
-| pnpm tauri dev      | Interface em desenvolvimento, com recarga                                        |
-| go test ./...       | Bateria do gateway (roteador, DAG, store, rede, permissão, protocolo, barramento)|
-| pnpm test           | Bateria da interface (redução de envelope do store)                              |
+| Nome                  | Descrição                                                                       |
+| --------------------- | ------------------------------------------------------------------------------- |
+| AI-BOT.exe            | Aplicativo desktop (Tauri); sobe o gateway como sidecar                          |
+| aibotd                | Gateway Go: `aibotd` sobe o servidor; `serve`, `token`, `specialists`, `version` |
+| aibotd -tags needle   | Mesmo gateway com o roteador local ligado (exige a biblioteca nativa)            |
+| pnpm tauri dev        | Interface em desenvolvimento, com recarga                                        |
+| gerar-manifesto.mjs   | Mede, assina (Ed25519) e confere o manifesto de atualização — `pnpm manifesto:gerar` e `pnpm manifesto:verificar` |
+| gerar-chaves.mjs      | Gera o par Ed25519: a pública para embutir no build, a privada para o cofre da TI |
+| go test ./...         | Bateria do gateway (roteador, DAG, store, rede, permissão, protocolo, barramento)|
+| pnpm test             | Bateria da interface (redução de envelope do store)                              |
+| pnpm manifesto:test   | Bateria do gerador de manifesto (assina, confere, corpo canônico estável)         |
 
 ## :computer: Acesso
 

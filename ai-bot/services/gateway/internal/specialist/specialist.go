@@ -167,7 +167,10 @@ var catalog = []Definition{
 			{ID: "pesquisar", Label: "Pesquisar", Insert: "/pesquisar ", Glyph: "search"},
 			{ID: "resumir", Label: "Resumir", Insert: "/resumir ", Glyph: "file"},
 		},
-		Tools:           []string{"web.search", "memory.read", "memory.write", "fs.read"},
+		// `pack.list` fica no especialista PADRÃO porque "o que a TI instalou
+		// aqui?" é pergunta de conversa, não de especialidade — e é para o chat
+		// que todo id desconhecido cai.
+		Tools:           []string{"web.search", "memory.read", "memory.write", "fs.read", "pack.list"},
 		Triggers:        []string{"pergunt", "explic", "resum", "pesquis", "duvid", "o que e", "por que", "compar", "traduz", "escrev"},
 		PreferredSkills: []string{"chat", "reasoning"},
 		Avatar: Avatar{
@@ -202,6 +205,10 @@ var catalog = []Definition{
 		Tools: []string{
 			"fs.read", "fs.write", "fs.list", "fs.search", "fs.patch",
 			"proc.run", "git.status", "git.diff", "git.commit", "diagnostics.run",
+			// A dupla de publicação (internal/ship): descobrir a stack e gerar
+			// o Dockerfile são leitura e função pura — cabem no especialista
+			// que edita o repositório, sem portão de execução.
+			"ship.detect", "ship.dockerfile",
 		},
 		Triggers:        []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript"},
 		PreferredSkills: []string{"code", "tools", "long-context"},
@@ -257,8 +264,13 @@ var catalog = []Definition{
 			{ID: "replicar", Label: "Replicar URL", Insert: "/replicar ", Glyph: "connect"},
 			{ID: "tokens", Label: "Tokens", Insert: "/tokens ", Glyph: "design"},
 		},
-		Tools:           []string{"fs.read", "fs.write", "web.fetch", "design.replicate", "image.generate"},
-		Triggers:        []string{"design", "interface", "layout", "tela", "componente", "css", "cor", "paleta", "tipografia", "figma", "mockup", "tema", "espacamento", "icone", "logo", "responsiv"},
+		// As cinco `video.*` moram aqui porque vídeo é entrega VISUAL — quem
+		// pede "corta a abertura e põe o título" está falando com o design,
+		// não com um décimo primeiro especialista que ninguém acharia.
+		Tools: []string{"fs.read", "fs.write", "web.fetch", "design.replicate", "image.generate",
+			"video.probe", "video.trim", "video.concat", "video.text", "video.export"},
+		Triggers: []string{"design", "interface", "layout", "tela", "componente", "css", "cor", "paleta", "tipografia", "figma", "mockup", "tema", "espacamento", "icone", "logo", "responsiv",
+			"video", "corte de video", "legenda no video", "gif", "mp4"},
 		PreferredSkills: []string{"chat", "vision"},
 		Avatar: Avatar{
 			Seed: 44, Shape: "bloom", Eyes: "ring", Mouth: "wave",
@@ -434,28 +446,25 @@ var catalog = []Definition{
 	},
 }
 
-// byID é o índice de acesso. Montado uma vez.
-var byID = func() map[string]Definition {
-	index := make(map[string]Definition, len(catalog)+1)
-	for _, definition := range catalog {
-		index[definition.ID] = definition
-	}
-	index[MasterID] = Master
-	return index
-}()
+// Daqui para baixo o acesso é SEMPRE pelo catálogo ativo (overlay.go), nunca
+// pela fatia `catalog` diretamente: desde a trilha A de docs/atualizacao.md o
+// catálogo compilado é só o ponto de partida, e um leitor que ignore a troca
+// responderia com o registro velho depois de uma publicação.
 
 // All devolve o catálogo na ordem de exibição. O master fica FORA: ele não é
 // uma opção que a pessoa escolhe, é o que roda antes da escolha existir.
 func All() []Definition {
-	out := make([]Definition, len(catalog))
-	copy(out, catalog)
+	list := active.Load().list
+	out := make([]Definition, len(list))
+	copy(out, list)
 	return out
 }
 
 // IDs devolve só os identificadores, na ordem de exibição.
 func IDs() []string {
-	out := make([]string, 0, len(catalog))
-	for _, definition := range catalog {
+	list := active.Load().list
+	out := make([]string, 0, len(list))
+	for _, definition := range list {
 		out = append(out, definition.ID)
 	}
 	return out
@@ -464,23 +473,28 @@ func IDs() []string {
 // Get busca por id. O segundo retorno distingue "não existe" de "veio zerado" —
 // um especialista zerado tem Surface vazia e a tela não saberia o que montar.
 func Get(id string) (Definition, bool) {
-	definition, ok := byID[id]
+	definition, ok := active.Load().byID[id]
 	return definition, ok
 }
 
 // GetOrDefault nunca falha: id desconhecido cai no especialista padrão. Usado no
 // caminho de renderização, onde derrubar a tela por causa de um id velho gravado
 // numa conversa antiga seria desproporcional.
+//
+// Uma leitura só do ponteiro, e não duas: entre um `active.Load()` para o id e
+// outro para o padrão poderia caber uma troca de catálogo, e a resposta sairia
+// de dois catálogos diferentes.
 func GetOrDefault(id string) Definition {
-	if definition, ok := byID[id]; ok {
+	index := active.Load().byID
+	if definition, ok := index[id]; ok {
 		return definition
 	}
-	return byID[DefaultID]
+	return index[DefaultID]
 }
 
 // Exists diz se o id é de um especialista real (master incluso).
 func Exists(id string) bool {
-	_, ok := byID[id]
+	_, ok := active.Load().byID[id]
 	return ok
 }
 

@@ -12,10 +12,56 @@
  * Tudo isso é responsabilidade daqui: sem os botões abaixo o aplicativo abre e
  * não fecha, e sem `data-tauri-drag-region` ele não sai do lugar da tela.
  */
-import { Bot, Minus, Moon, Settings, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowUpCircle, Bot, Minus, Moon, Settings, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
+import type { UpdateTrack } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { TopbarSlot } from "./TopbarActions";
+
+/* ----------------------------- a atualização ----------------------------- */
+
+/**
+ * O que cada trilha custa a quem está usando o app.
+ *
+ * A divisão vem de `docs/atualizacao.md` e o texto é escrito do ponto de vista
+ * da PESSOA, não do sistema: ela não precisa saber que existe um sidecar, mas
+ * precisa saber se tem algo a fazer. É por isso que "dados" e "cérebro" dizem
+ * explicitamente "nada a fazer" em vez de simplesmente não aparecerem — chegar
+ * a versão nova e não haver instrução nenhuma é o que faz a pessoa procurar um
+ * botão que não existe.
+ */
+const UPDATE_TRACK_LABEL: Record<UpdateTrack, string> = {
+  data: "dados (especialistas, modelos, política): nada a fazer, já está valendo",
+  gateway: "cérebro: nada a fazer, ele reinicia sozinho",
+  ui: "interface: reabra o aplicativo",
+  shell: "aplicativo: instale a versão nova"
+};
+
+/** Do que custa MENOS ao que custa MAIS — a leitura termina no que pede ação. */
+const UPDATE_TRACK_ORDER: UpdateTrack[] = ["data", "gateway", "ui", "shell"];
+
+/**
+ * O verbo do chip: a ÚNICA coisa que a pessoa precisa fazer.
+ *
+ * Quando há mais de uma trilha pendente, vence a mais cara — quem precisa
+ * instalar não precisa ser lembrado de reabrir, porque instalar já reabre.
+ */
+export function updateAction(tracks: UpdateTrack[]): string {
+  if (tracks.includes("shell")) return "instalar";
+  if (tracks.includes("ui")) return "reabrir";
+  return "pronta";
+}
+
+/** O texto do `title`: o que muda, e o que fazer com cada parte. */
+export function describeUpdate(version: string, tracks: UpdateTrack[]): string {
+  const cabeca = version.trim() === "" ? "Atualização pronta." : `Atualização ${version} pronta.`;
+  // Trilha desconhecida (gateway mais novo do que esta tela) é IGNORADA em vez
+  // de virar "undefined" no aviso: o chip continua correto sobre o que ele
+  // conhece, e o resto chega quando a interface for atualizada.
+  const conhecidas = UPDATE_TRACK_ORDER.filter((track) => tracks.includes(track));
+  if (conhecidas.length === 0) return `${cabeca} Nada a fazer agora.`;
+  return `${cabeca} ${conhecidas.map((track) => UPDATE_TRACK_LABEL[track]).join(" · ")}.`;
+}
 
 /**
  * Os três controles da janela, na ordem que o Windows usa.
@@ -77,6 +123,9 @@ export function Topbar() {
   const session = useApp((state) => state.session);
   const theme = useApp((state) => state.theme);
   const status = useApp((state) => state.status);
+  const updateAvailable = useApp((state) => state.updateAvailable);
+  const updateVersion = useApp((state) => state.updateVersion);
+  const updateTracks = useApp((state) => state.updateTracks);
   const setModel = useApp((state) => state.setModel);
   const setTheme = useApp((state) => state.setTheme);
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
@@ -109,6 +158,33 @@ export function Topbar() {
           <span className="topbar-status" data-status={status} role="status">
             {status === "connecting" ? <Wifi size={13} aria-hidden /> : <WifiOff size={13} aria-hidden />}
             <span>{status === "connecting" ? "conectando…" : "offline"}</span>
+          </span>
+        ) : null}
+
+        {/*
+          O AVISO DE ATUALIZAÇÃO — e por que ele é um chip e não um modal.
+
+          A atualização já foi baixada e verificada; ela não está esperando
+          decisão nenhuma, está esperando a próxima abertura. Interromper o
+          trabalho de quem está no meio de uma conversa para dizer isso troca um
+          aviso por uma interrupção, e a pessoa aprende a fechar o aviso sem ler
+          — que é como um aviso deixa de existir mesmo estando na tela.
+
+          Não é botão de propósito: não há nada para clicar. Reabrir o
+          aplicativo é decisão de quem está trabalhando, e o `title` diz
+          exatamente o que muda e o que fazer com cada parte.
+        */}
+        {updateAvailable ? (
+          <span
+            className="update-chip"
+            data-action={updateAction(updateTracks)}
+            role="status"
+            title={describeUpdate(updateVersion, updateTracks)}
+          >
+            <ArrowUpCircle size={13} aria-hidden />
+            <span>
+              {updateVersion === "" ? "atualização" : updateVersion} · {updateAction(updateTracks)}
+            </span>
           </span>
         ) : null}
       </div>

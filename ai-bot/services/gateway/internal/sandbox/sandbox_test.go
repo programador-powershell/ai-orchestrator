@@ -158,21 +158,21 @@ func TestWSLAvailableComDistribuicao(t *testing.T) {
 	}
 }
 
-func TestVPSeNuvemAparecemComMotivo(t *testing.T) {
+func TestNuvemApareceComMotivo(t *testing.T) {
 	// Honestidade: a opção continua na lista, cinza, com o porquê. O produto
 	// anterior prometia os quatro ambientes no rodapé — sumir com a opção faria
-	// a pessoa procurar por uma função que ela leu que existe.
-	for _, runner := range []Runner{NewVPSRunner(), NewCloudRunner()} {
-		available, detail := runner.Available(context.Background())
-		if available {
-			t.Fatalf("%s ainda não tem executor", runner.ID())
-		}
-		if detail != notImplemented {
-			t.Fatalf("%s: motivo inesperado %q", runner.ID(), detail)
-		}
-		if _, err := runner.Run(context.Background(), "", "echo oi"); err == nil {
-			t.Fatalf("%s: Run tinha de recusar", runner.ID())
-		}
+	// a pessoa procurar por uma função que ela leu que existe. (O VPS saiu
+	// desta lista: ele tem executor de verdade, testado em vps_test.go.)
+	runner := NewCloudRunner()
+	available, detail := runner.Available(context.Background())
+	if available {
+		t.Fatalf("%s ainda não tem executor", runner.ID())
+	}
+	if detail != notImplemented {
+		t.Fatalf("%s: motivo inesperado %q", runner.ID(), detail)
+	}
+	if _, err := runner.Run(context.Background(), "", "echo oi"); err == nil {
+		t.Fatalf("%s: Run tinha de recusar", runner.ID())
 	}
 }
 
@@ -321,41 +321,42 @@ func novoRegistro() *Registry {
 		NewLocalRunner(),
 		NewDockerRunner(DockerOptions{}),
 		NewWSLRunner(),
-		NewVPSRunner(),
+		NewVPSRunner(VPSConfig{}),
 		NewCloudRunner(),
 	)
 }
 
 func TestRegistryTrocaEDevolveOAtivo(t *testing.T) {
 	registry := novoRegistro()
+	ctx := context.Background()
 
-	// Sessão que nunca escolheu roda no local — o padrão seguro.
-	if got := registry.Active("s1"); got != protocol.EnvLocal {
+	// Sessão que nunca escolheu roda no padrão — sem VPS configurada, local.
+	if got := registry.Active(ctx, "s1"); got != protocol.EnvLocal {
 		t.Fatalf("padrão tinha de ser local, veio %q", got)
 	}
 
 	if err := registry.Set("s1", protocol.EnvDocker); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if got := registry.Active("s1"); got != protocol.EnvDocker {
+	if got := registry.Active(ctx, "s1"); got != protocol.EnvDocker {
 		t.Fatalf("esperava docker, veio %q", got)
 	}
 
 	// O ambiente é POR SESSÃO: trocar numa conversa não pode mudar a outra —
 	// duas janelas trabalhando em projetos diferentes é o caso normal.
-	if got := registry.Active("s2"); got != protocol.EnvLocal {
+	if got := registry.Active(ctx, "s2"); got != protocol.EnvLocal {
 		t.Fatalf("a outra sessão foi contaminada: %q", got)
 	}
 
 	if err := registry.Set("s1", protocol.EnvWSL); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if got := registry.Active("s1"); got != protocol.EnvWSL {
+	if got := registry.Active(ctx, "s1"); got != protocol.EnvWSL {
 		t.Fatalf("esperava wsl, veio %q", got)
 	}
 
 	registry.Forget("s1")
-	if got := registry.Active("s1"); got != protocol.EnvLocal {
+	if got := registry.Active(ctx, "s1"); got != protocol.EnvLocal {
 		t.Fatalf("depois de esquecer a sessão volta ao padrão, veio %q", got)
 	}
 }
@@ -370,7 +371,7 @@ func TestRegistryRecusaAmbienteDesconhecido(t *testing.T) {
 		t.Fatalf("esperava ErrNoRunner, veio %v", err)
 	}
 	// A recusa não pode deixar a sessão num ambiente que ninguém escolheu.
-	if got := registry.Active("s1"); got != protocol.EnvDocker {
+	if got := registry.Active(context.Background(), "s1"); got != protocol.EnvDocker {
 		t.Fatalf("o ambiente anterior tinha de continuar, veio %q", got)
 	}
 	if err := registry.Set("", protocol.EnvDocker); err == nil {
@@ -379,7 +380,7 @@ func TestRegistryRecusaAmbienteDesconhecido(t *testing.T) {
 }
 
 func TestRegistryDescribeTrazMotivoDeQuemNaoPode(t *testing.T) {
-	registry := NewRegistry(NewLocalRunner(), NewVPSRunner(), NewCloudRunner())
+	registry := NewRegistry(NewLocalRunner(), NewVPSRunner(VPSConfig{}), NewCloudRunner())
 	described := registry.Describe(context.Background())
 
 	if len(described) != 3 {

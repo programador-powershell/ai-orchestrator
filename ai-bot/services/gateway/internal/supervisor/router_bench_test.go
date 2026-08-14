@@ -116,9 +116,10 @@ func TestRouteStickyDoesNotAllocate(t *testing.T) {
 // ele discordasse de Normalize, o roteamento passaria a casar radicais
 // diferentes dos do catálogo e a decisão mudaria sem nenhum teste reclamar.
 func TestNormalizedTriggerCacheAgreesWithNormalize(t *testing.T) {
+	cache := activeCatalog()
 	for _, definition := range specialist.All() {
 		for _, trigger := range definition.Triggers {
-			if got, want := normalizedTrigger(trigger), Normalize(trigger); got != want {
+			if got, want := cache.trigger(trigger), Normalize(trigger); got != want {
 				t.Errorf("o radical %q de %q: o cache devolveu %q e Normalize devolve %q",
 					trigger, definition.ID, got, want)
 			}
@@ -127,7 +128,7 @@ func TestNormalizedTriggerCacheAgreesWithNormalize(t *testing.T) {
 
 	// E o caminho de fora do catálogo tem de continuar valendo: Score é
 	// exportada e recebe especialistas montados à mão.
-	if got, want := normalizedTrigger("Radical NÃO catalogado"), Normalize("Radical NÃO catalogado"); got != want {
+	if got, want := cache.trigger("Radical NÃO catalogado"), Normalize("Radical NÃO catalogado"); got != want {
 		t.Errorf("radical fora do catálogo: o cache devolveu %q, esperava %q", got, want)
 	}
 }

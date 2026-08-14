@@ -35,6 +35,15 @@ catalog.json
 memory.json
 worktrees/
 
+# Chave de assinatura da atualização.
+#
+# A PRIVADA (`scripts/gerar-chaves.mjs`) mora no cofre da TI e nunca aqui: quem
+# a tem publica atualização para todas as estações. Estas linhas existem para o
+# caso comum de alguém redirecionar a saída do gerador para um arquivo enquanto
+# testa — o commit acidental não pode ser a última defesa, mas é a mais barata.
+*.pem
+*.key
+
 # Sistema operacional e editor
 .DS_Store
 Thumbs.db

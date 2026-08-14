@@ -90,6 +90,7 @@ func TestKindValidRejectsUnknownVerbs(t *testing.T) {
 		KindEscalate, KindAsk, KindReply, KindGate,
 		KindDelegate,
 		KindState,
+		KindNotice,
 	}
 	for _, kind := range known {
 		if !kind.Valid() {

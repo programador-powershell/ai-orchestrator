@@ -96,6 +96,49 @@ func (b *Bus) PublishEphemeral(sessionID string, envelope protocol.Envelope) {
 	b.fanout(sessionID, envelope)
 }
 
+// Broadcast entrega um envelope a TODAS as sessões com alguém olhando, sem
+// gravar em nenhuma.
+//
+// Existe para o aviso que não pertence a conversa nenhuma: "há uma versão nova
+// pronta" é do APLICATIVO, não do assunto que a pessoa está tratando. Publicar
+// numa sessão escolhida a esmo faria o aviso aparecer só para quem estivesse
+// naquela conversa — e sumir ao trocar de conversa.
+//
+// `build` monta o envelope de CADA sessão, e recebe o id porque parte do estado
+// é por sessão. O caso concreto é o `busy`: o cliente aplica `state.busy` como
+// veio, então um envelope com `busy:false` mandado para uma sessão que está no
+// meio de um turno apagaria o indicador e liberaria o campo de texto com o
+// modelo ainda respondendo. Quem monta o envelope é quem sabe disso.
+//
+// Devolver `false` pula a sessão — é a saída para o envelope que não pôde ser
+// montado (falha ao serializar o payload, por exemplo).
+//
+// Efêmero pelo mesmo motivo do `state` de ambiente: o replay de um aviso de
+// ontem reencenaria uma atualização que já foi aplicada.
+func (b *Bus) Broadcast(build func(sessionID string) (protocol.Envelope, bool)) {
+	if build == nil {
+		return
+	}
+	b.mu.RLock()
+	sessions := make([]string, 0, len(b.topics))
+	for sessionID := range b.topics {
+		sessions = append(sessions, sessionID)
+	}
+	b.mu.RUnlock()
+
+	// A lista de sessões é tirada sob a trava e o fanout acontece FORA dela:
+	// fanout pega a trava de escrita quando encontra assinante lento, e
+	// chamá-lo com a de leitura na mão travaria o processo inteiro.
+	for _, sessionID := range sessions {
+		envelope, ok := build(sessionID)
+		if !ok {
+			continue
+		}
+		envelope.Session = sessionID
+		b.fanout(sessionID, envelope)
+	}
+}
+
 func (b *Bus) fanout(sessionID string, envelope protocol.Envelope) {
 	b.mu.RLock()
 	topic := b.topics[sessionID]

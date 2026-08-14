@@ -1,9 +1,11 @@
 //! As janelas do AI-BOT.
 //!
-//! A janela `main` é declarada no tauri.conf.json e sobe com o processo. A
-//! `avatars` — o laboratório onde a pessoa personaliza os bots, aberta pelo
-//! ícone do AI-BOT na barra lateral — também é declarada lá, porém com
-//! `visible: false`: ela nasce junto, escondida, e o clique só a mostra.
+//! A janela `main` é declarada no tauri.conf.json e sobe com o processo — hoje
+//! pela mão do `create_windows` no `setup` (ver lib.rs: as duas levam
+//! `"create": false` para não nascerem antes de o app decidir QUAL interface
+//! carregar). A `avatars` — o laboratório onde a pessoa personaliza os bots,
+//! aberta pelo ícone do AI-BOT na barra lateral — também é declarada lá, porém
+//! com `visible: false`: ela nasce junto, escondida, e o clique só a mostra.
 //!
 //! Por que criar escondida em vez de criar sob demanda: o laboratório carrega o
 //! mesmo bundle React da tela principal. Construir a janela no clique custa o
