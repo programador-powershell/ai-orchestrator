@@ -219,7 +219,7 @@ impl AuthService {
             DecodingKey::from_rsa_components(n, e).map_err(|_| ApiError::Unauthorized)?;
         let mut validation = Validation::new(header.alg);
         validation.set_issuer(&[self.config.oidc_issuer.as_str()]);
-        validation.set_audience(&[self.config.oidc_audience.as_str()]);
+        validation.set_audience(&self.config.oidc_audience);
         let claims = decode::<OidcClaims>(token, &decoding, &validation)
             .map_err(|_| ApiError::Unauthorized)?
             .claims;

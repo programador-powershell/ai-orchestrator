@@ -177,3 +177,15 @@
 .ship__vrow { display: flex; align-items: center; gap: 6px; margin: 0; }
 .ship__vnow { color: var(--text-1); font-weight: 600; }
 .ship__vnext { color: var(--accent); font-weight: 600; }
+
+/*
+ * Botão que revela o Dockerfile gerado.
+ *
+ * Fica na largura do bloco, abaixo dos chips de framework, e não ao lado
+ * deles: `Executar` é ação de pipeline e mora no cabeçalho do run — misturar
+ * as duas alturas faria a pessoa clicar em "ver" achando que ia "rodar".
+ */
+.ship__dockerfile-toggle {
+  width: 100%;
+  margin-top: 6px;
+}

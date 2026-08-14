@@ -42,7 +42,18 @@ interface FoldedText {
   map: number[];
 }
 
-/** Dobra o texto (minúsculas + sem diacríticos) mantendo o mapa de índices. */
+/**
+ * Dobra o texto (minúsculas + sem diacríticos) mantendo o mapa de índices.
+ *
+ * Percorre caractere a caractere porque o MAPA exige isso: para destacar o
+ * trecho encontrado é preciso saber de qual posição do texto original veio
+ * cada posição do texto dobrado, e uma normalização em bloco perde essa
+ * correspondência (um caractere acentuado vira dois e volta a virar um).
+ *
+ * É caro — uma chamada a `normalize` por caractere. Só use quando o mapa for
+ * necessário de verdade; para comparar texto, `normalizeSearchText` faz o
+ * mesmo em bloco e é ~20x mais rápido.
+ */
 function foldText(source: string): FoldedText {
   let text = "";
   const map: number[] = [];
@@ -58,9 +69,18 @@ function foldText(source: string): FoldedText {
   return { text, map };
 }
 
-/** Normalização usada na busca: minúsculas, sem acentos. */
+/**
+ * Normalização usada na busca: minúsculas, sem acentos.
+ *
+ * Dobra a string INTEIRA de uma vez. Antes isto chamava `foldText` e jogava o
+ * mapa fora — pagava a normalização caractere a caractere para descartar
+ * justamente a parte que a torna cara. A busca refaz esta conta para cada
+ * mensagem de cada conversa a CADA tecla digitada: medido, eram 244 ms por
+ * tecla com 50 conversas de 30 mensagens, e 958 ms com 120 conversas.
+ * Digitar "deploy" travava a interface por segundos.
+ */
 export function normalizeSearchText(text: string): string {
-  return foldText(text).text;
+  return text.normalize("NFD").replace(COMBINING_MARKS, "").toLowerCase();
 }
 
 /**

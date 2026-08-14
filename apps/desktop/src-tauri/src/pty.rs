@@ -47,11 +47,11 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::ssh::{build_interactive_args, validate_target, SshTarget};
 
@@ -63,6 +63,22 @@ const MAX_SESSIONS: usize = 8;
 const MAX_WRITE: usize = 64 * 1024;
 /// Bloco de leitura do PTY.
 const READ_BUF: usize = 8192;
+
+/*
+ * Janela de blocos NÃO confirmados pela tela — o freio do produtor.
+ *
+ * Sem freio, a thread de leitura emite na velocidade do PTY e o front só
+ * empilha: o buffer de escrita do xterm.js DESCARTA acima de 5×10⁷ bytes
+ * pendentes, então um `cat` de arquivo grande não fica lento — ele perde
+ * pedaço no meio, calado. Um terminal de verdade faz o contrário: quem lê
+ * devagar segura quem escreve (é o que faz `comando | head` terminar).
+ *
+ * A contagem é em BLOCOS, não em bytes, para não depender de os dois lados
+ * medirem a mesma coisa (o Rust conta UTF-8, o JavaScript conta UTF-16).
+ * Cada bloco tem no máximo READ_BUF, então 256 blocos ≈ 2 MiB de folga —
+ * larga o bastante para que o uso normal nunca encoste no freio.
+ */
+const JANELA_BLOCOS: usize = 256;
 /// Guarda do buffer de remontagem UTF-8. Sequência válida tem no máximo 4
 /// bytes; acima disso é lixo, e segurar lixo indefinidamente esconderia saída.
 const MAX_CARRY: usize = 8;
@@ -234,6 +250,9 @@ struct Session {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     cwd: String,
     target: String,
+    /// Blocos emitidos e ainda não confirmados pela tela, com a variável de
+    /// condição em que a thread de leitura espera quando a janela fecha.
+    pendentes: Arc<(Mutex<usize>, Condvar)>,
     cols: u16,
     rows: u16,
     alive: Arc<AtomicBool>,
@@ -307,7 +326,22 @@ pub async fn pty_spawn(
     let rows = rows.unwrap_or(24).clamp(5, 200);
 
     {
-        let sessions = lock_sessions(&state)?;
+        let mut sessions = lock_sessions(&state)?;
+        /*
+         * Descarta as MORTAS antes de contar.
+         *
+         * O limite conta entradas do mapa, e quem morre sozinho (`exit`,
+         * Ctrl+D, ssh caindo) não saía dele: só `pty_kill`/`pty_kill_all`
+         * removiam. O resultado era um limite que se fechava com ZERO shells
+         * vivos — abrir e encerrar oito vezes bastava para o painel devolver
+         * SESSION_LIMIT até o app reiniciar, sem nada na tela para desfazer.
+         *
+         * A varredura aqui é a garantia, não o caminho comum: a thread de
+         * espera também se remove ao terminar. Ela existe porque a thread é
+         * disparada ANTES da inserção no mapa — filho que morre no mesmo
+         * instante seria removido antes de entrar, e a entrada ficaria.
+         */
+        sessions.retain(|_, session| session.alive.load(Ordering::SeqCst));
         if sessions.len() >= MAX_SESSIONS {
             return Err(err(
                 "SESSION_LIMIT",
@@ -385,11 +419,14 @@ pub async fn pty_spawn(
     let id = uuid::Uuid::new_v4().to_string();
     let alive = Arc::new(AtomicBool::new(true));
     let killed = Arc::new(AtomicBool::new(false));
+    let pendentes = Arc::new((Mutex::new(0usize), Condvar::new()));
 
     // ---- thread de LEITURA: só dados. Não emite exit (ver item 3). ----
     {
         let app = app.clone();
         let id = id.clone();
+        let pendentes = Arc::clone(&pendentes);
+        let alive_leitura = Arc::clone(&alive);
         thread::spawn(move || {
             let mut buf = [0u8; READ_BUF];
             let mut carry: Vec<u8> = Vec::new();
@@ -402,6 +439,35 @@ pub async fn pty_spawn(
                             // Só metade de um caractere chegou: espera o resto
                             // em vez de emitir evento vazio.
                             continue;
+                        }
+                        /*
+                         * Espera a janela abrir ANTES de emitir. Enquanto
+                         * espera, ninguém lê o PTY — e é assim que o freio
+                         * chega ao processo filho, que bloqueia na escrita.
+                         *
+                         * A espera é com prazo e reconfere `alive`: sessão
+                         * encerrada (ou webview fechada sem confirmar) não
+                         * pode deixar esta thread parada para sempre.
+                         */
+                        {
+                            let (trava, condicao) = &*pendentes;
+                            let mut atual = match trava.lock() {
+                                Ok(guarda) => guarda,
+                                Err(_) => break,
+                            };
+                            while *atual >= JANELA_BLOCOS {
+                                if !alive_leitura.load(Ordering::SeqCst) {
+                                    break;
+                                }
+                                let (guarda, _) = match condicao
+                                    .wait_timeout(atual, std::time::Duration::from_millis(250))
+                                {
+                                    Ok(resultado) => resultado,
+                                    Err(_) => return,
+                                };
+                                atual = guarda;
+                            }
+                            *atual += 1;
                         }
                         if app
                             .emit("pty-data", PtyDataEvent { id: id.clone(), data })
@@ -458,6 +524,21 @@ pub async fn pty_spawn(
                     reason: reason.into(),
                 },
             );
+            /*
+             * E sai do mapa. Sem isto a entrada morta segue segurando o
+             * master do ConPTY, o writer e o killer até o app fechar — e
+             * ainda ocupa um dos oito slots.
+             *
+             * O estado vem pelo `AppHandle` porque `State` é emprestado do
+             * comando e não atravessa a thread. Se a inserção ainda não
+             * aconteceu (filho que morre instantaneamente), o `remove` não
+             * acha nada e quem limpa é o `retain` do próximo `pty_spawn`.
+             */
+            if let Some(estado) = app.try_state::<PtyState>() {
+                if let Ok(mut sessions) = estado.sessions.lock() {
+                    sessions.remove(&id);
+                }
+            }
         });
     }
 
@@ -471,6 +552,7 @@ pub async fn pty_spawn(
                 killer: Mutex::new(killer),
                 cwd: cwd_str,
                 target: rotulo,
+                pendentes: Arc::clone(&pendentes),
                 cols,
                 rows,
                 alive: Arc::clone(&alive),
@@ -547,6 +629,29 @@ pub fn pty_resize(
     Ok(())
 }
 
+/// Confirma que a tela consumiu blocos — abre a janela do freio.
+///
+/// O front chama uma vez por bloco escrito, no callback do `term.write`, que
+/// é o momento em que o xterm.js REALMENTE processou aquele pedaço (e não o
+/// momento em que ele foi enfileirado). Sem esta confirmação a janela fecharia
+/// e a leitura pararia; com ela, quem dita o ritmo é a tela.
+///
+/// Sessão inexistente devolve Ok: o front pode confirmar um bloco que chegou
+/// pouco antes do encerramento, e isso não é erro.
+#[tauri::command]
+pub fn pty_ack(state: State<'_, PtyState>, id: String, blocos: Option<usize>) -> Result<(), String> {
+    let sessions = lock_sessions(&state)?;
+    let Some(session) = sessions.get(&id) else {
+        return Ok(());
+    };
+    let (trava, condicao) = &*session.pendentes;
+    if let Ok(mut atual) = trava.lock() {
+        *atual = atual.saturating_sub(blocos.unwrap_or(1));
+        condicao.notify_all();
+    }
+    Ok(())
+}
+
 /// Encerra a sessão. Idempotente.
 ///
 /// Não emite `pty-exit` aqui: quem emite é a thread de espera, com o código
@@ -558,6 +663,9 @@ pub fn pty_kill(state: State<'_, PtyState>, id: String) -> Result<(), String> {
         return Ok(());
     };
     session.killed.store(true, Ordering::SeqCst);
+    // Acorda a leitura se ela estiver segurando o freio: sem isto ela só
+    // perceberia o fim quando o prazo da espera vencesse.
+    session.pendentes.1.notify_all();
     if let Ok(mut killer) = session.killer.lock() {
         // Processo pode já ter morrido — não é falha da operação.
         let _ = killer.kill();
@@ -572,6 +680,7 @@ pub fn pty_kill_all(state: State<'_, PtyState>) -> Result<usize, String> {
     let total = sessions.len();
     for (_, session) in sessions.drain() {
         session.killed.store(true, Ordering::SeqCst);
+        session.pendentes.1.notify_all();
         if let Ok(mut killer) = session.killer.lock() {
             let _ = killer.kill();
         }

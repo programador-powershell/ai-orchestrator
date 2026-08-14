@@ -163,6 +163,47 @@ describe("searchConversations", () => {
   it("tolera abas ausentes no mapa", () => {
     expect(searchConversations({}, "x")).toEqual([]);
   });
+
+  it("conta ocorrências espalhadas por mensagens diferentes", () => {
+    /*
+     * O corpo passou a ser contado como UMA string por conversa (memorizada
+     * pela identidade do array). Este é o contrato: unir as mensagens não
+     * pode perder nem inventar ocorrência.
+     */
+    const results = searchConversations(
+      { chat: [conv("c1", "T", ["alfa no começo", "meio sem nada", "alfa e alfa no fim"], 1)] },
+      "alfa"
+    );
+    expect(results[0].matchCount).toBe(3);
+  });
+
+  it("não casa termo que só existiria colando o fim de uma mensagem no início da seguinte", () => {
+    const results = searchConversations(
+      { chat: [conv("c1", "T", ["termina em depl", "oy começa aqui"], 1)] },
+      "deploy"
+    );
+    expect(results).toEqual([]);
+  });
+
+  it("reflete mensagem nova na mesma conversa (a memória é por array, não por id)", () => {
+    const antes = conv("c1", "T", ["alfa"], 1);
+    expect(searchConversations({ chat: [antes] }, "alfa")[0].matchCount).toBe(1);
+    // O store troca o array ao acrescentar — a memória tem de morrer junto.
+    const depois = { ...antes, messages: [...antes.messages, { role: "user" as const, content: "alfa de novo" }] };
+    expect(searchConversations({ chat: [depois] }, "alfa")[0].matchCount).toBe(2);
+  });
+
+  it("`limite` corta os resultados já ordenados por relevância", () => {
+    const results = searchConversations(all, "deploy", undefined, 1);
+    expect(results).toHaveLength(1);
+    expect(results[0].conversationId).toBe("c1");
+    expect(results[0].snippet).not.toBe("");
+  });
+
+  it("`limite` zero devolve vazio e `limite` maior que o total não sobra", () => {
+    expect(searchConversations(all, "deploy", undefined, 0)).toEqual([]);
+    expect(searchConversations(all, "deploy", undefined, 99)).toHaveLength(2);
+  });
 });
 
 describe("groupByProject", () => {

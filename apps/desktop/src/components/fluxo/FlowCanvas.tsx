@@ -26,7 +26,7 @@
  * conforme o quadro em que a medição chegou.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -52,6 +52,9 @@ import type { FlowDefinition } from "../../lib/fluxo/types";
 const LARGURA_NO = 214;
 const ALTURA_NO = 64;
 
+/** Lado do quadrado da alça — o React Flow soma `width`/`height` ao ler `x`/`y`. */
+const LADO_ALCA = 9;
+
 /**
  * As alças de cada tipo de nó, DECLARADAS.
  *
@@ -67,13 +70,29 @@ const ALTURA_NO = 64;
  */
 function alcasDe(tipo: string, id: string) {
   const meio = ALTURA_NO / 2;
+  /*
+   * `x`/`y` são o CANTO SUPERIOR-ESQUERDO do retângulo da alça, não o centro:
+   * o React Flow calcula o ponto da aresta como `x + width / 2`. Declarando o
+   * centro, toda ponta de linha saía 4,5px para baixo e para a direita do
+   * lugar — e nos dois ramos da condição o desvio ficava visível, porque as
+   * alças estão a 38% e 76% da altura e a linha nascia fora do ponto colorido.
+   */
   const alca = (
     type: "source" | "target",
     position: Position,
-    x: number,
-    y: number,
+    centroX: number,
+    centroY: number,
     idAlca?: string
-  ) => ({ id: idAlca ?? null, nodeId: id, type, position, x, y, width: 9, height: 9 });
+  ) => ({
+    id: idAlca ?? null,
+    nodeId: id,
+    type,
+    position,
+    x: centroX - LADO_ALCA / 2,
+    y: centroY - LADO_ALCA / 2,
+    width: LADO_ALCA,
+    height: LADO_ALCA
+  });
 
   if (tipo === "trigger") return [alca("source", Position.Right, LARGURA_NO, meio)];
   if (tipo === "end") return [alca("target", Position.Left, 0, meio)];
@@ -105,7 +124,15 @@ function Canvas({ definition, destaque }: { definition: FlowDefinition; destaque
   const [nodes, setNodes, aplicarMudancasDeNo] = useNodesState<Node>([]);
   const [edges, setEdges] = useEdgesState<Edge>([]);
 
-  /** Store → canvas (o porquê do tamanho e das alças está no topo do arquivo). */
+  /**
+   * Store → canvas (o porquê do tamanho e das alças está no topo do arquivo).
+   *
+   * A SELEÇÃO não vem daqui. Forçá-la a cada sincronia desfazia a seleção
+   * múltipla (Ctrl+clique ou laço) no quadro seguinte — e o assistente
+   * sincroniza a cada operação que chega, então bastava o modelo escrever uma
+   * linha para a marcação da pessoa sumir. O que o efeito faz com o estado
+   * anterior é PRESERVÁ-LO.
+   */
   useEffect(() => {
     setNodes((atuais) => {
       const porId = new Map(atuais.map((node) => [node.id, node]));
@@ -116,7 +143,7 @@ function Canvas({ definition, destaque }: { definition: FlowDefinition; destaque
           id: node.id,
           type: node.type,
           position: node.position,
-          selected: node.id === selectedNode,
+          selected: anterior?.selected ?? false,
           width: LARGURA_NO,
           height: ALTURA_NO,
           measured: { width: LARGURA_NO, height: ALTURA_NO },
@@ -127,7 +154,23 @@ function Canvas({ definition, destaque }: { definition: FlowDefinition; destaque
         } as Node;
       });
     });
-  }, [definition.nodes, selectedNode, destaque, setNodes]);
+  }, [definition.nodes, destaque, setNodes]);
+
+  /**
+   * Seleção pedida pelo STORE — e só quando ela muda.
+   *
+   * Existe porque adicionar um nó pela barra superior chama `select(id)`: sem
+   * este efeito, o nó nasceria sem marcação e o painel de detalhes abriria
+   * para um cartão que a tela não destaca. Separado do sync acima de
+   * propósito: lá a seleção é do canvas e precisa sobreviver às operações do
+   * assistente; aqui é uma ordem explícita, e ela chega uma vez.
+   */
+  const selecaoAnterior = useRef(selectedNode);
+  useEffect(() => {
+    if (selecaoAnterior.current === selectedNode) return;
+    selecaoAnterior.current = selectedNode;
+    setNodes((atuais) => atuais.map((node) => ({ ...node, selected: node.id === selectedNode })));
+  }, [selectedNode, setNodes]);
 
   useEffect(() => {
     setEdges(

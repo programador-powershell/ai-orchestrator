@@ -61,6 +61,44 @@ describe("normalizeSearchText", () => {
   it("remove acentos e baixa a caixa", () => {
     expect(normalizeSearchText("Ação Coração ÀÉÎÕÜ")).toBe("acao coracao aeiou");
   });
+
+  it("dobra igual caractere a caractere e em bloco", () => {
+    /*
+     * A função passou a normalizar a string INTEIRA de uma vez, em vez de
+     * caractere a caractere. Este teste é o contrato dessa troca: o resultado
+     * não pode mudar. Cobre o que costuma divergir entre as duas formas —
+     * acento já decomposto na entrada, ligadura, caractere fora do plano
+     * básico (emoji, que ocupa dois code units) e til combinante solto.
+     */
+    const casos: Array<[string, string]> = [
+      ["ação", "acao"],
+      ["ação", "acao"], // já decomposto na entrada
+      ["MAÇÃ", "maca"],
+      ["Straße", "straße"], // ß não vira ss sem locale — e não deve virar
+      ["ÅNGSTRÖM", "angstrom"],
+      ["café ☕ quente", "cafe ☕ quente"],
+      ["🚀 deploy", "🚀 deploy"], // par substituto sobrevive inteiro
+      ["", ""]
+    ];
+    for (const [entrada, esperado] of casos) {
+      expect(normalizeSearchText(entrada), JSON.stringify(entrada)).toBe(esperado);
+    }
+  });
+
+  it("é barata o bastante para rodar a cada tecla", () => {
+    /*
+     * Não é teste de relógio de parede com número mágico: é uma trava de
+     * ORDEM DE GRANDEZA. A versão anterior chamava `normalize` uma vez por
+     * caractere e levava ~250 ms para este volume — o suficiente para travar
+     * a digitação. Se alguém reintroduzir o laço por caractere, isto acusa.
+     */
+    const texto = "Como configuro o pipeline de deploy com variáveis de ambiente? ".repeat(400);
+    const inicio = performance.now();
+    for (let i = 0; i < 40; i += 1) normalizeSearchText(texto);
+    const decorrido = performance.now() - inicio;
+    // ~1 MB de texto dobrado 40 vezes. Em bloco isso fica em dezenas de ms.
+    expect(decorrido).toBeLessThan(1500);
+  });
 });
 
 describe("filterConversations", () => {

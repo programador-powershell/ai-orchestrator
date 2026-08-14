@@ -26,6 +26,7 @@ import type { EngineSelection, UiMode } from "@multiplike/contracts";
 
 import { describeSelection } from "../lib/engine";
 import { useApp } from "../lib/store";
+import { avaliarSelecao } from "../lib/enginePolicy";
 
 interface Opcao {
   chave: string;
@@ -42,6 +43,7 @@ export function ModelSelect({ mode }: { mode: string }) {
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const profile = useApp((state) => state.profile);
   const policy = useApp((state) => state.policy);
+  const policyVerified = useApp((state) => state.policyVerified);
   const session = useApp((state) => state.session);
   // Trocar de motor no meio de um turno mandaria a continuação para outro
   // modelo — a resposta sairia costurada por dois.
@@ -93,6 +95,13 @@ export function ModelSelect({ mode }: { mode: string }) {
    * da aba Code. Modelo avulso vem por último: escolher um fixa a conta num
    * provedor só, o que é decisão consciente, não a primeira da lista.
    */
+  /** O mesmo contexto que o motor usa — ver `lib/enginePolicy.ts`. */
+  const contextoDePolitica = {
+    policy,
+    policyVerified,
+    temGateway: Boolean(settings.gateway?.baseUrl?.trim())
+  };
+
   const opcoes: Opcao[] = [
     ...settings.fusionPresets.map((preset) => ({
       chave: `fusion:${preset.id}`,
@@ -108,7 +117,13 @@ export function ModelSelect({ mode }: { mode: string }) {
       rotulo: "Rota do workspace",
       detalhe: "O gateway decide o modelo pela política do grupo"
     },
-    ...(policy?.localRuntimeAllowed !== false
+/*
+     * As duas regras saem de `avaliarSelecao`, a MESMA que o `chatOnce`
+     * aplica na hora de usar. Antes a checagem morava só aqui, escrita como
+     * `policy?.byokAllowed !== false` — o que tratava "ainda nao sei" (o
+     * bootstrap que nao respondeu) como "pode".
+     */
+    ...(avaliarSelecao({ kind: "local" }, contextoDePolitica).permitido
       ? [
           {
             chave: "local",
@@ -118,7 +133,10 @@ export function ModelSelect({ mode }: { mode: string }) {
           }
         ]
       : []),
-    ...(policy?.byokAllowed !== false
+    ...(avaliarSelecao(
+      { kind: "model", target: { providerId: "", model: "" } },
+      contextoDePolitica
+    ).permitido
       ? (settings.modelCatalog ?? []).map((item) => ({
           chave: `model:${item.providerId}:${item.model}`,
           selection: { kind: "model", target: { providerId: item.providerId, model: item.model } } as EngineSelection,

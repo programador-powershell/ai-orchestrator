@@ -261,7 +261,18 @@ export function parseAnsi(text: string, inicial: AnsiStyle = VAZIO): AnsiResult 
  * porque mexe em posição de caractere, não em estilo.
  */
 export function aplicarRetornos(linha: string): string {
-  let saida = "";
+  /*
+   * As células são um ARRAY de code points, não uma string indexada.
+   *
+   * A versão anterior iterava por code point (`for…of`) e escrevia com
+   * `saida.slice(0, coluna) + ch + saida.slice(coluna + 1)`, que indexa por
+   * unidade UTF-16. Um emoji ocupa duas unidades e uma coluna: os dois
+   * contadores saíam de sincronia no primeiro caractere fora do BMP, e a
+   * escrita seguinte cortava o par substituto ao meio — o resto da linha
+   * virava lixo, com um substituto solto no meio. É saída comum: `git` com
+   * emoji no commit, `npm` com ✨, qualquer script que decore o progresso.
+   */
+  const celulas: string[] = [];
   let coluna = 0;
   for (const ch of linha) {
     if (ch === "\r") {
@@ -272,10 +283,12 @@ export function aplicarRetornos(linha: string): string {
       coluna = Math.max(0, coluna - 1);
       continue;
     }
-    saida = saida.slice(0, coluna) + ch + saida.slice(coluna + 1);
+    // Sobrescreve a coluna, ou preenche o buraco se o cursor pulou à frente.
+    while (celulas.length < coluna) celulas.push(" ");
+    celulas[coluna] = ch;
     coluna += 1;
   }
-  return saida;
+  return celulas.join("");
 }
 
 /** Texto limpo, sem nenhum escape — para copiar, buscar e gravar em log. */

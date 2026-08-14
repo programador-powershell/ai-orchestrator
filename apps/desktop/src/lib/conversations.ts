@@ -89,6 +89,31 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 /**
+ * Corpo da conversa já dobrado, memorizado pela IDENTIDADE do array de
+ * mensagens.
+ *
+ * A busca roda a cada tecla e refazia a normalização do histórico inteiro
+ * toda vez — texto que não mudou entre uma letra e a seguinte. Medido com
+ * 300 conversas de 40 mensagens (~6 MChar): 43 ms por tecla, dos quais 36 ms
+ * eram só redobrar. Com a memória, 4 ms.
+ *
+ * A chave é `messages` e não a conversa: o store troca o array quando uma
+ * mensagem entra, então a entrada velha morre sozinha — e o `WeakMap` solta
+ * a memória quando a conversa sai da tela. O título fica de fora de
+ * propósito: renomear NÃO troca o array de mensagens, e dobrar um título é
+ * barato.
+ */
+const corposDobrados = new WeakMap<ExportMessage[], string>();
+
+function corpoDobrado(messages: ExportMessage[]): string {
+  const memorizado = corposDobrados.get(messages);
+  if (memorizado !== undefined) return memorizado;
+  const dobrado = normalizeSearchText(messages.map((message) => message.content).join("\n"));
+  corposDobrados.set(messages, dobrado);
+  return dobrado;
+}
+
+/**
  * Busca nas conversas, ignorando caixa e acentos. Ordena por relevância
  * (mais ocorrências primeiro) e desempata pela conversa mais recente.
  *
@@ -97,36 +122,59 @@ function countOccurrences(haystack: string, needle: string): number {
  * outro módulo obrigaria a trocar de aba para abrir — um resultado que a
  * pessoa não pediu, num lugar que ela não estava olhando. Sem `escopo`, varre
  * tudo (é o que a exportação e os testes usam).
+ *
+ * `limite` corta ANTES de montar os trechos. Quem chama mostra oito linhas e
+ * jogava fora o resto — mas o trecho é a parte cara da busca (`searchSnippet`
+ * dobra caractere a caractere para saber onde o acerto cai no texto ORIGINAL,
+ * e varre mensagem por mensagem até achar). Com 300 conversas em que o termo
+ * só aparece na última mensagem, montar 300 trechos para exibir 8 custava
+ * 472 ms; recortando antes, oito. Sem `limite` o comportamento é o de antes.
  */
 export function searchConversations(
   all: Partial<Record<UiMode, ExportConversation[]>>,
   query: string,
-  escopo?: UiMode
+  escopo?: UiMode,
+  limite?: number
 ): ConversationSearchResult[] {
   const needle = normalizeSearchText(query.trim());
   if (!needle) return [];
-  const results: Array<ConversationSearchResult & { updatedAt: number }> = [];
+  /*
+   * O corpo vira UMA string por conversa, unida por "\n". Duas ocorrências
+   * coladas por essa junção só existiriam se o termo contivesse "\n" — o
+   * campo é um `<input>`, que não aceita quebra de linha. Chamada por
+   * programa com termo multilinha cai na contagem por mensagem, que é exata.
+   */
+  const termoTemQuebra = needle.includes("\n");
+  const parciais: Array<{
+    mode: UiMode;
+    conversation: ExportConversation;
+    matchCount: number;
+  }> = [];
   for (const mode of escopo ? [escopo] : UI_MODES) {
     for (const conversation of all[mode] ?? []) {
       const titleMatches = countOccurrences(normalizeSearchText(conversation.title), needle);
-      const bodyMatches = conversation.messages.reduce(
-        (total, message) => total + countOccurrences(normalizeSearchText(message.content), needle),
-        0
-      );
+      const bodyMatches = termoTemQuebra
+        ? conversation.messages.reduce(
+            (total, message) => total + countOccurrences(normalizeSearchText(message.content), needle),
+            0
+          )
+        : countOccurrences(corpoDobrado(conversation.messages), needle);
       const matchCount = titleMatches + bodyMatches;
       if (!matchCount) continue;
-      results.push({
-        mode,
-        conversationId: conversation.id,
-        title: conversation.title,
-        snippet: searchSnippet(conversation.messages, query) || conversation.title,
-        matchCount,
-        updatedAt: conversation.updatedAt
-      });
+      parciais.push({ mode, conversation, matchCount });
     }
   }
-  results.sort((a, b) => b.matchCount - a.matchCount || b.updatedAt - a.updatedAt);
-  return results.map(({ updatedAt: _updatedAt, ...result }) => result);
+  parciais.sort(
+    (a, b) => b.matchCount - a.matchCount || b.conversation.updatedAt - a.conversation.updatedAt
+  );
+  const visiveis = limite === undefined ? parciais : parciais.slice(0, Math.max(0, limite));
+  return visiveis.map(({ mode, conversation, matchCount }) => ({
+    mode,
+    conversationId: conversation.id,
+    title: conversation.title,
+    snippet: searchSnippet(conversation.messages, query) || conversation.title,
+    matchCount
+  }));
 }
 
 /* ------------------------------- projetos ------------------------------ */

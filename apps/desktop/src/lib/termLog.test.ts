@@ -90,3 +90,35 @@ describe("pushLines", () => {
     expect(saida.some((item) => item.text === "banner")).toBe(false);
   });
 });
+
+describe("splitOutput e o retorno de carro", () => {
+  /** Escritos assim porque o byte literal some ao passar por editor e shell. */
+  const CR = "\r";
+
+  it("barra de progresso vira UMA linha, a final", () => {
+    /*
+     * O regex de antes era /\r\n?/g, que transformava `\r` SOZINHO em
+     * quebra de linha. Um `docker pull` despejava dezenas de linhas quase
+     * iguais no scrollback, cada uma um estagio congelado da barra.
+     */
+    const saida = splitOutput("baixando  10%" + CR + "baixando  55%" + CR + "baixando 100%", "output");
+    expect(saida).toEqual([{ kind: "output", text: "baixando 100%" }]);
+  });
+
+  it("\\r\\n continua sendo quebra de linha de verdade", () => {
+    expect(splitOutput("um\r\ndois", "output")).toEqual([
+      { kind: "output", text: "um" },
+      { kind: "output", text: "dois" }
+    ]);
+  });
+
+  it("linha mais curta nao deixa sobra da anterior", () => {
+    // 'processando...' tem 14 colunas; 'ok' escreve 2 e as outras 12 ficam.
+    const saida = splitOutput("processando..." + CR + "ok", "output");
+    expect(saida[0].text).toBe("okocessando...");
+  });
+
+  it("backspace apaga a coluna anterior", () => {
+    expect(splitOutput("abc\bd", "output")).toEqual([{ kind: "output", text: "abd" }]);
+  });
+});

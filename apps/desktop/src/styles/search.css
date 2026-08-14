@@ -139,3 +139,6 @@
   .tbsearch-campo:focus-within { position: absolute; right: 0; width: 240px; padding: 0 10px; z-index: 61; }
   .tbsearch-campo:focus-within input { display: block; }
 }
+
+/* A lista fica atras do que foi digitado enquanto a varredura alcanca. */
+.tbsearch-lista.buscando { opacity: 0.6; }
