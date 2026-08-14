@@ -140,6 +140,20 @@
   com quem falhou de verdade — e o portão pergunta "seguir, refazer ou abortar?",
   que não é o que se responde a quem pediu esclarecimento. A pergunta já tem o
   caminho dela: o evento `escalate`, com o campo de resposta ao lado na tela.
+- **E a tela também para de chamar isso de falha.** `worker.done` passou a carregar
+  `escalated`, e quem escalou ganhou estado próprio: **amarelo** no grafo, "escalou"
+  no rótulo, mão levantada no lugar do triângulo de alerta, fora do contador de
+  falhas e fora do de concluídas. Antes o nó ficava **vermelho** ao mesmo tempo que
+  a faixa logo acima pedia resposta — a mesma coisa contada duas vezes, com dois
+  significados —, e o número de falhas da tela discordava do que o gateway usa para
+  abrir o portão. A regra virou uma função só (`lib/crew.ts`), com teste: as três
+  telas que julgavam `worker.done` por conta própria — Equipe, Quadro e o trilho —
+  davam **três respostas diferentes** para o mesmo evento, e o trilho ainda deixava
+  a tarefa em "aguardando resposta" para sempre depois de respondida.
+- **O estado da tarefa no trilho volta a ter cor.** As regras eram
+  `.rail-task[data-state="running"|"done"|"failed"]` e o trilho sempre escreveu
+  `data-tone` com `run|ok|fail|ask`: nenhum seletor casava, e a etiqueta ficava
+  cinza até nas tarefas que falharam.
 
 ### :construction_worker: Refactors
 

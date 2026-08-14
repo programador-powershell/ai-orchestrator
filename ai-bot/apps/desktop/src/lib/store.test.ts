@@ -17,12 +17,16 @@ import type {
   Done,
   Envelope,
   EnvelopeKind,
+  Escalate,
   Message,
   Ready,
   Reply,
   Route,
-  Thinking
+  TaskDispatch,
+  Thinking,
+  WorkerDone
 } from "@aibot/contracts";
+import { outcomeOf } from "./crew";
 import { applyEnvelope, initialAppData, type AppData } from "./store";
 
 let counter = 0;
@@ -227,5 +231,72 @@ describe("applyEnvelope", () => {
     // O estado da tela segue a ÚLTIMA rota; o histórico, não.
     expect(state.activeSpecialist).toBe("design");
     expect(state.activeSurface).toBe("canvas");
+  });
+
+  /**
+   * O `escalated` tem de ATRAVESSAR o envelope com este nome exato.
+   *
+   * O campo nasce no Go (`json:"escalated,omitempty"`) e é copiado à mão para o
+   * contrato TS — não existe gerador nem teste que compare as duas pontas. Se os
+   * nomes divergirem, NADA quebra: o payload chega, o campo vira `undefined`, o
+   * desfecho volta a ser "failed" e a tela chama de falha quem só fez uma
+   * pergunta. É o modo de falha que o cabeçalho do contrato descreve — silêncio.
+   */
+  it("worker.done atravessa com o escalated e o desfecho sai dele", () => {
+    const state = reduce(initialAppData(), [
+      envelope<TaskDispatch>("task.dispatch", {
+        task: { id: "t1", title: "Migrar tabelas", specialist: "data", goal: "mover o schema" },
+        workerId: "w-1-t1",
+        wave: 1
+      }),
+      envelope<Escalate>("escalate", { taskId: "t1", workerId: "w-1-t1", question: "qual banco?" }),
+      envelope<WorkerDone>("worker.done", {
+        taskId: "t1",
+        workerId: "w-1-t1",
+        ok: false,
+        escalated: true,
+        error: "escalado: qual banco?"
+      })
+    ]);
+
+    const done = state.crew.done["t1"];
+    expect(done?.escalated).toBe(true);
+    expect(done ? outcomeOf(done) : null).toBe("escalated");
+    expect(state.crew.escalations).toHaveLength(1);
+  });
+
+  /**
+   * A mesma tarefa reexecutada — o caso que decidiu o desenho.
+   *
+   * `crew.escalations` só cresce enquanto a conversa vive e `crew.done` é
+   * sobrescrito por `taskId`. Quem deduzisse escalação cruzando as duas listas
+   * ainda veria a escalação do primeiro plano aqui e chamaria de "escalado" uma
+   * falha real — apagando-a do contador enquanto o gateway conta 1 e abre o
+   * portão. O desfecho vem do `done` NOVO, e só dele.
+   */
+  it("o done novo da mesma tarefa vence a escalacao antiga", () => {
+    const state = reduce(initialAppData(), [
+      envelope<Escalate>("escalate", { taskId: "t1", workerId: "w-1-t1", question: "qual banco?" }),
+      envelope<WorkerDone>("worker.done", {
+        taskId: "t1",
+        workerId: "w-1-t1",
+        ok: false,
+        escalated: true,
+        error: "escalado: qual banco?"
+      }),
+      // Plano novo, mesmo id — um modelo reusa t1/t2/t3 —, e agora falha de verdade.
+      envelope<WorkerDone>("worker.done", {
+        taskId: "t1",
+        workerId: "w-1-t1",
+        ok: false,
+        error: "o trabalhador não concluiu em 6 rodadas"
+      })
+    ]);
+
+    const done = state.crew.done["t1"];
+    expect(done?.escalated).toBeUndefined();
+    expect(done ? outcomeOf(done) : null).toBe("failed");
+    // A escalação velha CONTINUA na lista: é isso que torna o cruzamento errado.
+    expect(state.crew.escalations).toHaveLength(1);
   });
 });

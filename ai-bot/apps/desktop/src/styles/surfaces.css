@@ -308,7 +308,11 @@ button.chip {
 }
 
 /* O mesmo selo serve de estado de tarefa. Os valores acompanham o mapa de
-   estados do grafo (idle/running/done/failed). */
+   estados do grafo (idle/running/done/failed/escalated). */
+.badge-risk[data-state="idle"] {
+  color: var(--muted);
+}
+
 .badge-risk[data-state="running"] {
   color: var(--accent);
 }
@@ -319,6 +323,10 @@ button.chip {
 
 .badge-risk[data-state="failed"] {
   color: var(--danger);
+}
+
+.badge-risk[data-state="escalated"] {
+  color: var(--warn);
 }
 
 /* Lista de chave e valor (propriedades de nó, parâmetros de treino). */
@@ -419,8 +427,9 @@ button.chip {
 
 /*
  * Estados do nó. Esta tabela precisa concordar com o STATE_INK do CrewSurface
- * (idle=faint, running=accent, done=ok, failed=danger): lá ela pinta o ícone e
- * a aresta, que são atributos de SVG fora do alcance destas regras.
+ * (idle=faint, running=accent, done=ok, failed=danger, escalated=warn): lá ela
+ * pinta o ícone e a aresta, que são atributos de SVG fora do alcance destas
+ * regras.
  */
 .dag-node,
 .flow-node {
@@ -444,6 +453,12 @@ button.chip {
 .dag-node[data-state="failed"],
 .flow-node[data-state="failed"] {
   stroke: var(--danger);
+}
+
+/* Só o DAG: escalar é conceito de equipe, e o Fluxo não tem trabalhador que
+   pergunte. Amarelo porque quem escalou não errou — está esperando. */
+.dag-node[data-state="escalated"] {
+  stroke: var(--warn);
 }
 
 .dag-node:hover,
@@ -703,8 +718,14 @@ button.chip {
   user-select: text;
 }
 
-.crew-result[data-ok="false"] {
+/* O gancho é o DESFECHO, não o `ok`: com `data-ok="false"` a pergunta de quem
+   escalou saía em vermelho de erro. */
+.crew-result[data-state="failed"] {
   color: var(--danger);
+}
+
+.crew-result[data-state="escalated"] {
+  color: var(--warn);
 }
 
 /* Escalonamento é alguém PARADO esperando resposta: cor de aviso, e no fim da
