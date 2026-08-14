@@ -1,0 +1,42 @@
+# Dependências e artefatos
+node_modules/
+dist/
+target/
+*.tsbuildinfo
+
+# Binário do gateway
+/dist/aibotd
+/dist/aibotd.exe
+
+# Esquemas gerados pelo tauri-build a cada compilação. São derivados do
+# Cargo.toml e das capabilities; versioná-los só produz conflito em toda
+# atualização do Tauri, sem ninguém nunca lê-los.
+apps/desktop/src-tauri/gen/
+
+# Biblioteca nativa e pesos do roteador local.
+#
+# NÃO versionar: needle.dll tem alguns MB e o modelo tem 14 — e nenhum dos dois
+# é nosso. Eles chegam pelo instalador, e o build padrão (sem `-tags needle`)
+# não precisa de nenhum dos dois.
+*.dll
+*.so
+*.dylib
+models/
+needle.h
+
+# Dados locais do gateway. O `token`, o `master.key` e o `vault.json` são
+# SEGREDO de verdade; `catalog.json` guarda referências de chave, não chaves —
+# mas guarda também a configuração da estação, que não é do repositório.
+.aibot/
+token
+master.key
+vault.json
+catalog.json
+memory.json
+worktrees/
+
+# Sistema operacional e editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

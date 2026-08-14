@@ -1,0 +1,18 @@
+{
+  "name": "ai-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-BOT — um bot com todas as especialidades, numa tela só",
+  "packageManager": "pnpm@10.15.1",
+  "scripts": {
+    "dev": "pnpm --filter @aibot/desktop dev",
+    "build": "pnpm --filter @aibot/desktop build",
+    "test": "pnpm --filter @aibot/desktop test",
+    "tauri:dev": "pnpm --filter @aibot/desktop tauri dev",
+    "tauri:build": "pnpm --filter @aibot/desktop tauri build",
+    "gateway:build": "go build -C services/gateway -o ../../dist/aibotd ./cmd/aibotd",
+    "gateway:build:needle": "go build -C services/gateway -tags needle -o ../../dist/aibotd ./cmd/aibotd",
+    "gateway:test": "go test -C services/gateway ./...",
+    "gateway:vet": "go vet -C services/gateway ./..."
+  }
+}

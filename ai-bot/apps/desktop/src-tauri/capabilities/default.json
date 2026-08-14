@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissões das duas janelas do AI-BOT. A janela principal roda sem decoração do sistema, então fechar, minimizar, maximizar e arrastar são ações da barra de título em React e precisam existir aqui; show e hide são o que o laboratório de avatares usa para reaparecer sem ser recriado. Nada de sistema de arquivos, shell ou HTTP entra nesta lista: essas capacidades são comandos nativos deste app, que passam pela aprovação do gateway, e não permissões abertas ao webview.",
+  "windows": ["main", "avatars"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "opener:default",
+    "process:allow-exit",
+    "process:allow-restart"
+  ]
+}

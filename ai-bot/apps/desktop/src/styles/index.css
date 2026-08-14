@@ -1,0 +1,12 @@
+/*
+ * index.css — a única folha importada pelo main.tsx.
+ *
+ * A ordem importa e não é alfabética: tokens primeiro (todo o resto lê as
+ * custom properties dele), depois o esqueleto da tela, depois as superfícies
+ * que vivem dentro do palco. Inverter isso faz regra de superfície ganhar de
+ * regra de shell por ordem de cascata, e o palco começa a vazar por baixo do
+ * composer.
+ */
+@import "./tokens.css";
+@import "./shell.css";
+@import "./surfaces.css";

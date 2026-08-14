@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI-BOT",
+  "version": "0.1.0",
+  "identifier": "com.multiplike.aibot",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1421",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AI-BOT",
+        "width": 1380,
+        "height": 860,
+        "minWidth": 1000,
+        "minHeight": 680,
+        "decorations": false,
+        "shadow": true,
+        "center": true
+      },
+      {
+        "label": "avatars",
+        "title": "AI-BOT — Laboratório de avatares",
+        "url": "index.html?window=avatars",
+        "width": 980,
+        "height": 680,
+        "minWidth": 820,
+        "minHeight": 560,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8799 ws://127.0.0.1:8799 ipc: http://ipc.localhost; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
