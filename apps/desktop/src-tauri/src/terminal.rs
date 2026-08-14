@@ -193,6 +193,22 @@ pub async fn terminal_execute(
     if command.is_empty() || command.len() > 8_192 {
         return Err("o comando deve ter entre 1 e 8.192 caracteres".into());
     }
+    /*
+     * O app NAO INSTALA. Regra da organizacao, verificada aqui.
+     *
+     * Este e um dos tres caminhos que o MODELO dirige (terminal_execute). O terminal
+     * interativo fica de fora de proposito: la quem digita sao as maos de
+     * quem opera, e essa pessoa responde pelo que faz — a mesma razao pela
+     * qual `pty_*` nunca entrou no registro de ferramentas do agente.
+     *
+     * O gate de aprovacao nao substitui esta checagem: quem clica "aprovar"
+     * raramente distingue `npm i -D vitest` de `npm i -g`, e a diferenca
+     * entre as duas e a maquina inteira.
+     */
+    if let Some(recusa) = crate::instalacao::tenta_instalar(&command) {
+        return Err(format!("{}: {}", recusa.codigo, recusa.motivo));
+    }
+
     if let Some(required) = runtime_for(&command) {
         let installed = definitions()
             .into_iter()

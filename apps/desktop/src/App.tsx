@@ -33,6 +33,7 @@ import { restorePolicy, syncPolicy } from "./lib/policySync";
 import { isSettingsShortcut, modeForDigitKey } from "./lib/shortcuts";
 import { useApp } from "./lib/store";
 import { startWorkEngine } from "./lib/workEngine";
+import { configureBackgroundUpdater } from "./lib/updater";
 import { GlassFilters } from "./components/GlassFilters";
 import { Composer } from "./components/Composer";
 import { ConnectionsPopover } from "./components/ConnectionsPopover";
@@ -254,6 +255,24 @@ function App() {
   // due date parava e as ops:work emitidas por outra aba eram perdidas.
   useEffect(() => {
     startWorkEngine();
+  }, []);
+
+  useEffect(() => {
+    /*
+     * Atualização automática — a razão de não haver reinstalação manual.
+     *
+     * A pipeline publica uma versão assinada; o app a baixa em segundo plano
+     * e aplica ao fechar. Estava escrito e sem chamador: o app só atualizava
+     * se alguém abrisse Configurações e clicasse, e por isso cada correção
+     * parecia exigir instalar de novo à mão.
+     *
+     * Falha aqui é SILENCIOSA de propósito. Sem rede, ou com o updater ainda
+     * não configurado (chave no placeholder, o normal em desenvolvimento), o
+     * plugin lança — e nada disso é problema de quem só quer usar o app. Quem
+     * precisa do detalhe abre Configurações, onde a verificação manual mostra
+     * o motivo por escrito.
+     */
+    void configureBackgroundUpdater();
   }, []);
 
   useEffect(() => {
