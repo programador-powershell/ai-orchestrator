@@ -423,15 +423,48 @@ button.chip {
 }
 
 /*
- * Estados do nó. Esta tabela precisa concordar com o STATE_INK do CrewSurface
- * (idle=faint, running=accent, done=ok, failed=danger, escalated=warn): lá ela
- * pinta o ícone e a aresta, que são atributos de SVG fora do alcance destas
- * regras.
+ * Estados do nó. Cada estado declara DUAS coisas — a matiz e quanto ela precisa
+ * escurecer — e o preenchimento e a borda saem das duas, uma vez só.
+ *
+ * Por que não é só a borda colorida, como era antes: um fio de 1,25px era a
+ * ÚNICA pista do estado, e a WCAG 1.4.11 pede 3:1 para o que identifica estado
+ * de componente. Medido contra o fundo do grafo (--canvas), no tema claro, três
+ * dos quatro estados reprovavam: não começou 2,18 · concluído 2,93 · falhou 3,92
+ * (o único que passava). Escalado, que entrou depois, dava 2,66.
+ *
+ * O conserto é nos dois eixos, porque um só não resolve:
+ *
+ *  - a ÁREA. O preenchimento ganha 10% da matiz do estado. Um fio de 1px é
+ *    invisível para quem tem visão reduzida; um retângulo de 186x62 não é. Isso
+ *    é percepção, e não move o número — tom suave tem contraste baixo de
+ *    propósito.
+ *  - o NÚMERO. A borda mistura --ink na matiz, o quanto cada uma precisa para
+ *    chegar a 3:1 contra o fundo. Os percentuais são diferentes porque as
+ *    matizes partem de luminâncias diferentes: falhou já passava (0%), concluído
+ *    quase (5%), rodando e escalado precisam de 10%, não-começou de 20%. Medido
+ *    nos dois temas, e `rodando` nas dez matizes de especialista (pior caso
+ *    3,08:1, em fluxo/claro).
+ *
+ * A mistura é com --ink e não com preto porque --ink troca de lado no tema
+ * escuro: misturar com a cor do TEXTO caminha para o lado de mais contraste nos
+ * dois temas, sem uma regra por tema.
+ *
+ * O percentual da borda vai ESCRITO em cada regra, e não num `--node-darken`.
+ * Fica repetitivo de propósito: `var()` dentro da posição de porcentagem de um
+ * `color-mix()` é a parte menos provada disto, e se ela não resolvesse o `stroke`
+ * cairia no valor inicial — que é `none`, ou seja, nó SEM borda nenhuma. A matiz
+ * continua em variável porque ali o custo de errar é outro (o preenchimento e o
+ * hover leem a mesma), e porque a base sempre a define.
+ *
+ * O STATE_INK do CrewSurface guarda a matiz PURA (é ele que pinta o ícone e a
+ * aresta, atributos de SVG fora do alcance daqui). As duas tabelas continuam
+ * partindo do mesmo token — o que muda é que a borda deriva dele.
  */
 .dag-node,
 .flow-node {
-  fill: var(--panel);
-  stroke: var(--faint);
+  --node-hue: var(--faint);
+  fill: color-mix(in srgb, var(--panel), var(--node-hue) 10%);
+  stroke: color-mix(in srgb, var(--faint), var(--ink) 20%);
   stroke-width: 1.25;
   cursor: pointer;
   transition: stroke var(--t-fast) var(--swift), fill var(--t-fast) var(--swift);
@@ -439,28 +472,35 @@ button.chip {
 
 .dag-node[data-state="running"],
 .flow-node[data-state="running"] {
-  stroke: var(--accent);
+  --node-hue: var(--accent);
+  stroke: color-mix(in srgb, var(--accent), var(--ink) 10%);
 }
 
 .dag-node[data-state="done"],
 .flow-node[data-state="done"] {
-  stroke: var(--ok);
+  --node-hue: var(--ok);
+  stroke: color-mix(in srgb, var(--ok), var(--ink) 5%);
 }
 
 .dag-node[data-state="failed"],
 .flow-node[data-state="failed"] {
+  --node-hue: var(--danger);
+  /* Falhou já passava 3:1 sozinho (3,92 no claro): nada a escurecer. */
   stroke: var(--danger);
 }
 
 /* Só o DAG: escalar é conceito de equipe, e o Fluxo não tem trabalhador que
    pergunte. Amarelo porque quem escalou não errou — está esperando. */
 .dag-node[data-state="escalated"] {
-  stroke: var(--warn);
+  --node-hue: var(--warn);
+  stroke: color-mix(in srgb, var(--warn), var(--ink) 10%);
 }
 
+/* O hover mantém o tom do estado: trocar por --panel-2 puro apagava a matiz
+   justamente no nó que a pessoa está apontando. */
 .dag-node:hover,
 .flow-node:hover {
-  fill: var(--panel-2);
+  fill: color-mix(in srgb, var(--panel-2), var(--node-hue) 10%);
 }
 
 /* O foco vai no GRUPO (é ele que tem tabIndex), não no retângulo. */
@@ -489,9 +529,19 @@ button.chip {
   stroke-width: 2;
 }
 
+/*
+ * O rótulo escurece 20% junto com o tom do nó, e isso não é estética.
+ *
+ * `--muted` puro sobre `--panel` dava 4,53:1 — passava o AA de texto miúdo por
+ * 0,03. Com o preenchimento tingido, caía para 3,79:1 no pior caso (rodando, no
+ * matiz do agent, tema claro) e REPROVAVA. Ou seja: tingir o nó consertaria o
+ * contraste do estado e quebraria o do texto em cima dele, que é troca ruim.
+ * Com 20% de --ink o pior caso vira 4,81:1 — melhor que o de hoje, nos dois
+ * temas e nas dez matizes.
+ */
 .dag-label,
 .flow-label {
-  fill: var(--muted);
+  fill: color-mix(in srgb, var(--muted), var(--ink) 20%);
   font-size: 9.5px;
   letter-spacing: 0.06em;
 }

@@ -154,6 +154,17 @@
   telas que julgavam `worker.done` por conta própria — Equipe, Quadro e o trilho —
   davam **três respostas diferentes** para o mesmo evento, e o trilho ainda deixava
   a tarefa em "aguardando resposta" para sempre depois de respondida.
+- **O estado do nó no grafo deixa de ser um fio de 1px.** A cor do estado vivia só
+  na borda de 1,25px, e medida contra o fundo do grafo **três dos quatro estados
+  reprovavam** o 3:1 que a WCAG 1.4.11 pede para identificar estado de componente:
+  não começou 2,18 · concluído 2,93 · falhou 3,92 (o único que passava) — e
+  escalado, que entrou agora, 2,66. O conserto é nos dois eixos, porque nenhum
+  resolve sozinho: o **preenchimento** recebe 10% da matiz do estado (um retângulo
+  de 186×62 é visível, um fio não — mas tom suave não move o número), e a **borda**
+  mistura o tanto de tinta que cada matiz precisa para chegar a 3:1, medido nos
+  dois temas e nas dez matizes de especialista. O rótulo dentro do nó escureceu
+  20% junto: sobre o preenchimento tingido ele caía para 3,79:1 e reprovava o AA
+  de texto miúdo; agora é 4,81:1 no pior caso, melhor que os 4,53:1 de antes.
 - **O estado da tarefa no trilho passa pelo ícone, não pela cor.** Havia três
   regras `.rail-task[data-state=…]` que não casavam com nada — o trilho sempre
   escreveu `data-tone`, com `run|ok|fail|ask`. Consertar o seletor era de uma linha
