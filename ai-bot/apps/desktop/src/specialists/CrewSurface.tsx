@@ -83,9 +83,13 @@ const STATE_INK: Record<NodeState, string> = {
  * existir sem entrar na seleção automática — com o grafo cheio e o painel do lado
  * dizendo "escolha um nó". Record obriga o tsc a apontar o que falta.
  */
+// A escalação PENDENTE é escolhida antes deste laço, por `escalations.waiting`.
+// Logo, quem chega aqui como "escalated" já foi respondido e não trava mais nada —
+// então falha vem primeiro. Invertido, uma pergunta já respondida roubava o painel
+// de uma falha real, para sempre.
 const ATTENTION_ORDER: Record<NodeState, number> = {
-  escalated: 0,
-  failed: 1,
+  failed: 0,
+  escalated: 1,
   running: 2,
   done: 3,
   idle: 4
@@ -116,6 +120,15 @@ function clamp(value: string, max: number): string {
 function escalationKey(escalation: Escalate): string {
   return `${escalation.taskId}:${escalation.workerId}:${escalation.question}`;
 }
+
+/**
+ * Em que pé está uma pergunta.
+ *
+ * `superseded` não é o mesmo que `answered`, e a tela não pode dizer "respondida"
+ * para as duas: a pergunta que morreu com a reexecução da tarefa nunca foi
+ * respondida — ela deixou de valer.
+ */
+type EscalationStatus = "waiting" | "answered" | "superseded";
 
 /** Bézier horizontal: sai pela direita da origem, entra pela esquerda do destino. */
 function curve(x1: number, y1: number, x2: number, y2: number): string {
@@ -271,17 +284,42 @@ export function CrewSurface() {
     };
   }, [crew]);
 
-  // Pendentes primeiro: quem ainda trava o plano fica acima de quem já foi
-  // respondido, sem que a resposta apague o registro da pergunta.
+  // Pendentes primeiro: quem ainda trava o plano fica acima de quem não trava
+  // mais, sem que isso apague o registro da pergunta.
   const escalations = useMemo(() => {
-    const pending = crew.escalations.filter((item) => !answered[escalationKey(item)]);
-    const settled = crew.escalations.filter((item) => answered[escalationKey(item)]);
+    /**
+     * Uma pergunta para de esperar por DOIS motivos, e eles são diferentes.
+     *
+     * `answered` é a pessoa ter respondido. `superseded` é a tarefa ter sido
+     * reexecutada e terminado de outro jeito — e era o caso que faltava:
+     * `crew.escalations` só cresce enquanto a conversa vive, então a pergunta do
+     * primeiro plano continuava pedindo resposta depois de a MESMA tarefa falhar
+     * num plano seguinte. O nó saía vermelho de falha com o ponto amarelo de
+     * pergunta em cima, roubava o foco do painel e o chip dizia "1 aguardando
+     * resposta" para sempre. É o mesmo cruzamento por `taskId` que `outcomeOf`
+     * existe para não fazer — ele estava condenado na regra e vivo aqui.
+     *
+     * Sem `done` ainda, esperar é o certo: há a janela em que o `escalate` chegou
+     * e o desfecho da onda não.
+     */
+    const statusOf = (item: Escalate): EscalationStatus => {
+      if (answered[escalationKey(item)]) return "answered";
+      const done = model.doneByTask.get(item.taskId);
+      if (done === undefined || outcomeOf(done) === "escalated") return "waiting";
+      return "superseded";
+    };
+
+    const status = new Map(crew.escalations.map((item) => [escalationKey(item), statusOf(item)]));
+    const isWaiting = (item: Escalate): boolean => status.get(escalationKey(item)) === "waiting";
+    const pending = crew.escalations.filter(isWaiting);
+    const rest = crew.escalations.filter((item) => !isWaiting(item));
     return {
       pending,
-      all: [...pending, ...settled],
+      all: [...pending, ...rest],
+      status,
       waiting: new Set(pending.map((item) => item.taskId))
     };
-  }, [crew.escalations, answered]);
+  }, [crew.escalations, answered, model]);
 
   // Sem escolha explícita a tela mostra o que precisa de atenção, nesta ordem:
   // quem escalou, quem falhou, quem está rodando. É a fila de quem trava o plano.
@@ -303,6 +341,8 @@ export function CrewSurface() {
   const activeDone = activeId ? model.doneByTask.get(activeId) ?? null : null;
   const activeOutcome = activeDone ? outcomeOf(activeDone) : null;
   const activeProgress = activeId ? model.progressByTask.get(activeId) ?? null : null;
+  // A faixa desta tarefa já está na tela? Então o painel não repete a pergunta.
+  const activeHasBanner = activeId !== "" && escalations.all.some((item) => item.taskId === activeId);
 
   const answer = (escalation: Escalate) => {
     const key = escalationKey(escalation);
@@ -355,7 +395,12 @@ export function CrewSurface() {
         */}
         {escalations.all.map((escalation) => {
           const key = escalationKey(escalation);
-          const settled = answered[key] === true;
+          // O status vem do memo, não de `answered` direto: a pergunta também para
+          // de esperar quando a tarefa foi reexecutada e terminou de outro jeito, e
+          // aí oferecer campo de resposta é pedir que se responda a um trabalhador
+          // que não existe mais.
+          const status = escalations.status.get(key) ?? "waiting";
+          const settled = status !== "waiting";
           const task = model.positions.get(escalation.taskId)?.task;
           return (
             <article
@@ -368,7 +413,7 @@ export function CrewSurface() {
                 <Hand size={14} aria-hidden />
                 <span className="card-title">{escalation.workerId} escalou</span>
                 <span className="badge-risk" data-risk={settled ? "read" : "write"}>
-                  {settled ? "respondida" : "aguardando"}
+                  {status === "waiting" ? "aguardando" : status === "answered" ? "respondida" : "encerrada"}
                 </span>
               </div>
               <p className="card-eyebrow">
@@ -377,7 +422,12 @@ export function CrewSurface() {
               </p>
               <p className="card-body">{escalation.question}</p>
 
-              {settled ? (
+              {status === "superseded" ? (
+                <p className="card-body">
+                  A tarefa rodou de novo e terminou de outro jeito — esta pergunta não espera mais
+                  resposta.
+                </p>
+              ) : settled ? (
                 <p className="card-body">
                   Resposta enviada como prompt — o orquestrador retoma a tarefa a partir dela.
                 </p>
@@ -624,11 +674,18 @@ export function CrewSurface() {
                     </div>
                   ) : null}
 
-                  {activeDone && activeOutcome ? (
-                    // O bloco de saída segue o DESFECHO, não o `ok`: quem escalou
-                    // tem `ok=false` e teria ganhado o X de falha com o texto em
-                    // vermelho — sendo que o texto é a pergunta, que a faixa lá em
-                    // cima já mostra pedindo resposta.
+                  {/*
+                    O bloco de saída segue o DESFECHO, não o `ok`: quem escalou tem
+                    `ok=false` e teria ganhado o X de falha com o texto em vermelho.
+
+                    E na escalação ele NÃO aparece quando a faixa já está na tela: o
+                    gateway monta `error` como "escalado: <a pergunta>", então este
+                    bloco repetiria, no mesmo quadro, a frase que a faixa mostra —
+                    com um prefixo de log a mais. Se a faixa não chegou (o `escalate`
+                    se perdeu e o `worker.done` não), o bloco volta a aparecer: mostrar
+                    o prefixo é melhor que deixar a pessoa sem a pergunta.
+                  */}
+                  {activeDone && activeOutcome && !(activeOutcome === "escalated" && activeHasBanner) ? (
                     <div className="card-body">
                       <span className="card-eyebrow">
                         {activeOutcome === "done" ? (

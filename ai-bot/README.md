@@ -135,11 +135,15 @@
   usar o campo (a tela, um diff) recebia uma frase. O isolamento da equipe agora
   fala com o `worktree.Manager` direto, que devolve caminho e ramo tipados; a
   ferramenta continua em texto, porque ela é para o modelo ler.
-- **Escalar não conta como falha da onda.** O trabalhador que se recusa a adivinhar
-  e escreve `ESCALAR:` entrava na contagem de falhas e abria o portão da onda junto
-  com quem falhou de verdade — e o portão pergunta "seguir, refazer ou abortar?",
-  que não é o que se responde a quem pediu esclarecimento. A pergunta já tem o
-  caminho dela: o evento `escalate`, com o campo de resposta ao lado na tela.
+- **Escalar não conta como falha da onda — mas ainda para a onda.** O trabalhador
+  que se recusa a adivinhar e escreve `ESCALAR:` era contado como falha, e o portão
+  dizia "1 tarefa falhou", empurrando quem lê para "refazer" — que não é o que se
+  responde a quem pediu esclarecimento. Agora são duas contagens: escalação sai do
+  número de falhas e do `✗` do relatório, e o texto do portão diz quantas falharam
+  e quantas estão esperando resposta. O que **não** mudou é a pausa: escalação
+  continua abrindo o portão, porque `results` só é escrito por quem entregou — sem
+  a pausa, a tarefa dependente receberia o bloco do upstream vazio e adivinharia
+  exatamente o que o trabalhador se recusou a adivinhar.
 - **E a tela também para de chamar isso de falha.** `worker.done` passou a carregar
   `escalated`, e quem escalou ganhou estado próprio: **amarelo** no grafo, "escalou"
   no rótulo, mão levantada no lugar do triângulo de alerta, fora do contador de
@@ -150,10 +154,14 @@
   telas que julgavam `worker.done` por conta própria — Equipe, Quadro e o trilho —
   davam **três respostas diferentes** para o mesmo evento, e o trilho ainda deixava
   a tarefa em "aguardando resposta" para sempre depois de respondida.
-- **O estado da tarefa no trilho volta a ter cor.** As regras eram
-  `.rail-task[data-state="running"|"done"|"failed"]` e o trilho sempre escreveu
-  `data-tone` com `run|ok|fail|ask`: nenhum seletor casava, e a etiqueta ficava
-  cinza até nas tarefas que falharam.
+- **O estado da tarefa no trilho passa pelo ícone, não pela cor.** Havia três
+  regras `.rail-task[data-state=…]` que não casavam com nada — o trilho sempre
+  escreveu `data-tone`, com `run|ok|fail|ask`. Consertar o seletor era de uma linha
+  e foi medido antes de entrar: naquele tamanho (9px, caixa-alta, espaçada) nenhum
+  matiz da paleta passa o AA no tema claro (`ask` 2,76:1, `run` 2,75:1, `ok`
+  3,04:1, `fail` 4,06:1) contra os 4,11:1 do cinza que já estava lá. As regras
+  mortas estavam, por acidente, protegendo a legibilidade. Quem diferencia agora é
+  o ícone — mão levantada para quem escalou, triângulo para falha.
 
 ### :construction_worker: Refactors
 

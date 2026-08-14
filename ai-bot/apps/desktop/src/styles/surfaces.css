@@ -308,11 +308,8 @@ button.chip {
 }
 
 /* O mesmo selo serve de estado de tarefa. Os valores acompanham o mapa de
-   estados do grafo (idle/running/done/failed/escalated). */
-.badge-risk[data-state="idle"] {
-  color: var(--muted);
-}
-
+   estados do grafo (idle/running/done/failed/escalated); `idle` não tem regra
+   porque a base já é --muted. */
 .badge-risk[data-state="running"] {
   color: var(--accent);
 }
@@ -719,13 +716,16 @@ button.chip {
 }
 
 /* O gancho é o DESFECHO, não o `ok`: com `data-ok="false"` a pergunta de quem
-   escalou saía em vermelho de erro. */
+   escalou saía em vermelho de erro.
+
+   E o estado "escalated" NÃO ganha cor de propósito. Este bloco é a PERGUNTA que
+   a pessoa precisa ler para poder responder, em 10px monoespacado: --warn sobre
+   --code-bg dá 2,80:1 no tema claro (o padrão), pior que o --muted 4,18:1 da
+   base. Pintar de amarelo aqui deixaria o texto mais importante da tela menos
+   legível que não pintar nada. Quem diz que é pergunta é a sobrancelha ao lado
+   ("pergunta", com a mão levantada). */
 .crew-result[data-state="failed"] {
   color: var(--danger);
-}
-
-.crew-result[data-state="escalated"] {
-  color: var(--warn);
 }
 
 /* Escalonamento é alguém PARADO esperando resposta: cor de aviso, e no fim da

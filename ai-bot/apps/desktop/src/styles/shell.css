@@ -540,32 +540,27 @@ select {
 }
 
 /*
- * O atributo é `data-tone`, e os valores são os de TaskTone (Rail.tsx) —
- * idle/run/ok/fail/ask.
+ * A etiqueta de estado da tarefa NÃO muda de cor, e isso é decisão, não esquecimento.
  *
- * Estas três regras estavam escritas como [data-state="running"|"done"|"failed"]
- * e não casavam com nada: o Rail nunca escreveu `data-state`, e "running"/"failed"
- * não são valores de tom. A etiqueta de estado ficava no `--muted` da base em
- * todas as tarefas, inclusive nas que falharam. Ao mexer aqui, confira o par:
- * atributo E vocabulário.
+ * Aqui existiam três regras `.rail-task[data-state="running"|"done"|"failed"]` que
+ * não casavam com nada: o Rail escreve `data-tone`, com os valores de TaskTone
+ * (idle/run/ok/fail/ask). Toda etiqueta caía no --muted da base — inclusive as que
+ * falharam.
+ *
+ * Corrigir o atributo era de uma linha, e foi TENTADO: o problema é que este texto
+ * tem 9px, caixa-alta e letter-spacing de 0.12em, e nenhum matiz semântico da
+ * paleta aguenta esse tamanho no tema claro (que é o padrão). Medido sobre
+ * --panel-2: ask 2,76:1 · run 2,75–2,83:1 · ok 3,04:1 · fail 4,06:1 — os quatro
+ * abaixo do 4,5:1 do AA, dois abaixo até do piso de 3:1, contra os 4,11:1 do
+ * --muted que já estava lá. Ou seja: as regras mortas estavam, por acidente,
+ * protegendo a legibilidade.
+ *
+ * Quem carrega o estado é o ÍCONE (Rail.tsx/ToneIcon: mão levantada para quem
+ * escalou, triângulo para falha, relógio para quem roda) — e ícone não depende de
+ * contraste de texto miúdo. Dar cor a esta etiqueta pede um token mais escuro na
+ * paleta, e isso é decisão de design, não efeito colateral de um conserto de
+ * escalação.
  */
-.rail-task[data-tone="run"] .rail-task-state {
-  color: var(--accent);
-}
-
-.rail-task[data-tone="ok"] .rail-task-state {
-  color: var(--ok);
-}
-
-.rail-task[data-tone="fail"] .rail-task-state {
-  color: var(--danger);
-}
-
-/* Escalação é alguém PARADO esperando resposta, não erro: amarelo de aviso, o
-   mesmo da faixa de escalação e do nó escalado no grafo. */
-.rail-task[data-tone="ask"] .rail-task-state {
-  color: var(--warn);
-}
 
 /* --------------------------------- palco -------------------------------- */
 

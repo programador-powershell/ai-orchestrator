@@ -171,7 +171,11 @@ func (s *Supervisor) runCrew(
 		}
 		group.Wait()
 
-		failures := 0
+		// Duas contagens, porque as duas perguntas são diferentes: `failures` é
+		// quem ERROU (é o rótulo, o ✗ do relatório e o número que a tela mostra);
+		// `escalations` é quem PAROU PARA PERGUNTAR. Nenhuma das duas produziu
+		// resultado, e é a soma que decide o portão — ver abaixo.
+		failures, escalations := 0, 0
 		for _, entry := range outcomes {
 			if entry.TaskID == "" {
 				continue
@@ -182,22 +186,33 @@ func (s *Supervisor) runCrew(
 				fmt.Fprintf(&report, "✓ %s: %s\n", entry.TaskID, truncate(entry.Result, 400))
 				continue
 			}
-			// Escalação sai do relatório com marca própria e FORA da contagem: quem
+			// Escalação sai do relatório com marca própria e fora de `failures`: quem
 			// lê o relatório (o modelo orquestrador, na volta) precisa distinguir a
 			// tarefa que não deu certo da que está esperando resposta, senão ele
-			// tenta refazer o trabalho em vez de responder a pergunta.
+			// tenta refazer o trabalho em vez de responder a pergunta. A marca é
+			// escrita por extenso porque o modelo não recebe legenda de glifo.
 			if entry.Escalated {
-				fmt.Fprintf(&report, "↑ %s: %s\n", entry.TaskID, entry.Error)
+				escalations++
+				fmt.Fprintf(&report, "↑ %s (escalou e espera resposta): %s\n", entry.TaskID, entry.Error)
 				continue
 			}
 			failures++
 			fmt.Fprintf(&report, "✗ %s: %s\n", entry.TaskID, entry.Error)
 		}
 
-		// Portão entre ondas: uma onda que falhou não pode seguir em silêncio,
-		// porque as tarefas seguintes dependem do que ela deveria ter produzido.
-		if failures > 0 && waveIndex+1 < len(plan.Waves) {
-			decision := s.openGate(ctx, sessionID, turn, orchestrator, waveIndex+1, failures)
+		// Portão entre ondas: a onda que deixou tarefa SEM RESULTADO não segue em
+		// silêncio, porque as seguintes dependem do que ela deveria ter produzido.
+		//
+		// Escalação conta aqui, e só aqui. Ela não é falha — não entra em
+		// `failures`, não sai com ✗ e não pinta a tela de vermelho —, mas é
+		// igualmente uma tarefa sem resultado: `results` só é escrito no ramo OK,
+		// então a dependente receberia o bloco do upstream VAZIO e adivinharia
+		// exatamente o que o trabalhador se recusou a adivinhar. O plano terminaria
+		// plausível, com metade do trabalho inventado, que é o modo de falha que o
+		// cabeçalho deste arquivo existe para impedir. O que muda em relação à falha
+		// é o TEXTO do portão, não a pausa.
+		if failures+escalations > 0 && waveIndex+1 < len(plan.Waves) {
+			decision := s.openGate(ctx, sessionID, turn, orchestrator, waveIndex+1, failures, escalations)
 			fmt.Fprintf(&report, "portão da onda %d: %s\n", waveIndex+1, decision)
 			if decision == protocol.GateAbort {
 				report.WriteString("execução abortada no portão\n")
@@ -353,11 +368,32 @@ func escalation(answer string) (string, bool) {
 // porque uma tarefa de três falhou é pior que seguir com o aviso registrado.
 const gateTimeout = 2 * time.Minute
 
+// gateReason descreve a onda para quem vai decidir, separando o que errou do que
+// perguntou.
+//
+// Pura e apartada porque é TEXTO DE DECISÃO: dizer "1 tarefa falhou" quando a
+// tarefa fez uma pergunta empurra a pessoa (ou o modelo) para "refazer", que é a
+// resposta errada — o que resolve escalação é responder. É o único pedaço deste
+// arquivo que dá para testar sem um supervisor de mentira.
+func gateReason(wave, failures, escalations int) string {
+	switch {
+	case escalations == 0:
+		return fmt.Sprintf("%d tarefa(s) da onda %d falharam — seguir, refazer ou abortar?",
+			failures, wave)
+	case failures == 0:
+		return fmt.Sprintf("%d tarefa(s) da onda %d escalaram e esperam resposta — seguir, refazer ou abortar?",
+			escalations, wave)
+	default:
+		return fmt.Sprintf("na onda %d, %d tarefa(s) falharam e %d escalaram e esperam resposta — seguir, refazer ou abortar?",
+			wave, failures, escalations)
+	}
+}
+
 func (s *Supervisor) openGate(
 	ctx context.Context,
 	sessionID, turn string,
 	actor protocol.Actor,
-	wave, failures int,
+	wave, failures, escalations int,
 ) protocol.GateDecision {
 	gateID := s.nextID("g")
 	channel := make(chan protocol.Gate, 1)
@@ -373,7 +409,7 @@ func (s *Supervisor) openGate(
 
 	_ = s.emit(sessionID, turn, protocol.KindGate, actor, protocol.Gate{
 		GateID: gateID,
-		Reason: fmt.Sprintf("%d tarefa(s) da onda %d falharam — seguir, refazer ou abortar?", failures, wave),
+		Reason: gateReason(wave, failures, escalations),
 	})
 
 	timer := time.NewTimer(gateTimeout)

@@ -128,8 +128,14 @@ function taskState(id: string, crew: Crew): { label: string; tone: TaskTone } {
     if (outcome === "done") {
       return { label: done.result ? `concluída — ${done.result}` : "concluída", tone: "ok" };
     }
+    // Rótulo CURTO, e não `done.error`. O trilho tem 236px e `.rail-task-state` é
+    // caixa-alta com letter-spacing e sem truncamento (ao contrário de
+    // `.rail-item-label`): a pergunta inteira viraria quatro linhas espaçadas
+    // empurrando as outras tarefas para fora da tela. E `done.error` traz o
+    // prefixo "escalado: " montado no Go — texto de máquina não é rótulo de UI. A
+    // pergunta inteira está na faixa da tela de Equipe, que é onde se responde.
     if (outcome === "escalated") {
-      return { label: done.error || "escalou", tone: "ask" };
+      return { label: "escalou", tone: "ask" };
     }
     return { label: done.error ? `falhou — ${done.error}` : "falhou", tone: "fail" };
   }
