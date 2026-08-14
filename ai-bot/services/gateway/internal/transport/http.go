@@ -48,11 +48,20 @@ type Server struct {
 	// servidor porque duas coisas dependem dele e não podem divergir: o `ready`,
 	// que a tela usa para nascer sabendo onde está, e a rota de troca.
 	environments *sandbox.Registry
-	log          *slog.Logger
+	// vault e catalogPath servem às rotas de catálogo (catalog.go): a chave do
+	// provedor vai para o cofre e o catalog.json guarda só a referência.
+	vault       CatalogVault
+	catalogPath string
+	log         *slog.Logger
 
 	mu        sync.Mutex
 	hostCalls map[string]chan hostResult
 	counter   uint64
+
+	// catalogMu serializa o ler-alterar-regravar do catalog.json. É trava
+	// própria (e não `mu`) porque o arquivo pode demorar num disco lento, e
+	// segurar a trava dos hostCalls nesse meio tempo pararia as ferramentas.
+	catalogMu sync.Mutex
 }
 
 type hostResult struct {
@@ -61,6 +70,10 @@ type hostResult struct {
 }
 
 // NewServer monta a fachada.
+//
+// vault e catalogPath alimentam as rotas de catálogo. Podem vir vazios (nil e
+// ""): o gateway continua inteiro e essas rotas recusam com o motivo, em vez
+// de o processo não subir por causa de uma tela de configuração.
 func NewServer(
 	cfg config.Config,
 	durable *store.Store,
@@ -69,6 +82,8 @@ func NewServer(
 	models *modelrouter.Router,
 	gate *permissions.Gate,
 	environments *sandbox.Registry,
+	vault CatalogVault,
+	catalogPath string,
 	log *slog.Logger,
 ) *Server {
 	return &Server{
@@ -79,6 +94,8 @@ func NewServer(
 		models:       models,
 		gate:         gate,
 		environments: environments,
+		vault:        vault,
+		catalogPath:  catalogPath,
 		log:          log,
 		hostCalls:    make(map[string]chan hostResult),
 	}
@@ -94,6 +111,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/specialists", s.auth(s.listSpecialists))
 	mux.Handle("GET /v1/models", s.auth(s.listModels))
 
+	// A administração do catálogo (catalog.go). Autenticada como tudo: quem
+	// cadastra provedor decide para ONDE as conversas da estação viajam.
+	mux.Handle("GET /v1/catalog", s.auth(s.getCatalog))
+	mux.Handle("POST /v1/catalog/providers", s.auth(s.postCatalogProvider))
+	mux.Handle("PATCH /v1/catalog/providers/{id}", s.auth(s.patchCatalogProvider))
+	mux.Handle("DELETE /v1/catalog/providers/{id}", s.auth(s.deleteCatalogProvider))
+	mux.Handle("POST /v1/catalog/models", s.auth(s.postCatalogModel))
+	mux.Handle("DELETE /v1/catalog/models/{id}", s.auth(s.deleteCatalogModel))
+	mux.Handle("POST /v1/catalog/test/{id}", s.auth(s.testCatalogProvider))
+
 	mux.Handle("GET /v1/sessions", s.auth(s.listSessions))
 	mux.Handle("POST /v1/sessions", s.auth(s.createSession))
 	mux.Handle("GET /v1/sessions/{id}", s.auth(s.getSession))
@@ -102,6 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/sessions/{id}/prompt", s.auth(s.postPrompt))
 	mux.Handle("POST /v1/sessions/{id}/cancel", s.auth(s.postCancel))
 	mux.Handle("POST /v1/sessions/{id}/environment", s.auth(s.postEnvironment))
+	// Ramifica a conversa: copia o prefixo do log para uma sessão nova (fork.go).
+	mux.Handle("POST /v1/sessions/{id}/fork", s.auth(s.postFork))
 	mux.Handle("GET /v1/sessions/{id}/sse", s.auth(s.sessionSSE))
 
 	mux.Handle("POST /v1/approvals", s.auth(s.postApproval))

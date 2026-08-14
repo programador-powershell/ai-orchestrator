@@ -39,8 +39,17 @@ export interface Transport {
    * Rejeita com o MOTIVO que o gateway escreveu no corpo, e não só com o
    * status: quem chama repassa essa frase para a tela, e "409" sozinho não diz
    * a ninguém o que fazer.
+   *
+   * Resolve com o corpo JSON da resposta (ou `undefined` quando não há corpo):
+   * as rotas de catálogo respondem coisas que a tela precisa ler — "a chave
+   * foi gravada", o resultado do teste de conexão — e jogá-las fora obrigaria
+   * um segundo fetch com uma segunda cópia do token.
    */
-  post(path: string, body: unknown): Promise<void>;
+  post(path: string, body: unknown): Promise<unknown>;
+  /** Um GET autenticado — mesma regra de token e de erro do `post`. */
+  get(path: string): Promise<unknown>;
+  /** Um DELETE autenticado — idem. `del` porque `delete` é palavra reservada. */
+  del(path: string): Promise<unknown>;
 }
 
 export interface TransportOptions {
@@ -383,27 +392,66 @@ export function createTransport(options: TransportOptions): Transport {
       lastSeq = Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
     },
 
-    async post(path: string, body: unknown): Promise<void> {
-      const base = httpBase(url);
-      if (base === "") throw new Error("endereço do gateway inválido");
-      const response = await fetch(`${base}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify(body)
-      });
-      if (!response.ok) {
-        // O corpo é lido ANTES de lançar: o gateway responde 409 com a frase
-        // que diz o que falta na máquina, e descartá-la deixava a pessoa com um
-        // número na tela e nenhuma ação possível.
-        let body = "";
-        try {
-          body = await response.text();
-        } catch {
-          // Conexão cortada no meio do corpo: fica o status, que ainda é melhor
-          // que transformar a recusa em sucesso.
-        }
-        throw new Error(failureMessage(path, response.status, body));
-      }
+    post(path: string, body: unknown): Promise<unknown> {
+      return request("POST", path, body);
+    },
+
+    get(path: string): Promise<unknown> {
+      return request("GET", path);
+    },
+
+    del(path: string): Promise<unknown> {
+      return request("DELETE", path);
     }
   };
+
+  /**
+   * O fetch autenticado que os três verbos compartilham. Um só, para a regra
+   * de erro (a frase acionável do gateway) e a regra de token valerem igual em
+   * todos — três cópias divergiriam na primeira manutenção.
+   */
+  async function request(method: string, path: string, body?: unknown): Promise<unknown> {
+    const base = httpBase(url);
+    if (base === "") throw new Error("endereço do gateway inválido");
+
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    const init: RequestInit = { method, headers };
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(`${base}${path}`, init);
+    if (!response.ok) {
+      // O corpo é lido ANTES de lançar: o gateway responde 409 com a frase
+      // que diz o que falta na máquina, e descartá-la deixava a pessoa com um
+      // número na tela e nenhuma ação possível.
+      let failure = "";
+      try {
+        failure = await response.text();
+      } catch {
+        // Conexão cortada no meio do corpo: fica o status, que ainda é melhor
+        // que transformar a recusa em sucesso.
+      }
+      throw new Error(failureMessage(path, response.status, failure));
+    }
+
+    let text = "";
+    try {
+      text = await response.text();
+    } catch {
+      // Sucesso sem corpo legível (conexão fechada depois do status): o status
+      // já disse que deu certo, e é isso que importa a quem chamou.
+      return undefined;
+    }
+    if (text === "") return undefined;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      // Corpo que não é JSON não vira exceção: o contrato de sucesso do
+      // gateway é JSON, e um proxy no meio devolvendo texto não pode
+      // transformar um 200 em erro na tela.
+      return undefined;
+    }
+  }
 }

@@ -455,6 +455,9 @@ var riskByTool = map[string]protocol.Risk{
 	"runtime.status":  protocol.RiskRead,
 	"finetune.status": protocol.RiskRead,
 	"schedule.list":   protocol.RiskRead,
+	// Lista os pacotes corporativos instalados (nome, versão, o que trazem).
+	// Só leitura de metadado — nem o conteúdo dos prompts sai por ela.
+	"pack.list": protocol.RiskRead,
 
 	// Deixa rastro: arquivo novo, arquivo alterado, worktree criada, commit
 	// feito. image.generate está aqui porque termina em arquivo no disco.

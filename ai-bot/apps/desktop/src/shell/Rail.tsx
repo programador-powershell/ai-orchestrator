@@ -20,6 +20,7 @@ import {
   Database,
   FileText,
   FolderOpen,
+  GitBranch,
   Hand,
   KanbanSquare,
   Layers,
@@ -71,6 +72,7 @@ function ConversationsRail() {
   const sessions = useApp((state) => state.sessions);
   const session = useApp((state) => state.session);
   const openSession = useApp((state) => state.openSession);
+  const forkSession = useApp((state) => state.forkSession);
 
   if (sessions.length === 0) {
     return (
@@ -88,7 +90,9 @@ function ConversationsRail() {
         // tipo de trabalho está guardado ali dentro.
         const Icon = SPECIALIST_ICON[item.specialist ?? ""] ?? Bot;
         return (
-          <li key={item.id}>
+          // O botão de ramificar é IRMÃO do botão da conversa, não filho:
+          // botão dentro de botão é HTML inválido e o clique dos dois brigaria.
+          <li key={item.id} className="rail-item-row">
             <button
               type="button"
               className="rail-item"
@@ -99,6 +103,15 @@ function ConversationsRail() {
               <Icon size={14} aria-hidden />
               <span className="rail-item-label">{item.title}</span>
               <span className="rail-item-meta">{item.turns}</span>
+            </button>
+            <button
+              type="button"
+              className="rail-item-fork"
+              onClick={() => forkSession(item.id)}
+              title="Ramificar esta conversa — o histórico é copiado para uma sessão nova"
+              aria-label={`Ramificar a conversa ${item.title}`}
+            >
+              <GitBranch size={13} aria-hidden />
             </button>
           </li>
         );

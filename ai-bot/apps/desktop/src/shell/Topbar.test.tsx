@@ -19,7 +19,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Topbar } from "./Topbar";
+import { initialAppData, useApp } from "../lib/store";
+import { Topbar, describeUpdate, updateAction } from "./Topbar";
 
 /* ------------------------------ a janela falsa ---------------------------- */
 
@@ -78,6 +79,9 @@ afterEach(() => {
   });
   container.remove();
   pretendeSerTauri(false);
+  // O store é um módulo, então ele sobrevive entre os testes: sem esta linha, um
+  // teste que liga o aviso de atualização o deixa ligado para o próximo.
+  useApp.setState(initialAppData());
 });
 
 /* --------------------------------- testes -------------------------------- */
@@ -116,6 +120,54 @@ describe("controles da janela", () => {
     expect(botao("Maximizar ou restaurar")).toBeNull();
     // O resto da barra continua de pé.
     expect(botao("Configurações")).not.toBeNull();
+  });
+});
+
+describe("aviso de atualização", () => {
+  function chip(): HTMLElement | null {
+    return container.querySelector<HTMLElement>(".update-chip");
+  }
+
+  it("não aparece quando não há atualização pendente", () => {
+    monta();
+    expect(chip(), "aviso de atualização sem atualização nenhuma").toBeNull();
+  });
+
+  it("aparece dizendo a versão e o que fazer, sem interromper o trabalho", () => {
+    useApp.setState({ updateAvailable: true, updateVersion: "0.2.0", updateTracks: ["ui"] });
+    monta();
+
+    const aviso = chip();
+    expect(aviso, "com atualização pendente o aviso tem de existir").not.toBeNull();
+    expect(aviso?.textContent).toContain("0.2.0");
+    expect(aviso?.textContent).toContain("reabrir");
+    expect(aviso?.getAttribute("title")).toContain("reabra o aplicativo");
+
+    // Nada de modal e nada de botão: a atualização não espera decisão, espera a
+    // próxima abertura. Um cartão por cima da conversa treinaria a pessoa a
+    // fechar o aviso sem ler.
+    expect(container.querySelector(".update-chip button")).toBeNull();
+    expect(document.querySelector(".approval-backdrop")).toBeNull();
+  });
+
+  it("o verbo do chip é o da trilha mais cara", () => {
+    // Instalar já reabre; lembrar das duas coisas só dilui a instrução.
+    expect(updateAction(["ui", "shell"])).toBe("instalar");
+    expect(updateAction(["gateway", "ui"])).toBe("reabrir");
+    expect(updateAction(["gateway"])).toBe("pronta");
+    expect(updateAction([])).toBe("pronta");
+  });
+
+  it("o título diz o que muda e o que cada parte custa", () => {
+    const texto = describeUpdate("0.3.0", ["shell", "gateway", "ui", "data"]);
+    expect(texto).toContain("Atualização 0.3.0 pronta.");
+    // Do que custa menos ao que custa mais: a leitura termina no que pede ação.
+    expect(texto.indexOf("nada a fazer, já está valendo")).toBeLessThan(texto.indexOf("reabra o aplicativo"));
+    expect(texto.indexOf("reabra o aplicativo")).toBeLessThan(texto.indexOf("instale a versão nova"));
+    // Trilha que esta interface não conhece não pode virar "undefined" no aviso.
+    const desconhecida = describeUpdate("0.3.0", ["mistério" as never]);
+    expect(desconhecida).not.toContain("undefined");
+    expect(desconhecida).toContain("Nada a fazer agora.");
   });
 });
 

@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { AlertTriangle, ArrowUp, Bot, Check, ChevronDown, RotateCcw, Square, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Bot, Check, ChevronDown, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import type { SpecialistAction, SpecialistDefinition } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { FALLBACK_SPECIALISTS, MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
@@ -57,6 +57,9 @@ export function Composer() {
   const setInput = useApp((s) => s.setInput);
   const setSpecialistOverride = useApp((s) => s.setSpecialistOverride);
   const send = useApp((s) => s.send);
+  const attachments = useApp((s) => s.attachments);
+  const attach = useApp((s) => s.attach);
+  const detach = useApp((s) => s.detach);
   const stop = useApp((s) => s.stop);
   const connect = useApp((s) => s.connect);
 
@@ -74,6 +77,7 @@ export function Composer() {
   });
 
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   /** Posição de cursor a aplicar depois que o React repintar o valor do campo. */
   const caretRef = useRef<number | null>(null);
@@ -134,11 +138,12 @@ export function Composer() {
 
   const submit = useCallback(() => {
     if (busy) return;
-    if (!input.trim()) return;
+    // Anexo sem texto vale como envio: o gesto de anexar já diz "abre isso".
+    if (!input.trim() && attachments.length === 0) return;
     // Sem argumento: o store já tem o texto: passar `input` aqui criaria duas fontes
     // de verdade para a mesma string.
     send();
-  }, [busy, input, send]);
+  }, [busy, input, attachments.length, send]);
 
   const onSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -274,6 +279,25 @@ export function Composer() {
         </p>
       ) : null}
 
+      {attachments.length > 0 ? (
+        <ul className="composer-attachments" aria-label="Arquivos anexados">
+          {attachments.map((item) => (
+            <li key={item.name} className="composer-attachment">
+              <Paperclip size={12} aria-hidden="true" />
+              <span className="composer-attachment-name">{item.name}</span>
+              <button
+                type="button"
+                className="composer-attachment-remove"
+                onClick={() => detach(item.name)}
+                aria-label={`Remover ${item.name}`}
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       <form className="composer" onSubmit={onSubmit} aria-busy={busy}>
         <label htmlFor={FIELD_ID} style={SR_ONLY}>
           {pinned ? `Mensagem para ${target.name}` : "Mensagem — o master escolhe o especialista"}
@@ -303,6 +327,42 @@ export function Composer() {
         </span>
 
         <div className="composer-bar">
+          {/*
+            O anexo é REFERÊNCIA, não upload: o app é desktop e o arquivo já
+            está no disco — o especialista o lê pela pasta do projeto. O que o
+            anexo faz AGORA é rotear: mandar um .docx é dizer "documentos" sem
+            precisar saber que existe um especialista de documentos.
+          */}
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            style={SR_ONLY}
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(event) => {
+              const picked = Array.from(event.target.files ?? []).map((file) => ({
+                name: file.name,
+                mime: file.type,
+                bytes: file.size
+              }));
+              if (picked.length > 0) attach(picked);
+              // Zera para o MESMO arquivo poder ser anexado de novo depois de
+              // removido — input de arquivo não dispara change para valor igual.
+              event.target.value = "";
+              fieldRef.current?.focus();
+            }}
+          />
+          <button
+            type="button"
+            className="composer-icon-button"
+            onClick={() => fileRef.current?.click()}
+            title="Anexar arquivo — o nome decide o especialista; o conteúdo é lido da pasta do projeto"
+            aria-label="Anexar arquivo"
+          >
+            <Paperclip size={14} aria-hidden="true" />
+          </button>
+
           <div className="composer-picker" ref={pickerRef}>
             <button
               type="button"

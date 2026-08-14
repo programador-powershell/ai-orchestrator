@@ -22,6 +22,7 @@ import {
   type ApprovalDecision,
   type ApprovalRequest,
   type Ask,
+  type Attachment,
   type Avatar,
   type ConversationLine,
   type Delegate,
@@ -36,6 +37,7 @@ import {
   type Hello,
   type Message,
   type ModelInfo,
+  type Notice,
   type Prompt,
   type ProtocolError,
   type Ready,
@@ -52,6 +54,7 @@ import {
   type Thinking,
   type ToolCall,
   type ToolResult,
+  type UpdateTrack,
   type WorkerDone
 } from "@aibot/contracts";
 import { DEFAULT_ENVIRONMENT, FALLBACK_ENVIRONMENTS } from "./environments";
@@ -118,6 +121,30 @@ export interface AppData {
    * cadeia. Quem desenha o popup lê a última em aberto.
    */
   delegations: Delegate[];
+  /**
+   * Os avisos de execução do turno (KindNotice), em ordem de chegada — "este
+   * passo vai rodar num container", o downgrade para o ai-jail da VPS.
+   *
+   * Fila só de acréscimo, como as delegações: o store é PURO e não tem relógio
+   * — quem faz o aviso sumir (~4 s) é o timer do componente NoticePopup, que
+   * guarda qual índice já foi dispensado. Remover daqui exigiria um relógio no
+   * redutor, e o redutor com relógio deixa de ser testável.
+   */
+  notices: Notice[];
+  /**
+   * A atualização que já foi baixada e verificada e está esperando alguma coisa
+   * acontecer (ver `docs/atualizacao.md`).
+   *
+   * Fica no estado e não numa fila de notificação porque ela não é um evento —
+   * é uma CONDIÇÃO, que continua verdadeira até o app reabrir ou o instalador
+   * rodar. O gateway a anuncia a cada verificação (de seis em seis horas, por
+   * padrão), então uma janela aberta depois do anúncio só fica sabendo na
+   * verificação seguinte — e é por isso que o campo ausente PRESERVA o que já
+   * estava, em vez de zerar.
+   */
+  updateAvailable: boolean;
+  updateVersion: string;
+  updateTracks: UpdateTrack[];
   theme: "light" | "dark";
   railOpen: boolean;
   avatarLabOpen: boolean;
@@ -125,6 +152,13 @@ export interface AppData {
   /** Personalizações do laboratório; chave = id do especialista. */
   avatars: Record<string, Avatar>;
   input: string;
+  /**
+   * Anexos aguardando envio. São REFERÊNCIAS (nome, mime, tamanho), não
+   * conteúdo: o app é desktop e o arquivo já está no disco — o especialista o
+   * lê pela pasta do projeto. O nome é o que o roteador usa para decidir o dono
+   * (.docx → documentos, .sql → dados).
+   */
+  attachments: Attachment[];
   error: string;
 }
 
@@ -136,11 +170,14 @@ export interface AppActions {
   decideGate(gateId: string, decision: GateDecision): void;
   answerAsk(answer: string): void;
   setInput(text: string): void;
+  attach(files: Array<{ name: string; mime: string; bytes: number }>): void;
+  detach(name: string): void;
   setModel(id: string): void;
   setEnvironment(id: Environment): void;
   setSpecialistOverride(id: string): void;
   newSession(): void;
   openSession(id: string): void;
+  forkSession(id: string): void;
   setTheme(theme: "light" | "dark"): void;
   toggleRail(): void;
   setAvatarLabOpen(open: boolean): void;
@@ -179,12 +216,17 @@ export function initialAppData(): AppData {
     environment: DEFAULT_ENVIRONMENT,
     environments: FALLBACK_ENVIRONMENTS,
     delegations: [],
+    notices: [],
+    updateAvailable: false,
+    updateVersion: "",
+    updateTracks: [],
     theme: "light",
     railOpen: true,
     avatarLabOpen: false,
     settingsOpen: false,
     avatars: {},
     input: "",
+    attachments: [],
     error: ""
   };
 }
@@ -651,6 +693,15 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       return { ...state, delegations: next };
     }
 
+    case "notice": {
+      const notice = payloadOf<Notice>(envelope);
+      if (!notice || typeof notice.title !== "string" || notice.title === "") return state;
+      // Fila SÓ de acréscimo: quem tira o aviso da tela é o componente, com o
+      // timer dele (~4 s) — este redutor é puro e não tem relógio para decidir
+      // que "já passou". A fila zera com a conversa, em conversationReset.
+      return { ...state, notices: [...state.notices, notice] };
+    }
+
     case "done": {
       return { ...state, busy: false, thinking: "", lines: closeTurn(state.lines, envelope.turn) };
     }
@@ -677,7 +728,26 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       // diferente — é um rótulo no rodapé, e ele PODE mudar de fora (outra
       // janela escolheu, ou o gateway caiu para local ao perder a VPS). Não
       // mostrar seria o rodapé prometer uma máquina que não é a da execução.
-      return { ...state, busy: published.busy, environment: published.environment ?? state.environment };
+      //
+      // A atualização entra pelo mesmo caminho e pelo mesmo motivo: ela é uma
+      // condição do PROCESSO, não desta janela, e quem sabe dela é o gateway.
+      //
+      // O campo ausente PRESERVA o que já estava, e isso não é cautela genérica:
+      // o gateway só anuncia a pendência (`update.Service.announce` sai fora
+      // quando não há nenhuma), então todo `state` de outra origem — uma troca
+      // de ambiente, por exemplo — chega sem esses campos. Zerar aqui faria o
+      // aviso piscar e sumir no primeiro clique do rodapé. O aviso termina
+      // quando o app reabre, que é exatamente o que ele pede.
+      return {
+        ...state,
+        busy: published.busy,
+        environment: published.environment ?? state.environment,
+        updateAvailable: published.updateAvailable ?? state.updateAvailable,
+        updateVersion: published.updateVersion ?? state.updateVersion,
+        updateTracks: Array.isArray(published.updateTracks)
+          ? published.updateTracks
+          : state.updateTracks
+      };
     }
 
     default:
@@ -721,6 +791,17 @@ async function gatewayInfo(): Promise<GatewayInfo> {
  */
 let transport: Transport | null = null;
 
+/**
+ * O transporte ativo, para telas que falam REST autenticado fora do fluxo de
+ * envelopes — a seção de provedores das configurações usa o `get`/`post`/`del`
+ * dele. É função (e não a variável exportada) porque `import` congelaria o
+ * valor de agora: o painel ficaria com `null` para sempre se abrisse antes do
+ * `connect` terminar. Nulo enquanto não há conexão — quem chama mostra isso.
+ */
+export function activeTransport(): Transport | null {
+  return transport;
+}
+
 /** Trava da janela assíncrona entre pedir o token e ter o transporte. */
 let opening = false;
 
@@ -741,6 +822,9 @@ function conversationReset(): Partial<AppData> {
     // As delegações são do TURNO, e o turno morre com a conversa. Mantê-las
     // faria o popup da conversa anterior reaparecer sobre a nova.
     delegations: [],
+    // Mesmo destino para os avisos de execução: um "vai rodar num container"
+    // da conversa anterior não anuncia nada sobre esta.
+    notices: [],
     busy: false,
     thinking: "",
     pendingApproval: null,
@@ -750,6 +834,7 @@ function conversationReset(): Partial<AppData> {
     activeSpecialist: "",
     activeSurface: "conversation",
     input: "",
+    attachments: [],
     error: ""
   };
 }
@@ -787,13 +872,43 @@ export const useApp = create<AppState>()(
       send: (text) => {
         const state = get();
         const value = (text ?? state.input).trim();
-        if (value === "" || transport === null) return;
+        // Anexo sem texto vale como envio: "abre isso aqui" está implícito no
+        // gesto de anexar — exigir uma frase junto seria cerimônia.
+        if ((value === "" && state.attachments.length === 0) || transport === null) return;
         const prompt: Prompt = { text: value };
         // Vazio = o master decide, que é o caminho normal.
         if (state.specialistOverride !== "") prompt.specialist = state.specialistOverride;
         if (state.activeModel !== "") prompt.model = state.activeModel;
+        if (state.attachments.length > 0) {
+          // O anexo é REFERÊNCIA, não upload: o app é desktop e o arquivo já
+          // está no disco — o especialista o lê pela pasta do projeto (fs.*,
+          // office.*). O que viaja é o nome, que é o que o roteador usa para
+          // decidir o dono (.docx → documentos, .sql → dados).
+          prompt.attachments = state.attachments.map((item) => ({ ...item }));
+        }
         transport.send<Prompt>("prompt", prompt);
-        set({ input: "", busy: true, error: "", thinking: "" });
+        set({ input: "", attachments: [], busy: true, error: "", thinking: "" });
+      },
+
+      attach: (files) => {
+        const current = get().attachments;
+        const additions = files
+          .filter((file) => file.name.trim() !== "")
+          .filter((file) => !current.some((existing) => existing.name === file.name))
+          .map((file) => ({
+            name: file.name,
+            mime: file.mime,
+            bytes: file.bytes,
+            // Sem upload não há referência de conteúdo; o campo existe no
+            // protocolo para quando houver.
+            ref: ""
+          }));
+        if (additions.length === 0) return;
+        set({ attachments: [...current, ...additions] });
+      },
+
+      detach: (name) => {
+        set({ attachments: get().attachments.filter((item) => item.name !== name) });
       },
 
       stop: () => {
@@ -891,6 +1006,38 @@ export const useApp = create<AppState>()(
         });
         // As linhas voltam pelo replay do gateway, não de um cache local.
         set({ ...conversationReset(), session: id });
+      },
+
+      /**
+       * Ramifica uma conversa: o gateway copia o log até aqui para uma sessão
+       * NOVA (POST /fork) e a tela abre o ramo na hora — dois futuros sobre o
+       * mesmo passado, sem recontar a história.
+       *
+       * Quem cria é o gateway, então a lista da barra só ganha a linha nova no
+       * próximo `ready`; abrir a sessão devolvida já basta para trabalhar nela.
+       */
+      forkSession: (id) => {
+        if (transport === null) {
+          set({ error: "sem conexão com o gateway — não deu para ramificar a conversa" });
+          return;
+        }
+        void transport
+          .post(`/v1/sessions/${encodeURIComponent(id)}/fork`, {})
+          .then((body) => {
+            const forked = body as { id?: unknown } | undefined;
+            if (forked && typeof forked.id === "string" && forked.id !== "") {
+              get().openSession(forked.id);
+              return;
+            }
+            // 201 sem corpo legível: a sessão pode ter nascido, mas sem o id
+            // não há o que abrir — e fingir sucesso deixaria a pessoa na
+            // conversa antiga achando que está no ramo.
+            set({ error: "o gateway ramificou sem devolver a sessão nova — abra a lista de conversas" });
+          })
+          .catch((cause: unknown) => {
+            const reason = cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+            set({ error: `não deu para ramificar a conversa: ${reason}` });
+          });
       },
 
       setTheme: (theme) => set({ theme }),

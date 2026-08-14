@@ -39,6 +39,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"unicode"
 
 	"aibot/gateway/internal/protocol"
@@ -119,6 +120,12 @@ type RouteInput struct {
 	Current string
 	// Allowed limita os candidatos ao que a política liberou. Vazio = todos.
 	Allowed []string
+	// Attachments são os NOMES dos anexos do prompt. Só a extensão importa:
+	// formato de arquivo é sinal FORTE de destino — quem manda um .docx quer
+	// trabalhar no documento, diga o texto o que disser. Como todo sinal de
+	// classificação, só conta no PRIMEIRO input: anexo em conversa com modo não
+	// reclassifica nada.
+	Attachments []string
 }
 
 // Router é o master.
@@ -210,6 +217,28 @@ func (r *Router) Route(ctx context.Context, in RouteInput) protocol.Route {
 
 	// --- degrau 1: fast router (Go puro) ---
 	scores := Score(text, candidates)
+
+	// Anexo entra ANTES do limiar léxico: depois da escolha explícita, é o
+	// sinal mais deliberado que existe — a pessoa ESCOLHEU um arquivo, enquanto
+	// radical é coincidência de vocabulário. A pontuação é somada (texto capado
+	// + peso por anexo; ver combineAttachments): um anexo decisivo encerra a
+	// decisão aqui, e um empate entre formatos segue a cascata levando o
+	// ranking combinado para o shortlist dos degraus seguintes.
+	if len(in.Attachments) > 0 {
+		combined, decisive := combineAttachments(scores, in.Attachments, candidates)
+		if decisive {
+			top := combined[0]
+			return decorate(protocol.Route{
+				Specialist: top.ID,
+				Previous:   in.Current,
+				Reason:     protocol.RouteHeuristic,
+				Confidence: top.Confidence,
+				Signals:    top.Signals,
+			})
+		}
+		scores = combined
+	}
+
 	if len(scores) > 0 {
 		top := scores[0]
 		runnerUp := 0.0
@@ -312,6 +341,121 @@ func shortlistFor(scores []Scored, candidates []specialist.Definition, limit int
 	return out
 }
 
+/* -------------------------------- anexos --------------------------------- */
+
+// attachmentWeight é o peso de UM anexo reconhecido na pontuação combinada.
+//
+// Dois × saturation, e não um número redondo qualquer, porque a garantia de
+// "extensão vence radical" vem da aritmética: a parcela de TEXTO entra capada
+// em `saturation` (a confiança já satura ali — acima disso o léxico não fica
+// "mais certo", só mais verboso), então com o dobro do teto UM anexo passa
+// QUALQUER pontuação de radical, inclusive a de um texto entupido de palavras
+// de código. Sem o cap não haveria peso que garantisse: a soma léxica não tem
+// teto teórico.
+const attachmentWeight = 2 * saturation
+
+// extensionOwner mapeia a extensão do anexo para o especialista dono do
+// formato.
+//
+// A lista é decisão de produto, não detecção de MIME: quem manda um .docx quer
+// trabalhar NO documento, quem manda um .sql quer o dado. Extensão ambígua
+// (json, md, html, css…) fica FORA de propósito — melhor descer a cascata sem
+// opinião do que errar com convicção.
+var extensionOwner = map[string]string{
+	// Documentos de escritório: o artefato final é o arquivo binário.
+	"docx": "office", "pptx": "office", "xlsx": "office", "pdf": "office", "odt": "office",
+	// Dados: consulta, base e amostra.
+	"sql": "data", "db": "data", "csv": "data",
+	// Design: imagem — e vídeo, que por decisão de produto mora lá.
+	"png": "design", "jpg": "design", "jpeg": "design", "svg": "design", "fig": "design",
+	"mp4": "design", "mov": "design", "webm": "design", "srt": "design",
+	// Código-fonte.
+	"go": "code", "rs": "code", "ts": "code", "tsx": "code", "py": "code", "js": "code",
+	"jsx": "code", "java": "code", "c": "code", "h": "code", "cpp": "code", "cs": "code",
+	"rb": "code", "php": "code", "kt": "code", "swift": "code", "sh": "code", "ps1": "code",
+	// Fine-tuning: dataset e pesos.
+	"jsonl": "tune", "gguf": "tune", "safetensors": "tune",
+}
+
+// extensionOf extrai a extensão do nome, minúscula e sem o ponto. Vazio quando
+// não há extensão — e aí o anexo simplesmente não opina.
+func extensionOf(name string) string {
+	dot := strings.LastIndexByte(name, '.')
+	if dot < 0 || dot == len(name)-1 {
+		return ""
+	}
+	return strings.ToLower(name[dot+1:])
+}
+
+// combineAttachments soma o peso dos anexos à pontuação léxica do texto.
+//
+// Devolve o ranking combinado e se o primeiro colocado é DECISIVO: estritamente
+// à frente do segundo e com pelo menos um anexo a seu favor. A parcela de texto
+// entra capada em saturation (Confidence×saturation É o bruto capado — nada a
+// recalcular), então um anexo sozinho vence qualquer radical; anexos de donos
+// diferentes disputam por quantidade e o texto desempata; e o empate EXATO não
+// decide — segue para os degraus seguintes com o ranking combinado, que é o que
+// alimenta o shortlist do Needle e as opções de clarificação.
+//
+// Sem anexo reconhecido (extensão desconhecida, ou dono barrado pela política)
+// devolve as pontuações INTACTAS: prompt sem anexo roteia exatamente como
+// antes.
+func combineAttachments(scores []Scored, names []string, candidates []specialist.Definition) ([]Scored, bool) {
+	attachRaw := make(map[string]float64, 2)
+	attachSignals := make(map[string][]string, 2)
+	for _, name := range names {
+		extension := extensionOf(name)
+		owner, known := extensionOwner[extension]
+		if !known || !allowedContains(candidates, owner) {
+			// Dono fora da política não pontua: rotear para quem o admin barrou
+			// seria usar o anexo como porta de trás da lista.
+			continue
+		}
+		attachRaw[owner] += attachmentWeight
+		// O sinal vai para a tela do mesmo jeito que um radical iria: quem passa
+		// o mouse na rota precisa ver O QUE pesou — aqui, o arquivo.
+		attachSignals[owner] = append(attachSignals[owner], "anexo ."+extension)
+	}
+	if len(attachRaw) == 0 {
+		return scores, false
+	}
+
+	raw := make(map[string]float64, len(scores)+len(attachRaw))
+	signals := make(map[string][]string, len(scores)+len(attachRaw))
+	for _, scored := range scores {
+		raw[scored.ID] = scored.Confidence * saturation
+		signals[scored.ID] = scored.Signals
+	}
+	for id, points := range attachRaw {
+		raw[id] += points
+		// Anexo na frente dos radicais: foi ele que decidiu, e a ordem dos
+		// sinais é a ordem em que a explicação se lê.
+		signals[id] = append(append([]string{}, attachSignals[id]...), signals[id]...)
+	}
+
+	out := make([]Scored, 0, len(raw))
+	for id, value := range raw {
+		confidence := value / saturation
+		if confidence > 1 {
+			confidence = 1
+		}
+		out = append(out, Scored{ID: id, Confidence: confidence, Signals: signals[id]})
+	}
+	// O bruto ordena (a confiança capada empata em 1.0 justamente nos casos que
+	// interessam), e o id desempata pelo mesmo motivo do Score: empate não pode
+	// virar sorteio entre execuções.
+	sort.SliceStable(out, func(i, j int) bool {
+		if raw[out[i].ID] != raw[out[j].ID] {
+			return raw[out[i].ID] > raw[out[j].ID]
+		}
+		return out[i].ID < out[j].ID
+	})
+
+	decisive := attachRaw[out[0].ID] > 0 &&
+		(len(out) == 1 || raw[out[0].ID] > raw[out[1].ID])
+	return out, decisive
+}
+
 // decorate preenche o que a tela precisa junto com a decisão.
 func decorate(route protocol.Route) protocol.Route {
 	definition := specialist.GetOrDefault(route.Specialist)
@@ -329,44 +473,6 @@ type Scored struct {
 	Signals    []string
 }
 
-// normalizedTriggers é a forma já dobrada de cada radical do catálogo.
-//
-// Os radicais são CONSTANTES: o catálogo não muda em tempo de execução. Dobrar
-// os ~150 a cada chamada de Score era refazer para sempre um trabalho cujo
-// resultado nunca muda — e Score roda no primeiro input de toda conversa.
-//
-// O mapa é montado na inicialização do pacote e só é LIDO depois, então não
-// precisa de trava: ninguém escreve nele depois que o programa começa a
-// atender.
-var normalizedTriggers = buildNormalizedTriggers()
-
-func buildNormalizedTriggers() map[string]string {
-	index := make(map[string]string, 256)
-	for _, definition := range catalogCandidates {
-		for _, trigger := range definition.Triggers {
-			if _, done := index[trigger]; done {
-				continue
-			}
-			index[trigger] = Normalize(trigger)
-		}
-	}
-	return index
-}
-
-// normalizedTrigger devolve o radical dobrado, do cache quando ele é do
-// catálogo.
-//
-// O caminho de fora do cache não é sobra: Score é exportada e recebe qualquer
-// []specialist.Definition — os testes montam especialistas à mão para exercitar
-// desempate. Cair para Normalize mantém esses casos com o MESMO resultado, só
-// sem o atalho.
-func normalizedTrigger(trigger string) string {
-	if needle, cached := normalizedTriggers[trigger]; cached {
-		return needle
-	}
-	return Normalize(trigger)
-}
-
 // Score pontua cada candidato contra o texto, do maior para o menor.
 //
 // Exportada porque é o coração do roteamento e precisa de teste próprio: um
@@ -378,12 +484,17 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 		return nil
 	}
 
+	// UMA leitura do ponteiro para a chamada inteira. Consultar o atômico a cada
+	// radical seria ~150 leituras por Score, e ainda deixaria a pontuação de um
+	// mesmo texto misturar dois catálogos se a troca caísse no meio do laço.
+	cache := activeCatalog()
+
 	out := make([]Scored, 0, len(candidates))
 	for _, definition := range candidates {
 		raw := 0.0
 		var signals []string
 		for _, trigger := range definition.Triggers {
-			needle := normalizedTrigger(trigger)
+			needle := cache.trigger(trigger)
 			if needle == "" {
 				continue
 			}
@@ -492,30 +603,88 @@ func Normalize(text string) string {
 
 /* ------------------------------ candidatos ------------------------------ */
 
-// catalogCandidates é o catálogo inteiro, materializado UMA vez.
+// routerCatalog é o catálogo do jeito que o roteador precisa dele: a fatia de
+// candidatos materializada e os radicais já normalizados.
 //
-// specialist.All() devolve uma fatia nova a cada chamada, e Route chama
-// candidatesFor em TODA mensagem — inclusive no caminho sticky, que é o de
-// quase todas elas e que a arquitetura promete custar zero. Como Definition
-// carrega prompt, ações e ferramentas, essa cópia dava 4 KB alocados por
-// mensagem só para depois perguntar se um id está na lista.
+// As duas coisas são caches, e existem por medida:
 //
-// Daqui para baixo a fatia é tratada como SOMENTE LEITURA. Isso não afrouxa
+//   - specialist.All() devolve uma fatia nova a cada chamada, e Route chama
+//     candidatesFor em TODA mensagem — inclusive no caminho sticky, que é o de
+//     quase todas elas e que a arquitetura promete custar zero. Como Definition
+//     carrega prompt, ações e ferramentas, essa cópia dava 4 KB alocados por
+//     mensagem só para depois perguntar se um id está na lista.
+//   - dobrar os ~150 radicais a cada Score era refazer para sempre um trabalho
+//     cujo resultado não muda entre publicações.
+//
+// A fatia é tratada como SOMENTE LEITURA daqui para baixo. Isso não afrouxa
 // nenhuma garantia: a cópia de All() sempre foi rasa — Triggers, Tools e
 // Actions já eram compartilhados com o catálogo —, então quem escrevesse nela
-// já corrompia o registro global. O que muda é só o custo.
-var catalogCandidates = specialist.All()
+// já corrompia o registro global.
+type routerCatalog struct {
+	candidates []specialist.Definition
+	normalized map[string]string
+}
+
+// catalogCache guarda o routerCatalog em vigor.
+//
+// Ponteiro atômico, e não mapa fixo de inicialização, porque o catálogo DEIXOU
+// de ser constante: a trilha A publica um catálogo novo a quente
+// (specialist.LoadOverlay). Cache montado uma vez e nunca reconstruído era
+// exatamente o defeito a evitar — a tela mostraria o catálogo publicado
+// enquanto o roteador continuaria pontuando pelos radicais do compilado.
+var catalogCache atomic.Pointer[routerCatalog]
+
+func init() {
+	rebuildCatalogCache()
+	// O gancho fecha o ciclo. Sem ele os caches acima seriam a única parte do
+	// gateway que não enxerga a publicação.
+	specialist.OnChange(rebuildCatalogCache)
+}
+
+func rebuildCatalogCache() {
+	candidates := specialist.All()
+	index := make(map[string]string, 256)
+	for _, definition := range candidates {
+		for _, trigger := range definition.Triggers {
+			if _, done := index[trigger]; done {
+				continue
+			}
+			index[trigger] = Normalize(trigger)
+		}
+	}
+	catalogCache.Store(&routerCatalog{candidates: candidates, normalized: index})
+}
+
+func activeCatalog() *routerCatalog {
+	return catalogCache.Load()
+}
+
+// trigger devolve o radical já dobrado, do cache quando ele é do catálogo
+// ativo.
+//
+// O caminho de fora do cache não é sobra: Score é exportada e recebe qualquer
+// []specialist.Definition — os testes montam especialistas à mão para exercitar
+// desempate, e um overlay recém-publicado traz radicais que o cache anterior
+// não tinha. Cair para Normalize mantém esses casos com o MESMO resultado, só
+// sem o atalho.
+func (c *routerCatalog) trigger(raw string) string {
+	if folded, cached := c.normalized[raw]; cached {
+		return folded
+	}
+	return Normalize(raw)
+}
 
 func candidatesFor(allowed []string) []specialist.Definition {
+	catalog := activeCatalog().candidates
 	if len(allowed) == 0 {
-		return catalogCandidates
+		return catalog
 	}
 	permitted := make(map[string]bool, len(allowed))
 	for _, id := range allowed {
 		permitted[id] = true
 	}
-	out := make([]specialist.Definition, 0, len(catalogCandidates))
-	for _, definition := range catalogCandidates {
+	out := make([]specialist.Definition, 0, len(catalog))
+	for _, definition := range catalog {
 		if permitted[definition.ID] {
 			out = append(out, definition)
 		}

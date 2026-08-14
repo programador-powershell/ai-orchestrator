@@ -243,6 +243,25 @@ func (s *Server) handleInbound(ctx context.Context, sessionID string, envelope p
 			s.log.Debug("portão sem pendência", "erro", err)
 		}
 
+	case protocol.KindReply:
+		// Resposta humana de um `ask` bloqueante (clarificação de rota,
+		// aprovação de plano). Ela RETOMA um turno inteiro, então segue o mesmo
+		// caminho assíncrono do prompt — a leitura do socket não pode ficar
+		// presa atrás de um turno de modelo.
+		var reply protocol.Reply
+		if err := envelope.Decode(&reply); err != nil {
+			return
+		}
+		go func() {
+			turnCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			if err := s.sup.Reply(turnCtx, sessionID, reply); err != nil {
+				// Sem pendência não é falha do gateway: é um reply atrasado de
+				// uma pergunta que a próxima mensagem já matou.
+				s.log.Debug("reply sem pendência", "sessao", sessionID, "erro", err)
+			}
+		}()
+
 	case protocol.KindToolResult:
 		// Resultado de ferramenta de MÁQUINA, vindo do aplicativo nativo.
 		var result protocol.ToolResult
@@ -292,7 +311,10 @@ func (s *Server) environmentState(
 		// seletor, em vez de oferecer opções que este processo não tem.
 		return "", nil
 	}
-	return s.environments.Active(sessionID), s.environments.Describe(ctx)
+	// Active ANTES do Describe, e com o mesmo ctx: é ele que mede o padrão do
+	// gateway (a VPS configurada e de pé vira o ambiente de quem nunca
+	// escolheu), e a medição fica no cache para o Describe logo atrás.
+	return s.environments.Active(ctx, sessionID), s.environments.Describe(ctx)
 }
 
 // sessionSummaries monta a lista de conversas que vai no `ready`.

@@ -148,9 +148,9 @@ func TestProcRunConfinaOCwdNaPastaDoProjeto(t *testing.T) {
 }
 
 func TestProcRunRecusaAmbienteIndisponivel(t *testing.T) {
-	// VPS e nuvem estão declarados e não têm executor. A recusa vem com o
-	// motivo, e não com um erro genérico de ferramenta.
-	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), sandbox.NewVPSRunner())
+	// A VPS está declarada e SEM configuração no catálogo. A recusa vem com o
+	// motivo acionável, e não com um erro genérico de ferramenta.
+	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), sandbox.NewVPSRunner(sandbox.VPSConfig{}))
 	registry, host, _ := procToolbox(t, environments)
 	if err := environments.Set("s1", protocol.EnvVPS); err != nil {
 		t.Fatalf("Set: %v", err)
@@ -159,10 +159,10 @@ func TestProcRunRecusaAmbienteIndisponivel(t *testing.T) {
 	_, err := registry.Call(context.Background(), "proc.run", "s1",
 		json.RawMessage(`{"command":"make"}`))
 	if err == nil {
-		t.Fatal("ambiente sem executor tinha de recusar")
+		t.Fatal("ambiente indisponível tinha de recusar")
 	}
-	if !strings.Contains(err.Error(), "ainda não tem executor") {
-		t.Fatalf("o motivo tem de chegar ao modelo: %v", err)
+	if !strings.Contains(err.Error(), "catalog.json") {
+		t.Fatalf("o motivo tem de chegar ao modelo com o que configurar: %v", err)
 	}
 	if host.chamado {
 		t.Fatal("recusar não é cair de volta na estação — seria rodar no lugar errado calado")

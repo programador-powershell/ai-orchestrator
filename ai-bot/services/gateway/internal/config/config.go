@@ -17,6 +17,7 @@
 package config
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -40,6 +41,11 @@ const (
 	EnvManaged      = "AIBOT_MANAGED"
 	EnvPolicyURL    = "AIBOT_POLICY_URL"
 	EnvWorktreeRoot = "AIBOT_WORKTREE_ROOT"
+
+	// A atualização (ver docs/atualizacao.md e internal/update).
+	EnvUpdateManifestURL = "AIBOT_UPDATE_MANIFEST_URL"
+	EnvUpdatePublicKey   = "AIBOT_UPDATE_PUBLIC_KEY"
+	EnvUpdateChannel     = "AIBOT_UPDATE_CHANNEL"
 )
 
 const (
@@ -49,6 +55,9 @@ const (
 	// DefaultLogLevel é "info": debug numa estação de usuário enche disco com
 	// conteúdo de conversa, que é o dado mais sensível que este processo toca.
 	DefaultLogLevel = "info"
+
+	// DefaultUpdateChannel é o canal de quem não escolheu. O outro é "beta".
+	DefaultUpdateChannel = "stable"
 
 	// MasterKeySize é fixo: internal/secrets sela com AES-256-GCM, e AES-256 não
 	// negocia o tamanho da chave. Chave de 31 bytes não é "quase" — é erro.
@@ -132,6 +141,18 @@ type Config struct {
 	// WorktreeRoot é onde os workers criam worktree de git. Fica dentro do
 	// DataDir por padrão para o desinstalador ter um lugar só para limpar.
 	WorktreeRoot string
+
+	// UpdateManifestURL é de onde vem o manifesto assinado. Vazia = sem
+	// atualização automática, que é um gateway inteiro e funcional — só não se
+	// atualiza sozinho.
+	UpdateManifestURL string
+
+	// UpdatePublicKey é a chave Ed25519 que verifica o manifesto. Vazia
+	// DESLIGA o serviço de atualização; ver updatePublicKey.
+	UpdatePublicKey []byte
+
+	// UpdateChannel é "stable" ou "beta". Manifesto de outro canal é ignorado.
+	UpdateChannel string
 }
 
 // Load lê o ambiente, cria o DataDir e materializa token e chave mestra.
@@ -146,15 +167,27 @@ func Load() (Config, error) {
 	}
 
 	c := Config{
-		Bind:         envOr(EnvBind, DefaultBind),
-		LogLevel:     strings.ToLower(envOr(EnvLog, DefaultLogLevel)),
-		Managed:      parseBool(os.Getenv(EnvManaged)),
-		PolicyURL:    strings.TrimSpace(os.Getenv(EnvPolicyURL)),
-		AllowOrigins: allowOrigins(),
+		Bind:              envOr(EnvBind, DefaultBind),
+		LogLevel:          strings.ToLower(envOr(EnvLog, DefaultLogLevel)),
+		Managed:           parseBool(os.Getenv(EnvManaged)),
+		PolicyURL:         strings.TrimSpace(os.Getenv(EnvPolicyURL)),
+		AllowOrigins:      allowOrigins(),
+		UpdateManifestURL: strings.TrimSpace(os.Getenv(EnvUpdateManifestURL)),
+		UpdateChannel:     strings.ToLower(envOr(EnvUpdateChannel, DefaultUpdateChannel)),
 	}
 
 	if !validLogLevel(c.LogLevel) {
 		return Config{}, fmt.Errorf("nível de log %q inválido em %s, use debug|info|warn|error", c.LogLevel, EnvLog)
+	}
+
+	c.UpdatePublicKey, err = updatePublicKey()
+	if err != nil {
+		// Falha de boot, e de propósito. Chave de atualização ilegível só vem de
+		// build ou instalação quebrada, e o desfecho alternativo — subir sem
+		// verificar nada — é exatamente o que a cadeia de confiança existe para
+		// impedir. Melhor o app não abrir com a causa escrita do que abrir
+		// aceitando qualquer manifesto.
+		return Config{}, err
 	}
 
 	// Caminho relativo é resolvido agora porque o sidecar HERDA o diretório de
@@ -223,8 +256,15 @@ func (c Config) String() string {
 	fmt.Fprintf(&out, " token=%s", presence(c.Token != ""))
 	fmt.Fprintf(&out, " chave_mestra=%s", presence(len(c.MasterKey) == MasterKeySize))
 	// A política vira presença e não URL porque link assinado costuma carregar
-	// token na query, e o log de boot vai parar em anexo de chamado.
+	// token na query, e o log de boot vai parar em anexo de chamado. O mesmo
+	// vale para o manifesto de atualização.
 	fmt.Fprintf(&out, " politica=%s", presence(c.PolicyURL != ""))
+	fmt.Fprintf(&out, " atualizacao=%s", presence(c.UpdateManifestURL != ""))
+	// A chave PÚBLICA poderia ir inteira no log sem risco; vai como presença
+	// para a linha de boot continuar legível e para não sugerir que chave é
+	// coisa que se copia de log.
+	fmt.Fprintf(&out, " chave_atualizacao=%s", presence(len(c.UpdatePublicKey) == ed25519.PublicKeySize))
+	fmt.Fprintf(&out, " canal=%s", c.UpdateChannel)
 	return out.String()
 }
 
@@ -403,7 +443,54 @@ func writeSecretAtomic(path, text string) error {
 	return nil
 }
 
-// masterKeyEncodings são os alfabetos base64 aceitos na chave mestra.
+/* --------------------------- chave de atualização ------------------------- */
+
+// compiledUpdateKey é a chave pública EMBUTIDA no build:
+//
+//	go build -ldflags "-X aibot/gateway/internal/config.compiledUpdateKey=<base64>"
+//
+// Ela existe porque a regra da cadeia de confiança é que a chave pública seja
+// gravada em tempo de COMPILAÇÃO (docs/atualizacao.md). Chave que viaja junto
+// com o que ela assina não assina nada — e chave que a variável de ambiente
+// pode trocar é chave que qualquer processo com acesso ao ambiente do usuário
+// substitui pela dele, apontando o gateway para o próprio servidor de
+// publicação. Seria SSRF com privilégio de instalar o próximo aibotd.
+var compiledUpdateKey string
+
+// updatePublicKey resolve a chave: o build manda, e o ambiente só preenche o
+// que o build deixou vazio.
+//
+// A precedência é essa e não a contrária. Um binário oficial (com chave
+// embutida) IGNORA AIBOT_UPDATE_PUBLIC_KEY — se o ambiente pudesse
+// sobrescrevê-la, a chave embutida seria uma sugestão. A variável serve ao
+// build de desenvolvimento e ao ambiente de homologação, que precisam apontar
+// para uma chave de teste sem recompilar o produto.
+func updatePublicKey() ([]byte, error) {
+	text := strings.TrimSpace(compiledUpdateKey)
+	origin := "embutida no build"
+	if text == "" {
+		text = strings.TrimSpace(os.Getenv(EnvUpdatePublicKey))
+		origin = EnvUpdatePublicKey
+	}
+	if text == "" {
+		// Sem chave o serviço de atualização não sobe (ele registra o motivo).
+		// Não é erro de boot: é o caso normal de quem compila e roda local.
+		return nil, nil
+	}
+
+	key, err := decodeBase64(text)
+	if err != nil {
+		return nil, fmt.Errorf("chave pública de atualização (%s): %w", origin, err)
+	}
+	if len(key) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("chave pública de atualização (%s): tem %d bytes depois do base64, e Ed25519 usa %d",
+			origin, len(key), ed25519.PublicKeySize)
+	}
+	return key, nil
+}
+
+// masterKeyEncodings são os alfabetos base64 aceitos nas chaves lidas de fora
+// (a mestra e a pública de atualização).
 //
 // O gateway gera em RawURL, mas a chave também é digitada por gente que a tirou
 // de um cofre — e cofre entrega padrão (com "+", "/" e "="). Aceitar as quatro
@@ -421,15 +508,22 @@ var masterKeyEncodings = []*base64.Encoding{
 // O tamanho é verificado aqui, e não em internal/secrets, porque erro de boot é
 // visível e erro no primeiro selo acontece com o usuário no meio de uma sessão.
 func decodeMasterKey(text string) ([]byte, error) {
+	key, err := decodeBase64(text)
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != MasterKeySize {
+		return nil, fmt.Errorf("tem %d bytes depois do base64, precisa de exatamente %d", len(key), MasterKeySize)
+	}
+	return key, nil
+}
+
+// decodeBase64 tenta os quatro alfabetos e devolve o primeiro que decodifica.
+func decodeBase64(text string) ([]byte, error) {
 	for _, encoding := range masterKeyEncodings {
-		key, err := encoding.DecodeString(text)
-		if err != nil {
-			continue
+		if key, err := encoding.DecodeString(text); err == nil {
+			return key, nil
 		}
-		if len(key) != MasterKeySize {
-			return nil, fmt.Errorf("tem %d bytes depois do base64, precisa de exatamente %d", len(key), MasterKeySize)
-		}
-		return key, nil
 	}
 	return nil, errors.New("não é base64 válido")
 }

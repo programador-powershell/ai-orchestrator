@@ -370,13 +370,14 @@ func decodeWSL(raw string) string {
 	return strings.TrimSpace(cleaned)
 }
 
-/* --------------------------- VPS, nuvem: honestos ------------------------ */
+/* ------------------------------ nuvem: honesta ---------------------------- */
 
 // notImplemented é a frase dos ambientes que ainda não têm executor.
 //
 // Eles CONTINUAM na lista, cinza, com este motivo. O produto anterior prometia
 // os quatro no rodapé e roteava só o VPS; sumir com a opção teria sido pior,
 // porque quem leu a promessa procura por ela. O honesto é aparecer e dizer.
+// (O VPS saiu daqui: ele tem executor de verdade em vps.go.)
 const notImplemented = "ainda não tem executor próprio nesta versão"
 
 // staticRunner é um ambiente declarado e não implementado.
@@ -392,9 +393,6 @@ func (s staticRunner) Available(context.Context) (bool, string) { return false, 
 func (s staticRunner) Run(context.Context, string, string) (Result, error) {
 	return Result{ExitCode: -1}, fmt.Errorf("%s: %s", s.id, s.detail)
 }
-
-// NewVPSRunner monta o ambiente do servidor da TI.
-func NewVPSRunner() Runner { return staticRunner{id: protocol.EnvVPS, detail: notImplemented} }
 
 // NewCloudRunner monta o ambiente de nuvem.
 func NewCloudRunner() Runner { return staticRunner{id: protocol.EnvCloud, detail: notImplemented} }
@@ -435,10 +433,11 @@ type availability struct {
 // Registry guarda os ambientes e qual deles está ativo em cada sessão.
 //
 // O ativo mora em MEMÓRIA, por sessão. Reiniciar o gateway devolve todas as
-// sessões para `local`, e isso é escolha: o ambiente é a resposta a "onde este
-// comando vai rodar?", e ressuscitá-la de um arquivo depois de uma queda faria
-// o primeiro comando depois do reinício rodar num lugar que ninguém reafirmou.
-// Voltar para o mais restrito e visível é o padrão seguro.
+// sessões para o padrão (DefaultEnvironment — a VPS medida agora, ou local), e
+// isso é escolha: o ambiente é a resposta a "onde este comando vai rodar?", e
+// ressuscitá-la de um arquivo depois de uma queda faria o primeiro comando
+// depois do reinício rodar num lugar que ninguém reafirmou. O padrão é
+// remedido a cada consulta justamente para refletir a máquina de AGORA.
 type Registry struct {
 	mu      sync.RWMutex
 	order   []protocol.Environment
@@ -471,8 +470,31 @@ func NewRegistry(runners ...Runner) *Registry {
 	return registry
 }
 
-// Default é o ambiente de quem nunca escolheu.
+// Default é o piso: o ambiente de quem nunca escolheu quando NADA melhor está
+// configurado. O padrão de verdade do gateway é DefaultEnvironment, que
+// promove a VPS quando a TI a configurou e ela responde.
 func Default() protocol.Environment { return protocol.EnvLocal }
+
+// DefaultEnvironment é onde nasce a sessão que nunca escolheu ambiente.
+//
+// O padrão do produto é a VPS da TI QUANDO ela existe: é a máquina
+// preparada para o trabalho (com o ai-jail confinando cada comando), e o
+// local volta a ser o que sempre foi — a exceção explícita, não o lugar onde
+// tudo cai por omissão.
+//
+// As duas condições são inegociáveis e a sondagem cobre ambas: uma VPS não
+// configurada mede indisponível na hora (sem processo filho), e uma
+// configurada só passa se o servidor responder E a fingerprint bater (ver
+// VPSRunner.Available). Promover uma VPS fora do ar faria todo comando de
+// sessão nova falhar; promover uma sem conferência mandaria o primeiro
+// comando para quem quer que responda pelo DNS. O custo da medição é contido
+// pelo cache curto de Availability.
+func (r *Registry) DefaultEnvironment(ctx context.Context) protocol.Environment {
+	if ok, _ := r.Availability(ctx, protocol.EnvVPS); ok {
+		return protocol.EnvVPS
+	}
+	return Default()
+}
 
 // Runner devolve o executor de um ambiente.
 func (r *Registry) Runner(id protocol.Environment) (Runner, bool) {
@@ -482,14 +504,18 @@ func (r *Registry) Runner(id protocol.Environment) (Runner, bool) {
 	return runner, ok
 }
 
-// Active devolve o ambiente da sessão. Sessão sem escolha roda no local.
-func (r *Registry) Active(sessionID string) protocol.Environment {
+// Active devolve o ambiente da sessão. Sessão sem escolha nasce no padrão do
+// gateway (DefaultEnvironment): VPS quando a TI a configurou e ela responde,
+// local no resto. O ctx existe por causa dessa sondagem — que sai FORA da
+// trava e com cache, então o caminho comum é uma leitura de mapa.
+func (r *Registry) Active(ctx context.Context, sessionID string) protocol.Environment {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if chosen, ok := r.active[sessionID]; ok {
+	chosen, ok := r.active[sessionID]
+	r.mu.RUnlock()
+	if ok {
 		return chosen
 	}
-	return Default()
+	return r.DefaultEnvironment(ctx)
 }
 
 // Set troca o ambiente ativo da sessão.

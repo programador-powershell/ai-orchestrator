@@ -7,6 +7,7 @@
 package eventbus
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -225,4 +226,99 @@ func TestCloseCancelsSubscriptionAndIsIdempotent(t *testing.T) {
 	if delivered.ID != "e-1" {
 		t.Errorf("envelope entregue ao assinante restante: esperava o id %q, obteve %q", "e-1", delivered.ID)
 	}
+}
+
+/* ------------------------------- Broadcast ------------------------------- */
+
+// O aviso que não pertence a conversa nenhuma — "há versão nova pronta" — vai
+// para TODAS as sessões abertas, com o envelope montado por sessão.
+func TestBroadcastReachesEverySessionAndIsNotStored(t *testing.T) {
+	bus, journal := newBus(t)
+	const otherSession = "outra-sessao"
+	if _, err := journal.CreateSession(store.SessionMeta{ID: otherSession, Title: "outra"}); err != nil {
+		t.Fatalf("CreateSession: esperava sucesso, obteve erro: %v", err)
+	}
+
+	first := bus.Subscribe(testSession)
+	defer first.Close()
+	second := bus.Subscribe(otherSession)
+	defer second.Close()
+
+	// O `build` recebe o id porque parte do estado é POR SESSÃO: o `busy` de uma
+	// sessão em turno não pode viajar para outra.
+	bus.Broadcast(func(sessionID string) (protocol.Envelope, bool) {
+		envelope := *envelopeOf("aviso")
+		envelope.Kind = protocol.KindState
+		if err := envelope.SetPayload(protocol.State{
+			Busy:            sessionID == testSession,
+			UpdateAvailable: true,
+			UpdateVersion:   "0.2.0",
+			UpdateTracks:    []string{"gateway"},
+		}); err != nil {
+			t.Errorf("SetPayload: %v", err)
+			return protocol.Envelope{}, false
+		}
+		return envelope, true
+	})
+
+	for _, each := range []struct {
+		who          string
+		subscription *Subscription
+		session      string
+		busy         bool
+	}{
+		{"primeira sessão", first, testSession, true},
+		{"segunda sessão", second, otherSession, false},
+	} {
+		delivered := receiveNow(t, each.subscription, each.who)
+		if delivered.Session != each.session {
+			t.Errorf("%s: esperava a sessão %q no envelope, obteve %q", each.who, each.session, delivered.Session)
+		}
+		var state protocol.State
+		if err := json.Unmarshal(delivered.Payload, &state); err != nil {
+			t.Fatalf("%s: ler o payload: %v", each.who, err)
+		}
+		if !state.UpdateAvailable || state.UpdateVersion != "0.2.0" {
+			t.Errorf("%s: esperava o aviso de atualização, obteve %+v", each.who, state)
+		}
+		if state.Busy != each.busy {
+			// É o defeito concreto que o `build` por sessão existe para evitar: o
+			// cliente aplica `busy` como veio, e um `false` entregue a quem está no
+			// meio de um turno apaga o indicador e libera o campo de texto.
+			t.Errorf("%s: esperava busy=%t, obteve %t", each.who, each.busy, state.Busy)
+		}
+	}
+
+	// Efêmero: o histórico não guarda um aviso que amanhã já não vale.
+	stored, err := journal.Since(testSession, 0, 0)
+	if err != nil {
+		t.Fatalf("Since: esperava sucesso, obteve erro: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Errorf("log depois do Broadcast: esperava vazio, obteve %d envelope(s)", len(stored))
+	}
+}
+
+// Sessão sem ninguém olhando não recebe nada, e o broadcast sem assinante
+// nenhum não é erro: é o caso normal do gateway que atualiza antes de a
+// primeira janela abrir.
+func TestBroadcastSkipsWhatTheBuilderRefusesAndSurvivesWithoutSubscribers(t *testing.T) {
+	bus, _ := newBus(t)
+
+	bus.Broadcast(func(string) (protocol.Envelope, bool) {
+		t.Error("o construtor foi chamado sem nenhum assinante")
+		return protocol.Envelope{}, false
+	})
+
+	subscription := bus.Subscribe(testSession)
+	defer subscription.Close()
+
+	bus.Broadcast(func(string) (protocol.Envelope, bool) { return protocol.Envelope{}, false })
+	select {
+	case envelope := <-subscription.Events:
+		t.Errorf("esperava nenhuma entrega quando o construtor recusa, obteve %+v", envelope)
+	default:
+	}
+
+	bus.Broadcast(nil)
 }

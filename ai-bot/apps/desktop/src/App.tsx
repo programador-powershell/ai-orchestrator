@@ -34,6 +34,7 @@ import { SettingsPanel } from "./shell/SettingsPanel";
 import { Composer } from "./shell/Composer";
 import { StatusBar } from "./shell/StatusBar";
 import { DelegationPopup } from "./shell/DelegationPopup";
+import { NoticePopup } from "./shell/NoticePopup";
 
 /** Igual ao carregador das superfícies: aceita `export default` ou o nomeado, e
  *  mantém o laboratório fora do bundle inicial — ele só abre quando alguém
@@ -61,6 +62,31 @@ const AvatarLab: LazyExoticComponent<ComponentType<{ standalone?: boolean }>> = 
 const IS_AVATAR_WINDOW =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("window") === "avatars";
+
+/**
+ * Diz ao Rust que a interface montou.
+ *
+ * É a contrapartida da TRILHA B da atualização (ver `docs/atualizacao.md` e
+ * `src-tauri/src/overlay.rs`): quando a janela está carregando um bundle web
+ * BAIXADO, a casca dá vinte segundos para esta chamada chegar. Sem ela, a pasta
+ * vai para quarentena e o app reinicia com a interface embutida.
+ *
+ * O que isso salva é o modo de falha que nenhum hash pega: um bundle íntegro,
+ * assinado, verificado — e que estoura no primeiro import. Do lado de fora, uma
+ * janela em branco é indistinguível de uma janela lenta; esta linha é o que faz
+ * a diferença entre as duas.
+ *
+ * Import dinâmico e falha silenciosa pelo mesmo motivo dos outros: no navegador
+ * do `pnpm dev` não existe comando nenhum para chamar, e a ausência dele não
+ * pode virar erro na tela.
+ */
+function reportUiHealth() {
+  void import("@tauri-apps/api/core")
+    .then(({ invoke }) => invoke("ui_ready"))
+    .catch(() => {
+      /* fora do Tauri não há casca para avisar */
+    });
+}
 
 /* ----------------------------- ErrorBoundary ----------------------------- */
 
@@ -126,6 +152,7 @@ function App() {
     if (started.current) return;
     started.current = true;
     connect();
+    reportUiHealth();
   }, [connect]);
 
   useEffect(() => {
@@ -233,6 +260,13 @@ function App() {
           ao lado dos cartões, e não dentro deles, porque não bloqueia nada. */}
       <SurfaceBoundary name="O aviso de delegação">
         <DelegationPopup />
+      </SurfaceBoundary>
+
+      {/* Mesmo espírito da delegação: o bot CONTANDO onde o próximo passo vai
+          rodar (container, ai-jail da VPS) — informa antes de fazer, não pede
+          nada e some sozinho. */}
+      <SurfaceBoundary name="O aviso de execução">
+        <NoticePopup />
       </SurfaceBoundary>
 
       <SurfaceBoundary name="O pedido de aprovação">

@@ -23,6 +23,7 @@ import type {
   Ready,
   Reply,
   Route,
+  State,
   TaskDispatch,
   Thinking,
   WorkerDone
@@ -391,5 +392,35 @@ describe("applyEnvelope", () => {
     expect(done ? outcomeOf(done) : null).toBe("failed");
     // A escalação velha CONTINUA na lista: é isso que torna o cruzamento errado.
     expect(state.crew.escalations).toHaveLength(1);
+  });
+
+  /**
+   * O aviso de atualização não pode piscar.
+   *
+   * O gateway só anuncia PENDÊNCIA (`update.Service.announce` sai fora quando
+   * não há nenhuma), e `state` chega de várias origens — a troca de ambiente é
+   * uma delas. Se o campo ausente zerasse o aviso, ele sumiria no primeiro
+   * clique do rodapé e voltaria na próxima verificação, sem nada explicando.
+   */
+  it("guarda a atualizacao pendente e nao a perde no state seguinte", () => {
+    const comAviso = reduce(initialAppData(), [
+      envelope<State>("state", {
+        busy: false,
+        updateAvailable: true,
+        updateVersion: "0.2.0",
+        updateTracks: ["ui", "gateway"]
+      })
+    ]);
+    expect(comAviso.updateAvailable).toBe(true);
+    expect(comAviso.updateVersion).toBe("0.2.0");
+    expect(comAviso.updateTracks).toEqual(["ui", "gateway"]);
+
+    // `state` de outra origem: só ambiente e `busy`, sem os campos de
+    // atualização (é assim que o gateway os omite).
+    const depois = applyEnvelope(comAviso, envelope<State>("state", { busy: true, environment: "docker" }));
+    expect(depois.busy).toBe(true);
+    expect(depois.environment).toBe("docker");
+    expect(depois.updateAvailable, "o aviso não pode sumir num state alheio").toBe(true);
+    expect(depois.updateTracks).toEqual(["ui", "gateway"]);
   });
 });

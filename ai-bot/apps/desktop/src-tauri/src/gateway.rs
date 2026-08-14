@@ -241,16 +241,38 @@ pub fn start(app: &AppHandle) -> Result<GatewayHandle, String> {
     // 2. Achar o binário.
     let binary = find_binary()?;
 
-    // 3. Subir.
-    let mut child = spawn(&binary, &data_dir)?;
+    // 3. TRILHA C: instalar o gateway que foi baixado, se houver um esperando.
+    //    Este é o único instante em que dá para fazer isso — o `aibotd` não está
+    //    rodando (o passo 1 provou que ninguém atende na porta) e no Windows um
+    //    executável em uso não se renomeia. Depois da adoção do passo 1 a troca
+    //    NÃO acontece, e é o certo: o processo é de outra pessoa.
+    let swap = match install_pending(&binary) {
+        Ok(swap) => swap,
+        Err(error) => {
+            // Atualização que não instala é um aborrecimento; app que não abre é
+            // um chamado. Segue com o binário que já estava lá.
+            eprintln!("[aibot] o gateway baixado não pôde ser instalado: {error}");
+            None
+        }
+    };
 
-    // 4. Esperar a porta. Falhou: o filho não pode ficar para trás — um gateway
-    //    meio subido segura a porta 8799 e impede a próxima tentativa.
-    if let Err(error) = wait_for_health(BIND, &mut child) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
+    // 4. Subir e esperar a porta.
+    let child = match spawn_and_wait(&binary, &data_dir) {
+        Ok(child) => child,
+        Err(error) => {
+            let Some(swap) = swap else { return Err(error) };
+            // ROLLBACK. A versão anterior ficou no disco justamente para esta
+            // hora: o gateway novo não subiu, então ele volta para a prateleira
+            // e a tentativa é refeita com o que funcionava ontem. Sem isto, uma
+            // atualização ruim do sidecar deixa o app permanentemente sem
+            // cérebro — e o caminho de volta seria reinstalar.
+            eprintln!("[aibot] o gateway baixado não subiu ({error}); voltando ao anterior");
+            swap.undo()?;
+            spawn_and_wait(&binary, &data_dir).map_err(|second| {
+                format!("{second} (a versão baixada também tinha falhado: {error})")
+            })?
+        }
+    };
 
     // 5. Token. Só agora: o arquivo é escrito pelo gateway no boot, e ler antes
     //    do `/health` pegaria a estação onde ele ainda não existe.
@@ -316,6 +338,110 @@ em uma das duas."
     ))
 }
 
+/* ----------------------- TRILHA C: trocar o binário ----------------------- */
+
+/// O gateway BAIXADO, esperando a próxima abertura: `aibotd.new`.
+///
+/// Quem o escreve é o próprio `aibotd`, depois de conferir a assinatura Ed25519
+/// do manifesto e o sha256 do artefato (ver `docs/atualizacao.md`). Ele não pode
+/// se substituir enquanto roda, então deixa o arquivo ao lado com este nome e
+/// quem faz a troca é a casca — aqui, no único instante em que o processo está
+/// parado.
+const PENDING_SUFFIX: &str = "new";
+
+/// A versão anterior, guardada até a nova provar que sobe: `aibotd.old`.
+const BACKUP_SUFFIX: &str = "old";
+
+/// A versão que subiu e não respondeu: `aibotd.rejected`.
+const REJECTED_SUFFIX: &str = "rejected";
+
+/// Uma troca de binário já feita, com o caminho de volta.
+pub(crate) struct BinarySwap {
+    installed: PathBuf,
+    backup: PathBuf,
+}
+
+impl BinarySwap {
+    /// Desfaz a troca: o binário que falhou sai da frente e o anterior volta.
+    ///
+    /// O que falhou vira `aibotd.rejected` em vez de voltar a ser `aibotd.new`,
+    /// e essa diferença é o que impede um LAÇO: como `.new` é justamente o que
+    /// dispara a troca, devolvê-lo ao nome de origem faria toda abertura do app
+    /// tentar de novo o mesmo binário quebrado — quinze segundos de espera por
+    /// tentativa, para sempre. Apagar seria a outra saída, mas aí some a única
+    /// prova do que aconteceu.
+    fn undo(&self) -> Result<(), String> {
+        let rejected = self.installed.with_extension(REJECTED_SUFFIX);
+        let _ = std::fs::remove_file(&rejected);
+        std::fs::rename(&self.installed, &rejected).map_err(|error| {
+            format!(
+                "não foi possível tirar o gateway novo do caminho ({} → {}): {error}",
+                self.installed.display(),
+                rejected.display()
+            )
+        })?;
+        std::fs::rename(&self.backup, &self.installed).map_err(|error| {
+            format!(
+                "o gateway anterior não voltou ({} → {}): {error}. \
+Reinstale o AI-BOT — o binário está em {}",
+                self.backup.display(),
+                self.installed.display(),
+                rejected.display()
+            )
+        })
+    }
+}
+
+/// Instala `aibotd.new` por cima do `aibotd` atual, se houver um esperando.
+///
+/// A troca é feita com DOIS renames e nenhuma cópia: rename dentro do mesmo
+/// volume é atômico, então em nenhum instante existe um `aibotd.exe` pela
+/// metade. A ordem — guardar o velho, depois pôr o novo — é o que permite
+/// desfazer; e se o segundo rename falhar, o velho volta na hora, porque ficar
+/// sem gateway nenhum é o único desfecho inaceitável.
+///
+/// # Cadeia de confiança
+///
+/// A casca NÃO verifica assinatura aqui. Ela confia neste arquivo porque ele
+/// está no diretório de INSTALAÇÃO, ao lado do binário que o instalador assinado
+/// colocou (ver `find_binary`), e porque quem o escreveu foi o `aibotd` que ela
+/// mesma lançou de lá. Se um dia o gateway passar a ser procurado numa pasta
+/// gravável por qualquer processo do usuário, esta função vira uma porta de
+/// execução de código e a verificação precisa mudar de lugar.
+pub(crate) fn install_pending(binary: &Path) -> Result<Option<BinarySwap>, String> {
+    // `aibotd.exe` → `aibotd.new`; `aibotd` (Linux/macOS) → `aibotd.new`.
+    let pending = binary.with_extension(PENDING_SUFFIX);
+    if !pending.is_file() {
+        return Ok(None);
+    }
+
+    let backup = binary.with_extension(BACKUP_SUFFIX);
+    // Sobra da troca anterior: no Windows o rename não sobrescreve pasta nem
+    // arquivo existente, então a limpeza é parte do caminho normal.
+    let _ = std::fs::remove_file(&backup);
+    std::fs::rename(binary, &backup).map_err(|error| {
+        format!(
+            "não foi possível guardar o gateway atual ({} → {}): {error}",
+            binary.display(),
+            backup.display()
+        )
+    })?;
+
+    if let Err(error) = std::fs::rename(&pending, binary) {
+        let _ = std::fs::rename(&backup, binary);
+        return Err(format!(
+            "não foi possível instalar o gateway baixado ({} → {}): {error}",
+            pending.display(),
+            binary.display()
+        ));
+    }
+
+    Ok(Some(BinarySwap {
+        installed: binary.to_path_buf(),
+        backup,
+    }))
+}
+
 /// Pasta de dados do gateway: `<app_config_dir>/AI-BOT`.
 ///
 /// Em domínio com perfil roaming o `%APPDATA%` viaja pela rede junto com o
@@ -323,7 +449,7 @@ em uma das duas."
 /// Quem não quer isso trafegando aponta `AIBOT_DATA_DIR` para `%LOCALAPPDATA%`
 /// na política da máquina; o padrão segue o do gateway para os dois lados
 /// concordarem sem configuração.
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
         .app_config_dir()
@@ -362,6 +488,22 @@ fn spawn(binary: &Path, data_dir: &Path) -> Result<Child, String> {
     command
         .spawn()
         .map_err(|error| format!("não foi possível subir {}: {error}", binary.display()))
+}
+
+/// Sobe o gateway e espera a porta responder; não deixa filho para trás.
+///
+/// Existe separada do `spawn` porque a TRILHA C precisa poder tentar DUAS vezes
+/// (o binário baixado e, se ele não subir, o anterior). Um gateway meio subido
+/// segura a porta 8799 e impede a segunda tentativa — por isso o `kill` no
+/// caminho de falha não é opcional.
+fn spawn_and_wait(binary: &Path, data_dir: &Path) -> Result<Child, String> {
+    let mut child = spawn(binary, data_dir)?;
+    if let Err(error) = wait_for_health(BIND, &mut child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    Ok(child)
 }
 
 /// Espera o `/health` responder 200, tentando a cada 150 ms por até 15 s.
@@ -666,6 +808,125 @@ mod tests {
         let address = resolve_authority("127.0.0.1:8799").expect("endereço literal");
         assert_eq!(address.port(), 8799);
         assert!(address.ip().is_loopback());
+    }
+
+    /* --------------------- TRILHA C: troca do binário --------------------- */
+
+    fn temp_install(nome: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aibot-gateway-{nome}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("criar pasta de instalação de teste");
+        dir
+    }
+
+    fn conteudo(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
+    /// O nome do arquivo pendente é combinado com o OUTRO lado.
+    ///
+    /// Quem o grava é o gateway (`update.GatewayPendingName`, no Go, é a string
+    /// literal `"aibotd.new"`). Aqui ele é DERIVADO do binário encontrado, e as
+    /// duas formas precisam coincidir: divergir significa a casca procurando um
+    /// arquivo que ninguém grava — atualização de cérebro que nunca acontece, em
+    /// silêncio, sem erro em lugar nenhum.
+    #[test]
+    fn o_nome_do_pendente_e_o_mesmo_que_o_gateway_grava() {
+        let instalado = Path::new("C:/Users/alguem/AppData/Local/AI-BOT/aibotd.exe");
+        assert_eq!(
+            instalado.with_extension(PENDING_SUFFIX).file_name(),
+            Some(std::ffi::OsStr::new("aibotd.new"))
+        );
+        // E o mesmo no formato dos outros sistemas, onde o binário não tem extensão.
+        assert_eq!(
+            Path::new("/opt/aibot/aibotd")
+                .with_extension(PENDING_SUFFIX)
+                .file_name(),
+            Some(std::ffi::OsStr::new("aibotd.new"))
+        );
+    }
+
+    /// Sem `aibotd.new` não acontece nada — que é o caminho de 99,9% das
+    /// aberturas do aplicativo.
+    #[test]
+    fn sem_binario_baixado_nao_ha_troca() {
+        let dir = temp_install("sem-pendente");
+        let binary = dir.join(binary_name());
+        std::fs::write(&binary, b"antigo").expect("gravar");
+        assert!(install_pending(&binary).expect("não deveria falhar").is_none());
+        assert_eq!(conteudo(&binary), "antigo");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn binario_baixado_entra_no_lugar_e_o_anterior_fica_guardado() {
+        let dir = temp_install("troca");
+        let binary = dir.join(binary_name());
+        std::fs::write(&binary, b"antigo").expect("gravar atual");
+        std::fs::write(binary.with_extension(PENDING_SUFFIX), b"novo").expect("gravar baixado");
+
+        let swap = install_pending(&binary)
+            .expect("deveria trocar")
+            .expect("deveria haver troca");
+
+        assert_eq!(conteudo(&binary), "novo");
+        assert_eq!(
+            conteudo(&binary.with_extension(BACKUP_SUFFIX)),
+            "antigo",
+            "a versão anterior tem de ficar no disco até a nova provar que sobe"
+        );
+        assert!(
+            !binary.with_extension(PENDING_SUFFIX).exists(),
+            "o pendente tem de sair, senão a troca se repete em toda abertura"
+        );
+        drop(swap);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// O rollback da trilha C. E, principalmente: o binário rejeitado NÃO volta
+    /// a se chamar `.new` — se voltasse, toda abertura tentaria de novo o mesmo
+    /// gateway quebrado e pagaria os quinze segundos de espera por tentativa.
+    #[test]
+    fn troca_desfeita_devolve_o_anterior_e_nao_repete_a_tentativa() {
+        let dir = temp_install("rollback");
+        let binary = dir.join(binary_name());
+        std::fs::write(&binary, b"antigo").expect("gravar atual");
+        std::fs::write(binary.with_extension(PENDING_SUFFIX), b"novo").expect("gravar baixado");
+
+        let swap = install_pending(&binary)
+            .expect("deveria trocar")
+            .expect("deveria haver troca");
+        swap.undo().expect("deveria desfazer");
+
+        assert_eq!(conteudo(&binary), "antigo");
+        assert_eq!(conteudo(&binary.with_extension(REJECTED_SUFFIX)), "novo");
+        assert!(!binary.with_extension(PENDING_SUFFIX).exists());
+        assert!(!binary.with_extension(BACKUP_SUFFIX).exists());
+
+        // Segunda abertura: não há mais nada pendente, então nada é trocado.
+        assert!(install_pending(&binary).expect("não deveria falhar").is_none());
+        assert_eq!(conteudo(&binary), "antigo");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Sobra de uma troca anterior não pode impedir a próxima: no Windows o
+    /// `rename` recusa destino existente, e um `aibotd.old` esquecido travaria
+    /// toda atualização de gateway daquela máquina em silêncio.
+    #[test]
+    fn sobra_da_troca_anterior_nao_trava_a_proxima() {
+        let dir = temp_install("sobra");
+        let binary = dir.join(binary_name());
+        std::fs::write(&binary, b"antigo").expect("gravar atual");
+        std::fs::write(binary.with_extension(BACKUP_SUFFIX), b"anterior").expect("gravar sobra");
+        std::fs::write(binary.with_extension(PENDING_SUFFIX), b"novo").expect("gravar baixado");
+
+        install_pending(&binary)
+            .expect("deveria trocar")
+            .expect("deveria haver troca");
+
+        assert_eq!(conteudo(&binary), "novo");
+        assert_eq!(conteudo(&binary.with_extension(BACKUP_SUFFIX)), "antigo");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Cortar no meio de um caractere multibyte faria pânico no `&texto[..n]`.

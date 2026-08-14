@@ -9,7 +9,13 @@
 //
 //   - `local`  -> aplicativo nativo (Rust), como sempre: é ele que tem Job
 //     Object e ConPTY, e o Go não executa comando na estação de propósito;
-//   - qualquer outro -> o Runner correspondente (docker/sbx, wsl…), aqui.
+//   - qualquer outro -> o Runner correspondente (docker/sbx, wsl, vps…), aqui.
+//
+// Uma exceção vem ANTES do ambiente ativo: trabalho de container (comando com
+// docker/docker-compose/container, ou pedido explícito do modelo) vai para o
+// Docker Sandboxes — e vai ANUNCIADO com um KindNotice antes de rodar. Sem o
+// sbx instalado o passo cai no ai-jail da VPS, também anunciado; o downgrade
+// nunca é silencioso. Ver containerStep.
 //
 // E o resultado volta CARIMBADO com onde rodou. É barato e resolve a metade do
 // problema que ninguém vê: o modelo lendo "código de saída 1" sem saber em qual
@@ -36,13 +42,22 @@ import (
 // trocar de ambiente muda em silêncio quanto tempo o modelo tem.
 const procTimeout = 15 * time.Minute
 
+// NoticePublisher entrega os avisos animados (KindNotice) a quem está olhando
+// a sessão. É a assinatura do PublishEphemeral do eventbus — interface aqui, e
+// não o *eventbus.Bus, para o teste medir a ORDEM aviso→execução com um
+// barramento de mentira, sem store nem WebSocket.
+type NoticePublisher interface {
+	PublishEphemeral(sessionID string, envelope protocol.Envelope)
+}
+
 // installProcessTools registra o `proc.run`.
 //
 // A closure carrega o `registry` porque o caminho local precisa despachar ao
 // host — e quem conhece a ponte é o registro, não o toolbox.
 func (t *Toolbox) installProcessTools(registry *Registry) {
 	registry.Register("proc.run",
-		"roda um comando único no ambiente ativo da sessão (local, docker, wsl…), com aprovação. args: {command, cwd?}",
+		"roda um comando único no ambiente ativo da sessão (local, docker, wsl…), com aprovação. "+
+			"args: {command, cwd?, env?} — env:\"docker\" pede explicitamente um container para este passo",
 		func(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 			return t.procRun(ctx, registry, sessionID, raw)
 		})
@@ -57,6 +72,9 @@ func (t *Toolbox) procRun(
 	var args struct {
 		Command string `json:"command"`
 		CWD     string `json:"cwd"`
+		// Env é o pedido EXPLÍCITO do modelo por um ambiente pontual
+		// ("docker"). Opcional — sem ele vale o ambiente ativo da sessão.
+		Env string `json:"env"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
@@ -65,9 +83,23 @@ func (t *Toolbox) procRun(
 		return "", errors.New("informe o comando em \"command\"")
 	}
 
+	// A decisão do container vem ANTES do ambiente ativo da sessão: trabalho
+	// de docker/compose/container vai para o sandbox — e vai ANUNCIADO. O
+	// padrão de trabalho é a VPS com o ai-jail; o Docker é a exceção que se
+	// conta na tela quando acontece.
+	if t.Environments != nil {
+		if reason, wants := containerIntent(args.Command, args.Env); wants {
+			if output, handled, err := t.containerStep(ctx, sessionID, args.Command, args.CWD, reason); handled {
+				return output, err
+			}
+			// Nem container nem VPS nesta máquina: o aviso do containerStep já
+			// explicou, e o comando segue o fluxo normal do ambiente ativo.
+		}
+	}
+
 	environment := protocol.EnvLocal
 	if t.Environments != nil {
-		environment = t.Environments.Active(sessionID)
+		environment = t.Environments.Active(ctx, sessionID)
 	}
 
 	if environment == protocol.EnvLocal {
@@ -77,7 +109,18 @@ func (t *Toolbox) procRun(
 		// reserializar aqui os apagaria em silêncio.
 		return registry.CallHost(ctx, sessionID, "proc.run", raw)
 	}
+	return t.runInEnvironment(ctx, sessionID, environment, args.CWD, args.Command)
+}
 
+// runInEnvironment despacha o comando ao Runner do ambiente, com as mesmas
+// conferências para todos: executor existe, ambiente disponível, pasta
+// confinada, teto de tempo.
+func (t *Toolbox) runInEnvironment(
+	ctx context.Context,
+	sessionID string,
+	environment protocol.Environment,
+	cwd, command string,
+) (string, error) {
 	runner, ok := t.Environments.Runner(environment)
 	if !ok {
 		return "", fmt.Errorf("o ambiente %q não tem executor neste gateway", environment)
@@ -88,19 +131,132 @@ func (t *Toolbox) procRun(
 		return "", fmt.Errorf("o ambiente %s não está disponível: %s", environment, detail)
 	}
 
-	workdir, err := t.workdir(sessionID, args.CWD)
-	if err != nil {
-		return "", err
+	// A VPS não usa pasta LOCAL nenhuma: o confinamento dela é o workdir do
+	// catalog.json, dentro do servidor (o ai-jail faz o `cd`). Exigir raiz de
+	// projeto local aqui impediria a sessão recém-criada — que nasce no padrão
+	// VPS e ainda não abriu pasta — de rodar o próprio primeiro comando. Um
+	// `cwd` relativo também não tem a que se referir lá, então é recusado com
+	// o caminho alternativo, em vez de ignorado em silêncio.
+	workdir := ""
+	if environment == protocol.EnvVPS {
+		if strings.TrimSpace(cwd) != "" {
+			return "", errors.New("o ambiente vps roda sempre no workdir configurado pela TI — " +
+				"ponha o `cd` dentro do próprio comando em vez de usar \"cwd\"")
+		}
+	} else {
+		resolved, err := t.workdir(sessionID, cwd)
+		if err != nil {
+			return "", err
+		}
+		workdir = resolved
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, procTimeout)
 	defer cancel()
 
-	result, err := runner.Run(ctx, workdir, args.Command)
+	result, err := runner.Run(ctx, workdir, command)
 	if err != nil {
 		return "", fmt.Errorf("ambiente %s: %w", environment, err)
 	}
 	return formatProcResult(environment, result), nil
+}
+
+/* ---------------------- a decisão anunciada do Docker --------------------- */
+
+// containerIntent diz se ESTE comando é trabalho de container, e por quê.
+//
+// Duas portas: o pedido explícito do modelo (env:"docker" nos argumentos) e o
+// léxico do próprio comando (docker, docker-compose, container). É heurística
+// de roteamento, não segurança — o pior caso de um falso positivo é o comando
+// rodar no sandbox anunciado, que é o lugar MAIS confinado da lista.
+func containerIntent(command, env string) (string, bool) {
+	if strings.EqualFold(strings.TrimSpace(env), "docker") {
+		return "o modelo pediu explicitamente um container para este passo", true
+	}
+	for _, field := range strings.Fields(strings.ToLower(command)) {
+		// Tira a pontuação de shell colada na palavra ("docker;", "(docker").
+		token := strings.Trim(field, "\"'`()[]{};&|<>")
+		switch {
+		case token == "docker" || strings.HasPrefix(token, "docker-compose"):
+			return fmt.Sprintf("o comando usa %s", token), true
+		case strings.Contains(token, "container"):
+			return "o comando mexe com container", true
+		}
+	}
+	return "", false
+}
+
+// containerStep decide ONDE o trabalho de container roda e ANUNCIA antes.
+//
+// A ordem aviso→execução não é cosmética: o popup existe para a pessoa ver
+// "isto vai para um container" ANTES de o container subir — anunciar depois é
+// narrar o passado. E o downgrade nunca é silencioso: sem o sbx instalado, o
+// aviso diz o porquê e o comando cai no ai-jail da VPS; sem VPS também, o
+// aviso diz isso e o fluxo normal (handled=false) assume.
+func (t *Toolbox) containerStep(
+	ctx context.Context,
+	sessionID, command, cwd, reason string,
+) (string, bool, error) {
+	specialist := t.specialistOf(sessionID)
+
+	dockerOK, dockerDetail := t.Environments.Availability(ctx, protocol.EnvDocker)
+	if dockerOK {
+		t.notify(sessionID, protocol.Notice{
+			Icon:       "docker",
+			Title:      "Este passo vai rodar num container",
+			Detail:     reason,
+			Specialist: specialist,
+		})
+		output, err := t.runInEnvironment(ctx, sessionID, protocol.EnvDocker, cwd, command)
+		return output, true, err
+	}
+
+	if vpsOK, _ := t.Environments.Availability(ctx, protocol.EnvVPS); vpsOK {
+		t.notify(sessionID, protocol.Notice{
+			Icon:  "docker",
+			Title: "Sem container nesta máquina — este passo cai no ai-jail da VPS",
+			Detail: fmt.Sprintf("%s; %s. O ai-jail limita tempo, memória e pasta, mas não é isolamento de kernel.",
+				reason, dockerDetail),
+			Specialist: specialist,
+		})
+		output, err := t.runInEnvironment(ctx, sessionID, protocol.EnvVPS, cwd, command)
+		return output, true, err
+	}
+
+	t.notify(sessionID, protocol.Notice{
+		Icon:  "docker",
+		Title: "Sem container e sem VPS — este passo segue no ambiente ativo",
+		Detail: fmt.Sprintf("%s; %s e a VPS não está disponível.",
+			reason, dockerDetail),
+		Specialist: specialist,
+	})
+	return "", false, nil
+}
+
+// specialistOf devolve o especialista ativo da sessão, ou "" quando ninguém
+// sabe — o popup sai com o bot padrão em vez de não sair.
+func (t *Toolbox) specialistOf(sessionID string) string {
+	if t.Specialist == nil {
+		return ""
+	}
+	return t.Specialist(sessionID)
+}
+
+// notify publica o aviso animado. EFÊMERO de propósito: o replay de um "vai
+// rodar num container" de ontem reencenaria o popup ao abrir a conversa — o
+// aviso só faz sentido antes do passo que ele anuncia.
+func (t *Toolbox) notify(sessionID string, notice protocol.Notice) {
+	if t.Notices == nil {
+		return
+	}
+	t.Notices.PublishEphemeral(sessionID, protocol.Envelope{
+		V:       protocol.Version,
+		TS:      time.Now().UTC(),
+		Session: sessionID,
+		Kind:    protocol.KindNotice,
+		From:    protocol.Actor{Kind: protocol.ActorSupervisor, Specialist: notice.Specialist},
+		Payload: mustPayload(notice),
+	})
 }
 
 // workdir devolve a pasta a partir da qual o comando roda, confinada à raiz do
