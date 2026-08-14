@@ -11,12 +11,22 @@
  * tamanho do contexto sem ajuste.
  */
 
-import type { SVGProps } from "react";
+import type { ReactNode, SVGProps } from "react";
 
 import { glyphs, type GlyphName } from "./glyphs";
 
 export type { GlyphName };
 export { glyphs };
+
+/**
+ * Como um ícone é usado no app: recebe tamanho e classe, devolve o desenho.
+ *
+ * Existe para os mapas que misturam glifo próprio e lucide (a navegação das
+ * Configurações, por exemplo). Tipar por `typeof AlgumIconeDoLucide` amarrava
+ * a lista ao `ForwardRefExoticComponent` da biblioteca, e um componente
+ * simples deixava de servir — sem que houvesse diferença nenhuma no uso.
+ */
+export type IconComponent = (props: { size?: number; className?: string }) => ReactNode;
 
 export interface GlyphProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
   name: GlyphName;

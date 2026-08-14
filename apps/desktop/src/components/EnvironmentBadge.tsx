@@ -13,16 +13,22 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Cloud, Monitor, ServerCog, SquareTerminal } from "lucide-react";
+import { Check } from "lucide-react";
 import { ENVIRONMENTS, type Environment } from "../lib/connectors";
+import { glyph } from "./icons";
 import { resolveRoute, routeLabel } from "../lib/ssh";
 import { useApp } from "../lib/store";
 
-const ICONS: Record<Environment, typeof Monitor> = {
-  local: Monitor,
-  wsl: SquareTerminal,
-  vps: ServerCog,
-  cloud: Cloud
+/**
+ * Um glifo por ambiente. Vem do pacote próprio porque é onde ele ganha do
+ * genérico: "WSL" não é um terminal qualquer, e "VPS" não é um servidor
+ * qualquer — o desenho distingue os quatro à distância de um rodapé.
+ */
+const ICONS: Record<Environment, ReturnType<typeof glyph>> = {
+  local: glyph("environments/local"),
+  wsl: glyph("environments/wsl"),
+  vps: glyph("environments/vps"),
+  cloud: glyph("environments/cloud")
 };
 
 export function EnvironmentBadge() {
