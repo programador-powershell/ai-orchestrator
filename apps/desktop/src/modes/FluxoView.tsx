@@ -96,10 +96,6 @@ const NOVOS: Array<{ type: NodeType; label: string; icone: typeof Zap; data: Rec
 ];
 
 export function FluxoView() {
-  const session = useApp((state) => state.session);
-  const runtimeStatus = useApp((state) => state.runtimeStatus);
-  const settings = useApp((state) => state.settings);
-
   const flows = useFluxo((state) => state.flows);
   const activeId = useFluxo((state) => state.activeId);
   const draft = useFluxo((state) => state.draft);
