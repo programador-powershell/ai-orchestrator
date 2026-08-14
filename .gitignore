@@ -33,3 +33,12 @@ artifacts/
 _preview/
 embed-overrides/
 .tmp-*.log
+
+# Arquivos grandes que não pertencem ao repositório.
+#
+# `apps.zip` (5 GB) entrou por um `git add -A` sem conferência e só foi barrado
+# no push, pelo limite de 100 MB do GitHub — depois de o GitLab já ter aceitado.
+# O padrão fica aqui para o descuido não se repetir.
+*.zip
+*.7z
+*.tar.gz

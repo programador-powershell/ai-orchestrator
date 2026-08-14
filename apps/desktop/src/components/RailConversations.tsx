@@ -1,7 +1,6 @@
 /**
  * Lista de conversas reais para o rail dinâmico — reutilizada pelas abas.
- * Organiza por projeto (pastas colapsáveis), exporta .md/.json e, quando
- * `searchable`, busca em TODAS as abas mostrando a origem de cada resultado.
+ * Organiza por projeto (pastas colapsáveis) e exporta .md/.json.
  */
 import { useMemo, useState } from "react";
 import {
@@ -13,33 +12,12 @@ import {
   MessageCircle,
   MoreHorizontal,
   Pencil,
-  Search,
   Trash2,
   X
 } from "lucide-react";
 import type { UiMode } from "@multiplike/contracts";
-import {
-  exportFileName,
-  groupByProject,
-  searchConversations,
-  toJson,
-  toMarkdown
-} from "../lib/conversations";
+import { exportFileName, groupByProject, toJson, toMarkdown } from "../lib/conversations";
 import { useApp, type Conversation } from "../lib/store";
-
-const modeLabels: Record<UiMode, string> = {
-  chat: "Chat",
-  code: "Code",
-  design: "Design",
-  data: "Data",
-  work: "Work",
-  security: "Security",
-  agent: "Agent",
-  fluxo: "Fluxo",
-  office: "Office",
-
-  tune: "Tuning"
-};
 
 function relativeTime(timestamp: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
@@ -64,19 +42,22 @@ function downloadText(fileName: string, text: string, type: string) {
  * Ele ocupava uma linha inteira do rail em todas as dez abas, e o rail é
  * estreito — é onde moram a árvore do projeto, o schema, a equipe. Em cima, o
  * campo existe uma vez só, aparece em toda aba e devolve a altura para quem
- * precisa dela. `searchable` continua no lugar para quem quiser o campo local,
- * mas nasce desligado.
+ * precisa dela.
+ *
+ * Ficou aqui, por um tempo, um `searchable` desligado "para quem quisesse o
+ * campo local". Nenhum dos onze chamadores passava a prop, então era uma
+ * segunda busca inalcançável — e ela assinava `state.conversations` INTEIRO,
+ * de modo que o rail de uma aba se redesenhava quando QUALQUER outra mexia no
+ * histórico dela. Código morto que ainda custava caro.
  */
-export function RailConversations({ mode, searchable = false }: { mode: UiMode; searchable?: boolean }) {
+export function RailConversations({ mode }: { mode: UiMode }) {
   const conversations = useApp((state) => state.conversations[mode]);
-  const allConversations = useApp((state) => state.conversations);
   const projects = useApp((state) => state.projects);
   const active = useApp((state) => state.activeConversation[mode]);
   // Turno em voo: trocar ou excluir a conversa agora enxertaria a resposta na
   // conversa errada. O store recusa de todo jeito; aqui a lista fica cinza
   // para a recusa não parecer clique perdido.
   const sending = useApp((state) => state.threads[mode].sending);
-  const setMode = useApp((state) => state.setMode);
   const loadConversation = useApp((state) => state.loadConversation);
   const deleteConversation = useApp((state) => state.deleteConversation);
   const createProject = useApp((state) => state.createProject);
@@ -84,17 +65,11 @@ export function RailConversations({ mode, searchable = false }: { mode: UiMode; 
   const deleteProject = useApp((state) => state.deleteProject);
   const moveConversation = useApp((state) => state.moveConversation);
 
-  const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [draftProject, setDraftProject] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
-  const term = searchable ? query.trim() : "";
-  const results = useMemo(
-    () => (term ? searchConversations(allConversations, term, mode) : []),
-    [allConversations, term, mode]
-  );
   const groups = useMemo(() => groupByProject(conversations, projects), [conversations, projects]);
 
   function exportConversation(conversation: Conversation, format: "md" | "json") {
@@ -187,129 +162,79 @@ export function RailConversations({ mode, searchable = false }: { mode: UiMode; 
 
   return (
     <>
-      {searchable && (
-        <label className="rail-search">
-          <Search size={13} />
+      <div className="rail-projects-bar">
+        {draftProject === null ? (
+          <button onClick={() => setDraftProject("")}>
+            <FolderPlus size={12} />
+            Novo projeto
+          </button>
+        ) : (
           <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar em todas as abas…"
-            aria-label="Buscar conversas"
+            autoFocus
+            value={draftProject}
+            placeholder="Nome do projeto"
+            aria-label="Nome do novo projeto"
+            onChange={(event) => setDraftProject(event.target.value)}
+            onBlur={commitProject}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitProject();
+              if (event.key === "Escape") setDraftProject(null);
+            }}
           />
-        </label>
+        )}
+      </div>
+
+      {conversations.length === 0 && projects.length === 0 && (
+        <span className="rail-empty">Sem histórico ainda — envie pelo composer.</span>
       )}
 
-      {term ? (
-        <>
-          {results.length === 0 && <span className="rail-empty">Nada encontrado no histórico.</span>}
-          {results.map((result) => (
-            <button
-              className="rail-result"
-              key={`${result.mode}-${result.conversationId}`}
-              title={result.title}
-              onClick={() => {
-                // O resultado pode estar em OUTRA aba, que talvez esteja com
-                // um turno em voo. Ler o estado na hora do clique é mais
-                // barato que assinar o thread de todas as abas (cada token
-                // recriaria o objeto e re-renderizaria o rail inteiro).
-                if (useApp.getState().threads[result.mode].sending) {
-                  useApp
-                    .getState()
-                    .setError(
-                      `A aba ${modeLabels[result.mode]} está respondendo. Aguarde o fim para abrir essa conversa.`
-                    );
-                  return;
-                }
-                setMode(result.mode);
-                loadConversation(result.mode, result.conversationId);
-              }}
-            >
-              <span className="rail-result-head">
-                <span>{result.title}</span>
-                <span className="rail-result-mode">{modeLabels[result.mode]}</span>
-                <span className="rail-result-count">{result.matchCount}</span>
-              </span>
-              <small>{result.snippet}</small>
-            </button>
-          ))}
-        </>
-      ) : (
-        <>
-          <div className="rail-projects-bar">
-            {draftProject === null ? (
-              <button onClick={() => setDraftProject("")}>
-                <FolderPlus size={12} />
-                Novo projeto
-              </button>
-            ) : (
+      {groups.map((group) => {
+        const project = group.project;
+        if (!project) return <div className="rail-group" key="loose">{group.conversations.map(renderConversation)}</div>;
+        const open = !collapsed[project.id];
+        return (
+          <div className="rail-group" key={project.id}>
+            {renaming?.id === project.id ? (
               <input
                 autoFocus
-                value={draftProject}
-                placeholder="Nome do projeto"
-                aria-label="Nome do novo projeto"
-                onChange={(event) => setDraftProject(event.target.value)}
-                onBlur={commitProject}
+                className="rail-group-rename"
+                value={renaming.name}
+                aria-label="Novo nome do projeto"
+                onChange={(event) => setRenaming({ id: project.id, name: event.target.value })}
+                onBlur={commitRename}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter") commitProject();
-                  if (event.key === "Escape") setDraftProject(null);
+                  if (event.key === "Enter") commitRename();
+                  if (event.key === "Escape") setRenaming(null);
                 }}
               />
-            )}
-          </div>
-
-          {conversations.length === 0 && projects.length === 0 && (
-            <span className="rail-empty">Sem histórico ainda — envie pelo composer.</span>
-          )}
-
-          {groups.map((group) => {
-            const project = group.project;
-            if (!project) return <div className="rail-group" key="loose">{group.conversations.map(renderConversation)}</div>;
-            const open = !collapsed[project.id];
-            return (
-              <div className="rail-group" key={project.id}>
-                {renaming?.id === project.id ? (
-                  <input
-                    autoFocus
-                    className="rail-group-rename"
-                    value={renaming.name}
-                    aria-label="Novo nome do projeto"
-                    onChange={(event) => setRenaming({ id: project.id, name: event.target.value })}
-                    onBlur={commitRename}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") commitRename();
-                      if (event.key === "Escape") setRenaming(null);
-                    }}
-                  />
-                ) : (
-                  <div className="rail-group-head">
-                    <button
-                      aria-expanded={open}
-                      onClick={() => setCollapsed({ ...collapsed, [project.id]: open })}
-                    >
-                      {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      <Folder size={12} />
-                      <span>{project.name}</span>
-                      <small>{group.conversations.length}</small>
-                    </button>
-                    <i
-                      role="button"
-                      aria-label="Renomear projeto"
-                      onClick={() => setRenaming({ id: project.id, name: project.name })}
-                    >
-                      <Pencil size={11} />
-                    </i>
-                    <i role="button" aria-label="Excluir projeto" onClick={() => deleteProject(project.id)}>
-                      <Trash2 size={11} />
-                    </i>
-                  </div>
-                )}
-                {open && group.conversations.map(renderConversation)}
-                {open && group.conversations.length === 0 && <span className="rail-empty">Pasta vazia.</span>}
+            ) : (
+              <div className="rail-group-head">
+                <button
+                  aria-expanded={open}
+                  onClick={() => setCollapsed({ ...collapsed, [project.id]: open })}
+                >
+                  {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  <Folder size={12} />
+                  <span>{project.name}</span>
+                  <small>{group.conversations.length}</small>
+                </button>
+                <i
+                  role="button"
+                  aria-label="Renomear projeto"
+                  onClick={() => setRenaming({ id: project.id, name: project.name })}
+                >
+                  <Pencil size={11} />
+                </i>
+                <i role="button" aria-label="Excluir projeto" onClick={() => deleteProject(project.id)}>
+                  <Trash2 size={11} />
+                </i>
               </div>
-            );
-          })}
-        </>
-      )}
+            )}
+            {open && group.conversations.map(renderConversation)}
+            {open && group.conversations.length === 0 && <span className="rail-empty">Pasta vazia.</span>}
+          </div>
+        );
+      })}
     </>
   );
 }

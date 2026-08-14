@@ -1,8 +1,10 @@
 /**
  * Cliente do terminal interativo (comandos Rust `pty_*`).
  *
- * A parte pura (estado, contadores, log) está em `ptySession.ts`. Aqui só o
- * transporte: resolver a rota, abrir, assinar os eventos e encerrar.
+ * Aqui só o TRANSPORTE: resolver a rota, abrir, assinar os eventos e
+ * encerrar. O estado da sessão — status, contadores, log com horário — é o
+ * redutor puro de `ptySession.ts`, que o `Terminal` alimenta com as ações
+ * conforme os eventos chegam.
  *
  * ## O ambiente do rodapé é resolvido AQUI
  *
@@ -118,6 +120,29 @@ export async function ptyList(): Promise<PtySessionInfo[]> {
   return invoke<PtySessionInfo[]>("pty_list");
 }
 
+/**
+ * Confirma blocos já desenhados — devolve fôlego à leitura do PTY.
+ *
+ * O Rust emite no máximo `JANELA_BLOCOS` blocos sem confirmação e, passando
+ * disso, PARA de ler o PTY; o freio chega ao processo filho, que bloqueia na
+ * escrita, como em qualquer terminal. Sem confirmar, um comando tagarela
+ * congelaria em vez de correr — por isso o `Terminal` chama esta função no
+ * callback do `term.write`, que é o instante em que o xterm.js realmente
+ * processou aquele pedaço.
+ *
+ * Erro aqui é engolido de propósito: sessão que acabou de encerrar devolve
+ * SESSION_NOT_FOUND, e transformar isso em faixa vermelha na tela seria
+ * ruído sobre algo que já terminou bem.
+ */
+export async function ptyAck(id: string, blocos = 1): Promise<void> {
+  if (!isTauriHost) return;
+  try {
+    await invoke("pty_ack", { id, blocos });
+  } catch {
+    // sessão já encerrada — nada a confirmar
+  }
+}
+
 export interface PtyListeners {
   onData?: (event: PtyDataEvent) => void;
   onExit?: (event: PtyExitEvent) => void;
@@ -134,29 +159,88 @@ export interface PtyListeners {
  * vivo, e a aba Code remonta a cada troca de aba.
  */
 export async function ptyListen(id: string, listeners: PtyListeners): Promise<UnlistenFn> {
-  if (!isTauriHost) return () => undefined;
+  const inscricao = await ptyListenPendente(listeners);
+  inscricao.amarrar(id);
+  return inscricao.parar;
+}
+
+/** Inscrição feita ANTES de existir id — ver `ptyListenPendente`. */
+export interface PtyInscricaoPendente {
+  /** Passa a filtrar por esta sessão e ENTREGA o que chegou antes, em ordem. */
+  amarrar: (id: string) => void;
+  parar: UnlistenFn;
+}
+
+/**
+ * Assina os três eventos ANTES de saber o id, guardando o que chegar.
+ *
+ * Existe por uma corrida real: a thread de leitura do Rust começa a emitir
+ * `pty-data` no instante em que o filho nasce, e o front só consegue assinar
+ * depois que `pty_spawn` volta — mais três round-trips de IPC do `listen`.
+ * Evento do Tauri sem ouvinte é DESCARTADO, não enfileirado; o que se perdia
+ * era justamente o começo: a faixa do PowerShell, o primeiro prompt, a
+ * primeira linha de um comando passado na abertura. Dava um terminal em
+ * branco que só reagia depois do primeiro Enter — parecendo travado.
+ *
+ * Assinando antes, nada se perde. O que chega antes de `amarrar` fica numa
+ * fila; ao amarrar, o que é da sessão é entregue na ordem e o resto é
+ * descartado (com dois terminais abertos, cada um vê a fila dos dois).
+ *
+ * A fila tem teto. Se `amarrar` nunca vier — spawn que falhou, efeito
+ * cancelado —, ela para de crescer em vez de segurar a saída inteira de um
+ * processo tagarela na memória.
+ */
+const MAX_EVENTOS_PENDENTES = 512;
+
+export async function ptyListenPendente(listeners: PtyListeners): Promise<PtyInscricaoPendente> {
+  if (!isTauriHost) return { amarrar: () => undefined, parar: () => undefined };
+
+  let alvo: string | null = null;
+  let fila: Array<() => void> | null = [];
+
+  /** Antes de amarrar, enfileira; depois, executa se for da sessão. */
+  const despachar = (idEvento: string | undefined, entregar: () => void, aceitaSemId = false) => {
+    if (alvo === null) {
+      if (fila && fila.length < MAX_EVENTOS_PENDENTES) {
+        fila.push(() => {
+          if (idEvento === alvo || (aceitaSemId && !idEvento)) entregar();
+        });
+      }
+      return;
+    }
+    if (idEvento === alvo || (aceitaSemId && !idEvento)) entregar();
+  };
+
   const desinscricoes: UnlistenFn[] = [];
   desinscricoes.push(
-    await listen<PtyDataEvent>("pty-data", (event) => {
-      if (event.payload.id !== id) return;
-      listeners.onData?.(event.payload);
-    })
+    await listen<PtyDataEvent>("pty-data", (event) =>
+      despachar(event.payload.id, () => listeners.onData?.(event.payload))
+    )
   );
   desinscricoes.push(
-    await listen<PtyExitEvent>("pty-exit", (event) => {
-      if (event.payload.id !== id) return;
-      listeners.onExit?.(event.payload);
-    })
+    await listen<PtyExitEvent>("pty-exit", (event) =>
+      despachar(event.payload.id, () => listeners.onExit?.(event.payload))
+    )
   );
   desinscricoes.push(
-    await listen<PtyErrorEvent>("pty-error", (event) => {
+    await listen<PtyErrorEvent>("pty-error", (event) =>
       // Erro sem id é do subsistema, não de uma sessão: entregar para quem
       // estiver ouvindo é melhor que engolir.
-      if (event.payload.id && event.payload.id !== id) return;
-      listeners.onError?.(event.payload);
-    })
+      despachar(event.payload.id, () => listeners.onError?.(event.payload), true)
+    )
   );
-  return () => {
-    for (const desinscrever of desinscricoes) desinscrever();
+
+  return {
+    amarrar: (id: string) => {
+      if (alvo !== null) return;
+      alvo = id;
+      const pendentes = fila ?? [];
+      fila = null;
+      for (const entregar of pendentes) entregar();
+    },
+    parar: () => {
+      fila = null;
+      for (const desinscrever of desinscricoes) desinscrever();
+    }
   };
 }

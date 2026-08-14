@@ -192,3 +192,42 @@ describe("stripAnsi", () => {
     expect(stripAnsi(bruto)).toBe("✓ 12 testes (1.3s)");
   });
 });
+
+describe("aplicarRetornos e caractere fora do BMP", () => {
+  /** Escritos assim porque o byte literal some ao passar por editor e shell. */
+  const CR = "\r";
+  const BS = "\b";
+
+  it("emoji ocupa UMA coluna e sobrevive inteiro", () => {
+    /*
+     * O cursor conta colunas; a string conta unidades UTF-16. Um emoji vale
+     * 1 coluna e 2 unidades. Indexando a saida por unidade, os dois saiam de
+     * sincronia no primeiro emoji e a escrita seguinte cortava o par
+     * substituto ao meio — o resto da linha virava lixo.
+     */
+    const saida = aplicarRetornos("\u{1F680} deploy");
+    expect(saida).toBe("\u{1F680} deploy");
+    expect([...saida]).toHaveLength(8);
+  });
+
+  it("sobrescrita depois do emoji cai na coluna certa", () => {
+    // 2 colunas ("ok"), volta ao inicio, escreve "AB": vira "AB" + resto.
+    const saida = aplicarRetornos("\u{1F680}xy" + CR + "AB");
+    expect([...saida]).toEqual(["A", "B", "y"]);
+  });
+
+  it("backspace apaga UMA coluna, nao meia unidade", () => {
+    const saida = aplicarRetornos("a\u{1F680}" + BS + "b");
+    expect(saida).toBe("ab");
+  });
+
+  it("barra de progresso com emoji nao acumula sobra", () => {
+    const saida = aplicarRetornos("\u{2728} 10%" + CR + "\u{2728} 100%");
+    expect(saida).toBe("\u{2728} 100%");
+  });
+
+  it("par substituto isolado nao e quebrado ao ser reescrito", () => {
+    const saida = aplicarRetornos("\u{1F600}\u{1F601}" + CR + "\u{1F602}");
+    expect([...saida]).toEqual(["\u{1F602}", "\u{1F601}"]);
+  });
+});

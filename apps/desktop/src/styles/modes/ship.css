@@ -177,3 +177,57 @@
 .ship__vrow { display: flex; align-items: center; gap: 6px; margin: 0; }
 .ship__vnow { color: var(--text-1); font-weight: 600; }
 .ship__vnext { color: var(--accent); font-weight: 600; }
+
+/*
+ * Botão que revela o Dockerfile gerado.
+ *
+ * Fica na largura do bloco, abaixo dos chips de framework, e não ao lado
+ * deles: `Executar` é ação de pipeline e mora no cabeçalho do run — misturar
+ * as duas alturas faria a pessoa clicar em "ver" achando que ia "rodar".
+ */
+.ship__dockerfile-toggle {
+  width: 100%;
+  margin-top: 6px;
+}
+
+/*
+ * Ações da imagem — ver o Dockerfile e escolher construí-lo.
+ *
+ * O interruptor fica AQUI, junto do framework, e não no cabeçalho do run:
+ * é o framework que torna a imagem possível (ele sabe porta, saída e start),
+ * e a decisão pertence a essa vizinhança.
+ */
+.ship__imagem {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ship__imagem-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass);
+  cursor: pointer;
+}
+.ship__imagem-check input { margin-top: 2px; flex: none; }
+.ship__imagem-check span {
+  display: grid;
+  gap: 1px;
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+/* O que vai acontecer NO DISCO fica escrito: gravar arquivo no projeto de
+   alguém sem avisar é o tipo de surpresa que derruba a confiança na
+   ferramenta inteira. */
+.ship__imagem-check small { color: var(--muted); font-size: var(--fs-eyebrow); }
+.ship__imagem-check code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--hover);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}

@@ -28,7 +28,7 @@
  * errado.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as Xterm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -37,14 +37,16 @@ import "../styles/terminal.css";
 import { Glyph } from "./icons";
 import {
   isPtyAvailable,
+  ptyAck,
   ptyKill,
-  ptyListen,
+  ptyListenPendente,
   ptyResize,
   ptySpawn,
   ptyWrite,
   type ShellKind
 } from "../lib/pty";
 import { ansiCssVars, termPalette, xtermTheme } from "../lib/termTheme";
+import { describeSession, emptySession, reduceSession } from "../lib/ptySession";
 import { useApp } from "../lib/store";
 
 /** Teto do scrollback. Terminal de verdade também tem — memória é finita. */
@@ -67,9 +69,33 @@ export function Terminal({ cwd }: { cwd: string }) {
   const idRef = useRef<string | null>(null);
 
   const [shell, setShell] = useState<ShellKind>("default");
+  /**
+   * O estado da sessão vem do REDUTOR, não de `useState` avulso.
+   *
+   * Antes eram três sinais soltos (`alvo`, `erro`, `vivo`) que não sabiam
+   * responder a pergunta que importa quando um terminal fecha sozinho: POR QUE.
+   * Chave recusada no SSH, shell inexistente, processo morto pelo sistema — os
+   * três viravam "sumiu" na tela, indistinguíveis de defeito nosso. O redutor
+   * guarda status, código de saída, tráfego e um log com horário, e tem a regra
+   * que o `useState` não tinha: **status terminal não volta atrás** (um
+   * `pty-data` atrasado, que chega depois do `pty-exit` porque as duas
+   * threads do Rust são independentes, não ressuscita a sessão).
+   */
+  const [sessao, despachar] = useReducer(reduceSession, undefined, emptySession);
+  /** Painel de diagnóstico aberto — fechado por padrão, é para quando dá errado. */
+  const [detalhes, setDetalhes] = useState(false);
   const [alvo, setAlvo] = useState("");
-  const [erro, setErro] = useState("");
-  const [vivo, setVivo] = useState(false);
+
+  const vivo = sessao.status === "running";
+  /*
+   * O erro mostrado é a ÚLTIMA entrada de nível `error` do log.
+   *
+   * Antes era um `useState` que a próxima mensagem sobrescrevia e o próximo
+   * spawn limpava — o motivo de uma sessão ter morrido desaparecia da tela
+   * antes de a pessoa conseguir ler. Agora ele vive no log, com horário, e o
+   * painel de detalhes mostra a sequência inteira.
+   */
+  const erro = [...sessao.logs].reverse().find((item) => item.level === "error")?.message ?? "";
   /** Incrementar reabre a sessão — é o "novo terminal" e o "reconectar". */
   const [nonce, setNonce] = useState(0);
 
@@ -107,7 +133,9 @@ export function Terminal({ cwd }: { cwd: string }) {
     // pior: mostraria a senha que o `sudo` está pedindo para esconder.
     const disposeData = term.onData((data) => {
       const id = idRef.current;
-      if (id) void ptyWrite(id, data);
+      if (!id) return;
+      despachar({ type: "write", at: new Date().toISOString(), bytes: data.length });
+      void ptyWrite(id, data);
     });
 
     /*
@@ -126,7 +154,9 @@ export function Terminal({ cwd }: { cwd: string }) {
 
     const disposeResize = term.onResize(({ cols, rows }) => {
       const id = idRef.current;
-      if (id) void ptyResize(id, cols, rows);
+      if (!id) return;
+      despachar({ type: "resize", at: new Date().toISOString(), cols, rows });
+      void ptyResize(id, cols, rows);
     });
 
     return () => {
@@ -155,7 +185,11 @@ export function Terminal({ cwd }: { cwd: string }) {
   /** Abre a sessão e liga os eventos. Refaz ao trocar shell, pasta ou destino. */
   useEffect(() => {
     if (!isPtyAvailable) {
-      setErro("O terminal interativo existe só no app desktop.");
+      despachar({
+        type: "spawn:fail",
+        at: new Date().toISOString(),
+        message: "O terminal interativo existe só no app desktop."
+      });
       return;
     }
     const term = termRef.current;
@@ -163,14 +197,95 @@ export function Terminal({ cwd }: { cwd: string }) {
 
     let cancelado = false;
     let desinscrever: (() => void) | undefined;
+    /*
+     * O id que ESTE efeito abriu — não o do ref.
+     *
+     * O `onExit` zera `idRef` (é o certo: teclar num shell morto não deve ir
+     * a lugar nenhum), e a limpeza lia justamente esse ref. Depois de uma
+     * saída espontânea ela via `null` e não chamava `ptyKill`, deixando a
+     * entrada no mapa do Rust — oito ciclos de "encerrou, reabri" e o painel
+     * batia no limite de sessões com nenhum shell vivo.
+     */
+    let idAberto: string | null = null;
 
     (async () => {
-      setErro("");
+      // `spawn:start` ZERA a sessão: reabrir não pode herdar o log nem os
+      // contadores da anterior, senão o diagnóstico mistura duas execuções.
+      despachar({
+        type: "spawn:start",
+        at: new Date().toISOString(),
+        cwd,
+        target: "…",
+        cols: term.cols,
+        rows: term.rows
+      });
       try {
         fitRef.current?.fit();
       } catch {
         // sem medida ainda: o spawn usa o padrão e o resize corrige depois
       }
+
+      /*
+       * A inscrição vem ANTES do spawn.
+       *
+       * A thread de leitura do Rust emite `pty-data` assim que o filho nasce,
+       * e evento do Tauri sem ouvinte é descartado — assinar depois do
+       * `await ptySpawn` perdia o começo da sessão (faixa do shell, primeiro
+       * prompt). `ptyListenPendente` guarda o que chegar e entrega ao
+       * `amarrar`, quando o id finalmente existe.
+       */
+      const inscricao = await ptyListenPendente({
+        /*
+         * O segundo argumento do `write` é o freio.
+         *
+         * Ele dispara quando o xterm.js processou ESTE bloco — não quando o
+         * enfileirou. Confirmando aí, o Rust volta a ler o PTY; sem
+         * confirmar, ele para na janela e o processo filho bloqueia na
+         * escrita, que é o comportamento certo. Antes não havia nada
+         * segurando o produtor, e o buffer do xterm descarta em silêncio
+         * acima de 5×10⁷ bytes pendentes: a saída não ficava lenta, ficava
+         * FALTANDO pedaço no meio.
+         */
+        onData: (evento) => {
+          // O contador de tráfego é por BYTE, não por bloco: é o número que
+          // responde "o processo estava mesmo escrevendo?" quando a tela
+          // parece parada.
+          despachar({ type: "data", at: new Date().toISOString(), bytes: evento.data.length });
+          term.write(evento.data, () => void ptyAck(evento.id));
+        },
+        onExit: (evento) => {
+          despachar({
+            type: "exit",
+            at: new Date().toISOString(),
+            exitCode: evento.exitCode,
+            reason: evento.reason
+          });
+          idRef.current = null;
+          // O código de saída aparece na tela, como em terminal de verdade.
+          const codigo = evento.exitCode ?? 0;
+          term.write(
+            `
+[2m[processo encerrado · ${evento.reason}` +
+              `${evento.exitCode === undefined ? "" : ` · código ${codigo}`}][0m
+`
+          );
+        },
+        onError: (evento) =>
+          despachar({
+            type: "error",
+            at: new Date().toISOString(),
+            code: evento.code,
+            message: evento.message
+          })
+      });
+      // A limpeza já pode desinscrever a partir daqui — antes desta linha ela
+      // via `undefined` e os três handlers de janela ficavam vivos para sempre.
+      desinscrever = inscricao.parar;
+      if (cancelado) {
+        inscricao.parar();
+        return;
+      }
+
       try {
         const { id, target } = await ptySpawn({
           cwd,
@@ -183,47 +298,42 @@ export function Terminal({ cwd }: { cwd: string }) {
           return;
         }
         idRef.current = id;
+        idAberto = id;
+        despachar({ type: "spawn:ok", at: new Date().toISOString(), id });
+        // O destino real só se conhece depois do spawn (a rota pode ser SSH).
         setAlvo(target);
-        setVivo(true);
-        desinscrever = await ptyListen(id, {
-          onData: (evento) => term.write(evento.data),
-          onExit: (evento) => {
-            setVivo(false);
-            idRef.current = null;
-            // O código de saída aparece na tela, como em terminal de verdade.
-            const codigo = evento.exitCode ?? 0;
-            term.write(
-              `\r\n\u001b[2m[processo encerrado \u00b7 ${evento.reason}` +
-                `${evento.exitCode === undefined ? "" : ` \u00b7 c\u00f3digo ${codigo}`}]\u001b[0m\r\n`
-            );
-          },
-          onError: (evento) => setErro(`${evento.code}: ${evento.message}`)
-        });
+        inscricao.amarrar(id);
       } catch (causa) {
         if (cancelado) return;
         // Rota bloqueada (VPS sem servidor) chega aqui com o motivo escrito —
         // cair para local em silêncio seria rodar na máquina errada.
-        setErro(causa instanceof Error ? causa.message : String(causa));
-        setVivo(false);
+        despachar({
+          type: "spawn:fail",
+          at: new Date().toISOString(),
+          message: causa instanceof Error ? causa.message : String(causa)
+        });
       }
     })();
 
     return () => {
       cancelado = true;
       desinscrever?.();
-      const id = idRef.current;
       idRef.current = null;
       // Fechar a aba mata o shell: deixá-lo vivo sem tela seria um processo
-      // órfão consumindo a máquina sem ninguém para vê-lo.
-      if (id) void ptyKill(id);
-      setVivo(false);
+      // órfão consumindo a máquina sem ninguém para vê-lo. Em sessão que já
+      // encerrou, o `pty_kill` é idempotente e serve para tirar a entrada do
+      // mapa — por isso vai o id local, e não o do ref.
+      if (idAberto) {
+        despachar({ type: "kill", at: new Date().toISOString() });
+        void ptyKill(idAberto);
+      }
     };
   }, [cwd, shell, environment, nonce]);
 
   return (
     <div className="xterm-host" data-alive={vivo ? "1" : "0"}>
       <header className="xterm-bar">
-        <span className="xterm-alvo" title={`Os comandos rodam em ${alvo || "…"}`}>
+        <span className="xterm-alvo" title={`Os comandos rodam em ${alvo || "…"} · ${describeSession(sessao)}`}>
           <Glyph name={environment === "vps" ? "environments/vps" : "environments/local"} size={12} />
           {alvo || "abrindo…"}
         </span>
@@ -260,6 +370,17 @@ export function Terminal({ cwd }: { cwd: string }) {
         >
           <Glyph name="ui/close" size={13} />
         </button>
+
+        <button
+          type="button"
+          className={`icon-button${detalhes ? " active" : ""}`}
+          onClick={() => setDetalhes((valor) => !valor)}
+          title="Diagnóstico da sessão"
+          aria-label="Diagnóstico da sessão"
+          aria-expanded={detalhes}
+        >
+          <Glyph name="features/diagnostics" size={13} />
+        </button>
       </header>
 
       {erro ? (
@@ -267,6 +388,49 @@ export function Terminal({ cwd }: { cwd: string }) {
           <Glyph name="status/warning" size={12} />
           {erro}
         </p>
+      ) : null}
+
+      {detalhes ? (
+        /*
+         * O que responde "por que aquele terminal morreu".
+         *
+         * Chave recusada no SSH, shell inexistente, processo morto pelo
+         * sistema: os três davam a MESMA tela vazia, indistinguível de defeito
+         * nosso. Aqui está o status, o código de saída, o tráfego (que diz se o
+         * processo chegou a escrever) e a sequência de eventos com horário.
+         */
+        <div className="xterm-diag">
+          <dl>
+            <div>
+              <dt>Estado</dt>
+              <dd>{describeSession(sessao)}</dd>
+            </div>
+            <div>
+              <dt>Sessão</dt>
+              <dd>{sessao.id || "—"}</dd>
+            </div>
+            <div>
+              <dt>Tráfego</dt>
+              <dd>
+                {sessao.bytesIn} B lidos · {sessao.bytesOut} B escritos em {sessao.writeCount}
+              </dd>
+            </div>
+            <div>
+              <dt>Grade</dt>
+              <dd>
+                {sessao.cols}×{sessao.rows} · {sessao.resizeCount} ajuste(s)
+              </dd>
+            </div>
+          </dl>
+          <ol className="xterm-diag-log">
+            {sessao.logs.map((item, indice) => (
+              <li key={indice} className={`n-${item.level}`}>
+                <time>{item.at.slice(11, 19)}</time>
+                <span>{item.message}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
       ) : null}
 
       <div className="xterm-tela" ref={hostRef} />

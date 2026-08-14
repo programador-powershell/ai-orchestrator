@@ -129,8 +129,13 @@ fn token_session(value: Value, previous_refresh: Option<String>) -> Result<OidcS
 /// Credencial que o IdP recusou de vez (refresh revogado) precisa SAIR do
 /// keyring: senão vira zumbi, retentada a cada reinício para sempre.
 fn discard(gateway_base_url: &str) {
-    if let Ok(entry) = keyring::Entry::new("Multiplike-AI", &account(gateway_base_url)) {
-        let _ = entry.delete_credential();
+    let conta = account(gateway_base_url);
+    // Nos dois serviços: credencial revogada sob o nome antigo seria
+    // ressuscitada pelo fallback de leitura a cada reinício.
+    for servico in [crate::rebrand::SERVICO, crate::rebrand::SERVICO_ANTIGO] {
+        if let Ok(entry) = keyring::Entry::new(servico, &conta) {
+            let _ = entry.delete_credential();
+        }
     }
 }
 
@@ -142,12 +147,12 @@ pub async fn oidc_restore(
     gateway_base_url: String,
     force: Option<bool>,
 ) -> Result<Option<OidcSession>, String> {
-    let entry = keyring::Entry::new("Multiplike-AI", &account(&gateway_base_url))
-        .map_err(|e| e.to_string())?;
-    let value = match entry.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
+    // Passa pelo fallback do rebranding: a sessão salva antes da 0.11.0 está
+    // sob o serviço antigo, e não achá-la mandaria a pessoa refazer o SSO sem
+    // motivo. `segredo_com_fallback` já regrava sob o nome novo ao achar.
+    let value = match crate::rebrand::segredo_com_fallback(&account(&gateway_base_url)) {
+        Some(value) => value,
+        None => return Ok(None),
     };
     let mut session: OidcSession = serde_json::from_str(&value).map_err(|e| e.to_string())?;
     let expired = session.expires_at <= chrono::Utc::now().timestamp();
@@ -170,8 +175,14 @@ pub async fn oidc_restore(
 
 #[tauri::command]
 pub async fn oidc_logout(gateway_base_url: String) -> Result<(), String> {
-    let entry = keyring::Entry::new("Multiplike-AI", &account(&gateway_base_url))
-        .map_err(|e| e.to_string())?;
+    let conta = account(&gateway_base_url);
+    // Apaga nos DOIS serviços. Sair da conta e deixar a sessão antiga viva no
+    // cofre seria a pior versão possível deste bug: um "logout" que devolve
+    // sucesso e mantém o refresh token gravado na máquina.
+    if let Ok(antiga) = keyring::Entry::new(crate::rebrand::SERVICO_ANTIGO, &conta) {
+        let _ = antiga.delete_credential();
+    }
+    let entry = keyring::Entry::new(crate::rebrand::SERVICO, &conta).map_err(|e| e.to_string())?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(error) => Err(error.to_string()),

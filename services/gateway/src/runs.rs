@@ -143,7 +143,21 @@ pub async fn publish(state: &AppState, run: Uuid, events: &[RunEventInput]) {
     if events.is_empty() {
         return;
     }
-    let payload = match serde_json::to_string(&json!({ "runId": run, "events": events })) {
+    /*
+     * O `type` PRECISA ir no payload.
+     *
+     * Este JSON e repassado VERBATIM ao cliente pelo hub (ws.rs, no braco do
+     * fanout) — nao ha reembrulho no caminho. E o `parseFrame` do cliente
+     * descarta, devolvendo `null`, todo frame sem `type`.
+     *
+     * Sem isto o tempo real ficava morto de um jeito que nao aparece em lugar
+     * nenhum: o cliente recebia o lote de `replay` do subscribe e mais nada
+     * depois, sem erro, sem log, sem socket fechado. Parecia "nao ha eventos
+     * novos".
+     */
+    let payload = match serde_json::to_string(
+        &json!({ "type": "events", "runId": run, "events": events }),
+    ) {
         Ok(value) => value,
         Err(error) => {
             tracing::warn!(error = %error, "falha ao serializar lote para publicação");

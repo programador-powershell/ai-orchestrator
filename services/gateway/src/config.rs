@@ -9,7 +9,16 @@ pub struct Config {
     pub oidc_issuer: String,
     pub oidc_client_id: String,
     pub oidc_client_secret: Option<String>,
-    pub oidc_audience: String,
+    /// Audiencias ACEITAS, em ordem de preferencia.
+    ///
+    /// Lista, e nao valor unico, por causa do rebranding: o `aud` mudou de
+    /// "ai-orchestrator" para "multiplike-ai" e um redeploy pelo manifesto
+    /// passa a exigir o novo enquanto o IdP ainda emite o antigo — todo login
+    /// devolveria 401 sem nada no log dizendo por que. Aceitar as duas durante
+    /// a virada e o unico jeito de trocar sem janela de indisponibilidade.
+    ///
+    /// Formato: `OIDC_AUDIENCE=nova,antiga` (separadas por virgula).
+    pub oidc_audience: Vec<String>,
     /// Escopo pedido na autorizacao E no refresh — o refresh token do Entra e
     /// multi-recurso; sem scope explicito o aud do token renovado nao e
     /// garantido e a validacao cai na primeira renovacao.
@@ -45,7 +54,18 @@ impl Config {
             oidc_client_secret: env::var("OIDC_CLIENT_SECRET")
                 .ok()
                 .filter(|v| !v.is_empty()),
-            oidc_audience: required("OIDC_AUDIENCE")?,
+            oidc_audience: {
+                let bruto = required("OIDC_AUDIENCE")?;
+                let lista: Vec<String> = bruto
+                    .split(',')
+                    .map(|item| item.trim().to_string())
+                    .filter(|item| !item.is_empty())
+                    .collect();
+                if lista.is_empty() {
+                    anyhow::bail!("OIDC_AUDIENCE definido, porém sem nenhuma audiência utilizável");
+                }
+                lista
+            },
             oidc_scope: env::var("OIDC_SCOPE")
                 .ok()
                 .filter(|v| !v.is_empty())

@@ -1,6 +1,6 @@
 {
   "name": "multiplike-ai",
-  "version": "0.7.0",
+  "version": "0.11.0",
   "private": true,
   "packageManager": "pnpm@10.15.1",
   "scripts": {

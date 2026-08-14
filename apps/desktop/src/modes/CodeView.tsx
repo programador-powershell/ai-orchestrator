@@ -1330,8 +1330,18 @@ export function CodeView() {
                 Assistido
               </button>
             </div>
-            {abaTerm === "shell" ? <Terminal cwd={root} /> : null}
-            <div className="codex-term-assistido" hidden={abaTerm !== "shell" ? false : true} onClick={() => promptRef.current?.focus()}>
+            {/*
+              O shell fica MONTADO, escondido — como o painel assistido logo
+              abaixo. Desmontar disparava a limpeza do efeito de sessão, que
+              mata o PTY: ir ver uma resposta no Assistido e voltar encontrava
+              o shell fechado, com o `cd`, o histórico e o processo em execução
+              perdidos. Um terminal que não sobrevive a trocar de aba não é um
+              terminal.
+            */}
+            <div className="codex-term-shell" hidden={abaTerm !== "shell"}>
+              <Terminal cwd={root} />
+            </div>
+            <div className="codex-term-assistido" hidden={abaTerm === "shell"} onClick={() => promptRef.current?.focus()}>
             <pre ref={termRef} aria-live="polite">
               {termLines.map((item, index) => (
                 <span className={`codex-term-line k-${item.kind}`} key={index}>

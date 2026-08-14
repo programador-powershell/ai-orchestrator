@@ -117,5 +117,84 @@
   flex-direction: column;
   min-height: 0;
 }
+.codex-term-shell { display: contents; }
 .codex-term.is-shell .xterm-host { flex: 1; min-height: 0; }
+
+/*
+ * As duas abas são ESCONDIDAS, não desmontadas.
+ *
+ * `display: none` precisa vir escrito porque `.codex-term-shell` usa
+ * `display: contents` — o atributo `hidden` do HTML é só um
+ * `display: none` de folha de estilo do agente, e qualquer `display`
+ * declarado depois o vence em silêncio. Sem isto o shell continuaria
+ * visível por cima do painel assistido.
+ *
+ * O invólucro existe justamente para o `hidden` ter onde morar sem que o
+ * emulador perca o `flex: 1` da coluna: `display: contents` faz o
+ * `.xterm-host` continuar sendo filho do flex, como antes.
+ */
+.codex-term-shell[hidden],
 .codex-term-assistido[hidden] { display: none; }
+
+/* ------------------------------------------------------------------ */
+/* Diagnóstico da sessão                                               */
+/*                                                                     */
+/* Fechado por padrão: é a tela de quando dá errado, não de quando      */
+/* funciona. Aberto, responde o que o terminal vazio não respondia —    */
+/* status, código de saída, tráfego e a sequência com horário.          */
+/* ------------------------------------------------------------------ */
+
+.xterm-diag {
+  flex: none;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--term-selection-border, var(--line));
+  background: var(--glass);
+  font-size: var(--fs-eyebrow);
+}
+
+.xterm-diag dl {
+  margin: 0 0 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 4px 14px;
+}
+.xterm-diag dl > div { min-width: 0; }
+.xterm-diag dt {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.xterm-diag dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-family: var(--font-mono);
+}
+
+.xterm-diag-log {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+.xterm-diag-log li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  color: var(--muted);
+}
+.xterm-diag-log time {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* O nível vem do redutor, não do texto: é o que separa "encerrou com 0"
+   de "encerrou com 1" sem depender de ler a mensagem. */
+.xterm-diag-log .n-warn span { color: var(--tone-amber, #f59e0b); }
+.xterm-diag-log .n-error span { color: var(--danger, #ef4444); }
