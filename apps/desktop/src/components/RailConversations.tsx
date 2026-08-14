@@ -35,6 +35,7 @@ const modeLabels: Record<UiMode, string> = {
   work: "Work",
   security: "Security",
   agent: "Agent",
+  fluxo: "Fluxo",
   office: "Office",
 
   tune: "Tuning"

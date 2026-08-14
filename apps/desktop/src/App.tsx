@@ -32,6 +32,7 @@ import {
   Sparkles,
   Sun,
   WandSparkles,
+  Workflow,
   X
 } from "lucide-react";
 import { listWorkspaces } from "./lib/gateway";
@@ -60,6 +61,7 @@ const viewLoaders: Record<UiMode, () => Promise<{ [key: string]: unknown }>> = {
   work: () => import("./modes/WorkView"),
   security: () => import("./modes/SecurityView"),
   agent: () => import("./modes/AgentView"),
+  fluxo: () => import("./modes/FluxoView"),
   office: () => import("./modes/OfficeView"),
   tune: () => import("./modes/TuneView")
 };
@@ -70,6 +72,7 @@ const DataView = lazy(() => import("./modes/DataView").then((m) => ({ default: m
 const WorkView = lazy(() => import("./modes/WorkView").then((m) => ({ default: m.WorkView })));
 const SecurityView = lazy(() => import("./modes/SecurityView").then((m) => ({ default: m.SecurityView })));
 const AgentView = lazy(() => import("./modes/AgentView").then((m) => ({ default: m.AgentView })));
+const FluxoView = lazy(() => import("./modes/FluxoView").then((m) => ({ default: m.FluxoView })));
 const OfficeView = lazy(() => import("./modes/OfficeView").then((m) => ({ default: m.OfficeView })));
 const TuneView = lazy(() => import("./modes/TuneView").then((m) => ({ default: m.TuneView })));
 const SettingsPanel = lazy(() => import("./components/Settings").then((m) => ({ default: m.SettingsPanel })));
@@ -85,6 +88,7 @@ const modeMeta: Record<UiMode, { label: string; icon: typeof MessageCircle }> = 
   work: { label: "Work", icon: Boxes },
   security: { label: "Security", icon: ShieldCheck },
   agent: { label: "Agent", icon: Bot },
+  fluxo: { label: "Fluxo", icon: Workflow },
   office: { label: "Office", icon: FileText },
   tune: { label: "Tuning", icon: FlaskConical }
 };
@@ -97,6 +101,7 @@ const railAction: Record<UiMode, string> = {
   work: "Nova sessão",
   security: "Nova revisão",
   agent: "Nova equipe",
+  fluxo: "Novo fluxo",
   office: "Nova sessão",
   tune: "Novo treino"
 };
@@ -133,6 +138,11 @@ const railViews: Record<UiMode, ReturnType<typeof lazy>> = {
       default: (m as { AgentRail?: () => ReactNode }).AgentRail ?? (() => null)
     }))
   ),
+  fluxo: lazy(() =>
+    import("./modes/FluxoView").then((m) => ({
+      default: (m as { FluxoRail?: () => ReactNode }).FluxoRail ?? (() => null)
+    }))
+  ),
   office: lazy(() =>
     import("./modes/OfficeView").then((m) => ({
       default: (m as { OfficeRail?: () => ReactNode }).OfficeRail ?? (() => null)
@@ -151,6 +161,7 @@ const modeViews: Record<UiMode, () => ReactNode> = {
   work: () => <WorkView />,
   security: () => <SecurityView />,
   agent: () => <AgentView />,
+  fluxo: () => <FluxoView />,
   office: () => <OfficeView />,
   tune: () => <TuneView />
 };
@@ -347,7 +358,15 @@ function App() {
             {railOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           </button>
         </div>
-        <button className="new-task glint" onClick={() => newConversation(mode)}>
+        <button
+          className="new-task glint"
+          onClick={() => {
+            // Cada aba tem a sua unidade de trabalho: no Fluxo o botao cria um
+            // fluxo, e nao mais uma conversa que ninguem usaria ali.
+            if (mode === "fluxo") void import("./lib/fluxo/store").then((m) => m.useFluxo.getState().newFlow());
+            else newConversation(mode);
+          }}
+        >
           <Plus size={16} />
           {railOpen && railAction[mode]}
         </button>
