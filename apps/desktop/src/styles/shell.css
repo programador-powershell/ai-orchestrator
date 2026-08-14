@@ -672,6 +672,20 @@ button { -webkit-tap-highlight-color: transparent; }
   transition: all var(--t-fast) ease;
 }
 .model-select:hover { color: var(--ink); border-color: var(--line-strong); }
+
+/*
+ * Chip SOMENTE-LEITURA: o motor aparece, a troca não.
+ *
+ * O modelo é configuração do administrador, então em nove das dez abas este
+ * chip só informa. Sem esta regra ele herdava `cursor: pointer` e o realce de
+ * hover do chip clicável — convidando um clique que não faz nada, que é a
+ * pior forma de dizer "não pode".
+ *
+ * Continua com contraste de leitura: quem usa tem direito de saber por qual
+ * modelo a resposta passou, ainda mais quando há fusão de vários.
+ */
+.model-select.readonly.inerte { cursor: default; }
+.model-select.readonly.inerte:hover { color: var(--muted); border-color: var(--line); }
 .model-select .fusion-dot {
   width: 12px;
   height: 12px;
