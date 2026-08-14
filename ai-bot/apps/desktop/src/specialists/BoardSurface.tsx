@@ -167,8 +167,13 @@ function TaskCard({ card }: { card: CardModel }): ReactNode {
         Escalação não repete o corpo: o `error` de quem escalou é "escalado: <a
         pergunta>", e o bloco de baixo já mostra a pergunta. Imprimir os dois
         colocava a mesma frase duas vezes no mesmo cartão.
+
+        A condição olha `card.escalation`, e não só o desfecho, porque os dois
+        eventos são independentes: se o `escalate` se perder e o `worker.done`
+        chegar, suprimir aqui deixaria o cartão com o chip "escalou" e NENHUM
+        texto — a pergunta só existe no `error`.
       */}
-      {card.done !== null && outcome !== "escalated" ? (
+      {card.done !== null && !(outcome === "escalated" && card.escalation !== null) ? (
         <div className="card-body">{card.done.ok ? card.done.result || "concluída" : card.done.error || "falhou"}</div>
       ) : null}
 
@@ -302,8 +307,14 @@ export function BoardSurface(): ReactNode {
         <span>
           fazendo <b>{cards.filter((card) => card.lane === "doing").length}</b>
         </span>
+        {/*
+          "Concluídas", e não "feitas": a palavra tem de ser a do NÚMERO. A coluna
+          "Feito" conta quem o worker terminou, com ou sem sucesso — falha e
+          escalação moram lá —, e este número conta só quem entregou. Com a mesma
+          palavra nos dois, o rodapé passava a contradizer a coluna logo acima.
+        */}
         <span>
-          feitas <b>{finished}</b>
+          concluídas <b>{finished}</b>
         </span>
         <span>estado muda pelo bot, não pelo mouse</span>
       </div>
