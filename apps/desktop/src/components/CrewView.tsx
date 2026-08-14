@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Square, Users, Wand2 } from "lucide-react";
 
-import { ThinkingOrb } from "./ThinkingOrb";
+import { ThinkingOrb, type ThinkingKind } from "./ThinkingOrb";
 import type { EngineSelection } from "@ai-orchestrator/contracts";
 
 import { Markdown } from "./Markdown";
@@ -35,6 +35,7 @@ import {
   rosterLine,
   summarizeCrew,
   type CrewMember,
+  type CrewRole,
   type ModelsByRole
 } from "../lib/agentCrew";
 import { runCrew, type CrewCall, type CrewDecision } from "../lib/agentCrewRun";
@@ -47,6 +48,23 @@ import { effectiveLimits } from "../lib/agentTree";
 import { useApprovalQueue } from "../lib/approvalQueue";
 import type { ToolCall } from "../lib/agent";
 import type { AgentTask } from "../lib/agentTree";
+
+/**
+ * O orbe de cada papel da equipe, EXPLÍCITO.
+ *
+ * Deduzir pelo rótulo da etapa não servia aqui: "Constituição",
+ * "Especificação" e "Integração" não casam com nenhuma pista, e quatro dos
+ * seis papéis mostravam o orbe de REPOUSO justamente enquanto o agente
+ * trabalhava. Como o conjunto de papéis é fechado, a tabela é exata.
+ */
+const ORBE_DO_PAPEL: Record<CrewRole, ThinkingKind> = {
+  idea: "breathing",
+  scope: "composing",
+  plan: "weaving",
+  code: "working",
+  review: "solving",
+  ci: "connecting"
+};
 
 const STATUS_LABEL: Record<CrewMember["status"], string> = {
   hired: "contratado",
@@ -368,12 +386,12 @@ export function CrewView({
                   >
                     <span className="crwx-role">{ROLE_LABEL[member.role]}</span>
                     <strong>{member.model}</strong>
-                    {/* O orbe sai da ETAPA do agente: quem revisa mostra a
+                    {/* O orbe sai do PAPEL do agente: quem revisa mostra a
                         conferência, quem planeja mostra os fios se
                         entrelaçando. Um spinner igual em todos dizia só que
                         alguém estava ocupado — mas a equipe inteira está. */}
                     {member.status === "working" || member.status === "hired" ? (
-                      <ThinkingOrb label={roleStageLabel(member.role)} size={13} className="orb--inline" />
+                      <ThinkingOrb kind={ORBE_DO_PAPEL[member.role]} size={13} className="orb--inline" />
                     ) : null}
                     <span className="crwx-badge">{STATUS_LABEL[member.status]}</span>
                   </button>

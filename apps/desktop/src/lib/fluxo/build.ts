@@ -56,12 +56,17 @@ export interface MontarOpcoes {
  */
 export async function montarDoPrompt(texto: string, { selection, ctx }: MontarOpcoes): Promise<void> {
   const pedido = texto.trim();
-  const loja = useFluxo.getState();
-  if (!pedido || loja.building) return;
+  if (!pedido) return;
+  if (useFluxo.getState().building) {
+    // O composer já ecoou a mensagem e limpou o campo: sair calado deixaria a
+    // frase sumir sem explicação. O aviso vai para o rodapé da aba.
+    useFluxo.getState().setNote("Uma montagem já está em curso — espere ela terminar ou clique em Parar.");
+    return;
+  }
 
   // Sem fluxo ativo, o Enter no balão não podia simplesmente não fazer nada:
   // quem digitou já disse o que quer, e criar o fluxo é o passo óbvio.
-  if (!loja.activeId) loja.newFlow();
+  if (!useFluxo.getState().activeId) useFluxo.getState().newFlow();
 
   const controller = new AbortController();
   const { apply, beginBuild, endBuild, pushPasso, setErro, setAbort } = useFluxo.getState();
@@ -70,7 +75,20 @@ export async function montarDoPrompt(texto: string, { selection, ctx }: MontarOp
   beginBuild(pedido);
   setStage("Montando o fluxo…");
 
+  /**
+   * Quantas operações o stream trouxe.
+   *
+   * É o sinal que separa "o modelo não respondeu operação nenhuma" de "as
+   * operações que ele mandou esvaziaram o canvas". Sem ele, um pedido
+   * legítimo como "limpe o fluxo, quero começar do zero" — que o modelo
+   * atende com `{"op":"clear"}` — parecia falha de conexão: a heurística
+   * entrava, montava um esqueleto que ninguém pediu e ainda renomeava o
+   * fluxo SALVO com a frase do comando.
+   */
+  let recebidas = 0;
+
   const registrar = (op: FlowOp) => {
+    recebidas += 1;
     apply(op);
     const linha = descreveOp(op);
     if (!linha) return;
@@ -100,13 +118,22 @@ export async function montarDoPrompt(texto: string, { selection, ctx }: MontarOp
      * esqueleto pelas palavras da frase — pelo MESMO caminho, operação por
      * operação. Um canvas vazio com "configure um motor" faria o recurso
      * parecer quebrado quando é só falta de conexão.
+     *
+     * A conta é de OPERAÇÕES RECEBIDAS, não de nós no canvas: "limpe o fluxo"
+     * e "remova todos os nós" terminam com o canvas vazio de propósito, e
+     * olhar só o resultado transformava o acerto do modelo em um fluxo
+     * inventado por cima.
      */
-    if (!useFluxo.getState().draft.nodes.length || resposta.trim().startsWith("—")) {
+    if (!recebidas || resposta.trim().startsWith("—")) {
       for (const op of heuristicOps(pedido)) registrar(op);
       endBuild("Montado sem modelo, pelas palavras do pedido — revise os detalhes.");
       return;
     }
-    endBuild();
+    endBuild(
+      useFluxo.getState().draft.nodes.length
+        ? undefined
+        : "Canvas limpo — descreva o novo fluxo no campo abaixo."
+    );
   } catch (cause) {
     if (controller.signal.aborted) {
       endBuild("Montagem interrompida.");

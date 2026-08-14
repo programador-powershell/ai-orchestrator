@@ -13,10 +13,10 @@
 
 import type { ReactNode, SVGProps } from "react";
 
-import { glyphs, type GlyphName } from "./glyphs";
+import { FILLED_GLYPHS, glyphs, type GlyphName } from "./glyphs";
 
 export type { GlyphName };
-export { glyphs };
+export { glyphs, FILLED_GLYPHS };
 
 /**
  * Como um ícone é usado no app: recebe tamanho e classe, devolve o desenho.
@@ -37,21 +37,31 @@ export interface GlyphProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
 /**
  * Renderiza um glifo pelo caminho no pacote (`"features/mcp"`).
  *
+ * O pacote tem DUAS famílias e elas pedem tratamento oposto: o glifo de
+ * contorno é `fill="none" stroke="currentColor"`; o de SILHUETA é
+ * `fill="currentColor"` e nenhum contorno — os filhos dele não repetem o
+ * `fill`, herdam da raiz. Desenhar silhueta com `fill="none"` traça o
+ * contorno da silhueta, que parece ícone quebrado e não ícone errado.
+ *
+ * `FILLED_GLYPHS` é gerado a partir da tag raiz de cada asset, então a
+ * classificação não pode divergir do desenho.
+ *
  * Nome desconhecido devolve nada em vez de quebrar a tela: um ícone ausente é
  * um detalhe, e derrubar a aba inteira por causa dele seria desproporcional.
  */
 export function Glyph({ name, size = 16, strokeWidth = 1.5, ...rest }: GlyphProps) {
   const conteudo = glyphs[name];
   if (!conteudo) return null;
+  const silhueta = FILLED_GLYPHS.has(name);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       width={size}
       height={size}
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
+      fill={silhueta ? "currentColor" : "none"}
+      stroke={silhueta ? "none" : "currentColor"}
+      strokeWidth={silhueta ? undefined : strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

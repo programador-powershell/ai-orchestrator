@@ -21,7 +21,7 @@
 import "../styles/modes/fluxo.css";
 
 import { useEffect, useMemo, useState } from "react";
-import { CircleAlert, Clock, GitBranch, Play, Plus, Save, Trash2, Workflow, Zap } from "lucide-react";
+import { CircleAlert, Clock, GitBranch, Play, Plus, Save, Square, Trash2, Workflow, Zap } from "lucide-react";
 
 import { FlowAssistant } from "../components/fluxo/FlowAssistant";
 import { FlowCanvas } from "../components/fluxo/FlowCanvas";
@@ -104,6 +104,8 @@ export function FluxoView() {
   const note = useFluxo((state) => state.note);
   const assistantOpen = useFluxo((state) => state.assistantOpen);
   const toggleAssistant = useFluxo((state) => state.toggleAssistant);
+  const stopBuild = useFluxo((state) => state.stopBuild);
+  const stage = useApp((state) => state.stage);
   const newFlow = useFluxo((state) => state.newFlow);
   const rename = useFluxo((state) => state.rename);
   const patchNode = useFluxo((state) => state.patchNode);
@@ -142,9 +144,15 @@ export function FluxoView() {
     []
   );
 
-  // Sair da aba com uma montagem em curso deixaria a chamada correndo para uma
-  // tela morta — e o `building` preso em true.
-  useEffect(() => () => useFluxo.getState().stopBuild(), []);
+  /*
+   * A montagem NÃO é abortada ao sair da aba.
+   *
+   * A view desmonta a cada troca de módulo, e o store de fluxo é de módulo
+   * justamente para a montagem sobreviver a isso — abortar no cleanup era
+   * fazer o oposto: ir ver o Chat por três segundos matava o trabalho no meio.
+   * O que corre em segundo plano escreve no store, então voltar mostra o
+   * resultado; para interromper de propósito existe o botão Parar.
+   */
 
   function adicionar(item: (typeof NOVOS)[number]) {
     const id = `${item.type[0]}${Date.now().toString(36).slice(-4)}`;
@@ -273,8 +281,20 @@ export function FluxoView() {
             <div className="fx-main">
               {building ? (
                 <div className="fx-montando">
-                  <ThinkingOrb kind="weaving" size={16} />
-                  <span>Montando o fluxo…</span>
+                  {/* Sem auréola: numa faixa de texto ela só engorda a linha —
+                      o brilho vale no balão flutuante, que é peça solta. */}
+                  <ThinkingOrb kind="weaving" size={20} className="orb--inline" />
+                  {/* A etapa que o `montarDoPrompt` escreve aparece AQUI. A
+                      aba não tem o balão de "processando" das outras (o envio
+                      desvia antes do `sending`), então sem esta linha o texto
+                      era escrito para ninguém. */}
+                  <span className="fx-montando-etapa">{stage || "Montando o fluxo…"}</span>
+                  {/* Parar precisa existir no estado PADRÃO da aba: a coluna
+                      do histórico nasce fechada, e o botão dela não bastava. */}
+                  <button type="button" className="lg-button ghost" onClick={stopBuild}>
+                    <Square size={12} />
+                    Parar
+                  </button>
                 </div>
               ) : null}
 

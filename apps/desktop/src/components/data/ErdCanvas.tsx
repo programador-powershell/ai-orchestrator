@@ -23,7 +23,7 @@
  * partir da mesma `TABLE_GEOMETRY` que o CSS usa.
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -55,6 +55,9 @@ export interface LigacaoResolvida {
   campoDestino: number;
 }
 
+/** Lado do quadrado da alça — o React Flow soma `width`/`height` ao ler `x`/`y`. */
+const LADO_ALCA = 8;
+
 /**
  * As alças de uma tabela, DECLARADAS (o porquê está no topo do arquivo).
  *
@@ -63,15 +66,20 @@ export interface LigacaoResolvida {
  * porque as duas saem de `TABLE_GEOMETRY`.
  */
 function alcasDe(table: SchemaTable) {
-  const nova = (type: "source" | "target", position: Position, x: number, y: number, id: string) => ({
+  /*
+   * `x`/`y` são o CANTO SUPERIOR-ESQUERDO do retângulo da alça, não o centro:
+   * o React Flow calcula o ponto da aresta como `x + width / 2`. Declarando o
+   * centro, toda ponta de linha saía 4px para baixo e para a direita do lugar.
+   */
+  const nova = (type: "source" | "target", position: Position, centroX: number, centroY: number, id: string) => ({
     id,
     nodeId: table.id,
     type,
     position,
-    x,
-    y,
-    width: 8,
-    height: 8
+    x: centroX - LADO_ALCA / 2,
+    y: centroY - LADO_ALCA / 2,
+    width: LADO_ALCA,
+    height: LADO_ALCA
   });
 
   const meioCabecalho = TABLE_GEOMETRY.headerHeight / 2;
@@ -100,15 +108,27 @@ function alcasDe(table: SchemaTable) {
  */
 function FocoNaTabela({ tabela, nonce }: { tabela: SchemaTable | null; nonce: number }) {
   const { setCenter, getZoom } = useReactFlow();
+  /*
+   * A tabela vive num ref, e não nas dependências.
+   *
+   * O objeto troca de identidade a CADA mudança dela — renomear um campo,
+   * mudar o tipo, arrastar. Com `tabela` na lista, o efeito rodava de novo e a
+   * tela ia sozinha para o centro dela no meio da edição, sem ninguém pedir.
+   * O gatilho é o `nonce`, que só o rail incrementa.
+   */
+  const alvo = useRef(tabela);
+  alvo.current = tabela;
+
   useEffect(() => {
-    if (!nonce || !tabela) return;
-    setCenter(tabela.x + LARGURA / 2, tabela.y + tableHeight(tabela) / 2, {
+    const table = alvo.current;
+    if (!nonce || !table) return;
+    setCenter(table.x + LARGURA / 2, table.y + tableHeight(table) / 2, {
       zoom: Math.max(getZoom(), 0.8),
       duration: 320
     });
     // `nonce` é o gatilho: pedir foco na MESMA tabela duas vezes precisa
     // mover de novo, e comparar só o id não dispararia na segunda.
-  }, [nonce, tabela, setCenter, getZoom]);
+  }, [nonce, setCenter, getZoom]);
   return null;
 }
 
@@ -123,9 +143,10 @@ export interface ErdCanvasProps {
   onConnect: (ligacao: LigacaoResolvida) => void;
   /** Apagou uma relação (Delete na aresta selecionada). */
   onDisconnect: (relationId: string) => void;
-  /** Soltou a tabela em outro lugar; `antes` é o documento do começo do arrasto. */
-  onMove: (id: string, x: number, y: number, antes: SchemaDocExt) => void;
-  onDeleteTable: (table: SchemaTable) => void;
+  /** Soltou o arrasto: TODAS as tabelas movidas, e o documento de antes dele. */
+  onMove: (movidas: Array<{ id: string; x: number; y: number }>, antes: SchemaDocExt) => void;
+  /** Delete com seleção: tabelas e relações somem no MESMO passo de histórico. */
+  onDelete: (tabelas: SchemaTable[], relationIds: string[]) => void;
 }
 
 export function ErdCanvas({
@@ -137,32 +158,44 @@ export function ErdCanvas({
   onConnect,
   onDisconnect,
   onMove,
-  onDeleteTable
+  onDelete
 }: ErdCanvasProps) {
   const [nodes, setNodes, aplicarMudancasDeNo] = useNodesState<Node>([]);
   const [edges, setEdges, aplicarMudancasDeAresta] = useEdgesState<Edge>([]);
 
   const porNome = useMemo(() => new Map(doc.tables.map((table) => [table.name, table])), [doc.tables]);
 
-  /** Documento → nós. Tamanho e alças declarados; ver o topo do arquivo. */
+  /**
+   * Documento → nós. Tamanho e alças declarados; ver o topo do arquivo.
+   *
+   * A SELEÇÃO não vem daqui. Ela é do canvas: forçar `selected` a cada
+   * sincronia desfazia a seleção múltipla (Ctrl+clique ou laço) no quadro
+   * seguinte, e o retângulo de seleção que o `canvas.css` desenha nunca
+   * chegava a existir. O que o efeito faz com o estado anterior é
+   * PRESERVÁ-LO, para uma operação do chat no meio da seleção não limpar o
+   * que a pessoa tinha marcado.
+   */
   useEffect(() => {
-    setNodes(
-      doc.tables.map((table) => {
+    setNodes((atuais) => {
+      const porId = new Map(atuais.map((node) => [node.id, node]));
+      return doc.tables.map((table) => {
+        const anterior = porId.get(table.id);
         const altura = tableHeight(table);
         return {
+          ...anterior,
           id: table.id,
           type: "table",
           position: { x: table.x, y: table.y },
-          selected: table.id === selectedId,
+          selected: anterior?.selected ?? false,
           width: LARGURA,
           height: altura,
           measured: { width: LARGURA, height: altura },
           handles: alcasDe(table),
-          data: { table, selecionada: table.id === selectedId }
+          data: { ...anterior?.data, table }
         } as Node;
-      })
-    );
-  }, [doc.tables, selectedId, setNodes]);
+      });
+    });
+  }, [doc.tables, setNodes]);
 
   /**
    * Documento → arestas. A FK mora no campo; a relação é o espelho dela.
@@ -210,25 +243,39 @@ export function ErdCanvas({
     [doc.tables, onConnect]
   );
 
+  /**
+   * O documento de ANTES do arrasto, para o commit virar uma entrada só.
+   *
+   * Um ref simples basta porque o React Flow só permite um arrasto por vez —
+   * e ele chama `onNodeDragStop` UMA vez por gesto, passando no terceiro
+   * argumento todos os nós que se moveram.
+   */
+  const antesDoArrasto = useRef<SchemaDocExt | null>(null);
+
+  const aoIniciarArrasto = useCallback(() => {
+    antesDoArrasto.current = doc;
+  }, [doc]);
+
   const aoMoverFim = useCallback(
-    (_: unknown, node: Node) => {
-      // O documento do começo do arrasto vem do próprio nó: guardá-lo aqui em
-      // um ref daria o valor errado quando duas tabelas são movidas juntas.
-      const antes = (node.data as { antes?: SchemaDocExt }).antes;
-      onMove(node.id, Math.max(0, Math.round(node.position.x)), Math.max(0, Math.round(node.position.y)), antes ?? doc);
+    (_: unknown, node: Node, arrastados: Node[]) => {
+      /*
+       * `arrastados` traz TODOS os nós do gesto — com seleção múltipla, o
+       * segundo argumento é só o que estava sob o cursor. Persistindo só ele,
+       * as outras tabelas voltavam para a posição antiga no próximo quadro,
+       * porque a sincronia relê a posição do documento.
+       */
+      const movidos = arrastados.length ? arrastados : [node];
+      onMove(
+        movidos.map((item) => ({
+          id: item.id,
+          x: Math.max(0, Math.round(item.position.x)),
+          y: Math.max(0, Math.round(item.position.y))
+        })),
+        antesDoArrasto.current ?? doc
+      );
+      antesDoArrasto.current = null;
     },
     [doc, onMove]
-  );
-
-  const aoIniciarArrasto = useCallback(
-    (_: unknown, node: Node) => {
-      // Carimba o estado atual no nó para o `commitMove` ter o "antes" certo,
-      // e o arrasto inteiro virar UMA entrada de histórico.
-      setNodes((atuais) =>
-        atuais.map((item) => (item.id === node.id ? { ...item, data: { ...item.data, antes: doc } } : item))
-      );
-    },
-    [doc, setNodes]
   );
 
   return (
@@ -244,13 +291,25 @@ export function ErdCanvas({
         onNodeDragStop={aoMoverFim}
         onNodeClick={(_, node) => onSelect(node.id)}
         onPaneClick={() => onSelect(null)}
-        onEdgesDelete={(apagadas) => apagadas.forEach((edge) => onDisconnect(edge.id))}
-        onNodesDelete={(apagados) => {
-          for (const node of apagados) {
-            const table = doc.tables.find((item) => item.id === node.id);
-            if (table) onDeleteTable(table);
-          }
+        /*
+         * `onDelete` e não o par `onNodesDelete`/`onEdgesDelete`: apagar uma
+         * tabela apaga em cascata as arestas ligadas a ela, e os dois
+         * callbacks disparavam em sequência, cada um com seu commit. Uma
+         * exclusão virava N+1 entradas de histórico, e um Ctrl+Z devolvia um
+         * estado do meio — a tabela de volta sem as relações. `onDelete`
+         * entrega tudo de uma vez, num commit só.
+         */
+        onDelete={({ nodes: apagados, edges: apagadas }) => {
+          const tabelas = apagados
+            .map((node) => doc.tables.find((item) => item.id === node.id))
+            .filter((table): table is SchemaTable => Boolean(table));
+          // Aresta de tabela que já vai embora não precisa perder a FK antes.
+          const idsApagados = new Set(apagados.map((node) => node.id));
+          const soltas = apagadas.filter((edge) => !idsApagados.has(edge.source) && !idsApagados.has(edge.target));
+          onDelete(tabelas, soltas.map((edge) => edge.id));
         }}
+        /* O padrão do React Flow 12 é só Backspace; a interface promete Delete. */
+        deleteKeyCode={["Delete", "Backspace"]}
         fitView
         fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
         minZoom={0.2}
@@ -258,8 +317,13 @@ export function ErdCanvas({
         proOptions={{ hideAttribution: false }}
       >
         <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
-        <Controls showInteractive={false} />
-        <MiniMap pannable zoomable nodeColor={() => "var(--accent)"} />
+        {/*
+         * No topo, e não no rodapé como na aba Fluxo: aqui os cantos de baixo
+         * já são da barra de ações da aba (esquerda) e do "Pedir ao agente"
+         * (direita), que ficariam por cima do zoom e do minimapa.
+         */}
+        <Controls showInteractive={false} position="top-left" />
+        <MiniMap pannable zoomable position="top-right" nodeColor={() => "var(--accent)"} />
         <FocoNaTabela tabela={doc.tables.find((table) => table.id === focusId) ?? null} nonce={focusNonce} />
       </ReactFlow>
     </div>

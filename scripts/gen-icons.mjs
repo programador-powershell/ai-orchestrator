@@ -3,8 +3,12 @@
  *
  * A saída é VERSIONADA e o gerador não roda no build: SVG-como-componente
  * exigiria uma dependência nova (homologação de TI/SI) e uma regra de loader
- * no Next; JSX inline não precisa de nenhum dos dois e some no tree-shaking
- * quando o glifo não é usado.
+ * no Next, e JSX inline não precisa de nenhum dos dois.
+ *
+ * Os 89 glifos vivem num literal só e são construídos na carga do módulo —
+ * não há tree-shaking por glifo. É barato (elementos React de uma camada,
+ * ~35 KB de fonte) e foi a troca escolhida para não depender de loader; se
+ * o pacote crescer muito, o caminho é quebrar em módulos por pasta.
  *
  * Uso: `node scripts/gen-icons.mjs`
  */
@@ -83,6 +87,8 @@ const FORA = new Set(["app/app-icon"]);
 
 const arquivos = listar(RAIZ).sort();
 const glifos = [];
+/** Glifos de SILHUETA — o desenho é preenchido, não contornado. */
+const preenchidos = [];
 
 for (const arquivo of arquivos) {
   const rel = relative(RAIZ, arquivo).replace(/\\/g, "/").replace(/\.svg$/, "");
@@ -90,18 +96,33 @@ for (const arquivo of arquivos) {
   const bruto = readFileSync(arquivo, "utf8");
   const abre = bruto.indexOf(">");
   const fecha = bruto.lastIndexOf("</svg>");
+  const raiz = bruto.slice(0, abre);
   const miolo = bruto.slice(abre + 1, fecha).trim();
+  /*
+   * O pacote tem DUAS famílias e elas se distinguem pela tag raiz: contorno
+   * traz `fill="none" stroke="currentColor"`, silhueta traz
+   * `fill="currentColor"` e nenhum stroke. Os filhos da silhueta não repetem
+   * o `fill` — herdam da raiz. Jogar os atributos da raiz fora, como este
+   * gerador fazia, deixava a silhueta sem preenchimento nenhum: o app
+   * desenhava o CONTORNO dela, que é o pior resultado possível (parece um
+   * ícone quebrado, e não um ícone errado).
+   */
+  const fillDaRaiz = /\sfill="([^"]*)"/.exec(raiz)?.[1];
+  if (fillDaRaiz && fillDaRaiz !== "none") preenchidos.push(rel);
   glifos.push({ chave: rel, nome: pascal(rel), jsx: paraJsx(miolo) });
 }
 
 const linhas = [];
-linhas.push('/* GERADO — não edite à mão. Fonte: pacote de ícones do AI Orchestrator. */');
+linhas.push('/* GERADO — não edite à mão. Rode `node scripts/gen-icons.mjs`. */');
 linhas.push('/* eslint-disable */');
 linhas.push("");
 linhas.push('import type { ReactElement } from "react";');
 linhas.push("");
 linhas.push("/** Miolo de cada glifo, na chave `pasta/nome` do pacote. */");
-linhas.push("export const glyphs: Record<string, ReactElement> = {");
+// `satisfies` em vez de anotação: com `Record<string, ReactElement>` o tipo
+// das CHAVES colapsa para `string`, e um nome de glifo com erro de digitação
+// compila e some da tela sem aviso nenhum.
+linhas.push("export const glyphs = {");
 for (const glifo of glifos) {
   linhas.push(`  "${glifo.chave}": (`);
   linhas.push("    <>");
@@ -109,11 +130,15 @@ for (const glifo of glifos) {
   linhas.push("    </>");
   linhas.push("  ),");
 }
-linhas.push("};");
+linhas.push("} satisfies Record<string, ReactElement>;");
 linhas.push("");
 linhas.push("export type GlyphName = keyof typeof glyphs;");
 linhas.push("");
+linhas.push("/** Glifos de silhueta: preenchem com `currentColor`, sem contorno. */");
+linhas.push("export const FILLED_GLYPHS: ReadonlySet<GlyphName> = new Set([");
+for (const chave of preenchidos) linhas.push(`  "${chave}",`);
+linhas.push("]);");
+linhas.push("");
 
 writeFileSync(SAIDA, linhas.join("\n"), "utf8");
-console.log(`${glifos.length} glifos -> ${SAIDA}`);
-console.log(glifos.map((g) => g.chave).join("\n"));
+console.log(`${glifos.length} glifos (${preenchidos.length} de silhueta) -> ${SAIDA}`);

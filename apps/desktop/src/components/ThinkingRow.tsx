@@ -16,7 +16,9 @@ export const ThinkingRow = memo(function ThinkingRow({ stage }: { stage: string 
   return (
     <article className="chatx-row assistant thinking-row" aria-live="polite">
       <span className="chatx-avatar" aria-hidden="true">
-        <ThinkingOrb label={stage} size={14} className="orb--avatar" />
+        {/* 20px é o desenho tunado da biblioteca para escala de texto, e cabe
+            nos 26px úteis do avatar — abaixo disso viraria o glifo simples. */}
+        <ThinkingOrb label={stage} size={20} className="orb--avatar" />
       </span>
       <div className="chatx-col">
         <div className="thinking-inline">

@@ -1,5 +1,5 @@
 /**
- * Pesquisa profunda — pipeline "nível Grok 4.5" executado no cliente.
+ * Pesquisa profunda — o pipeline roda no cliente, não no provedor.
  *
  * 1. O modelo (via `ask`) propõe até 4 URLs candidatas em JSON.
  * 2. Cada URL é lida via comando Rust `research_fetch`; YouTube usa oEmbed.
