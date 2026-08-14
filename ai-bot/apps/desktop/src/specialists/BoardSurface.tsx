@@ -24,6 +24,7 @@ import {
   TriangleAlert
 } from "lucide-react";
 import type { Escalate, Task, TaskProgress, WorkerDone } from "@aibot/contracts";
+import { outcomeOf } from "../lib/crew";
 import { SPECIALIST_ICON } from "../lib/specialists";
 import { useApp } from "../lib/store";
 import { ConversationSurface, hueStyle, resolveSpecialist } from "./ConversationSurface";
@@ -73,7 +74,10 @@ function TaskCard({ card }: { card: CardModel }): ReactNode {
   const spec = resolveSpecialist(specialists, card.task.specialist);
   const Icon = SPECIALIST_ICON[spec.id] ?? Bot;
   const target = NEXT_LANE[card.lane];
-  const failed = card.done !== null && !card.done.ok;
+  // O desfecho do trabalhador vem da mesma regra que o grafo da Equipe usa. Aqui
+  // ele era `!card.done.ok`, e por isso o cartão de quem só fez uma pergunta
+  // dizia "falhou" com triângulo de alerta.
+  const outcome = card.done !== null ? outcomeOf(card.done) : null;
 
   function askToMove(): void {
     // Preenche o composer em vez de enviar: o texto é um PEDIDO, e pedido a
@@ -101,7 +105,11 @@ function TaskCard({ card }: { card: CardModel }): ReactNode {
       <div className="task-chips">
         <span className="chip" title={LANES.find((lane) => lane.id === card.lane)?.hint}>
           {card.lane === "done" ? (
-            failed ? (
+            outcome === "escalated" ? (
+              <>
+                <CircleAlert size={12} aria-hidden="true" /> escalou
+              </>
+            ) : outcome === "failed" ? (
               <>
                 <TriangleAlert size={12} aria-hidden="true" /> falhou
               </>
@@ -155,13 +163,23 @@ function TaskCard({ card }: { card: CardModel }): ReactNode {
         </div>
       ) : null}
 
-      {card.done !== null ? (
+      {/*
+        Escalação não repete o corpo: o `error` de quem escalou é "escalado: <a
+        pergunta>", e o bloco de baixo já mostra a pergunta. Imprimir os dois
+        colocava a mesma frase duas vezes no mesmo cartão.
+      */}
+      {card.done !== null && outcome !== "escalated" ? (
         <div className="card-body">{card.done.ok ? card.done.result || "concluída" : card.done.error || "falhou"}</div>
       ) : null}
 
       {card.escalation !== null ? (
+        // "perguntou", e não "está esperando resposta": quem sabe se a pergunta já
+        // foi respondida é a tela da Equipe, onde a resposta é digitada, e essa
+        // marca não sai de lá (é estado local, não do protocolo). Afirmar espera
+        // aqui deixava o cartão pedindo para sempre algo que já foi feito.
         <div className="card-body" title={card.escalation.question}>
-          <CircleAlert size={12} aria-hidden="true" /> o worker perguntou algo e está esperando resposta
+          <CircleAlert size={12} aria-hidden="true" /> o worker parou e perguntou:{" "}
+          {card.escalation.question}
         </div>
       ) : null}
 
@@ -217,7 +235,12 @@ export function BoardSurface(): ReactNode {
     });
   }, [tasks, dispatches, progress, done, escalations]);
 
-  const finished = cards.filter((card) => card.lane === "done").length;
+  // "Concluídas" conta quem CONCLUIU, e a coluna "Feito" não é isso: ela é "o
+  // worker terminou, com ou sem sucesso" (ver o hint de LANES), então falha e
+  // escalação moram lá também. Contar a coluna dizia que a tarefa que parou para
+  // perguntar estava pronta — e é o mesmo número que a Equipe mostra, por
+  // `state === "done"`, discordando deste.
+  const finished = cards.filter((card) => card.done !== null && card.done.ok).length;
 
   return (
     <div className="surface board-surface">

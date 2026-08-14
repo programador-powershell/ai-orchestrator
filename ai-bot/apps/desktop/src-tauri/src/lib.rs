@@ -105,6 +105,11 @@
 //!   comandos da lista abaixo. Por isso a lista é curta e por isso as
 //!   ferramentas de máquina não estão nela.
 
+/// Régua de desempenho compartilhada pelos benchmarks `#[ignore]` dos módulos
+/// quentes (`pty`, `pdf`, `tools`, `hostbridge`). Só existe em teste: nada dela
+/// entra no binário que a pessoa instala.
+#[cfg(test)]
+mod bench;
 mod gateway;
 mod hostbridge;
 mod jail;

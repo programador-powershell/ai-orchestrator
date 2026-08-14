@@ -426,6 +426,7 @@ var riskByTool = map[string]protocol.Risk{
 	"pdf.extract":     protocol.RiskRead,
 	"runtime.status":  protocol.RiskRead,
 	"finetune.status": protocol.RiskRead,
+	"schedule.list":   protocol.RiskRead,
 
 	// Deixa rastro: arquivo novo, arquivo alterado, worktree criada, commit
 	// feito. image.generate está aqui porque termina em arquivo no disco.
@@ -443,6 +444,10 @@ var riskByTool = map[string]protocol.Risk{
 	"worktree.create":  protocol.RiskWrite,
 	"worktree.remove":  protocol.RiskWrite,
 	"git.commit":       protocol.RiskWrite,
+	// Apagar gatilho é escrita, não rede: o que sai daqui é uma linha a menos no
+	// arquivo da agenda. Criar continua em RiskNetwork logo abaixo, porque o que
+	// nasce ali vai rodar sozinho e falar com o provedor sem ninguém olhando.
+	"schedule.remove": protocol.RiskWrite,
 
 	// Roda processo com o token de quem está logado. O confinamento de caminho
 	// limita onde se escreve, não o que o comando faz.

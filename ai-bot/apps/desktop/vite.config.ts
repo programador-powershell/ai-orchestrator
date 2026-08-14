@@ -65,6 +65,15 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: false,
-    include: ["src/**/*.test.{ts,tsx}"]
+    include: ["src/**/*.test.{ts,tsx}"],
+    // O benchmark tem nome `*.bench.test.ts` e casaria com o `include` acima;
+    // rodado como teste comum, `bench()` não tem o que fazer e o arquivo falha.
+    // Por isso ele sai daqui e entra em `benchmark.include` — o padrão do
+    // vitest para benchmark exige terminar em `.bench.ts`, e o nome do arquivo
+    // é o combinado do time.
+    exclude: ["**/node_modules/**", "**/dist/**", "src/**/*.bench.test.ts"],
+    benchmark: {
+      include: ["src/**/*.bench.test.ts"]
+    }
   }
 });

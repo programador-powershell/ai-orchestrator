@@ -31,6 +31,7 @@ import type {
   WorkerDone
 } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { outcomeOf, type WorkerOutcome } from "../lib/crew";
 import { SPECIALIST_ICON, specialistById } from "../lib/specialists";
 
 /* ------------------------------- geometria ------------------------------ */
@@ -41,13 +42,20 @@ const GAP_X = 74;
 const GAP_Y = 18;
 const PAD = 20;
 
-type NodeState = "idle" | "running" | "done" | "failed";
+/**
+ * O estado do nó é o ciclo de vida (não começou / rodando) mais o desfecho do
+ * trabalhador, que vem inteiro de `WorkerOutcome` — a mesma união que o quadro do
+ * Trabalho e o trilho usam. Escrever "escalated" de novo aqui abriria a porta
+ * para as três telas discordarem sobre quantos desfechos existem.
+ */
+type NodeState = "idle" | "running" | WorkerOutcome;
 
 const STATE_LABEL: Record<NodeState, string> = {
   idle: "não começou",
   running: "rodando",
   done: "concluído",
-  failed: "falhou"
+  failed: "falhou",
+  escalated: "escalou"
 };
 
 /**
@@ -60,7 +68,27 @@ const STATE_INK: Record<NodeState, string> = {
   idle: "var(--faint)",
   running: "var(--accent)",
   done: "var(--ok)",
-  failed: "var(--danger)"
+  failed: "var(--danger)",
+  // Amarelo porque escalação JÁ É amarela neste app: é a borda da faixa
+  // `.crew-escalation` e o ponto no canto do nó. Vermelho diria "deu errado" de
+  // um trabalhador que só fez uma pergunta.
+  escalated: "var(--warn)"
+};
+
+/**
+ * Ordem da fila de atenção, do que mais trava o plano para o que menos trava.
+ *
+ * É `Record` e não lista por um motivo mecânico: `["failed", ...] as NodeState[]`
+ * aceita calada uma lista INCOMPLETA, e foi assim que um estado novo passaria a
+ * existir sem entrar na seleção automática — com o grafo cheio e o painel do lado
+ * dizendo "escolha um nó". Record obriga o tsc a apontar o que falta.
+ */
+const ATTENTION_ORDER: Record<NodeState, number> = {
+  escalated: 0,
+  failed: 1,
+  running: 2,
+  done: 3,
+  idle: 4
 };
 
 interface CrewNode {
@@ -166,9 +194,12 @@ export function CrewSurface() {
       return wave;
     };
 
+    // O desfecho vem de `outcomeOf` e não de `done.ok`: quem escalou parou para
+    // perguntar, e chamar isso de falha pinta de vermelho o nó que a faixa logo
+    // acima está mostrando como pergunta em aberto.
     const stateOf = (id: string): NodeState => {
       const done = doneByTask.get(id);
-      if (done) return done.ok ? "done" : "failed";
+      if (done) return outcomeOf(done);
       return dispatchByTask.has(id) ? "running" : "idle";
     };
 
@@ -229,7 +260,11 @@ export function CrewSurface() {
       progressByTask,
       running: nodes.filter((node) => node.state === "running").length,
       finished: nodes.filter((node) => node.state === "done").length,
+      // `failed` conta SÓ falha. Com escalação dentro dele, o número na tela
+      // discordava do número que o gateway usa para abrir o portão da onda — e
+      // dois contadores da mesma coisa que discordam é pior que um só.
       failed: nodes.filter((node) => node.state === "failed").length,
+      escalated: nodes.filter((node) => node.state === "escalated").length,
       currentWave: nodes.reduce((top, node) => (node.state === "running" ? Math.max(top, node.wave) : top), 0),
       width: waves > 0 ? PAD * 2 + waves * NODE_W + (waves - 1) * GAP_X : 0,
       height: rows > 0 ? PAD * 2 + rows * NODE_H + (rows - 1) * GAP_Y : 0
@@ -252,17 +287,21 @@ export function CrewSurface() {
   // quem escalou, quem falhou, quem está rodando. É a fila de quem trava o plano.
   const activeId = useMemo(() => {
     if (selected && model.positions.has(selected)) return selected;
-    const escalated = model.nodes.find((node) => escalations.waiting.has(node.task.id));
-    if (escalated) return escalated.task.id;
-    for (const state of ["failed", "running", "done", "idle"] as NodeState[]) {
-      const found = model.nodes.find((node) => node.state === state);
-      if (found) return found.task.id;
+    // Quem AINDA espera resposta vem antes de qualquer estado: é o único nó desta
+    // tela que não destrava sozinho. `waiting` sai do `answered`, que é local, e
+    // por isso não pode morar no modelo — ver o comentário dele.
+    const waiting = model.nodes.find((node) => escalations.waiting.has(node.task.id));
+    if (waiting) return waiting.task.id;
+    let first: CrewNode | null = null;
+    for (const node of model.nodes) {
+      if (first === null || ATTENTION_ORDER[node.state] < ATTENTION_ORDER[first.state]) first = node;
     }
-    return "";
+    return first?.task.id ?? "";
   }, [selected, model, escalations]);
 
   const active = activeId ? model.positions.get(activeId) ?? null : null;
   const activeDone = activeId ? model.doneByTask.get(activeId) ?? null : null;
+  const activeOutcome = activeDone ? outcomeOf(activeDone) : null;
   const activeProgress = activeId ? model.progressByTask.get(activeId) ?? null : null;
 
   const answer = (escalation: Escalate) => {
@@ -499,20 +538,31 @@ export function CrewSurface() {
                       <text className="dag-label" x={node.x + 38} y={node.y + 44}>
                         {clamp(node.workerId || definition.name, 24)}
                       </text>
-                      {node.escalated ? (
+                      {/*
+                        O ponto agora diz UMA coisa só: ainda espera você.
+
+                        Que o trabalhador escalou já está no estado do nó (amarelo,
+                        rótulo "escalou"), então um ponto para todo escalado
+                        repetiria o recado — era metade do "mesma coisa contada
+                        duas vezes" desta tela. O que o estado NÃO carrega é se a
+                        pergunta já foi respondida, porque isso vive no `answered`
+                        local; é essa a informação que sobra aqui.
+
+                        Ele também aparece ANTES do estado: o `escalate` chega no
+                        evento próprio e o `worker.done` só sai quando a onda toda
+                        fecha, então existe uma janela em que o nó ainda está
+                        "rodando" e a pergunta já está na tela.
+                      */}
+                      {node.escalated && escalations.waiting.has(node.task.id) ? (
                         <circle
                           cx={node.x + NODE_W - 13}
                           cy={node.y + 13}
                           r={5}
-                          fill={escalations.waiting.has(node.task.id) ? "var(--warn)" : "var(--faint)"}
+                          fill="var(--warn)"
                           stroke="var(--panel)"
                           strokeWidth={2}
                         >
-                          <title>
-                            {escalations.waiting.has(node.task.id)
-                              ? "escalou e espera resposta"
-                              : "escalou; já respondido"}
-                          </title>
+                          <title>escalou e espera resposta</title>
                         </circle>
                       ) : null}
                     </g>
@@ -526,12 +576,15 @@ export function CrewSurface() {
                 <>
                   <div className="card-head">
                     <span className="card-title">{active.task.title}</span>
-                    <span
-                      className="badge-risk"
-                      data-risk={
-                        active.state === "failed" ? "execute" : active.state === "done" ? "read" : "write"
-                      }
-                    >
+                    {/*
+                      `data-state`, e não `data-risk`: o selo estava traduzindo
+                      estado de tarefa para risco de FERRAMENTA ("execute",
+                      "read") só para conseguir cor emprestada, e nessa tradução
+                      escalado cairia no mesmo balde vermelho de falha.
+                      `.badge-risk[data-state]` já existe em surfaces.css e é o
+                      gancho certo — a cor fica onde a cor mora.
+                    */}
+                    <span className="badge-risk" data-state={active.state}>
                       {STATE_LABEL[active.state]}
                     </span>
                   </div>
@@ -571,13 +624,23 @@ export function CrewSurface() {
                     </div>
                   ) : null}
 
-                  {activeDone ? (
+                  {activeDone && activeOutcome ? (
+                    // O bloco de saída segue o DESFECHO, não o `ok`: quem escalou
+                    // tem `ok=false` e teria ganhado o X de falha com o texto em
+                    // vermelho — sendo que o texto é a pergunta, que a faixa lá em
+                    // cima já mostra pedindo resposta.
                     <div className="card-body">
                       <span className="card-eyebrow">
-                        {activeDone.ok ? <Check size={11} aria-hidden /> : <X size={11} aria-hidden />}{" "}
-                        resultado
+                        {activeOutcome === "done" ? (
+                          <Check size={11} aria-hidden />
+                        ) : activeOutcome === "escalated" ? (
+                          <Hand size={11} aria-hidden />
+                        ) : (
+                          <X size={11} aria-hidden />
+                        )}{" "}
+                        {activeOutcome === "escalated" ? "pergunta" : "resultado"}
                       </span>
-                      <pre className="crew-result" data-ok={activeDone.ok ? "true" : "false"}>
+                      <pre className="crew-result" data-state={activeOutcome}>
                         {activeDone.result || activeDone.error || "sem saída"}
                       </pre>
                     </div>
@@ -608,6 +671,12 @@ export function CrewSurface() {
         <span>
           rodando <b>{model.running}</b> · concluídas <b>{model.finished}</b> · falhas{" "}
           <b>{model.failed}</b>
+          {model.escalated > 0 ? (
+            <>
+              {" "}
+              · escalaram <b>{model.escalated}</b>
+            </>
+          ) : null}
         </span>
         <span className="surface-toolbar-spacer" />
         <span>

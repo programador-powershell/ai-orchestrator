@@ -35,6 +35,7 @@ import (
 	"aibot/gateway/internal/netguard"
 	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
+	"aibot/gateway/internal/schedule"
 	"aibot/gateway/internal/secrets"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
@@ -115,6 +116,11 @@ func serve() error {
 		return err
 	}
 
+	agenda, err := schedule.Open(filepath.Join(cfg.DataDir, "schedule.json"))
+	if err != nil {
+		return err
+	}
+
 	/* ------------------------------ política ----------------------------- */
 
 	policy := permissions.DefaultPolicy()
@@ -129,7 +135,7 @@ func serve() error {
 	/* ------------------------------- modelos ----------------------------- */
 
 	models := modelrouter.New(&http.Client{Timeout: 5 * time.Minute}, vault)
-	providers, catalog, err := loadCatalog(cfg.DataDir)
+	providers, catalog, searchBackend, err := loadCatalog(cfg.DataDir)
 	if err != nil {
 		return err
 	}
@@ -152,14 +158,28 @@ func serve() error {
 			})
 		})
 
+	// Um gerente de cópias isoladas para os DOIS caminhos: a ferramenta que o
+	// modelo pede e o isolamento que o supervisor faz por conta dele. Dois
+	// gerentes sobre o mesmo repositório teriam um semáforo cada e voltariam a
+	// disputar o index.lock — o erro de trava que ele existe para não acontecer.
+	worktrees := openWorktrees(cfg, log)
+
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{
 		Root:      func(sessionID string) string { return sessionRoot(durable, sessionID) },
 		Memory:    recall,
 		Net:       guard,
 		MCP:       hub,
-		Worktrees: openWorktrees(cfg, log),
+		Worktrees: worktrees,
 		Secrets:   vault,
+		Schedule:  agenda,
+		// O mesmo roteador do turno: imagem e fine-tuning falam com o provedor
+		// pela credencial que já está configurada, sem um segundo caminho.
+		Models: models,
+		// O motor de busca vem do catalog.json. Vazio = `web.search` recusa
+		// dizendo o que configurar — melhor do que mandar a consulta da pessoa
+		// para um buscador que ninguém escolheu.
+		Search: searchBackend,
 	}
 	toolbox.Install(registry)
 
@@ -182,15 +202,31 @@ func serve() error {
 
 	router := supervisor.NewRouter(localRouter, supervisor.NewModelClassifier(models, ""))
 	sup := supervisor.New(supervisor.Deps{
-		Store:  durable,
-		Bus:    bus,
-		Models: models,
-		Gate:   gate,
-		Memory: recall,
-		Tools:  registry,
-		Router: router,
+		Store:     durable,
+		Bus:       bus,
+		Models:    models,
+		Gate:      gate,
+		Memory:    recall,
+		Tools:     registry,
+		Router:    router,
+		Worktrees: worktrees,
 	})
 	sup.InstallCrewTools(registry)
+
+	// O relógio da agenda. Vive enquanto o processo vive; o cancelamento sai no
+	// encerramento, antes do Shutdown do servidor.
+	agendaCtx, stopAgenda := context.WithCancel(context.Background())
+	defer stopAgenda()
+	schedule.NewRunner(agenda, func(ctx context.Context, sessionID, prompt string) error {
+		// Turno em andamento é PESSOA escrevendo. O supervisor cancela o turno
+		// anterior quando chega outro prompt, então disparar aqui mataria a
+		// resposta que ela está lendo. O gatilho perde a janela e volta na
+		// próxima: perder uma execução é melhor que interromper a conversa.
+		if sup.Busy(sessionID) {
+			return errors.New("a sessão está no meio de um turno")
+		}
+		return sup.Prompt(ctx, sessionID, protocol.Prompt{Text: prompt})
+	}, log).Start(agendaCtx)
 
 	/* ------------------------------ transporte --------------------------- */
 
@@ -290,6 +326,10 @@ func openWorktrees(cfg config.Config, log *slog.Logger) *worktree.Manager {
 type catalogFile struct {
 	Providers []modelrouter.Provider `json:"providers"`
 	Models    []modelrouter.Entry    `json:"models"`
+	// Search é o motor de busca da ferramenta `web.search`. Nasce vazio: sem ele
+	// a ferramenta recusa dizendo o que configurar, e recusar é melhor do que
+	// mandar a consulta do usuário para um buscador que ninguém escolheu.
+	Search supervisor.SearchBackend `json:"search"`
 }
 
 // loadCatalog lê providers/models do disco, criando um arquivo comentado na
@@ -298,30 +338,31 @@ type catalogFile struct {
 // O arquivo nasce com todos os provedores DESLIGADOS e sem chave: um gateway
 // que sobe já falando com a internet, antes de alguém configurar, é um gateway
 // que manda o primeiro prompt para onde o padrão apontar.
-func loadCatalog(dataDir string) ([]modelrouter.Provider, []modelrouter.Entry, error) {
+func loadCatalog(dataDir string) ([]modelrouter.Provider, []modelrouter.Entry, supervisor.SearchBackend, error) {
 	path := filepath.Join(dataDir, "catalog.json")
+	var empty supervisor.SearchBackend
 
 	raw, err := os.ReadFile(path)
 	if err == nil {
 		var parsed catalogFile
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, nil, fmt.Errorf("ler %s: %w", path, err)
+			return nil, nil, empty, fmt.Errorf("ler %s: %w", path, err)
 		}
-		return parsed.Providers, parsed.Models, nil
+		return parsed.Providers, parsed.Models, parsed.Search, nil
 	}
 	if !os.IsNotExist(err) {
-		return nil, nil, fmt.Errorf("ler %s: %w", path, err)
+		return nil, nil, empty, fmt.Errorf("ler %s: %w", path, err)
 	}
 
 	seed := defaultCatalog()
 	pretty, err := json.MarshalIndent(seed, "", "  ")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, empty, err
 	}
 	if err := os.WriteFile(path, pretty, 0o600); err != nil {
-		return nil, nil, fmt.Errorf("gravar %s: %w", path, err)
+		return nil, nil, empty, fmt.Errorf("gravar %s: %w", path, err)
 	}
-	return seed.Providers, seed.Models, nil
+	return seed.Providers, seed.Models, seed.Search, nil
 }
 
 // protocolModel encurta a montagem do catálogo semente. Os ids são editáveis no

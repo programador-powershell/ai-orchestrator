@@ -21,6 +21,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,30 @@ import (
 // cliente de propósito: quando os dois divergem, o lado menor pagina para
 // sempre pedindo o mesmo pedaço e o replay nunca termina.
 const MaxEventBatch = 500
+
+// maxLineSize é o teto de uma linha do log. Uma mensagem inteira cabe numa
+// linha, e resposta de modelo passa fácil dos 64 KiB do buffer padrão do
+// Scanner — sem isto, `bufio.ErrTooLong` cortaria o replay no primeiro turno
+// longo.
+const maxLineSize = 8 * 1024 * 1024
+
+// metaFlushDelay é a janela do debounce do cabeçalho.
+//
+// O cabeçalho é CACHE: a fonte é o log, e `lastSeqOnDisk` sabe reconstruir o
+// que importa a partir dele. Gravá-lo a cada envelope custava um fsync e um
+// rename por linha — mais caro que gravar a própria linha. Com a janela, uma
+// rajada de streaming paga UMA gravação em vez de uma por token, e o que se
+// arrisca numa queda é o cabeçalho ficar até 200 ms atrás (título, contagem de
+// turnos), nunca o conteúdo da conversa.
+const metaFlushDelay = 200 * time.Millisecond
+
+// indexStride é de quantos em quantos envelopes o log ganha um marco de
+// deslocamento. Guardar TODOS custaria memória proporcional ao log para
+// economizar uma varredura de no máximo 64 linhas — índice cheio não paga.
+const indexStride = 64
+
+// tailProbe é quanto se lê do FIM do log para achar a última linha.
+const tailProbe = 64 * 1024
 
 // ErrNotFound diz que a sessão não existe no disco.
 var ErrNotFound = errors.New("sessão não encontrada")
@@ -80,10 +105,30 @@ type Store struct {
 
 // sessionHandle mantém o arquivo aberto e o seq corrente de uma sessão.
 type sessionHandle struct {
-	mu   sync.Mutex
-	meta SessionMeta
-	file *os.File
-	path string
+	mu       sync.Mutex
+	meta     SessionMeta
+	file     *os.File
+	path     string
+	metaPath string
+
+	// metaDirty diz que o cabeçalho em memória está à frente do disco, e
+	// metaTimer é a gravação já agendada (nil = nenhuma). Ver metaFlushDelay.
+	metaDirty bool
+	metaTimer *time.Timer
+	// retired impede que uma gravação agendada ressuscite o cabeçalho depois do
+	// Close ou do DeleteSession.
+	retired bool
+
+	// index é o mapa esparso "seq -> byte em que a linha começa", em ordem
+	// crescente de seq. Sem ele, `Since` varre do começo em toda página e o
+	// replay, que pagina de 500 em 500, fica quadrático no tamanho do log.
+	index []logOffset
+}
+
+// logOffset marca em que byte do log começa a linha do envelope `seq`.
+type logOffset struct {
+	seq    uint64
+	offset int64
 }
 
 // Open abre (ou cria) o diretório de dados e o tranca.
@@ -160,17 +205,71 @@ func stale(lockPath string) bool {
 	return process.Signal(syscall.Signal(0)) != nil
 }
 
+/* --------------------------- cabeçalho pendente -------------------------- */
+//
+// Os métodos abaixo mexem no cabeçalho e no agendamento do debounce. Todos
+// exigem handle.mu segurado e NENHUM toca em Store.mu: quem grava segura
+// handle.mu e o Close segura Store.mu antes de handle.mu — pegar Store.mu aqui
+// fecharia o ciclo e travaria o app inteiro no meio de uma resposta.
+
+// touchMeta anota que o cabeçalho mudou e agenda a gravação.
+func (h *sessionHandle) touchMeta() {
+	h.metaDirty = true
+	if h.retired || h.metaTimer != nil {
+		return
+	}
+	h.metaTimer = time.AfterFunc(metaFlushDelay, h.flushMetaAsync)
+}
+
+// flushMetaAsync é o disparo do agendamento.
+func (h *sessionHandle) flushMetaAsync() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.metaTimer = nil
+	if h.retired || !h.metaDirty {
+		return
+	}
+	// Erro aqui é ignorado como já era no Append: perder o cabeçalho não perde
+	// a conversa, porque o log é a fonte e a reabertura o reconstrói.
+	_ = h.writeMeta()
+}
+
+// writeMeta grava o cabeçalho na hora e cancela o pendente.
+func (h *sessionHandle) writeMeta() error {
+	if err := writeJSONAtomic(h.metaPath, h.meta); err != nil {
+		return err
+	}
+	h.metaDirty = false
+	return nil
+}
+
+// retire descarrega o pendente (se `flush`), desarma o agendamento e fecha o
+// arquivo. É o que garante que a barra lateral não abra desatualizada depois de
+// fechar o app.
+func (h *sessionHandle) retire(flush bool) {
+	if h.metaTimer != nil {
+		h.metaTimer.Stop()
+		h.metaTimer = nil
+	}
+	if flush && h.metaDirty {
+		_ = h.writeMeta()
+	}
+	h.metaDirty = false
+	h.retired = true
+	if h.file != nil {
+		_ = h.file.Sync()
+		_ = h.file.Close()
+		h.file = nil
+	}
+}
+
 // Close solta a trava.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, handle := range s.sessions {
 		handle.mu.Lock()
-		if handle.file != nil {
-			_ = handle.file.Sync()
-			_ = handle.file.Close()
-			handle.file = nil
-		}
+		handle.retire(true)
 		handle.mu.Unlock()
 	}
 	s.sessions = make(map[string]*sessionHandle)
@@ -269,7 +368,9 @@ func (s *Store) UpdateSession(id string, mutate func(*SessionMeta)) (SessionMeta
 	handle.meta.LastSeq, handle.meta.SyncedSeq = previousSeq, previousSynced
 	handle.meta.UpdatedAt = time.Now().UTC()
 
-	if err := writeJSONAtomic(filepath.Join(s.sessionDir(id), "meta.json"), handle.meta); err != nil {
+	// Edição do usuário (renomear, arquivar) vai ao disco na hora: é rara e é o
+	// tipo de mudança que a pessoa espera ver de volta se o app cair em seguida.
+	if err := handle.writeMeta(); err != nil {
 		return SessionMeta{}, err
 	}
 	return handle.meta, nil
@@ -290,7 +391,7 @@ func (s *Store) MarkSynced(id string, seq uint64) error {
 	}
 	handle.meta.SyncedSeq = seq
 	handle.meta.UpdatedAt = time.Now().UTC()
-	return writeJSONAtomic(filepath.Join(s.sessionDir(id), "meta.json"), handle.meta)
+	return handle.writeMeta()
 }
 
 // ListSessions devolve os cabeçalhos, mais recente primeiro.
@@ -302,6 +403,18 @@ func (s *Store) ListSessions() ([]SessionMeta, error) {
 		}
 		return nil, fmt.Errorf("listar sessões: %w", err)
 	}
+	// Sessões abertas mandam sobre o disco: a gravação do cabeçalho é debounced
+	// (ver metaFlushDelay), então o meta.json de uma conversa EM ANDAMENTO pode
+	// estar alguns milissegundos atrás. Quem está com o arquivo aberto é o
+	// escritor, e é ele que sabe o número e o horário corretos — sem esta
+	// sobreposição, a barra lateral pisca a conversa ativa fora de ordem.
+	s.mu.Lock()
+	live := make(map[string]*sessionHandle, len(s.sessions))
+	for id, handle := range s.sessions {
+		live[id] = handle
+	}
+	s.mu.Unlock()
+
 	out := make([]SessionMeta, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -313,6 +426,11 @@ func (s *Store) ListSessions() ([]SessionMeta, error) {
 			// Sessão ilegível não derruba a listagem: a pessoa perde UMA linha
 			// da barra lateral, não o acesso ao histórico inteiro.
 			continue
+		}
+		if handle, ok := live[meta.ID]; ok {
+			handle.mu.Lock()
+			meta = handle.meta
+			handle.mu.Unlock()
 		}
 		out = append(out, meta)
 	}
@@ -327,10 +445,9 @@ func (s *Store) DeleteSession(id string) error {
 	s.mu.Lock()
 	if handle, ok := s.sessions[id]; ok {
 		handle.mu.Lock()
-		if handle.file != nil {
-			_ = handle.file.Close()
-			handle.file = nil
-		}
+		// Sem flush: o diretório vai embora logo abaixo, e uma gravação
+		// agendada que escapasse recriaria o cabeçalho de uma sessão apagada.
+		handle.retire(false)
 		handle.mu.Unlock()
 		delete(s.sessions, id)
 	}
@@ -365,12 +482,13 @@ func (s *Store) Append(sessionID string, envelope *protocol.Envelope) (uint64, e
 		handle.file = file
 	}
 
+	now := time.Now().UTC()
 	handle.meta.LastSeq++
 	envelope.Seq = handle.meta.LastSeq
 	envelope.Session = sessionID
 	envelope.V = protocol.Version
 	if envelope.TS.IsZero() {
-		envelope.TS = time.Now().UTC()
+		envelope.TS = now
 	}
 
 	line, err := json.Marshal(envelope)
@@ -393,16 +511,56 @@ func (s *Store) Append(sessionID string, envelope *protocol.Envelope) (uint64, e
 		}
 	}
 
-	handle.meta.UpdatedAt = time.Now().UTC()
+	// Marco de deslocamento para o índice de leitura: o envelope seguinte começa
+	// onde este terminou. A posição é PERGUNTADA ao descritor em vez de somada a
+	// partir do tamanho da linha — soma erraria se o arquivo crescesse por fora,
+	// e um marco errado é replay entregando o envelope errado. Custa uma chamada
+	// a cada indexStride envelopes.
+	if next := envelope.Seq + 1; next%indexStride == 0 {
+		if end, seekErr := handle.file.Seek(0, io.SeekCurrent); seekErr == nil {
+			handle.noteOffset(next, end)
+		}
+	}
+
+	handle.meta.UpdatedAt = now
 	if envelope.Kind == protocol.KindDone {
 		handle.meta.Turns++
 	}
 	if envelope.From.Specialist != "" {
 		handle.meta.Specialist = envelope.From.Specialist
 	}
-	_ = writeJSONAtomic(filepath.Join(s.sessionDir(sessionID), "meta.json"), handle.meta)
+	// Cabeçalho é cache do log: vai ao disco em janela (ver metaFlushDelay), não
+	// a cada envelope.
+	handle.touchMeta()
 
 	return envelope.Seq, nil
+}
+
+// noteOffset acrescenta um marco ao índice. Exige handle.mu segurado.
+//
+// Só aceita marcos em ordem crescente. Assim a fatia fica sempre ordenada — o
+// que a busca binária de `startFrom` exige — mesmo com duas leituras
+// concorrentes semeando o índice ao mesmo tempo.
+func (h *sessionHandle) noteOffset(seq uint64, offset int64) {
+	if len(h.index) > 0 && seq <= h.index[len(h.index)-1].seq {
+		return
+	}
+	h.index = append(h.index, logOffset{seq: seq, offset: offset})
+}
+
+// startFrom devolve de que byte começar a leitura para achar o primeiro
+// envelope com seq > fromSeq, e qual seq deve estar exatamente ali. Exige
+// handle.mu segurado.
+//
+// Devolve (0, 0) quando não há marco útil: leitura do começo, sem promessa.
+func (h *sessionHandle) startFrom(fromSeq uint64) (offset int64, expect uint64) {
+	target := fromSeq + 1
+	position := sort.Search(len(h.index), func(i int) bool { return h.index[i].seq > target })
+	if position == 0 {
+		return 0, 0
+	}
+	mark := h.index[position-1]
+	return mark.offset, mark.seq
 }
 
 // durable diz quais verbos merecem ida ao disco na hora.
@@ -428,14 +586,28 @@ func (s *Store) Since(sessionID string, fromSeq uint64, limit int) ([]protocol.E
 		return nil, err
 	}
 
-	// Flush antes de ler: o que está no buffer do arquivo aberto para escrita
-	// precisa estar visível para quem lê por outro descritor.
+	// Não há Sync antes de ler, e não é esquecimento: `os.File.Write` não tem
+	// buffer em espaço de usuário, então a linha já está visível para qualquer
+	// descritor assim que o write volta — o cache do sistema de arquivos é o
+	// mesmo para os dois lados. Sync empurra para o DISPOSITIVO, que é o que a
+	// durabilidade quer e a visibilidade não; fazê-lo aqui punia cada página do
+	// replay com um fsync.
 	handle.mu.Lock()
-	if handle.file != nil {
-		_ = handle.file.Sync()
-	}
 	path := handle.path
+	lastSeq := handle.meta.LastSeq
+	offset, expect := handle.startFrom(fromSeq)
 	handle.mu.Unlock()
+
+	// Nada novo depois do cursor. O replay pagina até receber lote vazio, então
+	// TODA reconexão termina exatamente aqui — sem esta saída, a última chamada
+	// varre o log inteiro para devolver nada.
+	if lastSeq <= fromSeq {
+		return nil, nil
+	}
+	capacity := limit
+	if pending := lastSeq - fromSeq; pending < uint64(limit) {
+		capacity = int(pending)
+	}
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -446,36 +618,120 @@ func (s *Store) Since(sessionID string, fromSeq uint64, limit int) ([]protocol.E
 	}
 	defer file.Close()
 
-	out := make([]protocol.Envelope, 0, 32)
+	out, marks, trusted, err := scanLog(file, offset, expect, fromSeq, limit, capacity)
+	if err != nil {
+		return out, err
+	}
+	if !trusted {
+		// O marco não cumpriu a promessa (log mexido por fora, por exemplo).
+		// Reler do começo é lento e correto — melhor que devolver um pedaço do
+		// meio da conversa como se fosse o começo dela.
+		if out, marks, _, err = scanLog(file, 0, 0, fromSeq, limit, capacity); err != nil {
+			return out, err
+		}
+	}
+	if len(marks) > 0 {
+		handle.mu.Lock()
+		for _, mark := range marks {
+			handle.noteOffset(mark.seq, mark.offset)
+		}
+		handle.mu.Unlock()
+	}
+	return out, nil
+}
+
+// scanLog lê o log a partir de `offset` e recolhe até `limit` envelopes com
+// seq > fromSeq, devolvendo também os marcos de deslocamento que encontrou pelo
+// caminho — é assim que o índice se enche na primeira leitura.
+//
+// `expect` é o seq que o índice promete encontrar em `offset` (0 = leitura do
+// começo, sem promessa). Promessa quebrada devolve `trusted = false` em vez de
+// erro: um marco furado degrada para varredura completa, nunca para replay com
+// o envelope errado.
+func scanLog(file *os.File, offset int64, expect, fromSeq uint64, limit, capacity int) (out []protocol.Envelope, marks []logOffset, trusted bool, err error) {
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, nil, false, fmt.Errorf("posicionar no log da sessão: %w", err)
+	}
+
+	out = make([]protocol.Envelope, 0, capacity)
 	scanner := bufio.NewScanner(file)
-	// Uma mensagem inteira cabe numa linha, e mensagem de modelo passa fácil dos
-	// 64 KiB do buffer padrão do Scanner — sem isto, `bufio.ErrTooLong` corta o
-	// replay no primeiro turno longo.
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+
+	position := offset
+	first := true
+	// Antes do cursor basta o NÚMERO da linha; depois dele, o envelope inteiro.
+	// Sondar as duas coisas em toda linha faria a leitura do começo pagar dois
+	// json por envelope devolvido — foi medido, e ficou mais lento que a versão
+	// que este código substitui.
+	skipping := true
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+		start := position
+		// O escritor grava exatamente uma quebra por linha e nunca '\r', então o
+		// começo da próxima linha é o tamanho desta mais um. Se o arquivo for
+		// mexido por fora e a conta furar, o marco aponta para o lugar errado —
+		// e é por isso que quem USA um marco confere o seq que achou nele.
+		position += int64(len(line)) + 1
+
+		var seq uint64
+		if skipping {
+			valid := false
+			seq, valid = seqOfLine(line)
+			if first {
+				first = false
+				if expect != 0 && (!valid || seq != expect) {
+					return nil, nil, false, nil
+				}
+			}
+			if !valid {
+				// Linha truncada por queda de energia no meio da escrita: pular
+				// é o certo. O log é append-only, então só a ÚLTIMA linha pode
+				// estar partida — abortar aqui perderia todo o histórico
+				// anterior a ela.
+				continue
+			}
+			if seq > fromSeq {
+				skipping = false
+			}
 		}
-		var envelope protocol.Envelope
-		if err := json.Unmarshal(line, &envelope); err != nil {
-			// Linha truncada por queda de energia no meio da escrita: pular é o
-			// certo. O log é append-only, então só a ÚLTIMA linha pode estar
-			// partida — abortar aqui perderia todo o histórico anterior a ela.
-			continue
+
+		if !skipping {
+			var envelope protocol.Envelope
+			if err := json.Unmarshal(line, &envelope); err != nil {
+				continue
+			}
+			seq = envelope.Seq
+			if seq > fromSeq {
+				out = append(out, envelope)
+			}
 		}
-		if envelope.Seq <= fromSeq {
-			continue
+
+		if seq != 0 && seq%indexStride == 0 {
+			marks = append(marks, logOffset{seq: seq, offset: start})
 		}
-		out = append(out, envelope)
 		if len(out) >= limit {
 			break
 		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-		return out, fmt.Errorf("ler log da sessão: %w", err)
+		return out, marks, true, fmt.Errorf("ler log da sessão: %w", err)
 	}
-	return out, nil
+	return out, marks, true, nil
+}
+
+// seqOfLine tira só o número da linha, sem desserializar o resto. `false` para
+// linha vazia, partida ou sem número.
+func seqOfLine(line []byte) (uint64, bool) {
+	if len(line) == 0 {
+		return 0, false
+	}
+	var head struct {
+		Seq uint64 `json:"seq"`
+	}
+	if err := json.Unmarshal(line, &head); err != nil || head.Seq == 0 {
+		return 0, false
+	}
+	return head.Seq, true
 }
 
 // LastSeq devolve o último número gravado.
@@ -522,12 +778,22 @@ func (s *Store) handle(id string) (*sessionHandle, error) {
 	if handle, ok := s.sessions[id]; ok {
 		return handle, nil
 	}
-	handle := &sessionHandle{meta: meta, path: logPath}
+	handle := &sessionHandle{
+		meta:     meta,
+		path:     logPath,
+		metaPath: filepath.Join(directory, "meta.json"),
+	}
 	s.sessions[id] = handle
 	return handle, nil
 }
 
-// lastSeqOnDisk varre o log e devolve o maior seq gravado.
+// lastSeqOnDisk devolve o último seq gravado, lendo o FIM do log.
+//
+// O `seq` é monotônico por construção — o único escritor é o `Append`, com o
+// mutex da sessão segurado e o arquivo em O_APPEND —, então a última linha
+// COMPLETA carrega o maior número. Varrer do começo para descobrir isso custava
+// um json por linha na abertura de cada sessão, ou seja, a subida do app ficava
+// proporcional ao tamanho do histórico.
 func lastSeqOnDisk(path string) (uint64, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -535,21 +801,67 @@ func lastSeqOnDisk(path string) (uint64, error) {
 	}
 	defer file.Close()
 
-	var last uint64
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var head struct {
-			Seq uint64 `json:"seq"`
+	info, err := file.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := info.Size()
+	if size == 0 {
+		return 0, nil
+	}
+
+	// Blocos cada vez maiores a partir do fim: um bloco fixo não serve porque a
+	// última linha pode ser uma resposta de modelo de dezenas de KB e porque a
+	// linha final pode estar partida por queda de energia — aí a resposta está
+	// na penúltima.
+	for probe := int64(tailProbe); ; probe *= 2 {
+		fromStart := probe >= size
+		if fromStart {
+			probe = size
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &head); err != nil {
-			continue
+		buffer := make([]byte, probe)
+		if _, err := file.ReadAt(buffer, size-probe); err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
 		}
-		if head.Seq > last {
-			last = head.Seq
+		if seq, ok := lastSeqInChunk(buffer, fromStart); ok {
+			return seq, nil
+		}
+		if fromStart || probe >= maxLineSize {
+			// Ou o log inteiro foi lido sem uma linha legível, ou a última linha
+			// passa do teto que este pacote sabe ler de qualquer jeito
+			// (maxLineSize). Desistir aqui é o que impede um log estranho de
+			// puxar centenas de MB para a memória só para responder um número.
+			return 0, nil
 		}
 	}
-	return last, scanner.Err()
+}
+
+// lastSeqInChunk procura, de trás para frente, a última linha completa do
+// pedaço. `fromStart` diz se o pedaço começa no início do arquivo — quando não
+// começa, a primeira linha dele pode ter sido cortada pela leitura e não vale.
+func lastSeqInChunk(chunk []byte, fromStart bool) (uint64, bool) {
+	// O que vier depois da última quebra é linha sem terminador: escrita
+	// interrompida no meio, que o log tolera de propósito.
+	if cut := bytes.LastIndexByte(chunk, '\n'); cut >= 0 {
+		chunk = chunk[:cut]
+	} else if !fromStart {
+		return 0, false
+	}
+
+	for len(chunk) > 0 {
+		start := bytes.LastIndexByte(chunk, '\n') + 1
+		if start == 0 && !fromStart {
+			return 0, false
+		}
+		if seq, ok := seqOfLine(chunk[start:]); ok {
+			return seq, true
+		}
+		if start == 0 {
+			return 0, false
+		}
+		chunk = chunk[:start-1]
+	}
+	return 0, false
 }
 
 // writeJSONAtomic grava por arquivo temporário + rename. Escrever por cima do

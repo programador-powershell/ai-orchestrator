@@ -539,16 +539,32 @@ select {
   color: var(--muted);
 }
 
-.rail-task[data-state="running"] .rail-task-state {
+/*
+ * O atributo é `data-tone`, e os valores são os de TaskTone (Rail.tsx) —
+ * idle/run/ok/fail/ask.
+ *
+ * Estas três regras estavam escritas como [data-state="running"|"done"|"failed"]
+ * e não casavam com nada: o Rail nunca escreveu `data-state`, e "running"/"failed"
+ * não são valores de tom. A etiqueta de estado ficava no `--muted` da base em
+ * todas as tarefas, inclusive nas que falharam. Ao mexer aqui, confira o par:
+ * atributo E vocabulário.
+ */
+.rail-task[data-tone="run"] .rail-task-state {
   color: var(--accent);
 }
 
-.rail-task[data-state="done"] .rail-task-state {
+.rail-task[data-tone="ok"] .rail-task-state {
   color: var(--ok);
 }
 
-.rail-task[data-state="failed"] .rail-task-state {
+.rail-task[data-tone="fail"] .rail-task-state {
   color: var(--danger);
+}
+
+/* Escalação é alguém PARADO esperando resposta, não erro: amarelo de aviso, o
+   mesmo da faixa de escalação e do nó escalado no grafo. */
+.rail-task[data-tone="ask"] .rail-task-state {
+  color: var(--warn);
 }
 
 /* --------------------------------- palco -------------------------------- */

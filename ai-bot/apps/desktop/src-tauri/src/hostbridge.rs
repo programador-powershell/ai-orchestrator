@@ -678,24 +678,89 @@ mod tests {
         assert_ne!(primeiro, segundo);
     }
 
-    /// A ponte só serve o que é endereçado ao host — o resto do tópico é do
-    /// gateway.
-    #[test]
-    fn seguir_sessao_so_muda_quando_e_diferente() {
-        let state = BridgeState {
+    fn estado_de_teste() -> BridgeState {
+        BridgeState {
             url: "ws://127.0.0.1:8799/v1/stream".into(),
             token: "t".into(),
             desired_session: Mutex::new(None),
             connected_session: Mutex::new(None),
             connected: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
-        };
+        }
+    }
+
+    /// A ponte só serve o que é endereçado ao host — o resto do tópico é do
+    /// gateway.
+    #[test]
+    fn seguir_sessao_so_muda_quando_e_diferente() {
+        let state = estado_de_teste();
         state.follow("  ");
         assert_eq!(*lock_or_recover(&state.desired_session), None);
         state.follow(" s7 ");
         assert_eq!(
             lock_or_recover(&state.desired_session).as_deref(),
             Some("s7")
+        );
+    }
+
+    /* ---------------------- medição (ver src/bench.rs) --------------------- */
+
+    /// Os frames que a ponte REALMENTE recebe durante uma resposta do modelo.
+    ///
+    /// Mesmo com `liveOnly`, o tópico é um só: cada `token` da resposta passa
+    /// por aqui para ser descartado. Uma resposta de verdade tem de 4 a 12 KB
+    /// entregues em algumas centenas de pedaços — é essa a carga do laço de
+    /// leitura, e não o `tool.call`, que aparece uma vez a cada turno.
+    fn corpus_frames_de_resposta(pedacos: usize) -> Vec<String> {
+        const TRECHOS: [&str; 6] = [
+            "## Resumo\n\nO relatório ",
+            "aponta crescimento de ",
+            "12% no trimestre",
+            ".\n\n```rust\nfn main() ",
+            "{ println!(\"olá\"); }\n```\n",
+            "\n- primeiro item\n- segundo item\n",
+        ];
+        (0..pedacos)
+            .map(|indice| {
+                json!({
+                    "v": 1,
+                    "id": format!("gw-{indice}"),
+                    "seq": indice,
+                    "session": "s1",
+                    "kind": "token",
+                    "from": { "kind": "model", "id": "assistant" },
+                    "payload": { "text": TRECHOS[indice % TRECHOS.len()], "index": indice },
+                })
+                .to_string()
+            })
+            .collect()
+    }
+
+    /// O laço de leitura peneirando uma resposta inteira.
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_handle_text_resposta_completa() {
+        let state = estado_de_teste();
+        let (sender, receiver) = mpsc::channel::<String>();
+        let frames = corpus_frames_de_resposta(800);
+        let bytes: usize = frames.iter().map(String::len).sum();
+        let (tempo, _) = crate::bench::median(|| {
+            for frame in &frames {
+                handle_text(&state, &sender, Some("s1"), frame);
+            }
+        });
+        // Nenhum desses frames é do host: nada pode ter ido para o correio de
+        // saída. Se foi, o benchmark está medindo outra coisa.
+        assert!(
+            receiver.try_recv().is_err(),
+            "frame que não é do host não pode gerar resposta"
+        );
+        crate::bench::report(
+            "hostbridge::handle_text",
+            &format!("{} frames / {} KiB", frames.len(), bytes / 1024),
+            tempo,
+            frames.len() as f64,
+            "frames",
         );
     }
 }

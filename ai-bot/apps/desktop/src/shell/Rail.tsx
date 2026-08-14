@@ -20,6 +20,7 @@ import {
   Database,
   FileText,
   FolderOpen,
+  Hand,
   KanbanSquare,
   Layers,
   Loader2,
@@ -30,6 +31,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import type { RailKind, Task } from "@aibot/contracts";
+import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { BotAvatar } from "../avatar/BotAvatar";
@@ -113,13 +115,29 @@ type TaskTone = "idle" | "run" | "ok" | "fail" | "ask";
  *  num campo à parte: o gateway manda dispatch/progress/done, e o último que
  *  chegou é a verdade. */
 function taskState(id: string, crew: Crew): { label: string; tone: TaskTone } {
-  if (crew.escalations.some((item) => item.taskId === id)) {
-    return { label: "aguardando resposta", tone: "ask" };
-  }
+  // O `done` decide PRIMEIRO, e é ele que diz se houve escalação (`outcomeOf`).
+  //
+  // A ordem estava invertida: a lista de escalações vinha antes e vencia o
+  // `worker.done`. Como aquela lista só cresce enquanto a conversa vive, uma
+  // tarefa que escalou, foi respondida e depois falhou de verdade ficava para
+  // sempre em "aguardando resposta" — o trilho escondendo a falha que o resto da
+  // tela mostrava.
   const done = crew.done[id];
   if (done) {
-    if (done.ok) return { label: done.result ? `concluída — ${done.result}` : "concluída", tone: "ok" };
+    const outcome = outcomeOf(done);
+    if (outcome === "done") {
+      return { label: done.result ? `concluída — ${done.result}` : "concluída", tone: "ok" };
+    }
+    if (outcome === "escalated") {
+      return { label: done.error || "escalou", tone: "ask" };
+    }
     return { label: done.error ? `falhou — ${done.error}` : "falhou", tone: "fail" };
+  }
+  // Antes do `done` chegar ainda vale a lista: o `escalate` sai de dentro do
+  // trabalhador e o `worker.done` só sai quando a onda inteira fecha, então há
+  // uma janela real em que a pergunta já existe e o desfecho não.
+  if (crew.escalations.some((item) => item.taskId === id)) {
+    return { label: "aguardando resposta", tone: "ask" };
   }
   const progress = crew.progress[id];
   if (progress) {
@@ -135,7 +153,10 @@ function taskState(id: string, crew: Crew): { label: string; tone: TaskTone } {
 function ToneIcon({ tone }: { tone: TaskTone }) {
   if (tone === "ok") return <Check size={13} aria-hidden />;
   if (tone === "fail") return <AlertTriangle size={13} aria-hidden />;
-  if (tone === "ask") return <AlertTriangle size={13} aria-hidden />;
+  // Mão levantada, não triângulo de alerta: quem escalou fez uma pergunta. Com o
+  // mesmo ícone de falha, a distinção que `taskState` calcula certo se perdia no
+  // desenho — e é o desenho que a pessoa lê.
+  if (tone === "ask") return <Hand size={13} aria-hidden />;
   if (tone === "run") return <Loader2 size={13} className="spin" aria-hidden />;
   return <Activity size={13} aria-hidden />;
 }

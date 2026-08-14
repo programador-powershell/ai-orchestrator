@@ -344,6 +344,16 @@ export interface WorkerDone {
   error?: string;
   worktree?: string;
   branch?: string;
+  /**
+   * O trabalhador PAROU PARA PERGUNTAR (`ESCALAR:`) em vez de errar.
+   *
+   * Vem junto com `ok: false`, porque não houve resultado para as tarefas
+   * dependentes lerem — e mesmo assim não é falha. Quem decide é o gateway, que
+   * já separa os dois casos na contagem da onda; a tela lê daqui em vez de
+   * cruzar a lista de escalações pelo `taskId` (ver `outcomeOf`, em lib/crew.ts,
+   * para o porquê de a dedução estar errada).
+   */
+  escalated?: boolean;
 }
 
 export interface Escalate {

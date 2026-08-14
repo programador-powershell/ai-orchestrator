@@ -35,7 +35,9 @@ import (
 
 	"aibot/gateway/internal/mcphub"
 	"aibot/gateway/internal/memory"
+	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/netguard"
+	"aibot/gateway/internal/schedule"
 	"aibot/gateway/internal/worktree"
 )
 
@@ -141,9 +143,23 @@ type Toolbox struct {
 	Net       *netguard.Guard
 	MCP       *mcphub.Hub
 	Worktrees *worktree.Manager
+	// Models é o MESMO roteador que atende o turno de conversa. As ferramentas
+	// que falam com o provedor (imagem, fine-tuning) passam por ele em vez de
+	// abrir cliente próprio: uma segunda superfície de credencial é uma segunda
+	// superfície para proteger, e a segunda é sempre a que fica desatualizada.
+	Models *modelrouter.Router
 	// Secrets é o cofre. Fica atrás de interface porque este pacote só pode
 	// USAR o segredo dentro de um callback — nunca recebê-lo de volta.
 	Secrets SecretUser
+	// Schedule é a agenda local (internal/schedule). Nil quando o gateway subiu
+	// sem pasta de dados gravável — e aí as ferramentas de agenda RECUSAM com
+	// motivo, em vez de aceitar o gatilho e perdê-lo quando o processo morrer.
+	Schedule *schedule.Store
+	// Search é o motor de busca contratado pelo cliente — searxng auto-hospedado,
+	// Brave ou Tavily. Zerado significa NÃO CONFIGURADO, e web.search recusa
+	// dizendo o que preencher e onde; um motor padrão embutido mandaria a
+	// consulta do usuário para um terceiro que ninguém aprovou.
+	Search SearchBackend
 }
 
 // gitTimeout limita cada chamada ao git.
@@ -180,21 +196,9 @@ func (t *Toolbox) Install(registry *Registry) {
 	registry.RegisterHost("pdf.extract", "extrai o texto de um PDF. args: {path}")
 	registry.RegisterHost("runtime.status", "estado do runtime local. args: {}")
 
-	// As de baixo continuam no host porque dependem de coisa da estação
-	// (processo, ConPTY, Job Object) ou de um serviço que ainda não existe deste
-	// lado. Registradas mesmo assim: uma ferramenta ausente do catálogo faria o
-	// modelo inventar outra saída, enquanto uma recusa explícita ele lê e
-	// contorna.
-	registry.RegisterHost("web.search", "pesquisa na web. args: {query}")
-	registry.RegisterHost("image.generate", "gera imagem. args: {prompt}")
-	registry.RegisterHost("design.replicate", "extrai a linguagem visual de uma URL. args: {url}")
-	registry.RegisterHost("flow.validate", "valida o fluxo montado na tela. args: {}")
-	registry.RegisterHost("finetune.submit", "envia um treino. args: {config}")
-	registry.RegisterHost("finetune.status", "estado dos treinos. args: {}")
-	registry.RegisterHost("schedule.create", "agenda uma automação. args: {cron, action}")
-
-	// E as que o gateway resolve sozinho — ver tools_extra.go.
+	// E as que o gateway resolve sozinho — ver tools_extra.go e tools_flow.go.
 	t.InstallExtraTools(registry)
+	t.InstallFlowTools(registry)
 }
 
 /* --------------------------- confinamento de fs -------------------------- */

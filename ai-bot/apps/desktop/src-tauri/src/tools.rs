@@ -1092,14 +1092,45 @@ fn replace_in_xml(xml: &str, needle: &str, value: &str, dialect: &Dialect) -> (S
     if edits.is_empty() {
         return (xml.to_string(), 0);
     }
-    // Do fim para o começo: aplicar na ordem direta invalidaria os
-    // deslocamentos das edições seguintes assim que a primeira mudasse o
-    // tamanho do texto.
-    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0.start));
-    let mut out = xml.to_string();
-    for (range, text) in edits {
-        out.replace_range(range, &text);
+    // UMA passada, do começo para o fim, montando o XML novo em pedaços.
+    //
+    // # Por que não é mais `replace_range` de trás para frente
+    //
+    // A versão anterior copiava o XML inteiro e aplicava cada edição com
+    // `replace_range`, do fim para o começo — correto, mas CARO do jeito que
+    // não aparece em documento pequeno: toda edição que muda o tamanho do texto
+    // MOVE todo o resto da string. O custo cresce com o produto "tamanho do
+    // documento × número de ocorrências", ou seja, com o QUADRADO num
+    // "substituir tudo" de verdade. Medido num contrato de 1,2 MB com 750
+    // ocorrências: 119 ms contra 13 ms do mesmo documento sem nenhuma
+    // ocorrência — quase todo o tempo era memória sendo arrastada.
+    //
+    // Aqui o XML é lido uma vez só: copia-se o trecho entre uma edição e a
+    // seguinte, depois o texto novo. Nada é movido duas vezes.
+    //
+    // # Por que a ordem direta é segura
+    //
+    // As edições são DISJUNTAS por construção — as ocorrências não se
+    // sobrepõem (o `from` da busca pula o comprimento da agulha) e cada uma
+    // toca spans distintos; a inserção do `xml:space` cai dentro da TAG de
+    // abertura, que nenhum intervalo de conteúdo cobre. Com intervalos
+    // disjuntos, percorrer em ordem crescente produz exatamente o mesmo texto
+    // que a aplicação de trás para frente produzia.
+    edits.sort_by_key(|edit| edit.0.start);
+    let mut out = String::with_capacity(xml.len() + value_xml.len() * replaced);
+    let mut cursor = 0usize;
+    for (range, text) in &edits {
+        // Rede contra sobreposição: fatiar o XML num índice que o cursor já
+        // passou entraria em PÂNICO, e pânico aqui derruba a ferramenta com um
+        // "erro desconhecido" no meio de uma edição de arquivo.
+        if range.start < cursor {
+            continue;
+        }
+        out.push_str(&xml[cursor..range.start]);
+        out.push_str(text);
+        cursor = range.end;
     }
+    out.push_str(&xml[cursor..]);
     (out, replaced)
 }
 
@@ -1642,5 +1673,98 @@ mod tests {
         let (out, trocas) = replace_in_xml(xml, "Abertura", "Encerramento", &PPTX_DIALECT);
         assert_eq!(trocas, 1);
         assert!(out.contains("<a:t>Encerramento</a:t>"), "saiu: {out}");
+    }
+
+    /* ---------------------- medição (ver src/bench.rs) --------------------- */
+
+    /// Um `word/document.xml` REALISTA — e "realista" aqui é o que o comentário
+    /// do `replace_in_xml` mede em documento de verdade: 92% dos parágrafos com
+    /// mais de um `<w:t>`, mediana de três caracteres por nó.
+    ///
+    /// Por isso os parágrafos abaixo vêm FRAGMENTADOS, com `w:rPr`, `w:proofErr`
+    /// e `w:bookmarkStart` no meio, e a agulha atravessando fronteira de nó. Um
+    /// corpus com um `<w:t>` por parágrafo mediria o caso fácil e esconderia
+    /// justamente o custo que o algoritmo existe para pagar.
+    fn corpus_document_xml(paragrafos: usize) -> String {
+        let mut out = String::with_capacity(paragrafos * 420);
+        out.push_str(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document><w:body>"#,
+        );
+        for indice in 0..paragrafos {
+            out.push_str(r#"<w:p><w:pPr><w:pStyle w:val="Corpo"/></w:pPr>"#);
+            // Parágrafo comum, partido como o Word parte.
+            out.push_str(r#"<w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Cláusula </w:t></w:r>"#);
+            out.push_str(&format!(r#"<w:r><w:t>{}</w:t></w:r>"#, indice + 1));
+            out.push_str(r#"<w:proofErr w:type="spellStart"/>"#);
+            out.push_str(r#"<w:r><w:t> — a </w:t></w:r><w:r><w:t>parte</w:t></w:r>"#);
+            out.push_str(r#"<w:r><w:t> contratante d</w:t></w:r>"#);
+            if indice % 4 == 0 {
+                // A agulha ATRAVESSANDO a fronteira de dois nós: o caso caro.
+                out.push_str(r#"<w:r><w:t>a Multi</w:t></w:r><w:r><w:t>plike </w:t></w:r>"#);
+            } else {
+                out.push_str(r#"<w:r><w:t>a empresa </w:t></w:r>"#);
+            }
+            out.push_str(r#"<w:bookmarkStart w:id="1" w:name="_Ref1"/>"#);
+            out.push_str(
+                r#"<w:r><w:t>obriga-se a cumprir o disposto nesta seção do contrato.</w:t></w:r>"#,
+            );
+            out.push_str("</w:p>");
+        }
+        out.push_str("</w:body></w:document>");
+        out
+    }
+
+    /// A substituição no texto concatenado, num contrato de ~3 mil parágrafos.
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_replace_in_xml_documento_grande() {
+        let xml = corpus_document_xml(3_000);
+        let (tempo, (saida, trocas)) =
+            crate::bench::median(|| replace_in_xml(&xml, "Multiplike", "ACME S.A.", &DOCX_DIALECT));
+        assert_eq!(trocas, 750, "o corpus tem uma agulha a cada quatro parágrafos");
+        assert!(saida.contains("ACME S.A."), "a troca não saiu no XML");
+        crate::bench::report(
+            "tools::replace_in_xml",
+            &format!("{} KiB / {trocas} trocas", xml.len() / 1024),
+            tempo,
+            xml.len() as f64 / (1024.0 * 1024.0),
+            "MiB",
+        );
+    }
+
+    /// O caso em que a agulha NÃO existe: `office.edit` paga a varredura inteira
+    /// antes de poder dizer "nenhuma ocorrência", e paga em toda parte do pacote
+    /// (cabeçalho, rodapé, notas).
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_replace_in_xml_sem_ocorrencia() {
+        let xml = corpus_document_xml(3_000);
+        let (tempo, (_, trocas)) = crate::bench::median(|| {
+            replace_in_xml(&xml, "agulha que não existe", "x", &DOCX_DIALECT)
+        });
+        assert_eq!(trocas, 0);
+        crate::bench::report(
+            "tools::replace_in_xml (0 hits)",
+            &format!("{} KiB", xml.len() / 1024),
+            tempo,
+            xml.len() as f64 / (1024.0 * 1024.0),
+            "MiB",
+        );
+    }
+
+    /// O caminho do `office.open`: XML inteiro para texto puro.
+    #[test]
+    #[ignore = "medição; rode com: cargo test --release -- --ignored --nocapture"]
+    fn bench_xml_text_documento_grande() {
+        let xml = corpus_document_xml(3_000);
+        let (tempo, texto) = crate::bench::median(|| tidy(&xml_text(&xml, &["w:p", "w:br", "w:tab"])));
+        assert!(texto.contains("Cláusula 1"), "a extração não leu o corpus");
+        crate::bench::report(
+            "tools::xml_text + tidy",
+            &format!("{} KiB", xml.len() / 1024),
+            tempo,
+            xml.len() as f64 / (1024.0 * 1024.0),
+            "MiB",
+        );
     }
 }

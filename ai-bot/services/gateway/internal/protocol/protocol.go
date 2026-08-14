@@ -419,7 +419,7 @@ type Task struct {
 	DependsOn  []string `json:"dependsOn,omitempty"`
 	// Worktree pede isolamento em cópia própria do repositório. Duas tarefas que
 	// escrevem no mesmo arquivo sem isso se sobrescrevem sem aviso.
-	Worktree bool `json:"worktree,omitempty"`
+	Worktree bool   `json:"worktree,omitempty"`
 	Model    string `json:"model,omitempty"`
 }
 
@@ -450,6 +450,16 @@ type WorkerDone struct {
 	Worktree string `json:"worktree,omitempty"`
 	// Branch é o ramo que o trabalhador produziu.
 	Branch string `json:"branch,omitempty"`
+	// Escalated marca o trabalhador que PAROU PARA PERGUNTAR em vez de errar.
+	//
+	// Vem junto com OK=false — não houve resultado para as dependentes lerem — e
+	// mesmo assim NÃO é falha: escalar é o trabalhador se recusando a adivinhar.
+	// O campo existe porque quem sabe disso é aqui: deduzir do lado de fora
+	// pediria cruzar o KindEscalate com este evento pelo TaskID, e as duas coisas
+	// têm ciclo de vida diferente na tela — a lista de escalações só cresce
+	// enquanto o `done` é sobrescrito por tarefa, então dois planos na mesma
+	// conversa reusando o id `t1` fariam a escalação velha rotular a falha nova.
+	Escalated bool `json:"escalated,omitempty"`
 }
 
 // Escalate devolve a decisão para cima.

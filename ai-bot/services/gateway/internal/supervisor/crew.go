@@ -25,6 +25,7 @@ import (
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
+	"aibot/gateway/internal/worktree"
 )
 
 // workerMaxRounds limita o vaivém de UM trabalhador.
@@ -144,11 +145,9 @@ func (s *Supervisor) runCrew(
 			return report.String(), err
 		}
 
-		type outcome struct {
-			taskID string
-			done   protocol.WorkerDone
-		}
-		outcomes := make([]outcome, len(wave))
+		// Slot por posição da onda: a tarefa que o plano citou e não existe deixa o
+		// slot zerado, e `TaskID` vazio é como o laço de baixo o reconhece.
+		outcomes := make([]protocol.WorkerDone, len(wave))
 
 		var group sync.WaitGroup
 		for position, taskID := range wave {
@@ -167,25 +166,32 @@ func (s *Supervisor) runCrew(
 			group.Add(1)
 			go func(position int, task protocol.Task, workerID string) {
 				defer group.Done()
-				done := s.runWorker(ctx, sessionID, turn, task, workerID, waveIndex+1, results)
-				outcomes[position] = outcome{taskID: task.ID, done: done}
+				outcomes[position] = s.runWorker(ctx, sessionID, turn, task, workerID, waveIndex+1, results)
 			}(position, task, workerID)
 		}
 		group.Wait()
 
 		failures := 0
 		for _, entry := range outcomes {
-			if entry.taskID == "" {
+			if entry.TaskID == "" {
 				continue
 			}
-			_ = s.emit(sessionID, turn, protocol.KindWorkerDone, orchestrator, entry.done)
-			if entry.done.OK {
-				results[entry.taskID] = entry.done.Result
-				fmt.Fprintf(&report, "✓ %s: %s\n", entry.taskID, truncate(entry.done.Result, 400))
+			_ = s.emit(sessionID, turn, protocol.KindWorkerDone, orchestrator, entry)
+			if entry.OK {
+				results[entry.TaskID] = entry.Result
+				fmt.Fprintf(&report, "✓ %s: %s\n", entry.TaskID, truncate(entry.Result, 400))
+				continue
+			}
+			// Escalação sai do relatório com marca própria e FORA da contagem: quem
+			// lê o relatório (o modelo orquestrador, na volta) precisa distinguir a
+			// tarefa que não deu certo da que está esperando resposta, senão ele
+			// tenta refazer o trabalho em vez de responder a pergunta.
+			if entry.Escalated {
+				fmt.Fprintf(&report, "↑ %s: %s\n", entry.TaskID, entry.Error)
 				continue
 			}
 			failures++
-			fmt.Fprintf(&report, "✗ %s: %s\n", entry.taskID, entry.done.Error)
+			fmt.Fprintf(&report, "✗ %s: %s\n", entry.TaskID, entry.Error)
 		}
 
 		// Portão entre ondas: uma onda que falhou não pode seguir em silêncio,
@@ -204,6 +210,10 @@ func (s *Supervisor) runCrew(
 }
 
 // runWorker executa UMA tarefa.
+//
+// O `WorkerDone` devolvido é a resposta completa sobre o trabalhador, escalação
+// inclusive (campo `Escalated`): é ele que vai para o log e para a tela, e ter um
+// segundo canal interno dizendo a mesma coisa criaria duas versões do mesmo fato.
 func (s *Supervisor) runWorker(
 	ctx context.Context,
 	sessionID, turn string,
@@ -228,10 +238,15 @@ func (s *Supervisor) runWorker(
 
 	// Cópia isolada quando a tarefa pediu — e o descarte é garantido aqui, não
 	// deixado para o modelo lembrar de chamar `worktree.remove`.
-	if task.Worktree && s.deps.Tools != nil {
+	//
+	// Sem gerenciador de cópias a tarefa FALHA, em vez de rodar no diretório
+	// compartilhado. Rodar sem isolamento é o modo de falha que este arquivo
+	// existe para impedir, e ele não avisa: o trabalho sai plausível e metade
+	// dele desaparece por cima do do vizinho.
+	if task.Worktree {
 		if created, err := s.createWorktree(ctx, task.ID); err == nil {
-			done.Worktree = created.path
-			done.Branch = created.branch
+			done.Worktree = created.Path
+			done.Branch = created.Branch
 			defer s.dropWorktree(task.ID)
 		} else {
 			done.Error = fmt.Sprintf("não foi possível isolar a tarefa: %v", err)
@@ -289,8 +304,11 @@ func (s *Supervisor) runWorker(
 				Question: question,
 			})
 			// Escalar NÃO é falha: é o trabalhador se recusando a adivinhar. O
-			// orquestrador (ou a pessoa) responde, e o plano segue.
+			// orquestrador (ou a pessoa) responde, e o plano segue. `OK` fica falso
+			// porque não há resultado para as dependentes lerem — quem separa uma
+			// coisa da outra é o `Escalated`, que segue no evento até a tela.
 			done.OK = false
+			done.Escalated = true
 			done.Error = "escalado: " + question
 			return done
 		}
@@ -373,34 +391,35 @@ func (s *Supervisor) openGate(
 
 /* ------------------------------- worktree ------------------------------- */
 
-type worktreeRef struct {
-	path   string
-	branch string
-}
-
-func (s *Supervisor) createWorktree(ctx context.Context, id string) (worktreeRef, error) {
-	raw, err := json.Marshal(map[string]string{"id": id})
-	if err != nil {
-		return worktreeRef{}, err
+// O isolamento fala com o `worktree.Manager` DIRETO, sem passar pelo registro de
+// ferramentas.
+//
+// Passar por lá seria pedir a uma ferramenta desenhada para o modelo um dado
+// desenhado para código: `worktree.create` devolve a frase "cópia isolada criada
+// em C:\… (ramo aibot/x)", que é o certo para o modelo ler e o errado para
+// preencher `WorkerDone.Worktree`, documentado como O CAMINHO da cópia. Quem
+// consumisse esse campo — a tela, um `cd`, um diff — receberia uma frase.
+//
+// A ferramenta continua existindo e continua devolvendo texto: ela é para quando
+// o MODELO pede uma cópia. Este caminho é o do supervisor, que não lê texto.
+func (s *Supervisor) createWorktree(ctx context.Context, id string) (worktree.Worktree, error) {
+	if s.deps.Worktrees == nil {
+		return worktree.Worktree{}, errors.New("o gerenciador de cópias isoladas não está disponível")
 	}
-	output, err := s.deps.Tools.Call(ctx, "worktree.create", "", raw)
-	if err != nil {
-		return worktreeRef{}, err
-	}
-	// A ferramenta devolve texto para o modelo; aqui só precisamos saber que
-	// deu certo e guardar o rótulo para o relatório.
-	return worktreeRef{path: output, branch: "aibot/" + id}, nil
+	// Base vazia é HEAD. O ramo vem do Manager, não montado aqui: o prefixo é
+	// dele (worktree.BranchPrefix), e remontá-lo na mão é a duplicata que sai do
+	// lugar na primeira vez que o prefixo mudar.
+	return s.deps.Worktrees.Create(ctx, id, "")
 }
 
 func (s *Supervisor) dropWorktree(id string) {
-	raw, err := json.Marshal(map[string]any{"id": id, "force": true})
-	if err != nil {
+	if s.deps.Worktrees == nil {
 		return
 	}
 	// Contexto próprio: o descarte precisa acontecer mesmo quando o turno foi
 	// cancelado — senão cada cancelamento deixa uma cópia do repositório no
 	// disco, e elas se acumulam sem ninguém perceber.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), worktree.DefaultTimeout)
 	defer cancel()
-	_, _ = s.deps.Tools.Call(ctx, "worktree.remove", "", raw)
+	_ = s.deps.Worktrees.Remove(ctx, id, true)
 }

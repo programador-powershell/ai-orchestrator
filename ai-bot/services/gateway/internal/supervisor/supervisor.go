@@ -29,6 +29,7 @@ import (
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
+	"aibot/gateway/internal/worktree"
 )
 
 // maxToolRounds limita o vaivém modelo↔ferramenta num turno.
@@ -56,8 +57,28 @@ type Deps struct {
 	Memory *memory.Store
 	Tools  *Registry
 	Router *Router
+	// Worktrees dá a cada tarefa isolada uma cópia de verdade do git. É o MESMO
+	// gerente do Toolbox: dois gerentes sobre o mesmo repositório teriam dois
+	// semáforos e voltariam a brigar pelo index.lock, que é justo o que ele
+	// serializa. Pode ser nil (fora de um repositório, ou sem git na estação) — e
+	// aí a tarefa que pediu isolamento falha em vez de rodar no compartilhado.
+	Worktrees *worktree.Manager
 	// PromptMaster devolve o prompt do admin. Pode ser nil.
 	PromptMaster func() string
+}
+
+// turnHandle é o cancelamento de UM turno, com IDENTIDADE.
+//
+// A identidade não é enfeite. O turno que é substituído continua correndo até
+// perceber o cancelamento, e a limpeza dele roda DEPOIS de o substituto já ter se
+// registrado; um `delete` cego apagaria o cancel de quem está vivo, e dali em
+// diante `Busy` diria que a sessão está livre e `Cancel` não cancelaria nada.
+//
+// A identidade é o id do turno porque comparar `context.CancelFunc` é proibido
+// em Go — func value só se compara com nil.
+type turnHandle struct {
+	turn   string
+	cancel context.CancelFunc
 }
 
 // Supervisor é o executor de turnos.
@@ -65,7 +86,7 @@ type Supervisor struct {
 	deps Deps
 
 	mu      sync.Mutex
-	running map[string]context.CancelFunc
+	running map[string]turnHandle
 	waiting map[string]chan protocol.ApprovalDecision
 	gates   map[string]chan protocol.Gate
 	counter uint64
@@ -75,7 +96,7 @@ type Supervisor struct {
 func New(deps Deps) *Supervisor {
 	return &Supervisor{
 		deps:    deps,
-		running: make(map[string]context.CancelFunc),
+		running: make(map[string]turnHandle),
 		waiting: make(map[string]chan protocol.ApprovalDecision),
 		gates:   make(map[string]chan protocol.Gate),
 	}
@@ -99,26 +120,33 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 		return errors.New("prompt vazio")
 	}
 
+	// O id sai ANTES do registro porque ele é a identidade do turno no mapa de
+	// execução (ver turnHandle). Fora do lock: `nextID` também tranca `mu`, e
+	// sync.Mutex não é reentrante.
+	turn := s.nextID("t")
+
 	// Um turno por sessão. O anterior é CANCELADO, não enfileirado: quem manda
 	// outra mensagem enquanto a resposta corre está corrigindo o rumo, e
 	// esperar a resposta abandonada terminar só atrasa a que interessa.
 	ctx, cancel := context.WithCancel(parent)
 	s.mu.Lock()
 	if previous, ok := s.running[sessionID]; ok {
-		previous()
+		previous.cancel()
 	}
-	s.running[sessionID] = cancel
+	s.running[sessionID] = turnHandle{turn: turn, cancel: cancel}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
-		if s.running[sessionID] != nil {
+		// Só quem AINDA é o dono da sessão se desregistra. Este turno pode já ter
+		// sido substituído — e apagar o registro do substituto deixaria a sessão
+		// marcada como livre com um turno correndo dentro dela.
+		if current, ok := s.running[sessionID]; ok && current.turn == turn {
 			delete(s.running, sessionID)
 		}
 		s.mu.Unlock()
 		cancel()
 	}()
 
-	turn := s.nextID("t")
 	session, err := s.deps.Store.GetSession(sessionID)
 	if err != nil {
 		return err
@@ -128,10 +156,9 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 	// depois quer o pedido, não o comando de roteamento. A troca de modo não se
 	// perde — ela fica registrada no envelope de rota, que é onde a interface
 	// desenha a faixa "agora é X".
+	//
+	// Sem comando não há o que repor: `ParseModeCommand` devolve o texto intacto.
 	_, question, hadCommand := ParseModeCommand(prompt.Text)
-	if !hadCommand {
-		question = prompt.Text
-	}
 
 	// 1. A pergunta entra no log ANTES de qualquer decisão. Se o roteamento ou
 	// o modelo falharem, a pessoa ainda vê o que perguntou — perder o próprio
@@ -284,11 +311,11 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 // Cancel interrompe o turno em andamento.
 func (s *Supervisor) Cancel(sessionID string) {
 	s.mu.Lock()
-	cancel := s.running[sessionID]
+	handle, ok := s.running[sessionID]
 	delete(s.running, sessionID)
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if ok {
+		handle.cancel()
 	}
 }
 
@@ -360,12 +387,12 @@ func (s *Supervisor) runModel(
 
 // buildMessages monta o prompt do turno. A ORDEM é a regra:
 //
-//	1. prompt master do admin  (nenhum especialista o remove)
-//	2. prompt do especialista
-//	3. contrato de ferramentas (só se ele tiver ferramentas liberadas)
-//	4. memórias relevantes
-//	5. histórico da conversa
-//	6. arquivos citados com @
+//  1. prompt master do admin  (nenhum especialista o remove)
+//  2. prompt do especialista
+//  3. contrato de ferramentas (só se ele tiver ferramentas liberadas)
+//  4. memórias relevantes
+//  5. histórico da conversa
+//  6. arquivos citados com @
 func (s *Supervisor) buildMessages(
 	sessionID string,
 	definition specialist.Definition,
