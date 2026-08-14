@@ -2,6 +2,7 @@ mod auth;
 mod blocklist;
 mod extensions;
 mod fsx;
+mod instalacao;
 mod mcp;
 mod memory;
 mod jail;
