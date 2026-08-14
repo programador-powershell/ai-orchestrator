@@ -174,7 +174,7 @@ pub fn run_session_create(
         .execute(
             "INSERT INTO sessions(id,mode,title,cwd,parent_id,created_at,updated_at) \
              VALUES(?1,?2,?3,?4,?5,?6,?6) \
-             ON CONFLICT(id) DO UPDATE SET title=excluded.title, updated_at=excluded.updated_at",
+             ON CONFLICT(id) DO UPDATE SET title=CASE WHEN excluded.title <> '' THEN excluded.title ELSE sessions.title END, updated_at=excluded.updated_at",
             params![
                 id,
                 clip(mode.as_deref().unwrap_or("agent"), 40),
@@ -408,9 +408,23 @@ pub fn run_set_status(run_id: String, status: String, error: Option<String>) -> 
 #[tauri::command]
 pub fn run_mark_synced(run_id: String, seq: i64) -> Result<(), String> {
     let connection = open()?;
+    /*
+     * O cursor também não passa do `last_seq` LOCAL.
+     *
+     * O `ack` do gateway devolve `GREATEST(last_seq, maior do lote)` — o
+     * `last_seq` *dele*, que pode ser maior que o daqui quando outra máquina
+     * empurrou eventos do mesmo run. Gravar esse número marcaria como
+     * sincronizado um evento que esta máquina ainda nem produziu: o run sairia
+     * de `run_pending_sync` para sempre e o que faltava nunca subiria — perda
+     * de log silenciosa, que é o defeito que este subsistema existe para
+     * impedir.
+     *
+     * `MIN` com `last_seq` fecha isso no lugar certo: quem sabe até onde ESTA
+     * máquina produziu é o banco daqui, não o servidor.
+     */
     connection
         .execute(
-            "UPDATE runs SET synced_seq=MAX(synced_seq,?2) WHERE id=?1",
+            "UPDATE runs SET synced_seq=MAX(synced_seq, MIN(?2, last_seq)) WHERE id=?1",
             params![run_id, seq.max(0)],
         )
         .map_err(|error| error.to_string())?;

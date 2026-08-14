@@ -141,8 +141,27 @@ async fn run_bridge(state: &AppState) -> anyhow::Result<()> {
 
 /* ------------------------------ Protocolo ----------------------------- */
 
+/*
+ * `rename_all_fields` NAO e redundante com `rename_all`.
+ *
+ * Num enum, `rename_all` renomeia o NOME DA VARIANTE (o valor da tag
+ * `type`), e so isso: os campos de dentro de cada variante continuam com o
+ * nome do Rust. O cliente sempre enviou `runId`/`fromSeq`/`approvalId` — e o
+ * servidor esperava `run_id`/`from_seq`/`approval_id`.
+ *
+ * O efeito era exatamente o pior tipo de falha: a conexao autenticava, o
+ * `hello` chegava, e dali em diante TODO comando voltava
+ * `{"type":"error","code":"BAD_FRAME","message":"missing field \`run_id\`"}`.
+ * Cinco dos sete comandos (subscribe, unsubscribe, events, decide, cancel);
+ * so `auth` e `ping` escapavam, por nao terem campo composto. Sem inscricao
+ * e sem ingest, o canal inteiro era decorativo.
+ *
+ * O lado corrigido e o SERVIDOR porque todo o resto do protocolo ja sai em
+ * camelCase (`hello`, `ack`, `replay`, `decided`, `lagged`) — mudar o cliente
+ * deixaria o mesmo socket falando duas convencoes.
+ */
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 enum Incoming {
     Auth {
         token: String,
@@ -497,4 +516,123 @@ async fn decide(
     crate::executor::advance(state, run).await?;
     runs::publish(state, run, std::slice::from_ref(&evento)).await;
     Ok(status)
+}
+
+/* ------------------------- Contrato dos frames ------------------------- */
+
+/*
+ * A fixture existe porque a divergencia que estes testes travam NAO aparecia
+ * em compilacao nem em teste de um lado so.
+ *
+ * O `#[serde(rename_all)]` num enum renomeia a VARIANTE, nao os campos dela.
+ * O servidor esperava `run_id` enquanto o cliente mandava `runId`, e o
+ * resultado era um socket que autenticava, respondia `hello` e recusava todo
+ * comando seguinte com BAD_FRAME. Cada lado passava nos proprios testes.
+ *
+ * O arquivo `apps/desktop/src/lib/__fixtures__/wsFrames.json` e escrito por
+ * ESTE teste e lido pelo teste do cliente (`wsProtocol.test.ts`). Quem mudar
+ * um dos lados quebra o outro na hora, que e exatamente o que faltava.
+ */
+#[cfg(test)]
+mod contrato {
+    use super::*;
+
+    /// Onde a fixture mora, a partir do diretorio deste crate.
+    const FIXTURE: &str =
+        "../../apps/desktop/src/lib/__fixtures__/wsFrames.json";
+
+    /// Um comando do cliente, exatamente como ele sai do `wsProtocol.ts`.
+    fn entrada(json: &str) -> Incoming {
+        serde_json::from_str(json).unwrap_or_else(|erro| {
+            panic!("o servidor recusou um frame que o cliente EMITE: {json}\n{erro}")
+        })
+    }
+
+    #[test]
+    fn o_servidor_aceita_os_frames_que_o_cliente_emite() {
+        // Os cinco que a divergencia quebrava, mais os dois que escapavam.
+        assert!(matches!(entrada(r#"{"type":"auth","token":"t"}"#), Incoming::Auth { .. }));
+        assert!(matches!(
+            entrada(r#"{"type":"subscribe","runId":"11111111-1111-4111-8111-111111111111","fromSeq":7}"#),
+            Incoming::Subscribe { from_seq: Some(7), .. }
+        ));
+        assert!(matches!(
+            entrada(r#"{"type":"unsubscribe","runId":"11111111-1111-4111-8111-111111111111"}"#),
+            Incoming::Unsubscribe { .. }
+        ));
+        assert!(matches!(
+            entrada(
+                r#"{"type":"events","runId":"11111111-1111-4111-8111-111111111111","events":[{"seq":1,"kind":"node:start","nodeId":"a","payload":{}}]}"#
+            ),
+            Incoming::Events { .. }
+        ));
+        assert!(matches!(
+            entrada(r#"{"type":"decide","approvalId":"22222222-2222-4222-8222-222222222222","approved":true}"#),
+            Incoming::Decide { approved: true, .. }
+        ));
+        assert!(matches!(
+            entrada(r#"{"type":"cancel","runId":"11111111-1111-4111-8111-111111111111"}"#),
+            Incoming::Cancel { .. }
+        ));
+        assert!(matches!(entrada(r#"{"type":"ping"}"#), Incoming::Ping));
+    }
+
+    #[test]
+    fn subscribe_sem_from_seq_vale_zero_implicito() {
+        // O cliente omite `fromSeq` na primeira inscricao.
+        match entrada(r#"{"type":"subscribe","runId":"11111111-1111-4111-8111-111111111111"}"#) {
+            Incoming::Subscribe { from_seq, .. } => assert_eq!(from_seq, None),
+            outro => panic!("variante errada: {:?}", std::mem::discriminant(&outro)),
+        }
+    }
+
+    #[test]
+    fn snake_case_NAO_e_mais_aceito_no_lugar_do_camel() {
+        // Trava a direcao da correcao: se alguem reverter o
+        // `rename_all_fields`, este teste passa a falhar junto com o de cima.
+        let antigo = r#"{"type":"subscribe","run_id":"11111111-1111-4111-8111-111111111111"}"#;
+        assert!(serde_json::from_str::<Incoming>(antigo).is_err());
+    }
+
+    #[test]
+    fn a_fixture_dos_frames_de_saida_bate_com_o_que_o_servidor_emite() {
+        let run = Uuid::parse_str("11111111-1111-4111-8111-111111111111").unwrap();
+        let aprovacao = Uuid::parse_str("22222222-2222-4222-8222-222222222222").unwrap();
+        let usuario = Uuid::parse_str("33333333-3333-4333-8333-333333333333").unwrap();
+        let evento = RunEventInput {
+            seq: 1,
+            kind: "node:start".into(),
+            node_id: Some("a".into()),
+            payload: Some(json!({ "ok": true })),
+        };
+
+        let saidas = json!({
+            "hello": { "type": "hello", "userId": usuario, "workspace": run },
+            "replay": { "type": "replay", "runId": run, "events": [
+                { "seq": 1, "ts": "2026-01-01T00:00:00Z", "kind": "node:start", "nodeId": "a", "payload": { "ok": true } }
+            ] },
+            "ack": { "type": "ack", "runId": run, "accepted": 1, "lastSeq": 1 },
+            "lagged": { "type": "lagged", "runId": run, "dropped": 3 },
+            "decided": { "type": "decided", "approvalId": aprovacao, "status": "approved" },
+            "unsubscribed": { "type": "unsubscribed", "runId": run },
+            "pong": { "type": "pong" },
+            "error": { "type": "error", "code": "BAD_FRAME", "message": "missing field" },
+            // O do fanout ao vivo: e o que ia SEM `type` e o cliente
+            // descartava em silencio.
+            "fanout": serde_json::from_str::<Value>(
+                &serde_json::to_string(&json!({ "type": "events", "runId": run, "events": [evento] })).unwrap()
+            ).unwrap()
+        });
+
+        let texto = format!("{}\n", serde_json::to_string_pretty(&saidas).unwrap());
+        let anterior = std::fs::read_to_string(FIXTURE).unwrap_or_default();
+        if anterior.replace("\r\n", "\n") != texto {
+            std::fs::write(FIXTURE, &texto).expect("gravar a fixture dos frames");
+            assert_eq!(
+                anterior.replace("\r\n", "\n"),
+                texto,
+                "a fixture dos frames mudou e foi reescrita — rode o teste do cliente (wsProtocol.test.ts) e confira o diff"
+            );
+        }
+    }
 }

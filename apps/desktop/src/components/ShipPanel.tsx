@@ -40,6 +40,14 @@ export function ShipPanel({ root }: { root: string }) {
   const [frameworkAtivo, setFrameworkAtivo] = useState(0);
   const [verDockerfile, setVerDockerfile] = useState(false);
   /**
+   * Construir a imagem faz parte do run?
+   *
+   * Desligado por padrão de propósito: o passo exige Docker instalado e leva
+   * minutos. Quem quer só rodar os testes não deve esperar por um
+   * `docker build` que não pediu.
+   */
+  const [construirImagem, setConstruirImagem] = useState(false);
+  /**
    * A pasta que foi CARREGADA — não a do editor.
    *
    * O painel detectava a stack na pasta digitada aqui e mandava o build rodar
@@ -61,6 +69,22 @@ export function ShipPanel({ root }: { root: string }) {
     const scanRoot = result.source.kind === "folder" ? result.source.path : root;
     setCarregado(scanRoot);
     await detectFrom(result.source, scanRoot);
+  };
+
+  /**
+   * Dispara o run e mostra a falha PRÉVIA na tela.
+   *
+   * Gravar o Dockerfile acontece antes do primeiro passo e pode falhar (rota
+   * SSH com caminho recusado, disco sem permissão). Sem este `catch` a
+   * promessa rejeitaria sem dono e o botão pareceria não ter feito nada.
+   */
+  const executar = async () => {
+    setError("");
+    try {
+      await startRun(carregado, { construirImagem });
+    } catch (causa) {
+      setError(causa instanceof Error ? causa.message : String(causa));
+    }
   };
 
   const running = run?.status === "running";
@@ -143,13 +167,31 @@ export function ShipPanel({ root }: { root: string }) {
               }}
             />
           ))}
-          <button
-            type="button"
-            className="ship__go ship__dockerfile-toggle"
-            onClick={() => setVerDockerfile((valor) => !valor)}
-          >
-            {verDockerfile ? "Ocultar Dockerfile" : "Ver Dockerfile"}
-          </button>
+          <div className="ship__imagem">
+            <button
+              type="button"
+              className="ship__go ship__dockerfile-toggle"
+              onClick={() => setVerDockerfile((valor) => !valor)}
+            >
+              {verDockerfile ? "Ocultar Dockerfile" : "Ver Dockerfile"}
+            </button>
+            <label className="ship__imagem-check">
+              <input
+                type="checkbox"
+                checked={construirImagem}
+                onChange={(event) => setConstruirImagem(event.target.checked)}
+              />
+              {/*
+                O texto diz o que VAI acontecer no disco. Gravar um arquivo no
+                projeto da pessoa sem avisar seria o tipo de surpresa que faz
+                alguém desconfiar da ferramenta inteira.
+              */}
+              <span>
+                Construir imagem ao executar
+                <small>grava <code>Dockerfile.multiplike</code> e roda <code>docker build</code></small>
+              </span>
+            </label>
+          </div>
           {verDockerfile && frameworks[frameworkAtivo] ? (
             <pre className="ship__out ship__out--plan">
               {generateDockerfile({
@@ -171,7 +213,7 @@ export function ShipPanel({ root }: { root: string }) {
                 Parar
               </button>
             ) : (
-              <button type="button" className="ship__go" onClick={() => void startRun(carregado)} disabled={!selected}>
+              <button type="button" className="ship__go" onClick={() => void executar()} disabled={!selected}>
                 Executar
               </button>
             )}
@@ -193,7 +235,7 @@ export function ShipPanel({ root }: { root: string }) {
           </ol>
         </section>
       ) : selected && selected.id !== "unknown" ? (
-        <button type="button" className="ship__go ship__go--wide" onClick={() => void startRun(carregado)}>
+        <button type="button" className="ship__go ship__go--wide" onClick={() => void executar()}>
           Executar build
         </button>
       ) : null}

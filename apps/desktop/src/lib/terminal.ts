@@ -16,7 +16,21 @@ import type { LanguageRuntime, TerminalResult } from "@multiplike/contracts";
 import { asTerminalResult, resolveRoute, ssh, toTarget } from "./ssh";
 import { useApp } from "./store";
 
-async function executeRouted(command: string, cwd?: string): Promise<TerminalResult> {
+/**
+ * Prazo de um comando, em ms.
+ *
+ * Existe porque `docker build` de projeto real estoura os 120s do padrao — e
+ * o erro chegava como "excedeu o limite", que manda a pessoa procurar defeito
+ * no Dockerfile em vez de no prazo. O Rust ainda prende o valor entre 1s e 1h.
+ *
+ * A chave enviada e `timeoutMs` (camelCase): o macro do Tauri converte para o
+ * `timeout_ms` do Rust. Mandar snake_case daqui faz o comando ser recusado.
+ */
+async function executeRouted(
+  command: string,
+  cwd?: string,
+  timeoutMs?: number
+): Promise<TerminalResult> {
   const settings = useApp.getState().settings;
   const rota = resolveRoute(settings.environment ?? "local", settings.deployServers ?? []);
   if (rota.kind === "blocked") {
@@ -26,12 +40,13 @@ async function executeRouted(command: string, cwd?: string): Promise<TerminalRes
     const resultado = await ssh.exec(toTarget(rota.server), command);
     return asTerminalResult(command, resultado);
   }
-  return invoke<TerminalResult>("terminal_execute", { command, cwd });
+  return invoke<TerminalResult>("terminal_execute", { command, cwd, timeoutMs });
 }
 
 export const terminal = {
   catalog: () => invoke<LanguageRuntime[]>("terminal_catalog"),
-  execute: (command: string, cwd?: string) => executeRouted(command, cwd),
+  execute: (command: string, cwd?: string, timeoutMs?: number) =>
+    executeRouted(command, cwd, timeoutMs),
   /** Força a estação, ignorando o ambiente — para o que é local por natureza. */
   executeLocal: (command: string, cwd?: string) =>
     invoke<TerminalResult>("terminal_execute", { command, cwd }),
