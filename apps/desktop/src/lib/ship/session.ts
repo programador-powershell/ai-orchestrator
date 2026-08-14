@@ -7,15 +7,38 @@
 
 import { create } from "zustand";
 import { terminal } from "../terminal";
-import { buildRun, canRelease, runPipeline, suggestBump, type Exec, type RunState, type StepState } from "./pipeline";
+import {
+  buildRunFromSteps,
+  canRelease,
+  runPipeline,
+  suggestBump,
+  type Exec,
+  type RunState,
+  type StepState
+} from "./pipeline";
+import { pipelineFor } from "./stack";
 import { sourceLabel, type ProjectSource } from "./source";
 import { detectStacks, MANIFEST_FILES, type DetectedStack } from "./stack";
+import { detectarFrameworks, type FrameworkDetectado } from "./stacks";
 import { collectFiles, fsRead, isTauriFs } from "../fsx";
+import { writeDockerfile } from "./artifacts";
+import { deploySteps } from "./deployPipeline";
+import { dockerfileFor, temDockerfileProprio } from "./plan";
 
 interface ShipState {
   source?: ProjectSource;
   stacks: DetectedStack[];
   selected?: DetectedStack;
+  /**
+   * Framework identificado — a outra metade da resposta.
+   *
+   * `stacks` diz a LINGUAGEM e os comandos do pipeline (instalar, testar,
+   * empacotar). Isto diz o FRAMEWORK, que é quem sabe a porta, a pasta de
+   * saída, o comando de start e a imagem base — o que o `generateDockerfile`
+   * precisa para produzir uma imagem que sobe. As duas coisas convivem: um
+   * projeto é "node" para o pipeline e "Next.js" para o container.
+   */
+  frameworks: FrameworkDetectado[];
   detecting: boolean;
   run?: RunState;
   version: string;
@@ -25,6 +48,7 @@ interface ShipState {
 
 export const useShip = create<ShipState>()(() => ({
   stacks: [],
+  frameworks: [],
   detecting: false,
   version: window.localStorage.getItem("ship.version") ?? "V.1"
 }));
@@ -33,11 +57,18 @@ export const useShip = create<ShipState>()(() => ({
 const SCAN_LIMITS = { maxDepth: 3, maxEntries: 4000 };
 
 export async function detectFrom(source: ProjectSource, root: string): Promise<void> {
-  useShip.setState({ source, detecting: true, stacks: [], selected: undefined, run: undefined });
+  useShip.setState({
+    source,
+    detecting: true,
+    stacks: [],
+    frameworks: [],
+    selected: undefined,
+    run: undefined
+  });
 
   // Artefato pré-compilado não tem fonte para inspecionar — o formato já basta.
   if (source.kind === "artifact") {
-    useShip.setState({ detecting: false, stacks: [], selected: undefined });
+    useShip.setState({ detecting: false, stacks: [], frameworks: [], selected: undefined });
     return;
   }
 
@@ -53,11 +84,16 @@ export async function detectFrom(source: ProjectSource, root: string): Promise<v
   }
 
   const stacks = detectStacks({ files, manifests });
-  useShip.setState({ stacks, selected: stacks[0], detecting: false });
+  // Mesma varredura, mesmos manifestos: identificar o framework não custa
+  // nenhum IO a mais.
+  const frameworks = detectarFrameworks({ arquivos: files, manifestos: manifests });
+  useShip.setState({ stacks, frameworks, selected: stacks[0], detecting: false });
 }
 
 export function selectStack(stack: DetectedStack): void {
-  useShip.setState({ selected: stack, run: buildRun(`run-${Date.now()}`, stack) });
+  // Prévia do pipeline ao escolher a stack — sem o passo de imagem, que só
+  // entra quando o run começa de fato (é ele que grava o Dockerfile).
+  useShip.setState({ selected: stack, run: buildRunFromSteps(`run-${Date.now()}`, pipelineFor(stack)) });
 }
 
 /** Executor real: roda na raiz do projeto, com o terminal do app. */
@@ -78,8 +114,17 @@ function execIn(cwd: string): Exec {
      * um build pela metade num servidor exige suporte do outro lado. O passo
      * registra isso em vez de deixar a pessoa achar que abortou o deploy.
      */
+    /*
+     * O prazo acompanha o COMANDO.
+     *
+     * `docker build` de projeto real leva minutos: com o padrão de 120s ele
+     * morria no meio e o erro chegava como "excedeu o limite", mandando a
+     * pessoa procurar defeito no Dockerfile. Instalar dependência também
+     * passa fácil de dois minutos em projeto grande.
+     */
+    const prazo = /^docker\b/.test(command.trim()) ? 45 * 60_000 : 10 * 60_000;
     const execucao = terminal
-      .execute(command, cwd)
+      .execute(command, cwd, prazo)
       .then((result) => ({
         exitCode: result.exitCode ?? 0,
         output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()
@@ -99,13 +144,54 @@ function execIn(cwd: string): Exec {
   };
 }
 
-export async function startRun(cwd: string): Promise<void> {
-  const { selected, controller: previous } = useShip.getState();
+/**
+ * Nome do projeto a partir do caminho — vira o nome da imagem.
+ *
+ * A última pasta é o que a pessoa reconhece; o caminho inteiro não cabe numa
+ * referência Docker.
+ */
+function nomeDoProjeto(cwd: string): string {
+  const partes = cwd.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return partes[partes.length - 1] || "app";
+}
+
+export async function startRun(cwd: string, opcoes: { construirImagem?: boolean } = {}): Promise<void> {
+  const { selected, frameworks, version, controller: previous } = useShip.getState();
   if (!selected) return;
   previous?.abort();
 
+  /*
+   * O passo de imagem só existe quando há framework identificado.
+   *
+   * É ele que sabe a porta, a pasta de saída e o comando de start — sem isso
+   * o Dockerfile seria chute. E o arquivo é gravado ANTES do run começar: o
+   * `docker build -f` precisa que ele já esteja no disco quando o passo
+   * chegar, e falhar aqui é falhar cedo, com a mensagem certa.
+   */
+  const framework = frameworks[0];
+  let passosDeImagem: Array<{ step: string; command: string }> = [];
+  if (opcoes.construirImagem && framework) {
+    try {
+      const conteudo = dockerfileFor(selected, framework);
+      const artefato = await writeDockerfile(cwd, conteudo, {
+        jaTemProprio: temDockerfileProprio(framework)
+      });
+      passosDeImagem = deploySteps({
+        projeto: nomeDoProjeto(cwd),
+        versao: version,
+        dockerfile: artefato.caminho
+      });
+    } catch (causa) {
+      useShip.setState({ run: undefined, controller: undefined });
+      throw causa instanceof Error ? causa : new Error(String(causa));
+    }
+  }
+
   const controller = new AbortController();
-  const run = buildRun(`run-${Date.now()}`, selected);
+  const run = buildRunFromSteps(`run-${Date.now()}`, [
+    ...pipelineFor(selected),
+    ...passosDeImagem
+  ]);
   useShip.setState({ run: { ...run, status: "running" }, controller });
 
   const onStep = (step: StepState) =>

@@ -37,11 +37,25 @@ export interface ExecResult {
 /** Assinatura do executor real (terminal_execute no desktop). */
 export type Exec = (command: string, signal: AbortSignal) => Promise<ExecResult>;
 
-export function buildRun(id: string, stack: DetectedStack): RunState {
+/** Passos crus, antes de virarem estado. */
+export interface PassoBruto {
+  step: string;
+  command: string;
+}
+
+/**
+ * Monta o run a partir de uma lista de passos QUALQUER.
+ *
+ * Separado de `buildRun` porque os passos deixaram de vir só do detector de
+ * stack: a construção da imagem entra depois deles, com o Dockerfile que o
+ * app gerou. Continuar montando a lista dentro da função obrigaria a passar
+ * uma `DetectedStack` sintética para acrescentar um passo.
+ */
+export function buildRunFromSteps(id: string, entries: readonly PassoBruto[]): RunState {
   return {
     id,
     status: "idle",
-    steps: pipelineFor(stack).map((entry, index) => ({
+    steps: entries.map((entry, index) => ({
       id: `${id}-${index}`,
       step: entry.step,
       command: entry.command,
@@ -49,6 +63,10 @@ export function buildRun(id: string, stack: DetectedStack): RunState {
       output: ""
     }))
   };
+}
+
+export function buildRun(id: string, stack: DetectedStack): RunState {
+  return buildRunFromSteps(id, pipelineFor(stack));
 }
 
 export interface RunEvents {

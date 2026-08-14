@@ -67,6 +67,7 @@ export function Composer() {
   const researchMode = useApp((state) => state.researchMode);
   const setResearchMode = useApp((state) => state.setResearchMode);
   const policy = useApp((state) => state.policy);
+  const policyVerified = useApp((state) => state.policyVerified);
   // Plugins e trilha: o registro já vem montado (global → usuário) e o modo do
   // harness decide o que da coleta entra no prompt.
   const registry = usePlugins((state) => state.registry);
@@ -166,7 +167,18 @@ export function Composer() {
     session,
     runtimeRunning: runtimeStatus.running,
     fusionPresets: settings.fusionPresets,
-    baseOverrides: settings.providerBaseOverrides
+    baseOverrides: settings.providerBaseOverrides,
+    /*
+     * A politica viaja com o contexto para o `chatOnce` poder recusar
+     * `local`/`model` — as duas rotas que NAO passam pelo gateway e que,
+     * portanto, nao teriam outro portao. `temGateway` distingue instalacao
+     * solta (libera) de bootstrap que nao respondeu (segura).
+     */
+    politica: {
+      policy,
+      policyVerified,
+      temGateway: Boolean(settings.gateway?.baseUrl?.trim())
+    }
   };
 
   /**
@@ -340,6 +352,12 @@ export function Composer() {
         onDelta: (delta) => buffer.push(delta),
         onReasoning: (delta) => reasoningBuffer.push(delta),
         onStage: (stage) => setStage(stage),
+        /*
+         * A política trocou a rota — e isso não é progresso, é uma decisão
+         * diferente da que a pessoa escolheu. Vai para a faixa de erro, que
+         * fica, e não para o estágio, que some no próximo passo.
+         */
+        onNotice: (mensagem) => useApp.getState().setError(mensagem),
         // Plano do orquestrador vira cartão: complexidade + executores listados.
         onFusionPlan: (plan) => {
           appendMessage(mode, {

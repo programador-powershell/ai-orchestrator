@@ -14,7 +14,7 @@
  * que ela não pediu. Quem quer o Chat vai ao Chat e busca lá.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { Glyph } from "./icons";
 import { searchConversations, type ConversationSearchResult } from "../lib/conversations";
@@ -38,10 +38,28 @@ export function TopbarSearch() {
   const campoRef = useRef<HTMLInputElement>(null);
 
   const termo = query.trim();
+  /**
+   * A varredura acompanha a digitação com atraso, e não junto.
+   *
+   * `searchConversations` percorre todas as mensagens de todas as conversas
+   * da aba. Mesmo depois de a normalização ficar ~20x mais barata, num
+   * histórico grande isso é dezenas de milissegundos — o bastante para a
+   * letra seguinte engasgar se a busca rodar no mesmo passe do teclado.
+   * `useDeferredValue` deixa o campo responder na hora e a lista chegar
+   * atrás, sem escolher um número mágico de milissegundos como um debounce
+   * exigiria.
+   *
+   * O teto vai como ARGUMENTO, não como `.slice` depois: o trecho de cada
+   * linha é a parte cara, e cortar aqui significava pagá-lo por conversa
+   * encontrada para mostrar oito.
+   */
+  const termoAdiado = useDeferredValue(termo);
   const resultados = useMemo<ConversationSearchResult[]>(
-    () => (termo ? searchConversations(conversations, termo, mode).slice(0, MAX_RESULTADOS) : []),
-    [conversations, termo, mode]
+    () => (termoAdiado ? searchConversations(conversations, termoAdiado, mode, MAX_RESULTADOS) : []),
+    [conversations, termoAdiado, mode]
   );
+  /** A lista está atrás do que foi digitado — serve para esmaecer enquanto alcança. */
+  const buscando = termo !== termoAdiado;
 
   // Trocar de aba zera a busca: o termo era da conversa de lá, e manter o
   // texto com uma lista vazia embaixo parece defeito.
@@ -129,7 +147,7 @@ export function TopbarSearch() {
       </label>
 
       {mostrandoLista ? (
-        <div className="tbsearch-lista glass-strong" role="listbox" aria-label="Resultados">
+        <div className={`tbsearch-lista glass-strong ${buscando ? "buscando" : ""}`} role="listbox" aria-label="Resultados">
           {resultados.length === 0 ? (
             <p className="tbsearch-vazio">Nada nesta aba para “{termo}”.</p>
           ) : (

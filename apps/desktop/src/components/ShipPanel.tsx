@@ -12,6 +12,8 @@ import { cancelRun, detectFrom, selectStack, setVersion, startRun, suggestedBump
 import { artifactRunHint, resolveSource, sourceLabel, type SourceKind } from "../lib/ship/source";
 import { bumpVersion, canRelease, planRelease, type StepStatus } from "../lib/ship/pipeline";
 import type { DetectedStack } from "../lib/ship/stack";
+import { generateDockerfile } from "../lib/ship/dockerfile";
+import type { FrameworkDetectado } from "../lib/ship/stacks";
 
 const KINDS: Array<{ id: SourceKind; label: string; placeholder: string }> = [
   { id: "github", label: "GitHub", placeholder: "owner/repo ou https://github.com/..." },
@@ -29,11 +31,22 @@ const STATUS_ICON: Record<StepStatus, string> = {
 };
 
 export function ShipPanel({ root }: { root: string }) {
-  const { source, stacks, selected, detecting, run, version } = useShip();
+  const { source, stacks, frameworks, selected, detecting, run, version } = useShip();
   const [kind, setKind] = useState<SourceKind>("folder");
   const [input, setInput] = useState(root);
   const [error, setError] = useState("");
   const [openStep, setOpenStep] = useState("");
+  /** Índice do framework escolhido — o primeiro é o de maior confiança. */
+  const [frameworkAtivo, setFrameworkAtivo] = useState(0);
+  const [verDockerfile, setVerDockerfile] = useState(false);
+  /**
+   * Construir a imagem faz parte do run?
+   *
+   * Desligado por padrão de propósito: o passo exige Docker instalado e leva
+   * minutos. Quem quer só rodar os testes não deve esperar por um
+   * `docker build` que não pediu.
+   */
+  const [construirImagem, setConstruirImagem] = useState(false);
   /**
    * A pasta que foi CARREGADA — não a do editor.
    *
@@ -56,6 +69,22 @@ export function ShipPanel({ root }: { root: string }) {
     const scanRoot = result.source.kind === "folder" ? result.source.path : root;
     setCarregado(scanRoot);
     await detectFrom(result.source, scanRoot);
+  };
+
+  /**
+   * Dispara o run e mostra a falha PRÉVIA na tela.
+   *
+   * Gravar o Dockerfile acontece antes do primeiro passo e pode falhar (rota
+   * SSH com caminho recusado, disco sem permissão). Sem este `catch` a
+   * promessa rejeitaria sem dono e o botão pareceria não ter feito nada.
+   */
+  const executar = async () => {
+    setError("");
+    try {
+      await startRun(carregado, { construirImagem });
+    } catch (causa) {
+      setError(causa instanceof Error ? causa.message : String(causa));
+    }
   };
 
   const running = run?.status === "running";
@@ -117,6 +146,64 @@ export function ShipPanel({ root }: { root: string }) {
         </section>
       ) : null}
 
+      {frameworks.length ? (
+        <section className="ship__stacks">
+          <h4 className="ship__title">Framework — como a imagem sobe</h4>
+          {/*
+            Isto é a outra metade da resposta. "Stack detectada" acima diz a
+            LINGUAGEM e os comandos do pipeline; aqui está o framework, que é
+            quem sabe a porta, a pasta de saída e o comando de start — os
+            valores de que o Dockerfile depende. Antes o catálogo das 47
+            stacks existia no código e não chegava a lugar nenhum.
+          */}
+          {frameworks.slice(0, 4).map((achado, indice) => (
+            <FrameworkChip
+              key={achado.id}
+              achado={achado}
+              active={indice === frameworkAtivo}
+              onPick={() => {
+                setFrameworkAtivo(indice);
+                setVerDockerfile(false);
+              }}
+            />
+          ))}
+          <div className="ship__imagem">
+            <button
+              type="button"
+              className="ship__go ship__dockerfile-toggle"
+              onClick={() => setVerDockerfile((valor) => !valor)}
+            >
+              {verDockerfile ? "Ocultar Dockerfile" : "Ver Dockerfile"}
+            </button>
+            <label className="ship__imagem-check">
+              <input
+                type="checkbox"
+                checked={construirImagem}
+                onChange={(event) => setConstruirImagem(event.target.checked)}
+              />
+              {/*
+                O texto diz o que VAI acontecer no disco. Gravar um arquivo no
+                projeto da pessoa sem avisar seria o tipo de surpresa que faz
+                alguém desconfiar da ferramenta inteira.
+              */}
+              <span>
+                Construir imagem ao executar
+                <small>grava <code>Dockerfile.multiplike</code> e roda <code>docker build</code></small>
+              </span>
+            </label>
+          </div>
+          {verDockerfile && frameworks[frameworkAtivo] ? (
+            <pre className="ship__out ship__out--plan">
+              {generateDockerfile({
+                stack: frameworks[frameworkAtivo].stack,
+                buildCommand: frameworks[frameworkAtivo].stack.defaultBuildCommand || undefined,
+                startCommand: frameworks[frameworkAtivo].stack.defaultStartCommand || undefined
+              })}
+            </pre>
+          ) : null}
+        </section>
+      ) : null}
+
       {run && run.steps.length ? (
         <section className="ship__run">
           <div className="ship__runhead">
@@ -126,7 +213,7 @@ export function ShipPanel({ root }: { root: string }) {
                 Parar
               </button>
             ) : (
-              <button type="button" className="ship__go" onClick={() => void startRun(carregado)} disabled={!selected}>
+              <button type="button" className="ship__go" onClick={() => void executar()} disabled={!selected}>
                 Executar
               </button>
             )}
@@ -148,7 +235,7 @@ export function ShipPanel({ root }: { root: string }) {
           </ol>
         </section>
       ) : selected && selected.id !== "unknown" ? (
-        <button type="button" className="ship__go ship__go--wide" onClick={() => void startRun(carregado)}>
+        <button type="button" className="ship__go ship__go--wide" onClick={() => void executar()}>
           Executar build
         </button>
       ) : null}
@@ -174,6 +261,28 @@ export function ShipPanel({ root }: { root: string }) {
         ) : null}
       </section>
     </Surface>
+  );
+}
+
+function FrameworkChip({
+  achado,
+  active,
+  onPick
+}: {
+  achado: FrameworkDetectado;
+  active: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <button type="button" className={`ship__stack${active ? " is-active" : ""}`} onClick={onPick}>
+      <span className="ship__stacklabel">
+        {achado.stack.name}
+        <em> · porta {achado.stack.defaultPort}</em>
+      </span>
+      <span className="ship__evidence">
+        detectado por {achado.evidencia} · saída em {achado.stack.outputDirectory}
+      </span>
+    </button>
   );
 }
 

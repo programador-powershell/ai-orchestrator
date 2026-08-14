@@ -28,6 +28,10 @@
     "active": true,
     "icon": ["icons/icon.ico"],
     "targets": ["nsis"],
+    "resources": {
+      "../../../NOTICE": "NOTICE",
+      "../../../licenses/openship-Apache-2.0.txt": "licenses/openship-Apache-2.0.txt"
+    },
     "createUpdaterArtifacts": true,
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },

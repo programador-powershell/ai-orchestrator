@@ -26,6 +26,7 @@ import type { EngineSelection, UiMode } from "@multiplike/contracts";
 
 import { describeSelection } from "../lib/engine";
 import { useApp } from "../lib/store";
+import { avaliarSelecao } from "../lib/enginePolicy";
 
 interface Opcao {
   chave: string;
@@ -42,6 +43,7 @@ export function ModelSelect({ mode }: { mode: string }) {
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
   const profile = useApp((state) => state.profile);
   const policy = useApp((state) => state.policy);
+  const policyVerified = useApp((state) => state.policyVerified);
   const session = useApp((state) => state.session);
   // Trocar de motor no meio de um turno mandaria a continuação para outro
   // modelo — a resposta sairia costurada por dois.
@@ -50,8 +52,27 @@ export function ModelSelect({ mode }: { mode: string }) {
   const [aberto, setAberto] = useState(false);
   const raizRef = useRef<HTMLDivElement>(null);
 
-  // Sem perfil (ainda sem gateway), o app é local e quem opera é a TI.
-  const podeTrocar = profile ? profile.role === "admin" || profile.role === "owner" : true;
+  /**
+   * Trocar o motor exige DUAS coisas: ser administrador **e** estar na Code.
+   *
+   * O modelo é configuração do administrador, por definição — quem decide qual
+   * motor atende cada módulo é a política, não quem está usando o app. Deixar
+   * a lista aberta nas dez abas contradizia isso na prática: bastava clicar no
+   * chip para escapar do que o admin definiu, e a governança virava sugestão.
+   *
+   * A Code é a exceção porque é a aba do próprio setor de TI. Ali a troca é
+   * ferramenta de trabalho: comparar um modelo com outro no mesmo repositório
+   * é o tipo de coisa que quem administra precisa fazer.
+   *
+   * A checagem de papel FICA, mesmo com a aba sendo restrita ao admin. Duas
+   * razões: uma condição não deve depender da outra continuar verdadeira, e
+   * "só o admin enxerga a aba" é visibilidade de menu — não é o mesmo que
+   * autorização, e não sobrevive a alguém trocar a lista de módulos visíveis.
+   *
+   * Sem perfil (ainda sem gateway), o app é local e quem opera é a TI.
+   */
+  const eAdministrador = profile ? profile.role === "admin" || profile.role === "owner" : true;
+  const podeTrocar = eAdministrador && mode === "code";
   const selection = settings.engines[mode as keyof typeof settings.engines] ?? settings.engines.chat;
 
   useEffect(() => {
@@ -73,11 +94,28 @@ export function ModelSelect({ mode }: { mode: string }) {
   const rotulo = describeSelection(selection, settings.fusionPresets, settings.modelCatalog);
 
   if (!podeTrocar) {
+    /*
+     * O chip continua MOSTRANDO o motor — só não deixa trocar.
+     *
+     * Esconder seria pior: a pessoa tem direito de saber por qual modelo a
+     * resposta dela passou, ainda mais quando existe fusão de vários. O que
+     * muda é o convite, e ele é diferente para cada caso: quem administra é
+     * levado às Configurações, onde a mudança é possível; quem não administra
+     * lê por que não pode, em vez de bater numa tela sem efeito.
+     */
+    const explicacao = eAdministrador
+      ? "O modelo deste módulo é definido nas Configurações (administração). A troca direta existe só na aba Code."
+      : "O modelo é definido pela política do administrador.";
+    // `inerte` só quando o clique não leva a lugar nenhum: para quem
+    // administra ele ainda abre as Configurações, e aí o cursor deve dizer
+    // isso. Um `cursor: default` sobre um botão que funciona é tão enganoso
+    // quanto o contrário.
     return (
       <button
-        className="model-select readonly"
-        onClick={() => setSettingsOpen(true)}
-        title="O modelo deste módulo é definido nas Configurações (administração)"
+        className={`model-select readonly${eAdministrador ? "" : " inerte"}`}
+        onClick={eAdministrador ? () => setSettingsOpen(true) : undefined}
+        title={explicacao}
+        aria-label={`Motor em uso: ${rotulo}. ${explicacao}`}
       >
         {selection.kind === "fusion" ? <span className="fusion-dot" /> : <Sparkles size={13} />}
         {rotulo}
@@ -93,6 +131,13 @@ export function ModelSelect({ mode }: { mode: string }) {
    * da aba Code. Modelo avulso vem por último: escolher um fixa a conta num
    * provedor só, o que é decisão consciente, não a primeira da lista.
    */
+  /** O mesmo contexto que o motor usa — ver `lib/enginePolicy.ts`. */
+  const contextoDePolitica = {
+    policy,
+    policyVerified,
+    temGateway: Boolean(settings.gateway?.baseUrl?.trim())
+  };
+
   const opcoes: Opcao[] = [
     ...settings.fusionPresets.map((preset) => ({
       chave: `fusion:${preset.id}`,
@@ -108,7 +153,13 @@ export function ModelSelect({ mode }: { mode: string }) {
       rotulo: "Rota do workspace",
       detalhe: "O gateway decide o modelo pela política do grupo"
     },
-    ...(policy?.localRuntimeAllowed !== false
+/*
+     * As duas regras saem de `avaliarSelecao`, a MESMA que o `chatOnce`
+     * aplica na hora de usar. Antes a checagem morava só aqui, escrita como
+     * `policy?.byokAllowed !== false` — o que tratava "ainda nao sei" (o
+     * bootstrap que nao respondeu) como "pode".
+     */
+    ...(avaliarSelecao({ kind: "local" }, contextoDePolitica).permitido
       ? [
           {
             chave: "local",
@@ -118,7 +169,10 @@ export function ModelSelect({ mode }: { mode: string }) {
           }
         ]
       : []),
-    ...(policy?.byokAllowed !== false
+    ...(avaliarSelecao(
+      { kind: "model", target: { providerId: "", model: "" } },
+      contextoDePolitica
+    ).permitido
       ? (settings.modelCatalog ?? []).map((item) => ({
           chave: `model:${item.providerId}:${item.model}`,
           selection: { kind: "model", target: { providerId: item.providerId, model: item.model } } as EngineSelection,

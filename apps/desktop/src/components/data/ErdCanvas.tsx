@@ -181,6 +181,18 @@ export function ErdCanvas({
       return doc.tables.map((table) => {
         const anterior = porId.get(table.id);
         const altura = tableHeight(table);
+        /*
+         * `data` só vira objeto NOVO quando a tabela mudou.
+         *
+         * O `TableNode` é `memo`, e `memo` compara `data` por identidade.
+         * Montando `{ ...anterior?.data, table }` incondicionalmente, toda
+         * tabela recebia um objeto novo a cada sincronia — e o efeito roda a
+         * cada operação do chat. Resultado: o `memo` não economizava nada e
+         * um schema de trinta tabelas redesenhava as trinta a cada linha que
+         * o modelo escrevia, com o arraste engasgando junto.
+         */
+        const dadosAnteriores = anterior?.data as { table?: unknown } | undefined;
+        const data = dadosAnteriores?.table === table ? anterior!.data : { ...anterior?.data, table };
         return {
           ...anterior,
           id: table.id,
@@ -191,7 +203,7 @@ export function ErdCanvas({
           height: altura,
           measured: { width: LARGURA, height: altura },
           handles: alcasDe(table),
-          data: { ...anterior?.data, table }
+          data
         } as Node;
       });
     });
@@ -204,6 +216,26 @@ export function ErdCanvas({
    * sai pela borda que aponta para o alvo. Fixando a saída na direita, toda
    * relação com o destino à esquerda dava a volta por fora do cartão.
    */
+  /**
+   * Seleção pedida de FORA do canvas — e só quando ela muda.
+   *
+   * Clicar numa tabela no rail chama `focusTable`, que centraliza a tela e
+   * grava `selectedId`. Só que o realce da tabela é desenhado pela classe
+   * `.react-flow__node.selected` (data.css), que quem escreve é o React Flow:
+   * ninguém marcava o nó, então a tela ia até a tabela e ela chegava sem
+   * destaque nenhum — o clique parecia não ter selecionado nada.
+   *
+   * Separado do sync acima de propósito: lá a seleção é do canvas e precisa
+   * sobreviver às operações do assistente; aqui é uma ordem explícita, e ela
+   * chega uma vez.
+   */
+  const selecaoAnterior = useRef(selectedId);
+  useEffect(() => {
+    if (selecaoAnterior.current === selectedId) return;
+    selecaoAnterior.current = selectedId;
+    setNodes((atuais) => atuais.map((node) => ({ ...node, selected: node.id === selectedId })));
+  }, [selectedId, setNodes]);
+
   useEffect(() => {
     setEdges(
       doc.relations.flatMap((relation) => {
@@ -244,17 +276,22 @@ export function ErdCanvas({
   );
 
   /**
-   * O documento de ANTES do arrasto, para o commit virar uma entrada só.
+   * O documento mais recente, para o "antes" do desfazer.
    *
-   * Um ref simples basta porque o React Flow só permite um arrasto por vez —
-   * e ele chama `onNodeDragStop` UMA vez por gesto, passando no terceiro
-   * argumento todos os nós que se moveram.
+   * O ref é atualizado a cada render e lido no FIM do arrasto — não no
+   * começo. Havia aqui um instantâneo tirado em `onNodeDragStart`, e ele
+   * envelhecia: se uma operação do chat chegasse durante o gesto (e chega, o
+   * assistente escreve enquanto a pessoa organiza o diagrama), o "antes"
+   * ficava anterior a ela e um Ctrl+Z depois de arrastar apagava também a
+   * tabela que o modelo tinha acabado de criar.
+   *
+   * Ler no fim é correto porque a posição só entra no documento AGORA: o
+   * arraste vive no estado do React Flow até o `onNodeDragStop`. Então o
+   * documento deste instante é exatamente "tudo o que aconteceu, menos este
+   * movimento" — que é a definição do que o desfazer deve restaurar.
    */
-  const antesDoArrasto = useRef<SchemaDocExt | null>(null);
-
-  const aoIniciarArrasto = useCallback(() => {
-    antesDoArrasto.current = doc;
-  }, [doc]);
+  const docAtual = useRef(doc);
+  docAtual.current = doc;
 
   const aoMoverFim = useCallback(
     (_: unknown, node: Node, arrastados: Node[]) => {
@@ -271,11 +308,10 @@ export function ErdCanvas({
           x: Math.max(0, Math.round(item.position.x)),
           y: Math.max(0, Math.round(item.position.y))
         })),
-        antesDoArrasto.current ?? doc
+        docAtual.current
       );
-      antesDoArrasto.current = null;
     },
-    [doc, onMove]
+    [onMove]
   );
 
   return (
@@ -287,7 +323,6 @@ export function ErdCanvas({
         onNodesChange={aplicarMudancasDeNo}
         onEdgesChange={aplicarMudancasDeAresta}
         onConnect={aoConectar}
-        onNodeDragStart={aoIniciarArrasto}
         onNodeDragStop={aoMoverFim}
         onNodeClick={(_, node) => onSelect(node.id)}
         onPaneClick={() => onSelect(null)}

@@ -74,10 +74,12 @@ pub enum StreamEvent {
 }
 
 fn read_key(account: &str) -> Result<String, String> {
-    keyring::Entry::new("Multiplike-AI", account)
-        .map_err(|error| error.to_string())?
-        .get_password()
-        .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())
+    // Chave gravada antes da 0.11.0 está sob o nome de serviço antigo. Sem o
+    // fallback, o app diria "não encontrada" para uma credencial que continua
+    // no Gerenciador de Credenciais — e a pessoa recadastraria à toa. A
+    // primeira leitura converte a entrada para o nome novo.
+    crate::rebrand::segredo_com_fallback(account)
+        .ok_or_else(|| "chave do provedor não encontrada no cofre do sistema".to_string())
 }
 
 /// `http://` só é aceito contra a própria máquina (runtime local). Para
@@ -445,10 +447,7 @@ pub async fn provider_fetch(request: ProviderFetchRequest) -> Result<Value, Stri
     if !path.starts_with('/') {
         return Err("path deve começar com /".into());
     }
-    let api_key = keyring::Entry::new("Multiplike-AI", &request.account)
-        .map_err(|error| error.to_string())?
-        .get_password()
-        .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())?;
+    let api_key = read_key(&request.account)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()

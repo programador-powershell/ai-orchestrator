@@ -11,6 +11,8 @@
  * (ver docs/creditos-inspiracao.md). Módulo puro: sem DOM, sem rede.
  */
 
+import { aplicarRetornos } from "./ansi";
+
 /**
  * Papel da linha no scrollback. É o que decide a cor — não o conteúdo.
  *
@@ -71,9 +73,20 @@ export function line(kind: TermKind, text: string): TermLine {
  */
 export function splitOutput(raw: string, kind: TermKind): TermLine[] {
   if (!raw) return [];
-  const normalizado = raw.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  /*
+   * `\r` SOZINHO não é quebra de linha — é o cursor voltando ao início dela.
+   *
+   * O regex de antes era `/\r\n?/g`, que transformava os dois em `\n`. Só que
+   * `\r` solto é o que toda barra de progresso usa para reescrever a MESMA
+   * linha: virando quebra, um `npm install` ou um `docker pull` despejavam
+   * dezenas de linhas quase idênticas no scrollback, cada uma um estágio
+   * congelado da barra. `aplicarRetornos` resolve o retorno como o terminal
+   * resolve — sobrescrevendo a coluna — e o resultado é a linha FINAL, que é
+   * o que a pessoa esperava ver.
+   */
+  const normalizado = raw.replace(/\r\n/g, "\n").replace(/\n+$/, "");
   if (!normalizado) return [];
-  return normalizado.split("\n").map((text) => line(kind, text));
+  return normalizado.split("\n").map((text) => line(kind, aplicarRetornos(text)));
 }
 
 /** Rodapé de execução: verde quando passou, vermelho quando não. */

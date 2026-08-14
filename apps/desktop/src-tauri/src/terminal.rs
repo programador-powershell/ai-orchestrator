@@ -166,15 +166,49 @@ fn augmented_path() -> String {
         .into_owned()
 }
 
+/// Limite padrao de um comando avulso.
+const TIMEOUT_PADRAO_MS: u64 = 120_000;
+/// Piso: menos que isto e erro de quem chama, nao configuracao.
+const TIMEOUT_MIN_MS: u64 = 1_000;
+/// Teto: uma hora. Existe para um valor absurdo nao virar processo eterno.
+const TIMEOUT_MAX_MS: u64 = 3_600_000;
+
+/// Prazo efetivo, preso na faixa aceitavel.
+///
+/// Publico para o teste — a regra que importa (0 vira o piso, 10^9 vira o
+/// teto) some se ficar escondida dentro do comando.
+pub fn prazo_ms(pedido: Option<u64>) -> u64 {
+    pedido
+        .unwrap_or(TIMEOUT_PADRAO_MS)
+        .clamp(TIMEOUT_MIN_MS, TIMEOUT_MAX_MS)
+}
+
 #[tauri::command]
 pub async fn terminal_execute(
     command: String,
     cwd: Option<String>,
+    timeout_ms: Option<u64>,
 ) -> Result<TerminalResult, String> {
     let command = command.trim().to_owned();
     if command.is_empty() || command.len() > 8_192 {
         return Err("o comando deve ter entre 1 e 8.192 caracteres".into());
     }
+    /*
+     * O app NAO INSTALA. Regra da organizacao, verificada aqui.
+     *
+     * Este e um dos tres caminhos que o MODELO dirige (terminal_execute). O terminal
+     * interativo fica de fora de proposito: la quem digita sao as maos de
+     * quem opera, e essa pessoa responde pelo que faz — a mesma razao pela
+     * qual `pty_*` nunca entrou no registro de ferramentas do agente.
+     *
+     * O gate de aprovacao nao substitui esta checagem: quem clica "aprovar"
+     * raramente distingue `npm i -D vitest` de `npm i -g`, e a diferenca
+     * entre as duas e a maquina inteira.
+     */
+    if let Some(recusa) = crate::instalacao::tenta_instalar(&command) {
+        return Err(format!("{}: {}", recusa.codigo, recusa.motivo));
+    }
+
     if let Some(required) = runtime_for(&command) {
         let installed = definitions()
             .into_iter()
@@ -188,9 +222,33 @@ pub async fn terminal_execute(
     }
     let cwd = valid_cwd(cwd)?;
     let start = Instant::now();
-    let mut child = Command::new("cmd.exe");
+
+    /*
+     * Carga DOCKER vai pela microVM do `sbx`, quando ele existe.
+     *
+     * Construir imagem exige um daemon, e usar o daemon do host significa que
+     * o build alcanca a rede, o socket e as imagens do host — um `Dockerfile`
+     * com `RUN curl ... | sh` roda com o alcance do daemon, nao o do processo.
+     * O `sbx` da daemon, filesystem e rede proprios.
+     *
+     * Sem `sbx` instalado o comando roda como sempre rodou: a ausencia dele
+     * reduz a garantia, nao impede o build. Quem precisa saber qual garantia
+     * valeu pergunta em `sbx_status`.
+     *
+     * Fora do Docker nada muda — o isolamento dos demais comandos e o Job
+     * Object de `jail.rs`, que e o certo para eles.
+     */
+    let (programa, argumentos) = match crate::sbx::envolver(&command, cwd.to_str()) {
+        Some((caminho, args)) => (caminho, args),
+        None => (
+            "cmd.exe".to_string(),
+            vec!["/D".into(), "/S".into(), "/C".into(), command.clone()],
+        ),
+    };
+
+    let mut child = Command::new(&programa);
     child
-        .args(["/D", "/S", "/C", &command])
+        .args(&argumentos)
         .current_dir(cwd)
         .env("PATH", augmented_path())
         .stdin(Stdio::null())
@@ -198,9 +256,18 @@ pub async fn terminal_execute(
         .stderr(Stdio::piped());
     #[cfg(windows)]
     child.creation_flags(0x08000000);
-    let output = timeout(Duration::from_secs(120), child.output())
+    /*
+     * O prazo passou a ser de quem chama.
+     *
+     * 120s fixos matavam `docker build` de qualquer projeto real — e o erro
+     * chegava como "excedeu o limite", que faz a pessoa procurar defeito no
+     * Dockerfile em vez de no prazo. Continua havendo teto (uma hora) porque
+     * sem nenhum o comando travado vira processo eterno sem dono.
+     */
+    let prazo = prazo_ms(timeout_ms);
+    let output = timeout(Duration::from_millis(prazo), child.output())
         .await
-        .map_err(|_| "o comando excedeu o limite de 120 segundos".to_string())?
+        .map_err(|_| format!("o comando excedeu o limite de {} segundos", prazo / 1_000))?
         .map_err(|error| error.to_string())?;
     Ok(TerminalResult {
         command,
