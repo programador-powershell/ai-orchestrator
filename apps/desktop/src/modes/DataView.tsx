@@ -8,7 +8,7 @@
  * O input de chat é o Composer global; esta view só aplica as operações.
  */
 import "../styles/modes/data.css";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { create } from "zustand";
 import {
   Check,
@@ -16,10 +16,8 @@ import {
   Database,
   Download,
   GitCompare,
-  KeyRound,
   LayoutGrid,
   Link2,
-  Maximize,
   Plus,
   Redo2,
   Save,
@@ -30,9 +28,7 @@ import {
   Trash2,
   Undo2,
   Upload,
-  X,
-  ZoomIn,
-  ZoomOut
+  X
 } from "lucide-react";
 import type { SchemaField, SchemaRelation, SchemaTable } from "@ai-orchestrator/contracts";
 import {
@@ -50,6 +46,7 @@ import {
   VStatus
 } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
+import { ErdCanvas, type LigacaoResolvida } from "../components/data/ErdCanvas";
 import { opsBus } from "../lib/ops";
 import {
   applyOps,
@@ -59,27 +56,15 @@ import {
   diffSchemasDown,
   emptyDoc,
   exportSql,
-  hitTestField,
   importSql,
   indexName,
   parseDocJson,
   SQL_DIALECTS,
-  TABLE_GEOMETRY,
   type SchemaDocExt,
   type SchemaIndexDef
 } from "../lib/schema";
 import { renderErdSvg } from "../lib/erdSvg";
 import { useApp } from "../lib/store";
-
-/* Geometria dos cards — única fonte em schema.ts (casa com .datax-table no CSS). */
-const TABLE_W = TABLE_GEOMETRY.width;
-const HEADER_H = TABLE_GEOMETRY.headerHeight;
-const ROW_H = TABLE_GEOMETRY.rowHeight;
-const STAGE_W = 4000;
-const STAGE_H = 3000;
-
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 1.6;
 
 /** Persistência local real: diagrama e snapshot de migração. */
 const DOC_KEY = "data.schema.doc";
@@ -195,61 +180,12 @@ useDataStore.subscribe((state, previous) => {
   if (state.snapshot !== previous.snapshot && state.snapshot) persist(SNAPSHOT_KEY, state.snapshot);
 });
 
-/* ------------------------------ Relações (SVG) ----------------------------- */
-
-interface RelationShape {
-  id: string;
-  d: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  mx: number;
-  my: number;
-  cardinality: string;
-  hot: boolean;
-}
-
-function relationShapes(doc: SchemaDocExt, selectedName: string | null): RelationShape[] {
-  const shapes: RelationShape[] = [];
-  for (const relation of doc.relations) {
-    const from = doc.tables.find((t) => t.name === relation.fromTable);
-    const to = doc.tables.find((t) => t.name === relation.toTable);
-    if (!from || !to) continue;
-    const fromIndex = Math.max(0, from.fields.findIndex((f) => f.name === relation.fromField));
-    const toIndex = Math.max(0, to.fields.findIndex((f) => f.name === relation.toField));
-    const y1 = from.y + HEADER_H + fromIndex * ROW_H + ROW_H / 2;
-    const y2 = to.y + HEADER_H + toIndex * ROW_H + ROW_H / 2;
-    const leftToRight = from.x <= to.x;
-    const x1 = leftToRight ? from.x + TABLE_W : from.x;
-    const x2 = leftToRight ? to.x : to.x + TABLE_W;
-    const bend = Math.max(46, Math.abs(x2 - x1) * 0.45);
-    const c1 = leftToRight ? x1 + bend : x1 - bend;
-    const c2 = leftToRight ? x2 - bend : x2 + bend;
-    shapes.push({
-      id: relation.id,
-      d: `M ${x1} ${y1} C ${c1} ${y1} ${c2} ${y2} ${x2} ${y2}`,
-      x1,
-      y1,
-      x2,
-      y2,
-      mx: (x1 + 3 * c1 + 3 * c2 + x2) / 8,
-      my: (y1 + 3 * y1 + 3 * y2 + y2) / 8,
-      cardinality: relation.cardinality,
-      hot: selectedName === relation.fromTable || selectedName === relation.toTable
-    });
-  }
-  return shapes;
-}
-
-/** Bezier da linha fantasma — mesmo `bend` de relationShapes. */
-function ghostPath(drag: { x1: number; y1: number; x2: number; y2: number }): string {
-  const leftToRight = drag.x1 <= drag.x2;
-  const bend = Math.max(46, Math.abs(drag.x2 - drag.x1) * 0.45);
-  const c1 = leftToRight ? drag.x1 + bend : drag.x1 - bend;
-  const c2 = leftToRight ? drag.x2 - bend : drag.x2 + bend;
-  return `M ${drag.x1} ${drag.y1} C ${c1} ${drag.y1} ${c2} ${drag.y2} ${drag.x2} ${drag.y2}`;
-}
+/*
+ * As curvas das relações eram calculadas aqui, com a bezier escrita à mão.
+ * Agora quem as desenha é o canvas (`ErdCanvas`), a partir das alças de cada
+ * campo — e elas seguem a tabela sozinhas durante o arrasto, sem recalcular
+ * o documento inteiro a cada quadro.
+ */
 
 function relationLabel(relation: SchemaRelation): string {
   return `${relation.fromTable}.${relation.fromField} → ${relation.toTable}.${relation.toField}`;
@@ -395,6 +331,7 @@ export function DataView() {
   const doc = useDataStore((state) => state.doc);
   const snapshot = useDataStore((state) => state.snapshot);
   const selectedId = useDataStore((state) => state.selectedId);
+  const focusId = useDataStore((state) => state.focusId);
   const focusNonce = useDataStore((state) => state.focusNonce);
   const canUndo = useDataStore((state) => state.past.length > 0);
   const canRedo = useDataStore((state) => state.future.length > 0);
@@ -405,18 +342,10 @@ export function DataView() {
   const addTable = useDataStore((state) => state.addTable);
   const saveSnapshot = useDataStore((state) => state.saveSnapshot);
 
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [panning, setPanning] = useState(false);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
   const [modal, setModal] = useState<"export" | "import" | "migrate" | null>(null);
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
   const [copied, setCopied] = useState(false);
-
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
 
   /** Canal chat → superfície: o Composer publica, a view aplica (com histórico). */
   useEffect(
@@ -445,36 +374,7 @@ export function DataView() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** Foco pedido pelo rail: centraliza a tabela no viewport com pan animado. */
-  useEffect(() => {
-    if (!focusNonce) return;
-    const { focusId, doc: current } = useDataStore.getState();
-    const table = current.tables.find((t) => t.id === focusId);
-    const node = canvasRef.current;
-    if (!table || !node) return;
-    const scale = zoomRef.current;
-    const rect = node.getBoundingClientRect();
-    const height = HEADER_H + table.fields.length * ROW_H;
-    const x = rect.width / 2 - (table.x + TABLE_W / 2) * scale;
-    const y = rect.height / 2 - (table.y + height / 2) * scale;
-    setPan({
-      x: Math.round(Math.min(0, Math.max(rect.width - STAGE_W * scale, x))),
-      y: Math.round(Math.min(0, Math.max(rect.height - STAGE_H * scale, y)))
-    });
-  }, [focusNonce]);
-
-  const dragRef = useRef<{
-    id: string;
-    pointerId: number;
-    startX: number;
-    startY: number;
-    originX: number;
-    originY: number;
-    before: SchemaDocExt;
-  } | null>(null);
-
   const selected = doc.tables.find((table) => table.id === selectedId) ?? null;
-  const shapes = useMemo(() => relationShapes(doc, selected?.name ?? null), [doc, selected]);
   const sqlPreview = useMemo(() => (modal === "export" ? exportSql(doc, doc.dialect) : ""), [modal, doc]);
 
   /** Diff real snapshot → atual; alimenta o modal de migração e o status. */
@@ -610,148 +510,37 @@ export function DataView() {
     commitDoc((current) => autoLayout(current));
   }
 
-  /* --------------------------- Arrasto no canvas -------------------------- */
-
-  /** Pan por arrasto do fundo — resposta 1:1 (a classe .panning desliga a transição). */
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; baseX: number; baseY: number } | null>(null);
-  /** Arrasto de FK em andamento: origem fixa, ponta seguindo o ponteiro. */
-  const fkRef = useRef<{ pointerId: number; tableId: string; fieldIndex: number } | null>(null);
-  const [fkDrag, setFkDrag] = useState<{ x1: number; y1: number; x2: number; y2: number; target: string | null } | null>(
-    null
-  );
-
-  function clampPan(x: number, y: number, scale: number): { x: number; y: number } {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { x, y };
-    return {
-      x: Math.round(Math.min(0, Math.max(rect.width - STAGE_W * scale, x))),
-      y: Math.round(Math.min(0, Math.max(rect.height - STAGE_H * scale, y)))
-    };
-  }
-
-  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!doc.tables.length) return;
-    const target = event.target as HTMLElement;
-    if (target.closest(".datax-table") || target.closest("button") || target.closest(".canvas-controls")) return;
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // pointer já finalizado (toque rápido): o pan segue sem captura
-    }
-    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: pan.x, baseY: pan.y };
-    setPanning(true);
-  }
-
-  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
-    const drag = panRef.current;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    setPan(clampPan(drag.baseX + (event.clientX - drag.startX), drag.baseY + (event.clientY - drag.startY), zoomRef.current));
-  }
-
-  function endPan() {
-    panRef.current = null;
-    setPanning(false);
-  }
-
-  /* ------------------------- FK por arrasto ------------------------- */
-
-  /**
-   * Ponto do palco (sem pan/zoom) a partir do ponteiro. Mesma matemática do
-   * `clampPan`: o palco é transformado por translate+scale com origem 0 0.
+  /* ----------------------- Gestos na área de trabalho ---------------------- */
+  /*
+   * Zoom com a roda, arrasto do fundo, seleção múltipla e o traço da ligação
+   * são do React Flow — o mesmo motor da aba Fluxo. O que sobra aqui é a
+   * tradução do gesto para uma operação no documento do schema.
    */
-  function stagePoint(clientX: number, clientY: number): { x: number; y: number } | null {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return null;
-    return { x: (clientX - rect.left - pan.x) / zoom, y: (clientY - rect.top - pan.y) / zoom };
+
+  /** Ligou dois campos: vira FK, e a FK vira relação (uma entrada de undo). */
+  function ligar({ origem, campoOrigem, destino, campoDestino }: LigacaoResolvida) {
+    const alvo = destino.fields[campoDestino];
+    if (!alvo) return;
+    setFieldReference(origem, campoOrigem, `${destino.name}.${alvo.name}`);
   }
 
-  function startFkDrag(event: ReactPointerEvent<HTMLElement>, table: SchemaTable, index: number) {
-    // Sem stopPropagation o arrasto da tabela também começaria (o handler
-    // está na <article>, e o evento borbulha da porta).
-    event.stopPropagation();
-    event.preventDefault();
-    const point = stagePoint(event.clientX, event.clientY);
-    if (!point) return;
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // toque encerrado antes da captura: o arrasto simplesmente não começa
-    }
-    fkRef.current = { pointerId: event.pointerId, tableId: table.id, fieldIndex: index };
-    setFkDrag({ x1: table.x + TABLE_W, y1: table.y + HEADER_H + index * ROW_H + ROW_H / 2, x2: point.x, y2: point.y, target: null });
+  /** Apagou a aresta: a referência do campo de origem some junto. */
+  function desligar(relationId: string) {
+    const relation = doc.relations.find((item) => item.id === relationId);
+    if (!relation) return;
+    const origem = doc.tables.find((table) => table.name === relation.fromTable);
+    if (!origem) return;
+    const indice = origem.fields.findIndex((field) => field.name === relation.fromField);
+    if (indice < 0) return;
+    setFieldReference(origem, indice, "");
   }
 
-  function moveFkDrag(event: ReactPointerEvent<HTMLElement>) {
-    const drag = fkRef.current;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const point = stagePoint(event.clientX, event.clientY);
-    if (!point) return;
-    const hit = hitTestField(doc, point.x, point.y);
-    setFkDrag((current) =>
-      current
-        ? {
-            ...current,
-            x2: point.x,
-            y2: point.y,
-            target: hit && hit.table.id !== drag.tableId ? `${hit.table.name}.${hit.table.fields[hit.fieldIndex].name}` : null
-          }
-        : current
-    );
-  }
-
-  /** Soltou: se caiu num campo de OUTRA tabela, cria a FK (uma entrada de undo). */
-  function endFkDrag(event: ReactPointerEvent<HTMLElement>) {
-    const drag = fkRef.current;
-    fkRef.current = null;
-    setFkDrag(null);
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const point = stagePoint(event.clientX, event.clientY);
-    if (!point) return;
-    const hit = hitTestField(doc, point.x, point.y);
-    if (!hit || hit.table.id === drag.tableId) return; // auto-referência de tabela não vira FK aqui
-    const source = doc.tables.find((t) => t.id === drag.tableId);
-    const target = hit.table.fields[hit.fieldIndex];
-    if (!source || !target) return;
-    setFieldReference(source, drag.fieldIndex, `${hit.table.name}.${target.name}`);
-  }
-
-  function startDrag(event: ReactPointerEvent<HTMLElement>, table: SchemaTable) {
-    if ((event.target as HTMLElement).closest(".datax-port")) return; // é arrasto de FK
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId);
-    } catch {
-      // pointer já finalizado (toque rápido): o arrasto segue sem captura
-    }
-    dragRef.current = {
-      id: table.id,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: table.x,
-      originY: table.y,
-      before: useDataStore.getState().doc
-    };
-    select(table.id);
-    setDraggingId(table.id);
-  }
-
-  function moveDrag(event: ReactPointerEvent<HTMLElement>) {
-    const drag = dragRef.current;
-    if (!drag || event.pointerId !== drag.pointerId) return;
-    const x = Math.max(0, Math.round(drag.originX + (event.clientX - drag.startX) / zoom));
-    const y = Math.max(0, Math.round(drag.originY + (event.clientY - drag.startY) / zoom));
-    useDataStore.getState().moveTable(drag.id, x, y);
-  }
-
-  /** O arrasto inteiro vira UMA entrada de histórico (snapshot do início). */
-  function endDrag() {
-    const drag = dragRef.current;
-    dragRef.current = null;
-    setDraggingId(null);
-    if (!drag) return;
-    const table = useDataStore.getState().doc.tables.find((t) => t.id === drag.id);
-    if (!table || (table.x === drag.originX && table.y === drag.originY)) return;
-    useDataStore.getState().commitMove(drag.before);
+  /** O arrasto inteiro vira UMA entrada de histórico (o estado do começo). */
+  function mover(id: string, x: number, y: number, antes: SchemaDocExt) {
+    const atual = useDataStore.getState().doc.tables.find((table) => table.id === id);
+    if (!atual || (atual.x === x && atual.y === y)) return;
+    useDataStore.getState().moveTable(id, x, y);
+    useDataStore.getState().commitMove(antes);
   }
 
   /* ----------------------------- Export/Import ---------------------------- */
@@ -839,104 +628,38 @@ export function DataView() {
       <VBody>
         <VCenter>
           {sending && <FloatingPulse label={stage || "Processando"} detail="Aplicando operações do canal ops:data" />}
-          <div
-            className={`infinite-canvas ${panning ? "datax-grabbing" : ""}`}
-            ref={canvasRef}
-            onClick={() => select(null)}
-            onPointerDown={startPan}
-            onPointerMove={movePan}
-            onPointerUp={endPan}
-            onPointerCancel={endPan}
-          >
-            <div className="canvas-dots" />
+          <div className="infinite-canvas">
             {doc.tables.length ? (
-              <div
-                className={`datax-stage ${panning ? "panning" : ""}`}
-                style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
-              >
-                <svg className="datax-links" width={STAGE_W} height={STAGE_H} aria-hidden="true">
-                  {shapes.map((shape) => (
-                    <g key={shape.id} className={shape.hot ? "hot" : ""}>
-                      <path d={shape.d} pathLength={1} />
-                      <circle cx={shape.x1} cy={shape.y1} r={3} />
-                      <circle cx={shape.x2} cy={shape.y2} r={3} />
-                      <text x={shape.mx} y={shape.my - 6} textAnchor="middle">
-                        {shape.cardinality}
-                      </text>
-                    </g>
-                  ))}
-                  {fkDrag && (
-                    // Fantasma do arrasto — mesma curva das relações reais, para
-                    // o traço não "pular" quando a FK é criada.
-                    <g className={`datax-ghost ${fkDrag.target ? "on-target" : ""}`}>
-                      <path d={ghostPath(fkDrag)} />
-                      <circle cx={fkDrag.x2} cy={fkDrag.y2} r={4} />
-                    </g>
-                  )}
-                </svg>
-                {doc.tables.map((table) => (
-                  <article
-                    key={table.id}
-                    className={`datax-table ${table.id === selectedId ? "selected" : ""} ${table.id === draggingId ? "dragging" : ""}`}
-                    data-tone={table.tone}
-                    style={{ left: table.x, top: table.y }}
-                    onPointerDown={(event) => startDrag(event, table)}
-                    onPointerMove={moveDrag}
-                    onPointerUp={endDrag}
-                    onPointerCancel={endDrag}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      select(table.id);
-                    }}
-                  >
-                    <header>
-                      <Table2 size={11} />
-                      <strong>{table.name}</strong>
-                      <small>{table.fields.length}</small>
-                    </header>
-                    {table.fields.map((field, index) => (
-                      <div className={`datax-field ${field.primaryKey ? "pk" : ""}`} key={`${table.id}-${index}`}>
-                        <span>
-                          {field.primaryKey ? <KeyRound size={10} /> : field.references ? <Link2 size={10} /> : <i />}
-                          {field.name}
-                        </span>
-                        <small>{field.type}</small>
-                        <button
-                          type="button"
-                          className="datax-port"
-                          title={`Arraste até um campo de outra tabela para criar a FK de ${table.name}.${field.name}`}
-                          aria-label={`Criar chave estrangeira a partir de ${table.name}.${field.name}`}
-                          onPointerDown={(event) => startFkDrag(event, table, index)}
-                          onPointerMove={moveFkDrag}
-                          onPointerUp={endFkDrag}
-                          onPointerCancel={() => {
-                            fkRef.current = null;
-                            setFkDrag(null);
-                          }}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      </div>
-                    ))}
-                  </article>
-                ))}
-              </div>
+              <ErdCanvas
+                doc={doc}
+                selectedId={selectedId}
+                focusId={focusId}
+                focusNonce={focusNonce}
+                onSelect={select}
+                onConnect={ligar}
+                onDisconnect={desligar}
+                onMove={mover}
+                onDeleteTable={removeTable}
+              />
             ) : (
-              <EmptyHero
-                icon={<Database size={26} />}
-                kicker="MODELAGEM ASSISTIDA"
-                title="Comece pelo schema."
-                detail="Peça tabelas e relações no composer — o diagrama nasce das operações do chat e fica salvo localmente."
-              >
-                <PromptCards prompts={heroPrompts} onPrompt={(prompt) => useApp.getState().setInput(prompt)} />
-              </EmptyHero>
+              <>
+                <div className="canvas-dots" />
+                <EmptyHero
+                  icon={<Database size={26} />}
+                  kicker="MODELAGEM ASSISTIDA"
+                  title="Comece pelo schema."
+                  detail="Peça tabelas e relações no composer — o diagrama nasce das operações do chat e fica salvo localmente."
+                >
+                  <PromptCards prompts={heroPrompts} onPrompt={(prompt) => useApp.getState().setInput(prompt)} />
+                </EmptyHero>
+              </>
             )}
+            {/* Zoom, enquadrar e minimapa são do canvas, no canto de sempre.
+                Aqui ficam só as ações que são DESTA aba. */}
             <div className="canvas-controls datax-controls">
               <button
                 disabled={!canUndo}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  undo();
-                }}
+                onClick={undo}
                 aria-label="Desfazer (Ctrl+Z)"
                 title="Desfazer (Ctrl+Z)"
               >
@@ -944,10 +667,7 @@ export function DataView() {
               </button>
               <button
                 disabled={!canRedo}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  redo();
-                }}
+                onClick={redo}
                 aria-label="Refazer (Ctrl+Shift+Z)"
                 title="Refazer (Ctrl+Shift+Z)"
               >
@@ -955,65 +675,19 @@ export function DataView() {
               </button>
               <i />
               <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setZoom((value) => Math.max(ZOOM_MIN, Number((value - 0.1).toFixed(2))));
-                }}
-                aria-label="Reduzir zoom"
-              >
-                <ZoomOut size={14} />
-              </button>
-              <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setZoom((value) => Math.min(ZOOM_MAX, Number((value + 0.1).toFixed(2))));
-                }}
-                aria-label="Ampliar zoom"
-              >
-                <ZoomIn size={14} />
-              </button>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setZoom(1);
-                  setPan({ x: 0, y: 0 });
-                }}
-                aria-label="Restaurar zoom e visão"
-                title="Restaurar zoom e visão"
-              >
-                <Maximize size={14} />
-              </button>
-              <i />
-              <button
                 disabled={!doc.tables.length}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  runAutoLayout();
-                }}
+                onClick={runAutoLayout}
                 aria-label="Auto-layout por conexões"
                 title="Auto-layout por conexões"
               >
                 <LayoutGrid size={14} />
               </button>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  addTable();
-                }}
-                aria-label="Adicionar tabela"
-              >
+              <button onClick={addTable} aria-label="Adicionar tabela" title="Adicionar tabela">
                 <Plus size={14} />
               </button>
             </div>
             {doc.tables.length > 0 && (
-              <button
-                className="canvas-ask"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  askAgentForMigration();
-                }}
-              >
+              <button className="canvas-ask" onClick={askAgentForMigration}>
                 <Sparkles size={13} />
                 Pedir ao agente
               </button>
