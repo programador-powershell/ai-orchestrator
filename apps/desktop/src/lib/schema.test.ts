@@ -6,7 +6,6 @@ import {
   diffSchemasDown,
   emptyDoc,
   exportSql,
-  hitTestField,
   importSql,
   indexName,
   parseDocJson,
@@ -670,58 +669,3 @@ describe("importSql — SQL do mundo real", () => {
   });
 });
 
-describe("hitTestField", () => {
-  /** Duas tabelas com posição controlada — o hit-test é geometria pura. */
-  function placed(): SchemaDocExt {
-    const doc = demoDoc();
-    return {
-      ...doc,
-      tables: doc.tables.map((table, i) => ({ ...table, x: i * 400, y: 100 }))
-    };
-  }
-
-  const { width, headerHeight, rowHeight } = TABLE_GEOMETRY;
-
-  it("acerta a linha do campo sob o ponto", () => {
-    const doc = placed();
-    const users = doc.tables[0];
-    // meio da 3ª linha (índice 2)
-    const y = users.y + headerHeight + 2 * rowHeight + rowHeight / 2;
-    const hit = hitTestField(doc, users.x + width / 2, y);
-    expect(hit?.table.name).toBe("users");
-    expect(hit?.fieldIndex).toBe(2);
-  });
-
-  it("clique no cabeçalho cai no primeiro campo", () => {
-    const doc = placed();
-    const users = doc.tables[0];
-    const hit = hitTestField(doc, users.x + 10, users.y + headerHeight / 2);
-    expect(hit?.fieldIndex).toBe(0);
-  });
-
-  it("fora do card devolve null", () => {
-    const doc = placed();
-    const users = doc.tables[0];
-    expect(hitTestField(doc, users.x - 1, users.y + 40)).toBeNull();
-    expect(hitTestField(doc, users.x + width + 1, users.y + 40)).toBeNull();
-    expect(hitTestField(doc, users.x + 10, users.y - 1)).toBeNull();
-    expect(hitTestField(doc, users.x + 10, users.y + tableHeight(users) + 1)).toBeNull();
-  });
-
-  it("não estoura o índice na borda de baixo", () => {
-    const doc = placed();
-    const users = doc.tables[0];
-    const hit = hitTestField(doc, users.x + 10, users.y + tableHeight(users));
-    expect(hit?.fieldIndex).toBe(users.fields.length - 1);
-  });
-
-  it("cards sobrepostos: ganha o que é desenhado por cima (último)", () => {
-    const base = placed();
-    const doc: SchemaDocExt = {
-      ...base,
-      tables: base.tables.map((table) => ({ ...table, x: 0, y: 0 }))
-    };
-    const hit = hitTestField(doc, 10, headerHeight + rowHeight / 2);
-    expect(hit?.table.name).toBe(doc.tables[doc.tables.length - 1].name);
-  });
-});

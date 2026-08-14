@@ -118,34 +118,12 @@ export function tableHeight(table: SchemaTable): number {
   return TABLE_GEOMETRY.headerHeight + table.fields.length * TABLE_GEOMETRY.rowHeight;
 }
 
-export interface FieldHit {
-  table: SchemaTable;
-  fieldIndex: number;
-}
-
-/**
- * Qual campo está sob o ponto (em coordenadas do palco, já sem pan/zoom).
- * Usado pelo arrasto de FK: o drop precisa saber em que linha soltou.
- *
- * Puro de propósito — nada de `elementFromPoint`, para poder ser testado sem
- * DOM e para não depender de qual elemento está por cima no momento do drop.
- * Empate (cards sobrepostos) resolve pelo ÚLTIMO da lista, que é o que o
- * navegador desenha por cima.
+/*
+ * `hitTestField` vivia aqui: dizia qual campo estava sob o ponteiro, para o
+ * arrasto de FK saber onde a linha foi solta. Quem responde isso agora é o
+ * próprio canvas, pelas alças de cada campo — o alvo é um elemento, não uma
+ * conta de coordenada.
  */
-export function hitTestField(doc: SchemaDocExt, x: number, y: number): FieldHit | null {
-  for (let i = doc.tables.length - 1; i >= 0; i -= 1) {
-    const table = doc.tables[i];
-    if (x < table.x || x > table.x + TABLE_GEOMETRY.width) continue;
-    if (y < table.y || y > table.y + tableHeight(table)) continue;
-    // Acima do primeiro campo = cabeçalho: solta na primeira coluna, que é o
-    // alvo esperado (PK) quando o usuário mira o título da tabela.
-    const offset = y - table.y - TABLE_GEOMETRY.headerHeight;
-    const index = offset < 0 ? 0 : Math.floor(offset / TABLE_GEOMETRY.rowHeight);
-    if (!table.fields.length) return null;
-    return { table, fieldIndex: Math.min(index, table.fields.length - 1) };
-  }
-  return null;
-}
 
 const LAYOUT_GAP_X = 60;
 const LAYOUT_GAP_Y = 48;

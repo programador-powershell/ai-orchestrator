@@ -40,91 +40,48 @@
 }
 
 /* --------------------------------- Canvas -------------------------- */
+/*
+ * Zoom, pan, arrasto e o traço da ligação são do React Flow — a pele dele
+ * está em styles/canvas.css, compartilhada com a aba Fluxo. Aqui fica só o
+ * que é do ERD: o cartão da tabela, as alças dos campos e a relação acesa.
+ */
 
-/* Pan (centralizar via rail) e zoom animados como um só movimento líquido. */
-.datax-stage {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 4000px;
-  height: 3000px;
-  transform-origin: 0 0;
-  transition: transform var(--t-slow) var(--spring-soft);
-}
-/* Pan manual (arrasto do fundo): resposta 1:1, sem transição. */
-.datax-stage.panning {
-  transition: none;
-}
-.infinite-canvas.datax-grabbing {
-  cursor: grabbing;
-}
-
-.datax-links {
+.datax-host {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-}
-.datax-links path {
-  fill: none;
-  stroke: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
-  stroke-width: 1.6;
-  opacity: 0.8;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 0;
-  transition: opacity var(--t-fast) ease;
-  animation: datax-draw 0.8s var(--swift);
-}
-@keyframes datax-draw {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
-}
-.datax-links circle {
-  fill: var(--accent);
-  opacity: 0.85;
-}
-.datax-links text {
-  fill: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 9px;
-}
-.datax-links g.hot path {
-  stroke: var(--accent);
-  stroke-width: 2.2;
-  opacity: 1;
-  filter: drop-shadow(0 0 5px var(--accent-glow));
-}
-.datax-links g.hot circle {
-  opacity: 1;
 }
 
-/* Fantasma do arrasto de FK: tracejado enquanto não há alvo, sólido e
-   destacado quando a ponta está sobre um campo válido. */
-.datax-links g.datax-ghost path {
-  stroke: var(--muted);
-  stroke-dasharray: 5 4;
-  stroke-width: 1.6;
-  opacity: 0.75;
-  animation: none;
-}
-.datax-links g.datax-ghost circle {
-  fill: var(--muted);
-}
-.datax-links g.datax-ghost.on-target path {
+/* Relação acesa: a tabela selecionada acende as ligações que a tocam. */
+.datax-host .datax-e.hot .react-flow__edge-path {
   stroke: var(--accent);
-  stroke-dasharray: none;
   stroke-width: 2.2;
-  opacity: 1;
   filter: drop-shadow(0 0 5px var(--accent-glow));
 }
-.datax-links g.datax-ghost.on-target circle {
-  fill: var(--accent);
-}
 
-/* Card de tabela (drawdb-like) — hover lift + movimentos com transição
-   (auto-layout/undo deslizam; durante o arrasto a resposta é 1:1). */
+/* Alça de campo — invisível até o cartão pedir atenção, para vinte tabelas
+   não virarem uma parede de bolinhas. */
+.datax-host .datax-h {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--panel-solid);
+  background: var(--datax-tone, var(--accent));
+  opacity: 0;
+  transition: opacity var(--t-fast) ease, transform var(--t-fast) ease;
+}
+.datax-host .datax-table:hover .datax-h,
+.datax-host .datax-table.selected .datax-h,
+.datax-host .react-flow__node.dragging .datax-h,
+.datax-host .datax-h:hover {
+  opacity: 1;
+}
+.datax-host .datax-h:hover { transform: scale(1.4); }
+/* A alça da TABELA fica na altura do cabeçalho: é o atalho para ligar duas
+   tabelas sem escolher campo. */
+.datax-host .datax-h--tabela { top: 15px; }
+
+/* Card de tabela (drawdb-like) — hover lift; a posição é do canvas. */
 .datax-table {
   --datax-tone: var(--accent);
-  position: absolute;
   width: 190px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -132,24 +89,14 @@
   box-shadow: var(--shadow-soft);
   cursor: grab;
   user-select: none;
-  touch-action: none;
   animation: pop-in var(--t-base) var(--spring) both;
-  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease,
-    transform var(--t-fast) var(--spring), left var(--t-base) var(--swift), top var(--t-base) var(--swift);
+  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
 }
 .datax-table:hover {
-  transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--datax-tone) 45%, var(--line-strong));
   box-shadow: 0 14px 30px rgba(20, 36, 48, 0.16), inset 0 1px 0 var(--glass-inner);
 }
 .datax-table:active {
-  cursor: grabbing;
-}
-.datax-table.dragging {
-  transform: none;
-  transition: border-color var(--t-fast) ease, box-shadow var(--t-fast) ease;
-  box-shadow: var(--shadow-float);
-  z-index: 6;
   cursor: grabbing;
 }
 /* Seleção: anel de acento que pulsa ao selecionar e assenta como vidro. */
@@ -204,7 +151,6 @@
 }
 
 .datax-field {
-  position: relative; /* âncora da porta de FK */
   height: 22px;
   display: flex;
   align-items: center;
@@ -213,35 +159,6 @@
   padding: 0 9px;
   font-size: var(--fs-micro);
   color: var(--ink);
-}
-
-/* Porta de FK: alvo de arrasto na borda direita da linha do campo. Fica
-   discreta e só aparece no hover do card, para não poluir o diagrama. */
-.datax-port {
-  position: absolute;
-  right: -5px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 10px;
-  height: 10px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--datax-tone, var(--accent));
-  background: var(--surface);
-  opacity: 0;
-  cursor: crosshair;
-  touch-action: none; /* senão o navegador rola em vez de arrastar */
-  transition: opacity var(--t-fast) ease, transform var(--t-fast) ease;
-}
-.datax-table:hover .datax-port,
-.datax-table.selected .datax-port {
-  opacity: 0.75;
-}
-.datax-port:hover,
-.datax-port:focus-visible {
-  opacity: 1;
-  transform: translateY(-50%) scale(1.35);
-  background: var(--datax-tone, var(--accent));
 }
 .datax-field span {
   display: inline-flex;
