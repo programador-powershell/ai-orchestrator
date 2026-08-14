@@ -49,7 +49,7 @@ fn definitions() -> Vec<(&'static str, &'static str, &'static [&'static str])> {
 }
 
 fn managed_root() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|root| root.join("AI Orchestrator").join("Runtimes"))
+    dirs::data_local_dir().map(|root| root.join("Multiplike-AI").join("Runtimes"))
 }
 
 fn runtime_definition(
@@ -121,7 +121,7 @@ pub fn terminal_catalog() -> Vec<LanguageRuntime> {
                 commands: commands.iter().map(|command| (*command).into()).collect(),
                 installed,
                 source: if managed {
-                    "AI Orchestrator".into()
+                    "Multiplike-AI".into()
                 } else if installed {
                     "Sistema".into()
                 } else {
@@ -244,7 +244,7 @@ async fn install_runtime(runtime_id: &str) -> Result<(), String> {
     let component = runtime::release_component_by_id(&format!("language-{runtime_id}")).await?;
     let cache = dirs::data_local_dir()
         .ok_or("LOCALAPPDATA indisponível")?
-        .join("AI Orchestrator")
+        .join("Multiplike-AI")
         .join("Installer");
     tokio::fs::create_dir_all(&cache)
         .await

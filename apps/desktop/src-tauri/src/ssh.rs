@@ -159,6 +159,69 @@ pub fn build_args(target: &SshTarget, command: &str) -> Vec<String> {
     args
 }
 
+/// Argumentos do `ssh` para uma sessão INTERATIVA (PTY).
+///
+/// Difere de [`build_args`] em três pontos, e cada um tem motivo:
+///
+/// - **`-tt`** força alocação de TTY no remoto. Sem isso o shell remoto nasce
+///   sem terminal, `bash` não carrega perfil interativo e programa de tela
+///   (`vim`, `top`) simplesmente não funciona. O `-t` duplicado força mesmo
+///   quando a entrada local não é um tty — e aqui ela não é: é um pipe do PTY.
+/// - **Sem `BatchMode=yes`.** Em [`build_args`] ele existe para o comando
+///   falhar em vez de travar esperando alguém digitar numa janela que não
+///   existe. Aqui a janela EXISTE — é o terminal da aba — então travar
+///   esperando uma passphrase de chave é o comportamento certo. As duas
+///   recusas que importam continuam de pé: `PasswordAuthentication=no` e
+///   `KbdInteractiveAuthentication=no`, para senha nunca ser digitada aqui.
+/// - **Sem comando com `&&`.** `remote_payload` monta `cd X && cmd`; com
+///   comando vazio isso viraria `cd X && `, erro de sintaxe. Para a sessão
+///   interativa o payload é `cd X && exec $SHELL -l`: o `exec` substitui o
+///   processo, então sair do shell encerra a conexão em vez de deixar um
+///   processo pai pendurado.
+///
+/// Puro e testável, como `build_args` — é aqui que as garantias moram.
+pub fn build_interactive_args(target: &SshTarget) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-tt".into(),
+        "-o".into(),
+        "PasswordAuthentication=no".into(),
+        "-o".into(),
+        "KbdInteractiveAuthentication=no".into(),
+        "-o".into(),
+        // NUNCA `no`, pelo mesmo motivo de `build_args`.
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        format!("ConnectTimeout={CONNECT_TIMEOUT_SECS}"),
+        "-o".into(),
+        "ClearAllForwardings=yes".into(),
+        "-p".into(),
+        target.port.to_string(),
+    ];
+    if target.auth_method == "keyFile" {
+        if let Some(caminho) = target.key_path.as_deref() {
+            args.push("-i".into());
+            args.push(caminho.to_string());
+            args.push("-o".into());
+            args.push("IdentitiesOnly=yes".into());
+        }
+    }
+    args.push(format!("{}@{}", target.user, target.host));
+    if let Some(dir) = target
+        .remote_workdir
+        .as_deref()
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    {
+        // `${SHELL:-/bin/sh}`: conta sem SHELL definido não pode ficar sem
+        // shell nenhum. `-l` para o perfil de login carregar (PATH, nvm, etc.).
+        args.push(format!(
+            "cd {} && exec ${{SHELL:-/bin/sh}} -l",
+            quote_posix(dir)
+        ));
+    }
+    args
+}
+
 /// Extrai o fingerprint de uma linha do `ssh-keyscan`/`ssh-keygen -lf`.
 pub fn parse_fingerprint(saida: &str) -> Option<String> {
     saida
@@ -602,6 +665,80 @@ mod tests {
     #[test]
     fn alvo_bem_formado_passa() {
         assert!(validate_target(&alvo()).is_ok());
+    }
+
+    /* ---------------- Sessão interativa (PTY) ---------------- */
+
+    #[test]
+    fn interativo_forca_tty_no_remoto() {
+        // Sem `-tt` o shell remoto nasce sem terminal: perfil interativo não
+        // carrega e programa de tela não funciona. A entrada local é um pipe do
+        // PTY, então o `-t` simples não bastaria — daí o duplicado.
+        let args = build_interactive_args(&alvo());
+        assert_eq!(args.first().map(String::as_str), Some("-tt"));
+    }
+
+    #[test]
+    fn interativo_mantem_a_verificacao_de_host_key() {
+        let args = build_interactive_args(&alvo()).join(" ");
+        assert!(args.contains("StrictHostKeyChecking=accept-new"));
+        assert!(!args.contains("StrictHostKeyChecking=no"));
+    }
+
+    #[test]
+    fn interativo_continua_recusando_senha() {
+        // A janela existe (é o terminal da aba), então BatchMode sai para uma
+        // passphrase de CHAVE poder ser digitada. Senha de conta, nunca.
+        let args = build_interactive_args(&alvo()).join(" ");
+        assert!(args.contains("PasswordAuthentication=no"));
+        assert!(args.contains("KbdInteractiveAuthentication=no"));
+        assert!(!args.contains("BatchMode=yes"));
+    }
+
+    #[test]
+    fn interativo_nao_encaminha_porta() {
+        assert!(build_interactive_args(&alvo())
+            .join(" ")
+            .contains("ClearAllForwardings=yes"));
+    }
+
+    #[test]
+    fn interativo_entra_no_workdir_com_exec() {
+        // `exec` substitui o processo: sair do shell encerra a conexão em vez
+        // de deixar um pai pendurado.
+        let payload = build_interactive_args(&alvo()).last().cloned().unwrap();
+        assert_eq!(payload, "cd '/srv/app' && exec ${SHELL:-/bin/sh} -l");
+    }
+
+    #[test]
+    fn interativo_sem_workdir_nao_monta_cd_vazio() {
+        // `remote_payload` com comando vazio daria `cd X && `, erro de sintaxe.
+        // Sem workdir o certo é não mandar comando nenhum: shell de login.
+        let mut sem_dir = alvo();
+        sem_dir.remote_workdir = None;
+        let args = build_interactive_args(&sem_dir);
+        assert_eq!(args.last().map(String::as_str), Some("deploy@vps.multiplike.local"));
+        assert!(!args.iter().any(|a| a.contains("&&")));
+    }
+
+    #[test]
+    fn interativo_escapa_workdir_com_apostrofo() {
+        let mut hostil = alvo();
+        hostil.remote_workdir = Some("/srv/it's here".into());
+        let payload = build_interactive_args(&hostil).last().cloned().unwrap();
+        // Fecha, escapa e reabre — o apóstrofo não pode terminar a string e
+        // deixar o resto virar comando.
+        assert_eq!(payload, r"cd '/srv/it'\''s here' && exec ${SHELL:-/bin/sh} -l");
+    }
+
+    #[test]
+    fn interativo_com_chave_fixa_nao_deixa_o_agente_escolher_outra() {
+        let mut com_chave = alvo();
+        com_chave.auth_method = "keyFile".into();
+        com_chave.key_path = Some("/home/deploy/.ssh/id_ed25519".into());
+        let args = build_interactive_args(&com_chave).join(" ");
+        assert!(args.contains("-i /home/deploy/.ssh/id_ed25519"));
+        assert!(args.contains("IdentitiesOnly=yes"));
     }
 
     #[test]

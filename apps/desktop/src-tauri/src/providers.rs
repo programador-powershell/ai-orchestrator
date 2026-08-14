@@ -74,7 +74,7 @@ pub enum StreamEvent {
 }
 
 fn read_key(account: &str) -> Result<String, String> {
-    keyring::Entry::new("AI Orchestrator", account)
+    keyring::Entry::new("Multiplike-AI", account)
         .map_err(|error| error.to_string())?
         .get_password()
         .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())
@@ -445,7 +445,7 @@ pub async fn provider_fetch(request: ProviderFetchRequest) -> Result<Value, Stri
     if !path.starts_with('/') {
         return Err("path deve começar com /".into());
     }
-    let api_key = keyring::Entry::new("AI Orchestrator", &request.account)
+    let api_key = keyring::Entry::new("Multiplike-AI", &request.account)
         .map_err(|error| error.to_string())?
         .get_password()
         .map_err(|_| "chave do provedor não encontrada no cofre do sistema".to_string())?;

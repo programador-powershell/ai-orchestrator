@@ -21,7 +21,7 @@ use crate::research::guard_public_host;
 use serde::Serialize;
 use std::time::Duration;
 
-const KEYRING_SERVICE: &str = "AI Orchestrator";
+const KEYRING_SERVICE: &str = "Multiplike-AI";
 /// Espaço próprio no cofre — longe das chaves de provedor e dos webhooks.
 const SECRET_PREFIX: &str = "mcp.";
 const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -83,7 +83,7 @@ pub async fn mcp_rpc(name: String, url: String, body: String) -> Result<McpOutco
         .post(target)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .header("User-Agent", "AI Orchestrator MCP/1.0")
+        .header("User-Agent", "Multiplike-AI MCP/1.0")
         .body(body);
     if let Some(valor) = token {
         request = request.bearer_auth(valor);

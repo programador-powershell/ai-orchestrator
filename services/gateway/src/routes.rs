@@ -295,7 +295,11 @@ pub async fn orchestration_validate(
     Ok(Json(plan))
 }
 
-fn plan_orchestration(graph: &OrchestrationGraph) -> Result<OrchestrationPlan, String> {
+/// `pub(crate)` porque o run durável CONGELA o plano no momento da criação
+/// (ver migration 0009): o mesmo validador da rota tem de valer ali.
+pub(crate) fn plan_orchestration(
+    graph: &OrchestrationGraph,
+) -> Result<OrchestrationPlan, String> {
     if graph.schema_version != 1 {
         return Err("unsupported orchestration schemaVersion".into());
     }
@@ -952,7 +956,7 @@ async fn fetch_public_text(source: &str) -> Result<(reqwest::Url, String), ApiEr
             .get(current.clone())
             .header(
                 reqwest::header::USER_AGENT,
-                "AI-Orchestrator-Design-Capture/0.1",
+                "Multiplike-AI-Design-Capture/0.1",
             )
             .send()
             .await

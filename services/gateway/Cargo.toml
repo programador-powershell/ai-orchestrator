@@ -1,12 +1,14 @@
 [package]
-name = "ai-orchestrator-gateway"
+name = "multiplike-ai-gateway"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10"
 anyhow = "1"
-axum = { version = "0.8", features = ["macros", "multipart"] }
+# `ws`: canal bidirecional do harness (src/ws.rs). Feature do axum que já está
+# na árvore — não acrescenta crate de terceiro.
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"

@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$certificatePath = Join-Path $env:RUNNER_TEMP 'ai-orchestrator-signing.pfx'
+$certificatePath = Join-Path $env:RUNNER_TEMP 'multiplike-ai-signing.pfx'
 [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($CertificateBase64))
 try {
   $signTool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Filter signtool.exe -Recurse |

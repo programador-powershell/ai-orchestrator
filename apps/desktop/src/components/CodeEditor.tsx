@@ -3,9 +3,14 @@
  * superfície. A view é recriada quando o arquivo muda (fileName); mudanças
  * externas de valor são aplicadas via dispatch para não recriar o histórico do
  * documento ativo. Suporta sugestão inline (texto fantasma) aceita com Tab.
+ *
+ * As cores de sintaxe vêm de `codeSyntaxTheme` (lib/cmTheme.ts), em tokens do
+ * tema — antes o editor herdava o `defaultHighlightStyle` do CodeMirror, feito
+ * para fundo claro e ilegível no tema escuro.
  */
 import { useEffect, useRef, type MutableRefObject } from "react";
 import { basicSetup, EditorView } from "codemirror";
+import { codeSyntaxTheme } from "../lib/cmTheme";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
@@ -100,13 +105,17 @@ function languageFor(fileName: string) {
   }
 }
 
-/** Tema mínimo: fundo transparente (herda o glass), seleção no acento da aba. */
+/**
+ * Cromo do editor em tokens do terminal — fundo transparente (herda
+ * `.codex-editor`), texto e medianiz na ramp cinza, e o acento da aba só no
+ * que é interação (caret, seleção, colchete casado).
+ */
 const glassTheme = EditorView.theme({
   "&": {
     position: "relative",
     height: "100%",
     backgroundColor: "transparent",
-    color: "var(--ink)",
+    color: "var(--term-fg)",
     fontSize: "var(--fs-small)"
   },
   ".cm-inline-ghost": {
@@ -116,7 +125,7 @@ const glassTheme = EditorView.theme({
     pointerEvents: "none",
     userSelect: "none",
     whiteSpace: "pre",
-    color: "var(--faint)",
+    color: "var(--term-gray-dim)",
     fontFamily: "var(--font-mono)",
     fontSize: "var(--fs-small)",
     lineHeight: "1.7"
@@ -127,18 +136,45 @@ const glassTheme = EditorView.theme({
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--accent)" },
   ".cm-gutters": {
     backgroundColor: "transparent",
-    color: "var(--faint)",
+    color: "var(--term-gray-dim)",
     border: "none",
     fontSize: "var(--fs-micro)"
   },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 5%, transparent)" },
-  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--accent-strong)" },
-  ".cm-selectionBackground": { backgroundColor: "var(--accent-soft)" },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "var(--term-bg-highlight)",
+    border: "none",
+    color: "var(--term-gray)"
+  },
+  ".cm-activeLine": { backgroundColor: "var(--term-bg-highlight)" },
+  ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--term-fg-dim)" },
+  ".cm-selectionBackground": { backgroundColor: "var(--term-bg-visual)" },
   "&.cm-focused .cm-selectionBackground": { backgroundColor: "var(--accent-soft)" },
-  ".cm-selectionMatch": { backgroundColor: "var(--accent-soft)" },
+  ".cm-selectionMatch": { backgroundColor: "var(--term-bg-hover)" },
   ".cm-matchingBracket, &.cm-focused .cm-matchingBracket": {
     backgroundColor: "var(--accent-soft)",
-    outline: "none"
+    outline: "1px solid var(--term-selection-border)"
+  },
+  /* Painel de busca do basicSetup: nascia com o cinza de fábrica do CodeMirror. */
+  ".cm-panels": {
+    backgroundColor: "var(--term-bg-dark)",
+    color: "var(--term-fg)",
+    borderColor: "var(--term-selection-border)"
+  },
+  ".cm-panels input, .cm-panels button": {
+    backgroundColor: "var(--term-bg)",
+    color: "var(--term-fg)",
+    border: "1px solid var(--term-prompt-border)",
+    borderRadius: "var(--radius-xs)"
+  },
+  ".cm-tooltip": {
+    backgroundColor: "var(--term-bg-dark)",
+    color: "var(--term-fg)",
+    border: "1px solid var(--term-selection-border)",
+    borderRadius: "var(--radius-xs)"
+  },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": {
+    backgroundColor: "var(--accent-soft)",
+    color: "var(--term-fg)"
   }
 });
 
@@ -274,6 +310,9 @@ export function CodeEditor({
       extensions: [
         basicSetup,
         languageFor(fileName),
+        // Depois do basicSetup de propósito: o estilo padrão dele é `fallback`,
+        // então este tem precedência sem precisar desmontar o setup.
+        codeSyntaxTheme,
         glassTheme,
         EditorView.lineWrapping,
         EditorView.editable.of(!readOnly),

@@ -27,7 +27,7 @@
  * Módulo puro: sem rede, sem DOM. Coberto por plugins.test.ts.
  */
 
-import type { UiMode } from "@ai-orchestrator/contracts";
+import type { UiMode } from "@multiplike/contracts";
 
 export type PluginScope = "global" | "user";
 

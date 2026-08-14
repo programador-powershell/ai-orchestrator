@@ -1,4 +1,4 @@
-# Benchmark funcional — AI Orchestrator V2 vs líderes de mercado
+# Benchmark funcional — Multiplike-AI vs líderes de mercado
 
 Data: 2026-08-10 · Método: **nenhuma vitória sem evidência executável.** Cada "ganha/empata"
 aponta para código e teste real; o que o líder faz melhor está declarado em "Lacunas".
@@ -7,7 +7,7 @@ rotula isso explicitamente em vez de fingir.
 
 ## Evidência global
 
-- **237 testes vitest verdes** em 14 arquivos (`corepack pnpm --filter @ai-orchestrator/desktop test`).
+- **237 testes vitest verdes** em 14 arquivos (`corepack pnpm --filter @multiplike/desktop test`).
 - **E2E real com rede**: `src/lib/osv.e2e.test.ts` parseia o `pnpm-lock.yaml` real deste repo
   e consulta a API OSV.dev ao vivo (controle lodash@4.17.15 → advisories GHSA reais com resumo,
   CVSS e versão corrigida). Gate por `OSV_E2E=1`.

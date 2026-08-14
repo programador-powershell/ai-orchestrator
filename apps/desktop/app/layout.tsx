@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "../src/styles.css";
 
 export const metadata: Metadata = {
-  title: "AI Orchestrator"
+  title: "Multiplike-AI"
 };
 
 export const viewport: Viewport = {

@@ -10,7 +10,7 @@ import {
   type ResearchReport,
   type RuntimeStatus,
   type UiMode
-} from "@ai-orchestrator/contracts";
+} from "@multiplike/contracts";
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";
 import type { ApprovalPolicy } from "./approval";

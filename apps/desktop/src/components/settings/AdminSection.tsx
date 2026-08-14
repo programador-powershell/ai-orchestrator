@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CircleCheck, LoaderCircle, ShieldCheck, Trash2, UsersRound } from "lucide-react";
-import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
+import { UI_MODES, type UiMode } from "@multiplike/contracts";
 import { useApp } from "../../lib/store";
 import { UsageReport } from "./UsageReport";
 import { AgentAuditLog } from "./AgentAuditLog";

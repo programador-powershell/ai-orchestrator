@@ -44,7 +44,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FsEntry } from "@ai-orchestrator/contracts";
+import type { FsEntry } from "@multiplike/contracts";
 import { opsBus, type StructuredOp } from "../lib/ops";
 import { isTauriFs } from "../lib/fsx";
 import {

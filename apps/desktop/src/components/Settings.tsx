@@ -25,7 +25,7 @@ import {
   type RuntimeStatus,
   type UiMode,
   type WorkspaceSummary
-} from "@ai-orchestrator/contracts";
+} from "@multiplike/contracts";
 import {
   Bot,
   Brain,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UiMode } from "@ai-orchestrator/contracts";
+import type { UiMode } from "@multiplike/contracts";
 import {
   addProject,
   assignProject,

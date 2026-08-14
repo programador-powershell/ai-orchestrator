@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AI Orchestrator Setup",
+  "productName": "Multiplike-AI Setup",
   "version": "0.1.0",
-  "identifier": "com.aiorchestrator.bootstrapper",
+  "identifier": "com.multiplike.bootstrapper",
   "build": {
     "beforeDevCommand": "corepack pnpm dev",
     "devUrl": "http://localhost:1421",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [{
       "label": "main",
-      "title": "Instalar AI Orchestrator",
+      "title": "Instalar Multiplike-AI",
       "width": 760,
       "height": 570,
       "minWidth": 720,

@@ -49,7 +49,7 @@ const DENIED_ROOTS = [
   /[\\/]\.ssh([\\/]|$)/i,
   /[\\/]\.aws([\\/]|$)/i,
   /[\\/]\.gnupg([\\/]|$)/i,
-  /[\\/]AppData[\\/](Roaming|Local)[\\/]AI Orchestrator([\\/]|$)/i,
+  /[\\/]AppData[\\/](Roaming|Local)[\\/]Multiplike-AI([\\/]|$)/i,
   /^[A-Z]:[\\/]Windows([\\/]|$)/i,
   /^[A-Z]:[\\/]Program Files/i,
   /^\/(etc|bin|sbin|usr\/bin|boot|sys|proc)([\\/]|$)/i

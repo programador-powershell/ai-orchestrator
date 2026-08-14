@@ -40,7 +40,7 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import type { FsEntry, OrchestrationGraph } from "@ai-orchestrator/contracts";
+import type { FsEntry, OrchestrationGraph } from "@multiplike/contracts";
 import {
   CodeEditor,
   type CodeEditorApi,
@@ -49,6 +49,7 @@ import {
 } from "../components/CodeEditor";
 import { FloatingPulse, Surface, TopbarActions, VBody, VCenter, VStatus } from "../components/Primitives";
 import { RailConversations } from "../components/RailConversations";
+import { Terminal } from "../components/Terminal";
 import { computeDiff, diffStats, toHunks, type DiffLine } from "../lib/diff";
 import { applySelectedHunks, splitIntoHunks, type Hunk } from "../lib/hunks";
 import { suggestIdentifier } from "../lib/inlineSuggest";
@@ -69,6 +70,8 @@ import { validateOrchestration } from "../lib/gateway";
 import { parseMarkdown, type BlockToken } from "../lib/markdown";
 import { useApp } from "../lib/store";
 import { terminal } from "../lib/terminal";
+import { emptyHistory, recallNext, recallPrev, remember } from "../lib/termHistory";
+import { exitLine, line, pushLines, splitOutput, type TermLine } from "../lib/termLog";
 
 const isTauriHost = isTauriFs;
 const ROOT_STORAGE_KEY = "code.root";
@@ -125,12 +128,12 @@ const HUNK_HEAD: CSSProperties = {
   alignItems: "center",
   gap: 8,
   padding: "6px 10px",
-  background: "var(--panel-2)",
-  borderBottom: "1px solid var(--line)",
-  color: "var(--muted)",
+  background: "var(--term-bg-dark)",
+  borderBottom: "1px solid var(--term-selection-border)",
+  color: "var(--term-gray)",
   cursor: "pointer"
 };
-const HUNK_HEAD_ON: CSSProperties = { background: "var(--hover)", color: "var(--ink)" };
+const HUNK_HEAD_ON: CSSProperties = { background: "var(--term-bg-highlight)", color: "var(--term-fg)" };
 const HUNK_CHECK: CSSProperties = { accentColor: "var(--accent)", cursor: "pointer" };
 const HUNK_HEADER_TEXT: CSSProperties = { flex: 1, minWidth: 0, fontSize: "var(--fs-micro)" };
 const HUNK_COUNTER: CSSProperties = { marginRight: "auto" };
@@ -750,12 +753,32 @@ export function CodeView() {
 
   /* ------------------------------ Terminal ------------------------- */
   const [command, setCommand] = useState("");
-  const [termLines, setTermLines] = useState<string[]>([
-    isTauriHost
-      ? "composer cli — comandos executam na raiz do projeto · Ctrl+P abre arquivos"
-      : "modo demonstração — comandos reais no app desktop"
+  const [termLines, setTermLines] = useState<TermLine[]>([
+    line(
+      "note",
+      isTauriHost
+        ? 'composer cli — comandos rodam na raiz do projeto · "help" lista o que existe aqui'
+        : 'modo demonstração — comandos reais no app desktop · "help" lista o que existe aqui'
+    )
   ]);
   const [termBusy, setTermBusy] = useState(false);
+  /** Histórico do prompt (↑/↓) — imutável, para o React comparar por referência. */
+  const [history, setHistory] = useState(emptyHistory);
+  /** Foco do prompt: o bloco do caret não pode piscar em terminal sem foco. */
+  const [promptFocus, setPromptFocus] = useState(false);
+  /**
+   * Qual painel do terminal está à vista.
+   *
+   * Nasce em "shell": quem abre um terminal espera um terminal. O assistido
+   * continua a um clique, porque falar com o agente pelo prompt e o gate de
+   * código colado são recursos, não rascunho.
+   */
+  const [abaTerm, setAbaTerm] = useState<"shell" | "assistido">("shell");
+
+  /** Empilha respeitando o teto do scrollback. */
+  const append = useCallback((incoming: TermLine[]) => {
+    setTermLines((current) => pushLines(current, incoming));
+  }, []);
   /** Último bloco de código vindo da IA — `run` executa com detecção ultra. */
   const [lastAiCode, setLastAiCode] = useState<{ code: string; hint: string } | null>(null);
   /**
@@ -777,21 +800,23 @@ export function CodeView() {
   async function runDetectedSource(source: string, hintedLanguage?: string) {
     const detected = detectLanguage(hintedLanguage ? `x.${hintedLanguage}` : source) ?? detectLanguage(source);
     if (!detected) {
-      setTermLines((lines) => [...lines, "ultra: não reconheci a linguagem — cole código ou informe um arquivo."]);
+      append([line("error", "ultra: não reconheci a linguagem — cole código ou informe um arquivo.")]);
       return;
     }
     if (!detected.run) {
-      setTermLines((lines) => [
-        ...lines,
-        `ultra: ${detected.language} detectado (${detected.via}) — sem runner direto; use a aba Data para SQL.`
+      append([
+        line(
+          "note",
+          `ultra: ${detected.language} detectado (${detected.via}) — sem runner direto; use a aba Data para SQL.`
+        )
       ]);
       return;
     }
     const tempFile = `.ultra_tmp.${detected.extension}`;
     const command = detected.run(tempFile);
-    setTermLines((lines) => [...lines, `↳ ultra: ${detected.language} (${detected.via}) → ${command}`]);
+    append([line("tool", `↳ ultra: ${detected.language} (${detected.via}) → ${command}`)]);
     if (!isTauriHost) {
-      setTermLines((lines) => [...lines, "modo demonstração — a execução real acontece no app desktop."]);
+      append([line("note", "modo demonstração — a execução real acontece no app desktop.")]);
       return;
     }
     setTermBusy(true);
@@ -799,10 +824,15 @@ export function CodeView() {
       const currentRoot = useCode.getState().root;
       await fsWrite(currentRoot, tempFile, source);
       const result = await terminal.execute(command, currentRoot === "." ? undefined : currentRoot);
-      const output = [result.stdout, result.stderr].filter(Boolean).join("");
-      setTermLines((lines) => [...lines, output || "(sem saída)", `[exit ${result.exitCode ?? "n/a"} · ${result.durationMs} ms]`, ""]);
+      append([
+        ...splitOutput(result.stdout, "output"),
+        ...splitOutput(result.stderr, "stderr"),
+        ...(result.stdout || result.stderr ? [] : [line("meta", "(sem saída)")]),
+        exitLine(result.exitCode, result.durationMs),
+        line("output", "")
+      ]);
     } catch (cause) {
-      setTermLines((lines) => [...lines, cause instanceof Error ? cause.message : String(cause)]);
+      append([line("error", cause instanceof Error ? cause.message : String(cause))]);
     } finally {
       /*
        * O temporário sai do projeto.
@@ -820,6 +850,28 @@ export function CodeView() {
   async function runCommandText(raw: string) {
     const cmd = raw.trim();
     if (!cmd || termBusy) return;
+
+    // `clear` / `help` são do PROMPT, não do shell: mandar "clear" para o
+    // cmd.exe limpava um console que ninguém vê e devolvia scrollback intacto.
+    if (/^(clear|cls)$/i.test(cmd)) {
+      setTermLines([]);
+      return;
+    }
+    if (/^(help|\?)$/i.test(cmd)) {
+      append([
+        line("command", `$ ${cmd}`),
+        line("note", "embutidos deste prompt:"),
+        line("tool", "  ai <pergunta>   pergunta ao motor da aba; o código da resposta fica pronto para `run`"),
+        line("tool", "  run             executa o último código colado ou vindo da IA (detecta a linguagem)"),
+        line("tool", "  <arquivo>       main.py, script.ps1 … rodam com o runtime da extensão"),
+        line("tool", "  clear · cls     limpa o scrollback     ↑ ↓ percorrem o histórico"),
+        line("tool", "  help · ?        esta lista             Ctrl+L limpa · Ctrl+C descarta a linha"),
+        line("note", "qualquer outra coisa vai para o shell, na raiz do projeto."),
+        line("output", "")
+      ]);
+      return;
+    }
+
     // `ai <pergunta>` — CLI agêntico nativo (estilo opencode): a pergunta vai
     // ao motor da aba; a resposta é espelhada e blocos de código ficam
     // prontos para `run` (execução com detecção ultra de linguagem).
@@ -827,10 +879,13 @@ export function CodeView() {
       const question = cmd.replace(/^ai\s+/i, "");
       // Evita inscrição dupla no store (sairia duplicado) enquanto o agente responde.
       if (useApp.getState().threads.code.sending) {
-        setTermLines((lines) => [...lines, `$ ${cmd}`, "o agente ainda está respondendo — aguarde a resposta anterior."]);
+        append([
+          line("command", `$ ${cmd}`),
+          line("error", "o agente ainda está respondendo — aguarde a resposta anterior.")
+        ]);
         return;
       }
-      setTermLines((lines) => [...lines, `$ ${cmd}`, `→ agente (${engineLabel})…`]);
+      append([line("command", `$ ${cmd}`), line("tool", `→ agente (${engineLabel})…`)]);
       const unsubscribe = useApp.subscribe((state, previous) => {
         if (previous.threads.code.sending && !state.threads.code.sending) {
           const last = state.threads.code.messages.at(-1);
@@ -841,14 +896,13 @@ export function CodeView() {
             const chosen = codeBlocks.at(-1);
             if (chosen?.text.trim()) {
               setLastAiCode({ code: chosen.text, hint: chosen.language });
-              setTermLines((lines) => [
-                ...lines,
-                last.content,
-                `↳ bloco de código recebido — digite "run" para executar com detecção automática.`,
-                ""
+              append([
+                ...splitOutput(last.content, "agent"),
+                line("tool", '↳ bloco de código recebido — digite "run" para executar com detecção automática.'),
+                line("output", "")
               ]);
             } else {
-              setTermLines((lines) => [...lines, last.content, ""]);
+              append([...splitOutput(last.content, "agent"), line("output", "")]);
             }
           }
           unsubscribe();
@@ -860,14 +914,11 @@ export function CodeView() {
 
     // `run` — executa o código colado ou o último bloco vindo da IA.
     if (/^run$/i.test(cmd)) {
-      setTermLines((lines) => [...lines, `$ ${cmd}`]);
+      append([line("command", `$ ${cmd}`)]);
       // Colado tem prioridade: é o mais recente e foi a pessoa quem trouxe.
       const alvo = pastedCode ?? lastAiCode;
       if (!alvo) {
-        setTermLines((lines) => [
-          ...lines,
-          'nada para executar — cole um código ou peça um com "ai <pergunta>".'
-        ]);
+        append([line("error", 'nada para executar — cole um código ou peça um com "ai <pergunta>".')]);
         return;
       }
       setPastedCode(null);
@@ -880,41 +931,79 @@ export function CodeView() {
       const detected = detectByFileName(cmd.replace(/^["']|["']$/g, ""));
       if (detected?.run) {
         const command = detected.run(cmd.replace(/^["']|["']$/g, ""));
-        setTermLines((lines) => [...lines, `↳ ultra: ${detected.language} (extensão) → executando`]);
+        append([line("tool", `↳ ultra: ${detected.language} (extensão) → executando`)]);
         await runCommandText(command);
         return;
       }
     }
     setTermBusy(true);
-    setTermLines((lines) => [...lines, `$ ${cmd}`]);
+    append([line("command", `$ ${cmd}`)]);
     try {
       if (isTauriHost) {
         const currentRoot = useCode.getState().root;
         const result = await terminal.execute(cmd, currentRoot === "." ? undefined : currentRoot);
-        const output = [result.stdout, result.stderr].filter(Boolean).join("");
-        const missing = result.runtimeRequired
-          ? `Runtime "${result.runtimeRequired}" não instalado — instale em Configurações.\n`
-          : "";
-        setTermLines((lines) => [
-          ...lines,
-          `${output}${missing}[exit ${result.exitCode ?? "n/a"} · ${result.durationMs} ms]`
+        append([
+          ...splitOutput(result.stdout, "output"),
+          ...splitOutput(result.stderr, "stderr"),
+          ...(result.runtimeRequired
+            ? [line("error", `Runtime "${result.runtimeRequired}" não instalado — instale em Configurações.`)]
+            : []),
+          exitLine(result.exitCode, result.durationMs)
         ]);
       } else {
         await new Promise((resolve) => window.setTimeout(resolve, 260));
-        setTermLines((lines) => [...lines, `modo demonstração — "${cmd}" executa no app desktop.`]);
+        append([line("note", `modo demonstração — "${cmd}" executa no app desktop.`)]);
       }
     } catch (cause) {
-      setTermLines((lines) => [...lines, cause instanceof Error ? cause.message : String(cause)]);
+      append([line("error", cause instanceof Error ? cause.message : String(cause))]);
     } finally {
       setTermBusy(false);
     }
   }
 
   function onPromptKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    // ↑/↓ percorrem o histórico; `value: null` = nada a recuperar, e nesse caso
+    // o que está digitado fica intacto (o ↑ não pode apagar a linha).
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      const { history: next, value } = recallPrev(history);
+      setHistory(next);
+      if (value !== null) setCommand(value);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      const { history: next, value } = recallNext(history);
+      setHistory(next);
+      if (value !== null) setCommand(value);
+      return;
+    }
+    // Ctrl+C descarta a linha e ecoa `^C`, como num shell. Ele NÃO interrompe
+    // comando em execução: `terminal_execute` é uma chamada única sem
+    // cancelamento, e um atalho que promete matar o processo sem matá-lo é
+    // pior que atalho nenhum. Enquanto roda, o campo está desabilitado.
+    if (event.ctrlKey && event.key.toLowerCase() === "c" && command) {
+      event.preventDefault();
+      append([line("command", `$ ${command}`), line("meta", "^C")]);
+      setCommand("");
+      setHistory((current) => ({ ...current, cursor: current.entries.length }));
+      return;
+    }
+    if (event.ctrlKey && event.key.toLowerCase() === "l") {
+      event.preventDefault();
+      setTermLines([]);
+      return;
+    }
     if (event.key !== "Enter") return;
     event.preventDefault();
     const cmd = command;
     setCommand("");
+    // O histórico grava o que a PESSOA digitou, e é registrado aqui — não
+    // dentro de `runCommandText`. Ela chama a si mesma para o atalho de
+    // arquivo executável (`main.py` → `python main.py`), e gravar lá punha as
+    // duas linhas no histórico: o ↑ devolvia `python main.py`, que ninguém
+    // escreveu, antes do `main.py` que foi escrito.
+    setHistory((current) => remember(current, cmd));
     void runCommandText(cmd);
   }
 
@@ -989,7 +1078,7 @@ export function CodeView() {
       : undefined;
 
   /* ------------------------------- Render --------------------------- */
-  const rootLabel = root === "." ? "ai-orchestrator" : root.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? root;
+  const rootLabel = root === "." ? "multiplike-ai" : root.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? root;
   const diffChanges = diffView ? diffStats(diffView.lines) : null;
   const diffHasChanges = !!diffChanges && diffChanges.added + diffChanges.removed > 0;
   const patch = diffView?.patch;
@@ -1209,31 +1298,65 @@ export function CodeView() {
             </div>
           )}
 
-          <div
-            className={`glass-terminal codex-term ${active ? "dock" : "full"}`}
-            onClick={() => promptRef.current?.focus()}
-          >
+          {/*
+            DUAS coisas moram neste painel, e elas não são a mesma.
+
+            "Shell" é o terminal de verdade: xterm.js sobre o PTY, com grade,
+            cursor e sequências de escape — é onde `vim`, `htop` e um build
+            colorido funcionam. É o padrão, porque é o que se espera de um
+            terminal.
+
+            "Assistido" é o prompt que já existia: `ai <pergunta>` fala com o
+            agente, código colado é reconhecido e ARMADO em vez de executado,
+            `run` dispara. Não é terminal, é um lançador com IA — e apagá-lo
+            para pôr o shell no lugar teria jogado fora recurso que funciona.
+          */}
+          <div className={`codex-term ${active ? "dock" : "full"} ${abaTerm === "shell" ? "is-shell" : ""}`}>
+            <div className="codex-term-tabs segmented segmented--acoes">
+              <button
+                type="button"
+                className={abaTerm === "shell" ? "active" : ""}
+                onClick={() => setAbaTerm("shell")}
+                title="Terminal completo, sobre o PTY"
+              >
+                Shell
+              </button>
+              <button
+                type="button"
+                className={abaTerm === "assistido" ? "active" : ""}
+                onClick={() => setAbaTerm("assistido")}
+                title="Prompt com IA, execução de arquivo e gate de código colado"
+              >
+                Assistido
+              </button>
+            </div>
+            {abaTerm === "shell" ? <Terminal cwd={root} /> : null}
+            <div className="codex-term-assistido" hidden={abaTerm !== "shell" ? false : true} onClick={() => promptRef.current?.focus()}>
             <pre ref={termRef} aria-live="polite">
-              {termLines.map((line, index) => (
-                <span className="codex-term-line" key={index}>
-                  {line}
+              {termLines.map((item, index) => (
+                <span className={`codex-term-line k-${item.kind}`} key={index}>
+                  {item.text}
                   {"\n"}
                 </span>
               ))}
             </pre>
-            <div className="codex-prompt">
-              <span className="codex-prompt-sign">$</span>
+            <div className={`codex-prompt ${promptFocus ? "focus" : ""} ${termBusy ? "busy" : ""}`}>
+              <span className="codex-prompt-sign">{termBusy ? "…" : "$"}</span>
               <span className="codex-prompt-line">
-                {!command && <i className="codex-caret" aria-hidden="true" />}
+                {/* Bloco do caret só com foco: sem isto o terminal parado exibia
+                    um cursor piscando como se estivesse esperando digitação. */}
+                {!command && promptFocus && !termBusy && <i className="codex-caret" aria-hidden="true" />}
                 <input
                   ref={promptRef}
                   className={command ? "" : "no-caret"}
                   value={command}
                   onChange={(event) => setCommand(event.target.value)}
                   onKeyDown={onPromptKeyDown}
+                  onFocus={() => setPromptFocus(true)}
+                  onBlur={() => setPromptFocus(false)}
                   disabled={termBusy}
-                  aria-label="Comando do terminal — ai fala com o agente; arquivos e código rodam com detecção automática"
-                  placeholder='comando, arquivo (auto-detect) ou "ai <pergunta>"'
+                  aria-label="Comando do terminal — ai fala com o agente; arquivos e código rodam com detecção automática; setas percorrem o histórico"
+                  placeholder={termBusy ? "executando…" : 'comando, arquivo, "ai <pergunta>" ou "help"'}
                   onPaste={(event) => {
                     const text = event.clipboardData.getData("text");
                     const detectado = text.includes("\n") ? detectLanguage(text) : null;
@@ -1253,19 +1376,19 @@ export function CodeView() {
                     event.preventDefault();
                     const linhas = text.split(/\r?\n/);
                     setPastedCode({ code: text, hint: detectado.extension });
-                    setTermLines((lines) => [
-                      ...lines,
-                      `↳ colado: ${detectado.language} · ${linhas.length} linha(s) — NÃO executado`,
-                      ...linhas.slice(0, 6).map((linha) => `  │ ${linha}`),
-                      linhas.length > 6 ? `  │ … +${linhas.length - 6} linha(s)` : "",
-                      'confira acima e digite "run" para executar.',
-                      ""
-                    ].filter(Boolean));
+                    append([
+                      line("tool", `↳ colado: ${detectado.language} · ${linhas.length} linha(s) — NÃO executado`),
+                      ...linhas.slice(0, 6).map((linha) => line("paste", `  │ ${linha}`)),
+                      ...(linhas.length > 6 ? [line("paste", `  │ … +${linhas.length - 6} linha(s)`)] : []),
+                      line("warning", 'confira acima e digite "run" para executar.'),
+                      line("output", "")
+                    ]);
                   }}
                   spellCheck={false}
                   autoComplete="off"
                 />
               </span>
+            </div>
             </div>
           </div>
 
@@ -1523,18 +1646,24 @@ export function CodeView() {
           <FolderOpen size={11} />
           {rootLabel}
         </span>
-        <span>
+        <span className={active?.dirty ? "codex-st-warn" : undefined}>
           <FileCode2 size={11} />
           {active ? active.name : "nenhum arquivo aberto"}
           {active?.dirty && <i className="codex-dirty" />}
         </span>
-        <span title="Estado do terminal integrado desta aba">
+        <span
+          className={termBusy ? "codex-st-run" : undefined}
+          title="Estado do terminal integrado desta aba"
+        >
           <TerminalIcon size={11} />
           terminal {termBusy ? "executando…" : "ocioso"}
         </span>
         {/* Chamada de modelo por tecla é dinheiro: a pessoa tem direito de
             ver quando ela acontece, e não descobrir na fatura. */}
         <span
+          className={
+            suggestState === "loading" ? "codex-st-run" : suggestState === "ready" ? "codex-st-ok" : undefined
+          }
           title={
             suggestState === "loading"
               ? "Consultando o modelo para completar no cursor"

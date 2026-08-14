@@ -74,7 +74,7 @@ export default function App() {
     if (progress.phase === "complete") return "Tudo pronto.";
     if (progress.phase === "error") return "Não foi possível concluir.";
     if (progress.phase === "cancelled") return "Instalação cancelada.";
-    return "Instalando AI Orchestrator";
+    return "Instalando Multiplike-AI";
   }, [progress.phase]);
 
   const showError = progress.phase === "error" || progress.phase === "cancelled";
@@ -88,7 +88,7 @@ export default function App() {
       <section className="card">
         <header className="brand" data-tauri-drag-region>
           <span className="brand-mark"><Sparkles size={19} /></span>
-          <div><strong>AI Orchestrator</strong><small>SETUP</small></div>
+          <div><strong>Multiplike-AI</strong><small>SETUP</small></div>
           <button className="close-setup" onClick={() => void invoke("close_installer")} aria-label="Fechar instalador"><X size={16} /></button>
         </header>
 

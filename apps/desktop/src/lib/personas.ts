@@ -3,7 +3,7 @@
  * GPTs). Cada persona pode fixar o modo da UI em que costuma ser usada.
  * Validação e normalização são puras; a persistência fica com quem chama.
  */
-import { UI_MODES, type UiMode } from "@ai-orchestrator/contracts";
+import { UI_MODES, type UiMode } from "@multiplike/contracts";
 import type { ChatMessage } from "./gateway";
 
 export interface Persona {

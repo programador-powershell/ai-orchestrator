@@ -46,7 +46,7 @@ import {
   rootSystemPrompt,
   subordinateSystemPrompt
 } from "./delegation";
-import type { EngineSelection } from "@ai-orchestrator/contracts";
+import type { EngineSelection } from "@multiplike/contracts";
 import { recordAgentAction } from "./agentAudit";
 import {
   closeSession,

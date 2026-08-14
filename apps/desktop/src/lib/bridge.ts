@@ -6,7 +6,7 @@
  *
  * Lógica pura: monta URL/variáveis/config a partir do RuntimeStatus.
  */
-import type { RuntimeStatus } from "@ai-orchestrator/contracts";
+import type { RuntimeStatus } from "@multiplike/contracts";
 
 export interface BridgeStatus {
   online: boolean;

@@ -8,7 +8,7 @@
  * Rust (src-tauri/src/policy.rs), nunca aqui.
  */
 
-import { UI_MODES, type BootstrapPolicy, type UiMode } from "@ai-orchestrator/contracts";
+import { UI_MODES, type BootstrapPolicy, type UiMode } from "@multiplike/contracts";
 import type { ApprovalPolicy } from "./approval";
 import type { ChatMessage } from "./gateway";
 
