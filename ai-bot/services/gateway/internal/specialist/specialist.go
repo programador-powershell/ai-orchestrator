@@ -195,9 +195,13 @@ var catalog = []Definition{
 			{ID: "explain", Label: "Explicar", Insert: "/explain ", Glyph: "explain"},
 			{ID: "testgen", Label: "Testes", Insert: "/testgen ", Glyph: "testgen"},
 		},
+		// `term.open` saiu desta lista junto com o registro dela no gateway (ver
+		// supervisor/tools.go): sem painel de terminal na interface, ela abria
+		// um shell que ninguém via e respondia sucesso ao modelo. Quem precisa
+		// rodar comando usa `proc.run`, que passa pela aprovação.
 		Tools: []string{
 			"fs.read", "fs.write", "fs.list", "fs.search", "fs.patch",
-			"proc.run", "git.status", "git.diff", "git.commit", "term.open", "diagnostics.run",
+			"proc.run", "git.status", "git.diff", "git.commit", "diagnostics.run",
 		},
 		Triggers:        []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript"},
 		PreferredSkills: []string{"code", "tools", "long-context"},

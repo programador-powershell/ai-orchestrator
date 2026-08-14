@@ -113,10 +113,20 @@ type Config struct {
 
 	// Managed liga a edição gerenciada: sem BYOK direto e sem runtime local, o
 	// que a política da empresa exige em estação corporativa.
+	//
+	// Os três efeitos, todos em cmd/aibotd: o modo de aprovação vira "perguntar
+	// sempre", o provedor local sai desabilitado e a lista de modelos permitidos
+	// passa a ser o catálogo MENOS tudo que é local (internal/policy.
+	// RestrictManaged). Enquanto esta variável só trocava o modo de aprovação, a
+	// frase "sem runtime local" era descrição de intenção, não comportamento.
 	Managed bool
 
 	// PolicyURL é de onde buscar a política assinada. Vazio = sem política
 	// remota, que é o caso do uso pessoal do app.
+	//
+	// Quem busca é internal/policy.Start, em segundo plano e pelo netguard (é
+	// endereço de fora). Falha de busca não derruba o boot e não relaxa nada: o
+	// padrão restritivo do Managed continua valendo.
 	PolicyURL string
 
 	// WorktreeRoot é onde os workers criam worktree de git. Fica dentro do

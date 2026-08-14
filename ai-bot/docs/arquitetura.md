@@ -174,7 +174,7 @@ A numeração (`seq`) é o que permite **replay**: quem cai reconecta dizendo o
 
 | Fica no **Go** | Fica no **Rust** |
 | --- | --- |
-| roteamento, sessão, memória, permissão, segredo, barramento | `proc.run` (processo com Job Object), `term.open` / PTY |
+| roteamento, sessão, memória, permissão, segredo, barramento | `proc.run` **no ambiente local** (processo com Job Object), PTY (comandos `pty_*`, só para a janela) |
 | arquivos do projeto, git, worktree | `office.*`, `pdf.extract` (binário no disco da pessoa) |
 | `secrets.scan`, `sql.render`, `schema.export`, `osv.query`, `webhook.post` | `runtime.status` (processo local do modelo) |
 | chamada de modelo (OpenAI, Anthropic, Gemini, local) | cofre do SO, login OIDC em loopback, janelas |
@@ -188,6 +188,33 @@ A ponte é o próprio protocolo: o gateway emite `tool.call` endereçado ao host
 Rust executa e devolve `tool.result`. O aplicativo nativo é **mais um
 participante**, não um caso especial.
 
+### O ambiente de execução (`internal/sandbox`)
+
+Cada sessão escolhe **onde** o próximo comando roda: `local`, `docker`, `wsl`,
+`vps` ou `cloud`. O gateway mede a disponibilidade de cada um na máquina e
+manda o resultado no `ready` — o que não dá para usar aparece **cinza com o
+motivo**, em vez de sumir da lista.
+
+O ponto que importa: o ambiente alcança o **despacho da ferramenta**, não só a
+aparência do rodapé. `proc.run` consulta o ambiente ativo antes de escolher o
+destino — `local` vai para o Rust, como sempre; qualquer outro vai para o
+`Runner` correspondente, e o resultado volta carimbado com onde rodou. No
+produto anterior o seletor roteava só o terminal, e o agente compilava no
+servidor enquanto lia os arquivos na estação, sem ninguém perceber.
+
+O ambiente **Docker** dirige o `sbx` (Docker Sandboxes) instalado na máquina, do
+mesmo jeito que dirigimos o `git`. Nada do Docker é redistribuído neste
+repositório — a licença do `docker/sbx-releases` é "All rights reserved" —, e
+quando o `sbx` não está no PATH a resposta é uma frase que diz o que instalar. O
+que é nosso e mora aqui é o [`.sbxenv.yaml`](../.sbxenv.yaml): workspace montado
+só na pasta do projeto, rede restrita, limites de CPU/memória e **nenhum
+segredo** dentro do container (as chaves ficam no cofre do gateway, que não roda
+lá dentro).
+
+O ambiente ativo mora em memória, por sessão: reiniciar o gateway devolve todo
+mundo para `local`. É escolha — ressuscitar de um arquivo faria o primeiro
+comando depois de uma queda rodar num lugar que ninguém reafirmou.
+
 ### Uma regra que não muda
 
 `pty_write` **não é ferramenta do agente**. Um shell interativo é execução sem
@@ -195,6 +222,45 @@ portão de aprovação — bastaria o modelo escrever `rm -rf .\n`. Quem precisa
 shell usa `proc.run`, que passa pelo portão. As três superfícies de execução
 (comando único com aprovação, caixa isolada com Job Object, terminal interativo
 humano) são separadas de propósito; fundi-las desfaz o modelo de aprovação.
+
+## A política
+
+**Onde ela é buscada.** `AIBOT_POLICY_URL` é lida no boot (`internal/config`) e
+buscada por `internal/policy`: um `GET` que sai pelo **netguard**, como todo
+endereço de fora — um servidor de política apontado para `169.254.169.254` seria
+SSRF com crachá. A busca roda em **segundo plano**, com refresh a cada 15
+minutos, e **não bloqueia o boot**: o app precisa abrir offline. Sem a variável,
+não há política remota — é o caso do uso pessoal.
+
+**O que ela restringe.** Duas coisas, e a diferença importa:
+
+| Campo                | Quem aplica                    | O quê                                  |
+| -------------------- | ------------------------------ | -------------------------------------- |
+| `Mode`, `DeniedTools`, `AgentTools`, `AllowedSpecialists`, `Max*` | `permissions.Gate.Evaluate` | cada chamada de ferramenta |
+| `BlockedDomains`     | `netguard`                     | cada saída de rede                     |
+| `AllowedModels`      | `modelrouter.SetAllowed`       | o catálogo **e** cada chamada de modelo |
+
+O portão do modelo fica em `resolveExact`, que é onde o modelo é **usado**, e não
+só em `Catalog`, que é onde ele é **listado**. Um id chega ao gateway sem ter
+passado pela lista de três maneiras normais: gravado numa conversa antiga,
+mandado direto no campo `model` do protocolo, ou vindo de um caminho interno
+como o classificador. Política que só filtra lista é decoração — foi assim que o
+`byokAllowed` do app anterior passou despercebido.
+
+**Por que o padrão gerenciado é restritivo.** Com `AIBOT_MANAGED` ligado e sem
+política remota ainda aplicada, o gateway sobe **sem o runtime local**: o
+provedor `local` fica desabilitado e todo modelo marcado como local sai da lista
+permitida (`policy.RestrictManaged`). Subir aberto "só até sincronizar" é subir
+aberto — a janela entre o boot e o primeiro sync é justamente quando ninguém
+está olhando. Pela mesma razão, **falha de busca não relaxa nada**: 500, timeout,
+DNS morto ou JSON truncado mantêm o padrão restritivo, porque indisponibilidade
+do servidor de política não pode virar liberação.
+
+Detalhe que fecha o último buraco: em `AllowedModels`, lista **ausente** (`nil`)
+significa "todos" e lista **vazia** significa "nenhum". São opostos porque a
+lista da estação gerenciada é calculada, e um catálogo só de modelos locais
+produz legitimamente uma lista vazia — que, colapsada em "todos", liberaria o
+catálogo inteiro na estação mais restrita do parque.
 
 ## Zero dependências no gateway
 

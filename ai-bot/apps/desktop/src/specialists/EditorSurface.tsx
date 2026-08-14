@@ -17,6 +17,7 @@ import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { lastFencedBlock } from "../lib/markdown";
 import { TopbarActions } from "../shell/TopbarActions";
+import { SurfaceStatus } from "../shell/StatusBar";
 import { ConversationSurface } from "./ConversationSurface";
 
 /* ------------------------- leitura do que está no store ------------------- */
@@ -233,6 +234,29 @@ export function EditorSurface(): ReactNode {
           Aplicar sugestão
         </button>
       </TopbarActions>
+
+      {/*
+        O rodapé do app, por portal (ver shell/StatusBar).
+
+        "Salvo" aqui NÃO significa gravado em disco: significa que o que está no
+        editor é igual ao que a ferramenta leu. Quem grava é o especialista, do
+        outro lado da conversa — por isso o texto diz "no editor" e a métrica só
+        aparece quando há arquivo aberto.
+      */}
+      {hasFile ? (
+        <SurfaceStatus>
+          <span className="statusbar-item" title={activePath}>
+            <FileCode2 aria-hidden />
+            <b>{baseName(activePath)}</b>
+          </span>
+          <span className="statusbar-item">
+            {dirty ? "com edições não enviadas" : "igual ao que foi lido"}
+          </span>
+          <span className="statusbar-item">
+            <b>{lineCount}</b> {lineCount === 1 ? "linha" : "linhas"}
+          </span>
+        </SurfaceStatus>
+      ) : null}
 
       <div className="surface-toolbar" role="tablist" aria-label="arquivos abertos">
         {files.length === 0 ? (

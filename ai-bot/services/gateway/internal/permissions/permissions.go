@@ -55,6 +55,19 @@ type Policy struct {
 	// AllowedSpecialists vazio significa todos — política não configurada não
 	// pode bloquear todo mundo no dia seguinte à migração.
 	AllowedSpecialists []string
+	// AllowedModels é a mesma ideia aplicada ao catálogo, com UMA diferença que
+	// vale a leitura: `nil` (campo ausente) significa todos, mas uma lista VAZIA
+	// declarada significa NENHUM.
+	//
+	// A distinção existe porque a lista da edição gerenciada é calculada — é o
+	// catálogo menos o BYOK local — e um catálogo só de modelo local produz
+	// legitimamente uma lista vazia. Se vazio virasse "todos", a estação mais
+	// restrita do parque seria a única com o catálogo inteiro liberado.
+	//
+	// Quem aplica isto no roteador é modelrouter.SetAllowed; o Gate não usa este
+	// campo para decidir ferramenta, ele só o CARREGA — a política é uma coisa
+	// só e quebrá-la em dois donos é como se perde metade dela.
+	AllowedModels []string
 	// DeniedTools é recusa dura: nem chega a perguntar.
 	DeniedTools    []string
 	BlockedDomains []string
@@ -333,6 +346,11 @@ func clonePolicy(policy Policy) Policy {
 	policy.AllowedSpecialists = cloneStrings(policy.AllowedSpecialists)
 	policy.DeniedTools = cloneStrings(policy.DeniedTools)
 	policy.BlockedDomains = cloneStrings(policy.BlockedDomains)
+	// AllowedModels NÃO passa por cloneStrings: aquela função colapsa lista vazia
+	// em nil, e neste campo os dois querem dizer o oposto um do outro — nenhum
+	// modelo contra todos os modelos. Colapsar aqui abriria o catálogo inteiro na
+	// travessia mais banal que existe, a cópia da política.
+	policy.AllowedModels = cloneModels(policy.AllowedModels)
 	return policy
 }
 
@@ -340,6 +358,16 @@ func cloneStrings(list []string) []string {
 	if len(list) == 0 {
 		// Preserva nil como nil: lista vazia e lista ausente significam a mesma
 		// coisa aqui, e alocar por nada em todo Policy() seria desperdício.
+		return nil
+	}
+	out := make([]string, len(list))
+	copy(out, list)
+	return out
+}
+
+// cloneModels copia preservando a diferença entre nil (todos) e vazia (nenhum).
+func cloneModels(list []string) []string {
+	if list == nil {
 		return nil
 	}
 	out := make([]string, len(list))
@@ -451,7 +479,12 @@ var riskByTool = map[string]protocol.Risk{
 
 	// Roda processo com o token de quem está logado. O confinamento de caminho
 	// limita onde se escreve, não o que o comando faz.
-	"proc.run":        protocol.RiskExecute,
+	"proc.run": protocol.RiskExecute,
+	// `term.open` está fora do catálogo hoje (ver supervisor/tools.go): sem
+	// painel de terminal na interface, ela abria um shell que ninguém via. A
+	// classificação fica porque esta tabela é o julgamento do RISCO, não o
+	// registro do que existe — apagá-la faria a ferramenta voltar um dia sem
+	// portão, que é a falha cara.
 	"term.open":       protocol.RiskExecute,
 	"diagnostics.run": protocol.RiskExecute,
 	"task.dispatch":   protocol.RiskExecute,

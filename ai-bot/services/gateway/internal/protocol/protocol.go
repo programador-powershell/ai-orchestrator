@@ -89,6 +89,24 @@ const (
 	// KindGate é um portão de decisão do DAG: segue, refaz ou aborta.
 	KindGate Kind = "gate"
 
+	// --- delegação ---
+
+	// KindDelegate é um especialista chamando OUTRO por conta própria, dentro do
+	// mesmo turno e sem perguntar nada à pessoa.
+	//
+	// Por que isto NÃO é KindTaskDispatch: aquele monta uma EQUIPE — DAG de
+	// tarefas com dependências, ondas, portão entre elas e cópia isolada do
+	// repositório por trabalhador — e quem o emite é o especialista `agent`,
+	// deliberadamente, porque o pedido é grande o bastante para valer um plano.
+	// Este aqui é o contrário: um especialista qualquer percebendo, no meio da
+	// própria resposta, que um pedaço do pedido é de outra especialidade, e
+	// pedindo aquela coisa pontual. Não há plano, não há onda, não há worktree e
+	// não há segundo turno — o dono da conversa continua sendo quem delegou.
+	//
+	// Enfiar os dois no mesmo verbo obrigaria a tela a adivinhar, pelo formato do
+	// payload, se desenha um quadro de equipe ou o popup de um bot só.
+	KindDelegate Kind = "delegate"
+
 	// --- estado ---
 
 	// KindState publica uma mudança de estado observável (sessão, especialista, modelo).
@@ -104,7 +122,8 @@ var validKinds = map[Kind]bool{
 	KindApprovalRequest: true, KindApprovalDecision: true,
 	KindTaskDispatch: true, KindTaskProgress: true, KindWorkerDone: true,
 	KindEscalate: true, KindAsk: true, KindReply: true, KindGate: true,
-	KindState: true,
+	KindDelegate: true,
+	KindState:    true,
 }
 
 // Valid diz se o verbo é conhecido.
@@ -244,6 +263,14 @@ type Ready struct {
 	// nova: é o master que decide, e ele só decide depois do primeiro prompt.
 	ActiveSpecialist string `json:"activeSpecialist,omitempty"`
 	ActiveModel      string `json:"activeModel,omitempty"`
+	// Environment é onde o próximo comando roda. Vem no `ready` para a tela
+	// NASCER sabendo onde está: um rodapé que abre em "Local" e só descobre o
+	// ambiente de verdade no primeiro `state` mostra o lugar errado justamente
+	// no quadro em que a pessoa decide se manda o comando.
+	Environment Environment `json:"environment,omitempty"`
+	// Environments é o catálogo com disponibilidade JÁ medida. Sem ele a tela
+	// listaria os cinco e ofereceria opção que não funciona.
+	Environments []EnvironmentInfo `json:"environments,omitempty"`
 	// Sessions são as conversas recentes, mais nova primeiro.
 	//
 	// Viaja no `ready` porque a barra lateral do cliente lista as conversas e não
@@ -275,6 +302,57 @@ type Model struct {
 	Context  int      `json:"context"`
 	Skills   []string `json:"skills,omitempty"`
 	Local    bool     `json:"local,omitempty"`
+}
+
+/* ------------------------------- ambiente -------------------------------- */
+
+// Environment é ONDE o próximo comando roda.
+//
+// Não é preferência de exibição: é o destino real da execução. O produto
+// anterior tinha este seletor no rodapé e roteava SÓ o terminal — o agente
+// compilava no servidor e lia os arquivos na estação, sem ninguém perceber que
+// eram duas máquinas. Por isso o ambiente viaja no protocolo e é o supervisor
+// que o consulta antes de despachar `proc.run`.
+type Environment string
+
+const (
+	// EnvLocal é a estação da pessoa. Quem executa é o aplicativo nativo (Rust),
+	// que tem Job Object e ConPTY — o gateway não roda comando na estação.
+	EnvLocal Environment = "local"
+	// EnvDocker é o Docker Sandboxes (`sbx`) instalado na máquina.
+	EnvDocker Environment = "docker"
+	// EnvWSL é o subsistema Linux do Windows.
+	EnvWSL Environment = "wsl"
+	// EnvVPS é o servidor configurado pela TI.
+	EnvVPS Environment = "vps"
+	// EnvCloud é o executor de nuvem (GitHub, GitLab, Gitea…).
+	EnvCloud Environment = "cloud"
+)
+
+// validEnvironments fecha a lista na borda: ambiente desconhecido tem de morrer
+// na rota que o recebe, e não virar um `default` silencioso lá dentro que roda
+// o comando no lugar errado.
+var validEnvironments = map[Environment]bool{
+	EnvLocal: true, EnvDocker: true, EnvWSL: true, EnvVPS: true, EnvCloud: true,
+}
+
+// Valid diz se o ambiente é conhecido.
+func (e Environment) Valid() bool { return validEnvironments[e] }
+
+// EnvironmentInfo é um ambiente como a tela precisa vê-lo.
+//
+// `Available` e `Detail` existem juntos de propósito: oferecer uma opção que
+// não funciona é pior do que não oferecer, e ESCONDER a que não funciona faz a
+// pessoa procurar por ela. O certo é mostrar cinza com o motivo — "o Docker
+// Sandboxes não está instalado" é acionável; a opção sumir, não.
+type EnvironmentInfo struct {
+	ID    Environment `json:"id"`
+	Label string      `json:"label"`
+	Hint  string      `json:"hint"`
+	// Available diz se este ambiente PODE ser escolhido agora.
+	Available bool `json:"available"`
+	// Detail diz por que não, quando não.
+	Detail string `json:"detail,omitempty"`
 }
 
 // Prompt é o texto enviado pela pessoa.
@@ -502,12 +580,33 @@ type Gate struct {
 	Reason   string       `json:"reason,omitempty"`
 }
 
+// Delegate é um especialista chamando outro por conta própria.
+//
+// Sai DUAS vezes por delegação: uma com `Done` falso, antes de o delegado
+// começar, e outra com `Done` verdadeiro e o resultado. O primeiro envelope é o
+// que faz o popup do bot aparecer na hora certa — anunciar quem entrou só depois
+// de ele já ter saído não anuncia nada.
+type Delegate struct {
+	From   string `json:"from"`             // quem delegou
+	To     string `json:"to"`               // quem entrou
+	Goal   string `json:"goal"`             // o que foi pedido a ele
+	Reason string `json:"reason,omitempty"` // por que, em uma frase
+	Depth  int    `json:"depth"`            // 1 = primeira delegação
+	Done   bool   `json:"done,omitempty"`   // true quando o delegado terminou
+	Result string `json:"result,omitempty"`
+}
+
 // State publica uma mudança observável.
 type State struct {
 	Specialist string `json:"specialist,omitempty"`
 	Model      string `json:"model,omitempty"`
 	Surface    string `json:"surface,omitempty"`
-	Busy       bool   `json:"busy"`
+	// Environment é o ambiente de execução ativo. Trocar de ambiente é uma
+	// mudança de estado como qualquer outra — e precisa chegar a TODAS as
+	// janelas da sessão, senão a segunda janela continua mostrando o anterior e
+	// a pessoa manda o comando achando que ele roda em outro lugar.
+	Environment Environment `json:"environment,omitempty"`
+	Busy        bool        `json:"busy"`
 	// Tokens gastos no turno, para o medidor de contexto.
 	PromptTokens int `json:"promptTokens,omitempty"`
 	OutputTokens int `json:"outputTokens,omitempty"`

@@ -15,7 +15,7 @@
  */
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import {
   SURFACES,
@@ -24,9 +24,12 @@ import {
   type Ask,
   type Avatar,
   type ConversationLine,
+  type Delegate,
   type Delta,
   type Done,
   type Envelope,
+  type Environment,
+  type EnvironmentInfo,
   type Escalate,
   type Gate,
   type GateDecision,
@@ -51,6 +54,8 @@ import {
   type ToolResult,
   type WorkerDone
 } from "@aibot/contracts";
+import { DEFAULT_ENVIRONMENT, FALLBACK_ENVIRONMENTS } from "./environments";
+import { preferenceStorage } from "./persistStorage";
 import { FALLBACK_SPECIALISTS, specialistById } from "./specialists";
 import { CLIENT_NAME, CLIENT_VERSION, createTransport, type Transport } from "./transport";
 
@@ -98,6 +103,21 @@ export interface AppData {
    */
   pendingAsk: Ask | null;
   crew: CrewState;
+  /**
+   * Onde o PRÓXIMO comando roda. Vem do gateway (é ele quem executa) e é o que
+   * o rodapé mostra — a tela nunca decide isto sozinha.
+   */
+  environment: Environment;
+  /** O catálogo medido nesta máquina; começa com a reserva local. */
+  environments: EnvironmentInfo[];
+  /**
+   * As delegações do turno, em ordem de chegada.
+   *
+   * Lista, e não um único "em curso": um delegado pode delegar de novo
+   * (`depth` conta os níveis), e guardar só o último apagaria de quem partiu a
+   * cadeia. Quem desenha o popup lê a última em aberto.
+   */
+  delegations: Delegate[];
   theme: "light" | "dark";
   railOpen: boolean;
   avatarLabOpen: boolean;
@@ -117,6 +137,7 @@ export interface AppActions {
   answerAsk(answer: string): void;
   setInput(text: string): void;
   setModel(id: string): void;
+  setEnvironment(id: Environment): void;
   setSpecialistOverride(id: string): void;
   newSession(): void;
   openSession(id: string): void;
@@ -155,6 +176,9 @@ export function initialAppData(): AppData {
     pendingApproval: null,
     pendingAsk: null,
     crew: emptyCrew(),
+    environment: DEFAULT_ENVIRONMENT,
+    environments: FALLBACK_ENVIRONMENTS,
+    delegations: [],
     theme: "light",
     railOpen: true,
     avatarLabOpen: false,
@@ -268,6 +292,25 @@ function sessionMetaOf(summary: SessionSummary): SessionMeta {
 }
 
 /**
+ * A última delegação AINDA aberta com o mesmo par de bots e o mesmo objetivo.
+ *
+ * A delegação não tem id — é o que o contrato diz —, então a identidade é o
+ * trio `from`+`to`+`goal`. "Ainda aberta" é a parte que importa: o mesmo
+ * especialista pode ser chamado duas vezes para o mesmo objetivo no mesmo
+ * turno, e o `done` da segunda não pode reescrever a primeira, que já fechou.
+ */
+function openDelegationIndex(list: Delegate[], incoming: Delegate): number {
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const entry = list[index];
+    if (!entry || entry.done === true) continue;
+    if (entry.from === incoming.from && entry.to === incoming.to && entry.goal === incoming.goal) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+/**
  * O especialista de quem falou. `from.specialist` vem no envelope justamente
  * para a UI não ter de deduzir do estado da tela — deduzir dá certo até a
  * conversa trocar de especialista no meio, que aqui é o caso normal.
@@ -315,6 +358,15 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
             ? "conversation"
             : specialistById(specialists, activeSpecialist).surface,
         activeModel: ready.activeModel ?? state.activeModel,
+        // Quem executa é o gateway, então é ele quem diz onde o próximo comando
+        // cai e quais ambientes existem NESTA máquina. Gateway antigo (sem os
+        // campos) preserva o que já estava: trocar por uma lista vazia deixaria
+        // o rodapé sem menu nenhum.
+        environment: ready.environment ?? state.environment,
+        environments:
+          Array.isArray(ready.environments) && ready.environments.length > 0
+            ? ready.environments
+            : state.environments,
         error: ""
       };
     }
@@ -568,6 +620,37 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       return { ...state, crew: { ...state.crew, gate } };
     }
 
+    case "delegate": {
+      const delegation = payloadOf<Delegate>(envelope);
+      if (!delegation) return state;
+
+      /*
+       * A delegação NÃO passa por aprovação, e isso é decisão de produto, não
+       * esquecimento: escolher de quem é o assunto é trabalho do bot. O portão
+       * continua valendo para o que o delegado FAZ — cada ferramenta dele emite
+       * `approval.request` como qualquer outra.
+       */
+      if (delegation.done !== true) {
+        return { ...state, delegations: [...state.delegations, delegation] };
+      }
+
+      const index = openDelegationIndex(state.delegations, delegation);
+      if (index < 0) {
+        // Conclusão sem abertura à vista (replay parcial, janela aberta no meio
+        // do turno): entra como concluída em vez de sumir. Perder o evento
+        // apagaria a única prova de que a troca de bot aconteceu.
+        return { ...state, delegations: [...state.delegations, delegation] };
+      }
+
+      const next = state.delegations.slice();
+      const open = next[index];
+      if (!open) return state;
+      // A entrada aberta é MARCADA, não duplicada: são o mesmo acontecimento, e
+      // duas linhas na lista fariam o popup reabrir uma delegação já encerrada.
+      next[index] = { ...open, ...delegation, done: true };
+      return { ...state, delegations: next };
+    }
+
     case "done": {
       return { ...state, busy: false, thinking: "", lines: closeTurn(state.lines, envelope.turn) };
     }
@@ -588,10 +671,13 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "state": {
       const published = payloadOf<State>(envelope);
       if (!published) return state;
-      // Só `busy`. Especialista, modelo e superfície chegam pela ROTA, que é a
-      // única que também abre a linha e desenha a faixa de troca: aplicá-los
-      // aqui trocaria a tela sem a pessoa ver por quê.
-      return { ...state, busy: published.busy };
+      // Só `busy` e o ambiente. Especialista, modelo e superfície chegam pela
+      // ROTA, que é a única que também abre a linha e desenha a faixa de troca:
+      // aplicá-los aqui trocaria a tela sem a pessoa ver por quê. O ambiente é
+      // diferente — é um rótulo no rodapé, e ele PODE mudar de fora (outra
+      // janela escolheu, ou o gateway caiu para local ao perder a VPS). Não
+      // mostrar seria o rodapé prometer uma máquina que não é a da execução.
+      return { ...state, busy: published.busy, environment: published.environment ?? state.environment };
     }
 
     default:
@@ -652,6 +738,9 @@ function conversationReset(): Partial<AppData> {
   return {
     lines: [],
     crew: emptyCrew(),
+    // As delegações são do TURNO, e o turno morre com a conversa. Mantê-las
+    // faria o popup da conversa anterior reaparecer sobre a nova.
+    delegations: [],
     busy: false,
     thinking: "",
     pendingApproval: null,
@@ -741,6 +830,42 @@ export const useApp = create<AppState>()(
 
       setModel: (id) => set({ activeModel: id }),
 
+      /**
+       * Troca o ambiente do PRÓXIMO comando.
+       *
+       * Quem executa é o gateway, então a escolha só vale depois que ele
+       * confirma — por isso o POST, e por isso o desfazer. Um rodapé que mostra
+       * "Docker" enquanto o gateway continua em "local" não é um detalhe de
+       * interface: é o comando caindo na estação da pessoa.
+       */
+      setEnvironment: (id) => {
+        const { environment: previous, session } = get();
+        if (id === previous) return;
+
+        if (transport === null || session === null || session === "") {
+          set({ error: `sem conexão com o gateway: o ambiente continua em ${previous}` });
+          return;
+        }
+
+        // Otimista, porque o menu tem de fechar com a escolha aplicada — e
+        // reversível, porque a confirmação é do outro lado.
+        set({ environment: id, error: "" });
+
+        void transport
+          .post(`/v1/sessions/${encodeURIComponent(session)}/environment`, { environment: id })
+          .catch((cause: unknown) => {
+            const reason = cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+            set((current) =>
+              // Outra escolha pode ter entrado enquanto o POST corria; desfazer
+              // por cima dela devolveria o rodapé a um ambiente que ninguém
+              // pediu. Só desfaz o que ainda é o nosso.
+              current.environment === id
+                ? { environment: previous, error: `o ambiente continua em ${previous}: ${reason}` }
+                : {}
+            );
+          });
+      },
+
       setSpecialistOverride: (id) => set({ specialistOverride: id }),
 
       newSession: () => {
@@ -793,6 +918,18 @@ export const useApp = create<AppState>()(
     {
       name: "aibot.v1",
       version: 1,
+      /*
+       * O `localStorage` NÃO entra aqui cru.
+       *
+       * O `persist` grava a cada `setState`, e este store recebe um `set` por
+       * TOKEN de resposta: sem freio, um turno de 800 tokens são 800
+       * `JSON.stringify` mais 800 escritas síncronas na thread que desenha —
+       * mesmo com o `partialize` abaixo deixando o payload minúsculo, porque o
+       * custo é por `set` e não por byte. O armazenamento coalescido junta a
+       * rajada numa gravação, pula o valor que não mudou e descarrega no
+       * fechamento. Ver `persistStorage.ts`.
+       */
+      storage: createJSONStorage(() => preferenceStorage()),
       // Só preferência. Conversa e sessões vêm do gateway — ver o cabeçalho.
       partialize: (state) => ({
         theme: state.theme,

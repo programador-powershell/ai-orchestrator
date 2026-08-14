@@ -25,6 +25,7 @@ import (
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
+	"aibot/gateway/internal/sandbox"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
 	"aibot/gateway/internal/supervisor"
@@ -43,7 +44,11 @@ type Server struct {
 	sup    *supervisor.Supervisor
 	models *modelrouter.Router
 	gate   *permissions.Gate
-	log    *slog.Logger
+	// environments guarda ONDE o próximo comando de cada sessão roda. Fica no
+	// servidor porque duas coisas dependem dele e não podem divergir: o `ready`,
+	// que a tela usa para nascer sabendo onde está, e a rota de troca.
+	environments *sandbox.Registry
+	log          *slog.Logger
 
 	mu        sync.Mutex
 	hostCalls map[string]chan hostResult
@@ -63,17 +68,19 @@ func NewServer(
 	sup *supervisor.Supervisor,
 	models *modelrouter.Router,
 	gate *permissions.Gate,
+	environments *sandbox.Registry,
 	log *slog.Logger,
 ) *Server {
 	return &Server{
-		cfg:       cfg,
-		store:     durable,
-		bus:       bus,
-		sup:       sup,
-		models:    models,
-		gate:      gate,
-		log:       log,
-		hostCalls: make(map[string]chan hostResult),
+		cfg:          cfg,
+		store:        durable,
+		bus:          bus,
+		sup:          sup,
+		models:       models,
+		gate:         gate,
+		environments: environments,
+		log:          log,
+		hostCalls:    make(map[string]chan hostResult),
 	}
 }
 
@@ -94,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/sessions/{id}/events", s.auth(s.sessionEvents))
 	mux.Handle("POST /v1/sessions/{id}/prompt", s.auth(s.postPrompt))
 	mux.Handle("POST /v1/sessions/{id}/cancel", s.auth(s.postCancel))
+	mux.Handle("POST /v1/sessions/{id}/environment", s.auth(s.postEnvironment))
 	mux.Handle("GET /v1/sessions/{id}/sse", s.auth(s.sessionSSE))
 
 	mux.Handle("POST /v1/approvals", s.auth(s.postApproval))
@@ -246,9 +254,15 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSession(r.PathValue("id")); err != nil {
+	sessionID := r.PathValue("id")
+	if err := s.store.DeleteSession(sessionID); err != nil {
 		s.storeError(w, err)
 		return
+	}
+	// O ambiente ativo mora em memória, indexado por sessão. Sem esta linha o
+	// mapa cresceria para sempre com id de conversa apagada.
+	if s.environments != nil {
+		s.environments.Forget(sessionID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -298,6 +312,74 @@ func (s *Server) postPrompt(w http.ResponseWriter, r *http.Request) {
 func (s *Server) postCancel(w http.ResponseWriter, r *http.Request) {
 	s.sup.Cancel(r.PathValue("id"))
 	s.ok(w, map[string]string{"status": "cancelado"})
+}
+
+// postEnvironment troca ONDE o próximo comando da sessão roda.
+//
+// A ordem aqui é a regra: confere a sessão, confere que o ambiente EXISTE,
+// confere que ele está DISPONÍVEL agora, e só então grava e publica. Aceitar um
+// ambiente indisponível e falhar depois, na hora do comando, jogaria o erro
+// para o meio de um turno — a pessoa descobriria que o Docker não está
+// instalado como uma ferramenta que falhou, e não como uma opção que não podia
+// ser escolhida.
+func (s *Server) postEnvironment(w http.ResponseWriter, r *http.Request) {
+	if s.environments == nil {
+		s.fail(w, http.StatusServiceUnavailable, "sem_ambientes", "este gateway não tem ambientes de execução")
+		return
+	}
+	sessionID := r.PathValue("id")
+
+	var body struct {
+		Environment protocol.Environment `json:"environment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.fail(w, http.StatusBadRequest, "bad_request", "corpo inválido: "+err.Error())
+		return
+	}
+	if _, err := s.store.GetSession(sessionID); err != nil {
+		s.storeError(w, err)
+		return
+	}
+	if _, known := s.environments.Runner(body.Environment); !known {
+		s.fail(w, http.StatusBadRequest, "ambiente_desconhecido",
+			fmt.Sprintf("ambiente %q não existe neste gateway", body.Environment))
+		return
+	}
+	if available, detail := s.environments.Availability(r.Context(), body.Environment); !available {
+		// 409 e não 400: o pedido está correto, a máquina é que não tem o
+		// ambiente agora. O `detail` é a frase acionável que a tela mostra.
+		s.fail(w, http.StatusConflict, "ambiente_indisponivel", detail)
+		return
+	}
+	if err := s.environments.Set(sessionID, body.Environment); err != nil {
+		s.fail(w, http.StatusBadRequest, "ambiente_invalido", err.Error())
+		return
+	}
+
+	// O `state` sai para TODAS as janelas da sessão. Sem isto, uma segunda
+	// janela continuaria mostrando o ambiente anterior e a pessoa mandaria o
+	// comando achando que ele roda em outro lugar.
+	envelope := protocol.Envelope{
+		V:       protocol.Version,
+		ID:      s.newID("st"),
+		TS:      time.Now().UTC(),
+		Session: sessionID,
+		Kind:    protocol.KindState,
+		From:    protocol.Actor{Kind: protocol.ActorSystem},
+	}
+	if err := envelope.SetPayload(protocol.State{
+		Environment: body.Environment,
+		Busy:        s.sup.Busy(sessionID),
+	}); err != nil {
+		s.fail(w, http.StatusInternalServerError, "state", err.Error())
+		return
+	}
+	// Efêmero porque `state` não é histórico: o log guarda o que aconteceu na
+	// conversa, e o replay de um `state` de ontem reencenaria uma troca de
+	// ambiente que já não vale. Quem reconecta lê o ambiente do `ready`.
+	s.bus.PublishEphemeral(sessionID, envelope)
+
+	s.ok(w, map[string]string{"environment": string(body.Environment)})
 }
 
 func (s *Server) postApproval(w http.ResponseWriter, r *http.Request) {

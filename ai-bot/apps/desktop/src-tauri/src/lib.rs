@@ -45,22 +45,22 @@
 //!   chegar aqui; expor uma delas como comando Tauri seria dar ao JS um atalho
 //!   que contorna esse portão.
 //!
-//!   O módulo é código PURO (não conhece Tauri) e, por isso, expõe dois GANCHOS
+//!   O módulo é código PURO (não conhece Tauri) e, por isso, expõe um GANCHO
 //!   que só o `setup` abaixo sabe preencher: `set_project_root(Option<PathBuf>)`
-//!   — a pasta a que todo caminho de arquivo fica confinado — e
-//!   `set_terminal_opener(...)` — quem sabe abrir um PTY de verdade, que é o
-//!   `pty` e precisa do `AppHandle` para mandar os bytes à janela. ENQUANTO OS
-//!   DOIS NÃO SÃO CHAMADOS, TODA FERRAMENTA DE MÁQUINA FALHA: a primeira com
-//!   "esta sessão não tem pasta de projeto aberta", a segunda com "o terminal
-//!   não está disponível nesta janela". São dois erros que parecem de política
-//!   e são de fiação.
+//!   — a pasta a que todo caminho de arquivo fica confinado. ENQUANTO ELE NÃO É
+//!   CHAMADO, TODA FERRAMENTA DE MÁQUINA FALHA com "esta sessão não tem pasta de
+//!   projeto aberta" — um erro que parece de política e é de fiação.
+//!
+//!   Houve um segundo gancho (`set_terminal_opener`) enquanto `term.open`
+//!   existia. Ele saiu junto com a ferramenta: ver o porquê em `tools.rs`.
 //! - `jail`       — Job Object do Windows (isolamento de árvore de processo).
 //!   Serve o `tools`; sem comando próprio.
 //! - `pdf`        — extrator de texto de PDF, escrito na casa por não haver
 //!   crate homologada. Serve o `tools`; sem comando próprio.
-//! - `pty`        — `PtyState: Default` e os seis comandos `pty_*`. O
-//!   `pty_spawn` é `async fn` e continua chamável fora do IPC: é ele que o
-//!   gancho de terminal das ferramentas usa para atender o `term.open`.
+//! - `pty`        — `PtyState: Default` e os seis comandos `pty_*`. Hoje eles só
+//!   são alcançáveis pela JANELA (tecla de humano); enquanto não existir painel
+//!   de terminal na interface, ninguém os chama — nem o agente, que perdeu o
+//!   `term.open` justamente por isso.
 //! - `vault`      — os três comandos `credential_*`.
 //! - `windows`    — o comando `open_avatar_lab`.
 //!
@@ -119,10 +119,10 @@ mod tools;
 mod vault;
 mod windows;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, WindowEvent};
 use tokio::time::timeout;
 
 /// Quanto o encerramento espera o gateway sair por conta própria.
@@ -132,6 +132,23 @@ use tokio::time::timeout;
 /// três segundos é o limite do que uma pessoa aceita entre clicar no X e a
 /// janela sumir.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+
+/// Rótulo da janela principal — o mesmo do `tauri.conf.json`.
+///
+/// Mora numa constante porque é a chave de uma DECISÃO (ver `closing_ends_app`):
+/// escrito à mão dentro do `if`, um erro de digitação viraria "nenhuma janela
+/// encerra o app" sem erro de compilação e sem nada na tela.
+const MAIN_WINDOW_LABEL: &str = "main";
+
+/// Fechar esta janela encerra o aplicativo inteiro?
+///
+/// Só a `main`. O laboratório de avatares (`avatars`) é uma janela auxiliar: a
+/// pessoa abre, mexe no retrato e fecha. Derrubar o app junto transformaria
+/// "terminei de mexer no avatar" em "perdi a conversa" — e o laboratório é
+/// justamente a janela que mais se abre e fecha numa sessão.
+fn closing_ends_app(label: &str) -> bool {
+    label == MAIN_WINDOW_LABEL
+}
 
 /// Encerra o aplicativo derrubando junto o que ele criou.
 ///
@@ -150,31 +167,56 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 /// 3. Os terminais do PTY são processos separados. No Windows, matar o pai não
 ///    mata o filho: fechar o app sem esta varredura deixa um `powershell.exe`
 ///    por aba aberta vivo no gerenciador de tarefas.
-#[tauri::command]
-async fn app_shutdown(
-    app: AppHandle,
-    gateway: State<'_, gateway::GatewayHandle>,
-    bridge: State<'_, hostbridge::BridgeHandle>,
-    terminals: State<'_, pty::PtyState>,
-) -> Result<(), String> {
+///
+/// # Por que os três estados chegam por `try_state`, e não por argumento
+///
+/// Esta função é chamada de DOIS lugares — o comando abaixo e o fechamento da
+/// janela — e o segundo não tem extrator de estado nenhum: `on_window_event`
+/// entrega janela e evento, mais nada. Além disso `state()` entra em PÂNICO
+/// quando o estado não existe, e este é exatamente o momento em que ele pode não
+/// existir (encerramento pela metade, ou boot que registrou uns e não outros).
+/// Cada etapa é independente: a ausência de uma não pode cancelar as outras.
+async fn shutdown(app: &AppHandle) {
     // Não bloqueia: o laço da ponte só percebe o pedido na próxima batida, e
     // esperar por ela seria esperar até meio segundo por nada — o processo sai
     // logo abaixo e leva a thread junto.
-    bridge.stop();
+    if let Some(bridge) = app.try_state::<hostbridge::BridgeHandle>() {
+        bridge.stop();
+    }
 
     // Erro aqui é ignorado de propósito: já estamos saindo, e transformar
     // "um terminal não quis morrer" em falha do botão de fechar troca um
     // problema pequeno por um app que não fecha.
-    let _ = pty::pty_kill_all(terminals);
+    if let Some(terminals) = app.try_state::<pty::PtyState>() {
+        let _ = pty::pty_kill_all(terminals);
+    }
 
-    // `stop()` é SÍNCRONO e bloqueia (ele varre a árvore com `taskkill /T` e
-    // depois colhe o filho), então vai para a pool de bloqueio em vez de
-    // prender uma worker do tokio. O `Arc` é clonado para o closure porque
-    // `State` empresta, e o empréstimo não atravessa o `spawn_blocking`.
-    let handle = gateway.inner().clone();
-    let _ = timeout(SHUTDOWN_GRACE, tokio::task::spawn_blocking(move || handle.stop())).await;
+    // O `Arc` é clonado ANTES do `await`: `State` é um empréstimo do estado
+    // gerenciado, e segurá-lo atravessando um ponto de suspensão prenderia o
+    // mapa inteiro pelo tempo do encerramento.
+    let gateway = app
+        .try_state::<gateway::GatewayHandle>()
+        .map(|state| state.inner().clone());
+    if let Some(handle) = gateway {
+        // `stop()` é SÍNCRONO e bloqueia (ele varre a árvore com `taskkill /T` e
+        // depois colhe o filho), então vai para a pool de bloqueio em vez de
+        // prender uma worker do tokio.
+        let _ = timeout(SHUTDOWN_GRACE, tokio::task::spawn_blocking(move || handle.stop())).await;
+    }
 
     app.exit(0);
+}
+
+/// O mesmo encerramento, exposto à janela.
+///
+/// Continua existindo para o caminho "sair" da interface (um atalho, um item de
+/// menu), mas ele NÃO é o caminho principal: quem fecha o app é o X da barra de
+/// título, e esse passa pelo `on_window_event` lá embaixo. Depender só deste
+/// comando seria depender de um webview que pode estar travado justamente na
+/// hora em que o encerramento importa.
+#[tauri::command]
+async fn app_shutdown(app: AppHandle) -> Result<(), String> {
+    shutdown(&app).await;
     Ok(())
 }
 
@@ -246,7 +288,7 @@ pub fn run() {
             // janela seria pânico em tempo de execução, e não erro de comando.
             app.manage(bridge);
 
-            // --- os dois ganchos das ferramentas de máquina ---
+            // --- o gancho das ferramentas de máquina ---
             //
             // A pasta de onde o aplicativo foi aberto é um PADRÃO, não a escolha
             // final: quem abre o AI-BOT de dentro de um projeto quer trabalhar
@@ -264,40 +306,43 @@ pub fn run() {
                 );
             }
 
-            // Quem sabe abrir terminal é o `pty`, e ele precisa do `AppHandle`
-            // para emitir `pty-data` na janela. As ferramentas são código puro
-            // chamado de uma thread qualquer, então o caminho é este gancho.
-            let opener_handle = app.handle().clone();
-            tools::set_terminal_opener(move |cwd: Option<&Path>| {
-                // `try_state` e não `state`: `state` entra em PÂNICO quando o
-                // estado não está mais lá, e este closure sobrevive à janela —
-                // uma ferramenta que chega durante o encerramento derrubaria a
-                // thread da ponte em vez de devolver um erro que o modelo lê.
-                let terminals = opener_handle
-                    .try_state::<pty::PtyState>()
-                    .ok_or_else(|| {
-                        "o terminal não está mais disponível: a janela do aplicativo já foi encerrada"
-                            .to_string()
-                    })?;
-                let directory = cwd.map(|path| path.to_string_lossy().into_owned());
-                // `pty_spawn` é `async` só porque comando do Tauri precisa ser;
-                // por dentro ele não espera nada. Quem chama aqui é uma thread
-                // de ferramenta — nunca um executor —, então bloquear nela é
-                // exatamente o que se quer, e não há runtime aninhado para
-                // entrar em pânico.
-                tauri::async_runtime::block_on(pty::pty_spawn(
-                    opener_handle.clone(),
-                    terminals,
-                    directory,
-                    // Tamanho, tipo de shell: o padrão. Quem redimensiona é a
-                    // tela, com `pty_resize`, assim que o painel aparece.
-                    None,
-                    None,
-                    None,
-                ))
-            });
+            // O segundo gancho — o abridor de terminal — vivia aqui e saiu com o
+            // `term.open`. Ele volta junto com a ferramenta, no dia em que a
+            // interface tiver painel de terminal: ver o bloco correspondente em
+            // `tools.rs`.
 
             Ok(())
+        })
+        // ------------------------- FECHAR A JANELA -------------------------
+        //
+        // Este é o ÚNICO encerramento que acontece na prática: ninguém procura
+        // um item de menu "sair", a pessoa clica no X da barra de título. Sem
+        // este gancho, o `app_shutdown` acima só rodaria se a interface o
+        // chamasse — e a interface pode estar travada exatamente quando o
+        // encerramento importa.
+        //
+        // O que sobrevive quando este caminho não existe não parece um defeito:
+        // o `aibotd` continua segurando a porta 8799, os servidores MCP filhos
+        // dele continuam de pé e cada sessão de PTY deixa um `powershell.exe`
+        // vivo. Na abertura seguinte o app ADOTA o gateway órfão, tudo funciona,
+        // e o único sintoma é o gerenciador de tarefas enchendo em silêncio.
+        .on_window_event(|window, event| {
+            let WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            if !closing_ends_app(window.label()) {
+                return;
+            }
+            // O encerramento é ASSÍNCRONO (o gateway pode levar até
+            // SHUTDOWN_GRACE para sair) e este gancho roda na thread da
+            // interface. Deixar o fechamento seguir agora mataria a janela — e
+            // com ela o `AppHandle` — no meio da varredura; segurar a thread
+            // aqui congelaria a tela com o app inteiro parado. Por isso:
+            // impede o fechamento, faz a limpeza fora, e quem realmente fecha é
+            // o `app.exit(0)` no fim de `shutdown`.
+            api.prevent_close();
+            let app = window.app_handle().clone();
+            tauri::async_runtime::spawn(async move { shutdown(&app).await });
         })
         .invoke_handler(tauri::generate_handler![
             // --- o processo Go ---
@@ -344,5 +389,77 @@ pub fn run() {
     if let Err(error) = outcome {
         eprintln!("[aibot] o aplicativo não pôde iniciar: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A regra do fechamento: a `main` derruba o app, o resto não.
+    ///
+    /// Sem a distinção, fechar o laboratório de avatares mataria a conversa
+    /// aberta; sem o gancho nenhum, o X da janela principal deixaria o gateway,
+    /// os MCP e os shells vivos. O teste trava as duas pontas.
+    #[test]
+    fn so_a_janela_principal_encerra_o_aplicativo() {
+        assert!(closing_ends_app(MAIN_WINDOW_LABEL));
+        assert!(
+            !closing_ends_app(windows::AVATAR_LAB_LABEL),
+            "fechar o laboratório de avatares NÃO pode derrubar o app"
+        );
+        assert!(!closing_ends_app("qualquer-outra"));
+    }
+
+    /// O rótulo é um acoplamento com o `tauri.conf.json`, e acoplamento por
+    /// string quebra em silêncio: renomear a janela lá deixaria `closing_ends_app`
+    /// respondendo `false` para todo mundo — nenhum erro de compilação, nenhum
+    /// aviso, e o encerramento simplesmente pararia de acontecer.
+    #[test]
+    fn os_rotulos_de_janela_batem_com_o_tauri_conf() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json precisa ser JSON válido");
+        let labels: Vec<&str> = config["app"]["windows"]
+            .as_array()
+            .expect("app.windows precisa ser uma lista")
+            .iter()
+            .filter_map(|window| window["label"].as_str())
+            .collect();
+        assert!(
+            labels.contains(&MAIN_WINDOW_LABEL),
+            "nenhuma janela do tauri.conf.json se chama {MAIN_WINDOW_LABEL:?}: {labels:?}"
+        );
+        assert!(
+            labels.contains(&windows::AVATAR_LAB_LABEL),
+            "nenhuma janela do tauri.conf.json se chama {:?}: {labels:?}",
+            windows::AVATAR_LAB_LABEL
+        );
+    }
+
+    /// O gancho de fechamento é fiação: `closing_ends_app` pode estar correto e
+    /// mesmo assim nunca ser consultado, que era exatamente o defeito anterior
+    /// (`app_shutdown` existia, ninguém o chamava). Não há como instanciar o
+    /// `Builder` num teste sem subir uma janela de verdade, então o que dá para
+    /// travar é a presença da fiação no fonte.
+    #[test]
+    fn o_fechamento_da_janela_esta_ligado_ao_encerramento() {
+        // Só o código de PRODUÇÃO: as agulhas abaixo aparecem literalmente
+        // dentro deste teste, e procurá-las no arquivo inteiro faria o teste
+        // encontrar a si mesmo e passar mesmo com a fiação removida. O corte é
+        // no início deste módulo — tudo o que vem antes é produção.
+        let fonte = include_str!("lib.rs");
+        let producao = fonte.split("mod tests {").next().unwrap_or_default();
+        assert!(
+            producao.contains(".on_window_event("),
+            "sem on_window_event, fechar a janela não encerra nada"
+        );
+        assert!(
+            producao.contains("WindowEvent::CloseRequested"),
+            "o encerramento tem de reagir ao CloseRequested"
+        );
+        assert!(
+            producao.contains("shutdown(&app)"),
+            "o gancho tem de chamar o MESMO corpo de encerramento do comando"
+        );
     }
 }

@@ -1,0 +1,128 @@
+# Sandbox do AI-BOT para o Docker Sandboxes (`sbx`).
+#
+# ESTE ARQUIVO É NOSSO. Nada do Docker — binário, instalador ou arquivo do kit —
+# entra neste repositório: a licença do docker/sbx-releases é "Copyright © 2026
+# Docker Inc. All rights reserved", software proprietário sem permissão de
+# redistribuição. O AI-BOT DIRIGE o `sbx` que estiver instalado na máquina (como
+# faz com o `git`) e recusa com mensagem acionável quando ele não está lá. Ver o
+# cabeçalho de services/gateway/internal/sandbox/sandbox.go.
+#
+# Sobre os campos: os marcados com `# conferir contra o kit-reference` são os que
+# não temos como validar aqui — a máquina que escreveu este arquivo não tem o
+# `sbx` instalado. O valor escolhido é sempre o CONSERVADOR (o que restringe
+# mais). Um TODO visível é melhor do que um campo inventado com cara de verdade:
+# campo errado que o sbx ignora em silêncio vira isolamento que ninguém tem.
+
+version: 1 # conferir contra o kit-reference
+
+# Nome do ambiente. Aparece no `sbx ls` e é como o container é referenciado.
+name: aibot-workspace
+
+# ---------------------------------------------------------------------------
+# Imagem
+# ---------------------------------------------------------------------------
+# Fixada por TAG e não por `latest`: o sandbox precisa ser o MESMO amanhã, senão
+# "funciona na minha máquina" volta pela porta dos fundos — agora entre duas
+# execuções do mesmo projeto na mesma estação.
+#
+# Debian slim porque o adaptador chama `bash -c` (ver sbxArgs, em sandbox.go).
+# Trocar por uma imagem sem bash quebra a execução, não o build.
+image: debian:12-slim # conferir contra o kit-reference
+
+# ---------------------------------------------------------------------------
+# Workspace
+# ---------------------------------------------------------------------------
+# SÓ a pasta do projeto entra. É o ponto inteiro de existir um ambiente Docker:
+# o comando do modelo alcança o código em que se está trabalhando e mais nada —
+# nem a pasta pessoal, nem as chaves de SSH, nem o resto do disco.
+workspace:
+  # Origem: a pasta de onde o `sbx` foi chamado. O gateway executa o processo a
+  # partir da raiz do projeto da sessão, justamente para isto resolver certo.
+  source: . # conferir contra o kit-reference
+  target: /workspace
+  # Leitura E escrita: o agente compila e edita. Se um dia houver um modo só de
+  # leitura para revisão, ele é OUTRO arquivo — não um campo alternado aqui.
+  readonly: false
+
+workdir: /workspace
+
+# ---------------------------------------------------------------------------
+# Rede
+# ---------------------------------------------------------------------------
+# Fechada por padrão. Um sandbox com rede aberta é uma estação a mais na rede da
+# empresa, criada por um comando que o modelo escreveu.
+#
+# A lista de liberação existe porque `npm install` e `cargo build` sem registro
+# não fazem nada — mas ela é EXPLÍCITA: acrescentar domínio aqui é decisão de
+# quem mantém o projeto, e passa pela mesma revisão de qualquer mudança de
+# configuração. O gateway tem o netguard dele para o que sai por ferramenta de
+# rede; isto aqui é o que sai de DENTRO do container.
+network:
+  mode: restricted # conferir contra o kit-reference
+  allow:
+    - registry.npmjs.org
+    - crates.io
+    - static.crates.io
+    - proxy.golang.org
+    - pypi.org
+    - files.pythonhosted.org
+
+# ---------------------------------------------------------------------------
+# Limites
+# ---------------------------------------------------------------------------
+# Teto de CPU e memória para um `while true` do modelo não derrubar a estação
+# junto. Números para uma máquina de desenvolvimento comum (16 GB): metade dos
+# núcleos e 4 GB. Ajuste local é bem-vindo; o que não vale é tirar o limite.
+resources:
+  cpus: "2" # conferir contra o kit-reference
+  memory: 4g # conferir contra o kit-reference
+  # PIDs limitados travam fork bomb antes de ela virar problema do sistema todo.
+  pids: 512 # conferir contra o kit-reference
+
+# ---------------------------------------------------------------------------
+# Segurança
+# ---------------------------------------------------------------------------
+# Sem privilégio, sem escalar privilégio, usuário não-root. São as três que
+# fazem um container ser contenção de verdade em vez de decoração.
+security:
+  privileged: false
+  no_new_privileges: true # conferir contra o kit-reference
+  user: "1000:1000" # conferir contra o kit-reference
+  # /tmp em tmpfs: escrita temporária que morre com o container, em vez de
+  # crescer dentro da camada de escrita e sobreviver ao que a gerou.
+  tmpfs:
+    - /tmp
+
+# ---------------------------------------------------------------------------
+# Ambiente
+# ---------------------------------------------------------------------------
+# NENHUM SEGREDO. Nem chave de provedor, nem token do gateway, nem credencial de
+# repositório. As chaves ficam no cofre do gateway (internal/secrets), que só as
+# USA dentro de um callback e nunca as devolve para quem chamou — e o gateway
+# não roda dentro deste container.
+#
+# Isto não é excesso de zelo: variável de ambiente de container aparece em
+# `docker inspect`, no log do daemon e em qualquer dump de processo, e quem lê o
+# comando que o modelo escreveu é o próprio modelo. Segredo aqui é segredo no
+# histórico da conversa.
+#
+# Se um comando PRECISAR de credencial (publicar um pacote, por exemplo), o
+# caminho é a pessoa rodar isso ela mesma, fora do sandbox. Ver a política:
+# DEV → AWS Secrets Manager/Passbolt; demais → Vaultwarden.
+env:
+  LANG: C.UTF-8
+  # Marca que o processo está dentro do sandbox — script de build que precise
+  # decidir algo por isso lê daqui em vez de adivinhar.
+  AIBOT_SANDBOX: "1"
+
+# ---------------------------------------------------------------------------
+# Persistência
+# ---------------------------------------------------------------------------
+# Caches de dependência sobrevivem entre execuções; o resto do container, não.
+# Sem isto, cada comando rebaixa o `npm install` inteiro e o ambiente Docker vira
+# a opção que ninguém escolhe por ser lenta.
+volumes: # conferir contra o kit-reference
+  - name: aibot-npm-cache
+    target: /home/sandbox/.npm
+  - name: aibot-cargo-registry
+    target: /home/sandbox/.cargo/registry

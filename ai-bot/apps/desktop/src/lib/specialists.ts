@@ -17,6 +17,7 @@
  * primeiro — e o cliente nunca lê esses campos.
  */
 
+import type { CSSProperties } from "react";
 import {
   Bot,
   Code2,
@@ -399,4 +400,23 @@ export function specialistById(list: SpecialistDefinition[], id: string): Specia
   if (id === MASTER_ID) return MASTER;
   const fallback = list.find((item) => item.id === DEFAULT_ID);
   return fallback ?? CHAT;
+}
+
+/**
+ * O matiz do especialista aplicado ao pedaço de interface que fala por ele.
+ *
+ * Vai como custom property porque o tema deriva tudo de `--accent-h`, e o
+ * pedaço precisa manter a cor de QUEM RESPONDEU mesmo depois de a conversa
+ * trocar de especialista. ARMADILHA JÁ PAGA NESTE PROJETO: não declare
+ * `transition` sobre `--accent-h`. A transição encalha no valor de partida e
+ * todas as linhas terminam com o matiz da primeira.
+ *
+ * Mora aqui, e não na superfície de conversa, porque o shell também precisa
+ * dele (o popup de delegação) — e importar da superfície arrastaria o chunk
+ * inteiro da conversa, com o markdown junto, para dentro do bundle inicial.
+ */
+export function hueStyle(hue: number): CSSProperties {
+  // `CSSProperties` não declara custom properties; a asserção dupla é o caminho
+  // sem `any` para escrever uma.
+  return { "--accent-h": String(hue) } as unknown as CSSProperties;
 }

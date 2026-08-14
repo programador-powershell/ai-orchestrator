@@ -88,6 +88,7 @@ func TestKindValidRejectsUnknownVerbs(t *testing.T) {
 		KindApprovalRequest, KindApprovalDecision,
 		KindTaskDispatch, KindTaskProgress, KindWorkerDone,
 		KindEscalate, KindAsk, KindReply, KindGate,
+		KindDelegate,
 		KindState,
 	}
 	for _, kind := range known {

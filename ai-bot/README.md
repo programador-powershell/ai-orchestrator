@@ -114,9 +114,47 @@
   `schedule.create` (com `list` e `remove` juntos — criar sem poder listar nem
   apagar é armadilha). São **36 ferramentas** no catálogo; no host ficaram só as
   seis que precisam da máquina de verdade (processo, ConPTY, binário de documento).
+- **O ambiente de execução voltou — com Docker.** Local, **Docker**, WSL, VPS e
+  Nuvem: onde o próximo comando roda é escolha da sessão, e o gateway mede a
+  disponibilidade de cada um na máquina antes de oferecer. O que ainda não tem
+  executor (VPS, Nuvem) aparece **cinza com o motivo** em vez de sumir. E,
+  diferente do produto anterior, o ambiente alcança o DESPACHO da ferramenta:
+  `proc.run` deixa de ir para a estação quando o ambiente não é o local — lá o
+  seletor roteava só o terminal, e o agente compilava no servidor enquanto lia os
+  arquivos na estação, sem ninguém perceber. O ambiente Docker dirige o `sbx`
+  (Docker Sandboxes) **instalado na máquina**: nada do Docker é redistribuído
+  aqui — a licença dele não permite —, e o que é nosso é o `.sbxenv.yaml`
+  (workspace só na pasta do projeto, rede restrita, limites de CPU/memória e
+  nenhum segredo dentro do container).
 
 ### :pushpin: Fixes
 
+- **A janela fecha, minimiza e sai do lugar.** Ela sobe sem moldura do sistema
+  (`decorations: false`) e a barra superior não tinha controle nenhum: sem X, sem
+  minimizar, sem faixa de arrasto. Agora os três botões ficam à direita da barra e
+  o espaço vazio dela é a região de arrasto — em faixas próprias, porque botão
+  dentro de região de arrasto vira arrasto e para de responder. No navegador do
+  `pnpm dev` eles não aparecem: botão de fechar que não fecha é pior que botão
+  nenhum.
+- **Fechar a janela encerra de verdade o que o app subiu.** O `app_shutdown`
+  existia e ninguém o chamava. Quem clicava no X deixava vivos o `aibotd`
+  (segurando a porta 8799), os servidores MCP filhos dele e um `powershell.exe`
+  por sessão de terminal — e como a abertura seguinte ADOTA o gateway órfão, nada
+  parecia quebrado enquanto os processos se acumulavam. O encerramento agora está
+  no `CloseRequested` da janela `main`, no Rust, porque a interface pode estar
+  travada justamente quando isso importa. Fechar o laboratório de avatares
+  continua fechando só ele.
+- **`term.open` saiu do catálogo de ferramentas.** Ela abria um ConPTY de verdade
+  e respondia "terminal aberto para a pessoa usar" — só que não existe painel de
+  terminal na interface. O modelo lia sucesso e seguia raciocinando sobre uma
+  janela que ninguém tem, enquanto cada chamada deixava um shell invisível vivo
+  até o teto de oito sessões recusar tudo para sempre. Ferramenta ausente é melhor
+  que ferramenta que promete o que não entrega: sem ela o modelo usa `proc.run`,
+  que passa pela aprovação. Volta quando o painel existir; os comandos `pty_*`
+  continuam de pé.
+- **A sessão de terminal sai do mapa quando o processo morre.** A thread que
+  espera o fim emitia `pty-exit` e ia embora, deixando a entrada — e com ela o
+  master do ConPTY, o writer e o killer — presa até o próximo `pty_spawn` varrer.
 - **A matiz por módulo funciona.** No produto anterior havia um `transition` sobre
   `--accent-h`: ele encalhava no valor de partida e as nove abas ficavam com o verde
   do Chat — a "cor própria por aba" anunciada nunca existiu. Aqui a matiz troca sem
@@ -173,6 +211,30 @@
   3,04:1, `fail` 4,06:1) contra os 4,11:1 do cinza que já estava lá. As regras
   mortas estavam, por acidente, protegendo a legibilidade. Quem diferencia agora é
   o ícone — mão levantada para quem escalou, triângulo para falha.
+- **O marco do replay só anda depois que o envelope foi aplicado.** O transporte
+  guardava o `seq` ANTES de chamar a redução do store: uma exceção lá dentro subia
+  por `receive` e por `onmessage`, onde ninguém a pega, e o envelope ficava sem ser
+  aplicado — com o marco já adiantado. Na reconexão, o `resumeFrom` pedia a partir
+  de um ponto **depois** do buraco e a linha sumia da conversa para sempre, que é
+  exatamente a invariante que o `seq` existe para garantir. Agora aplica primeiro,
+  marca depois, e a falha vai para o console em vez de sumir com o dado.
+- **A preferência não grava mais a cada tecla.** O `persist` do zustand escreve a
+  cada `setState` sem comparar nada, e este store recebe um `set` por token de
+  resposta: um turno de 800 tokens eram 800 `JSON.stringify` e 800 escritas
+  síncronas na thread que desenha (o `partialize` encolhe o payload, mas o custo é
+  por `set`, não por byte). O armazenamento agora **coalesce** a rajada numa
+  gravação por janela, **pula** o valor idêntico ao que já está no disco e
+  **descarrega no fechamento** (`pagehide`/`visibilitychange`). O
+  `QuotaExceededError` é engolido com aviso: ele nascia dentro do `setState` e
+  derrubava o **envio da mensagem** — perder a preferência de tema é aceitável,
+  perder a mensagem não.
+- **O 409 do gateway virou frase.** O `post` lançava `o gateway recusou … com 409`
+  e jogava o corpo fora, justamente onde mora o texto acionável ("o Docker
+  Sandboxes não está instalado — instale o Docker Desktop e o sbx…"). Agora o corpo
+  é lido, o `error.message` do contrato vira a mensagem do erro (com o status
+  junto) e ela chega ao alerta do composer pelo desfazer do `setEnvironment`. O
+  crachá do rodapé também passou a levar o motivo na dica: antes escrevia
+  "indisponível" sem dizer o que fazer para passar a ser disponível.
 
 ### :construction_worker: Refactors
 

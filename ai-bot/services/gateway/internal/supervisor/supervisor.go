@@ -242,6 +242,11 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 		return err
 	}
 
+	// O orçamento de delegação é do TURNO e é compartilhado com os sub-turnos:
+	// três delegações são três, aconteçam elas todas aqui ou espalhadas pela
+	// árvore que elas abrem.
+	budget := &delegationBudget{}
+
 	var totalUsage modelrouter.Usage
 	for round := 0; round < maxToolRounds; round++ {
 		s.thinking(sessionID, turn, actor, thinkingLabel(definition, round), false)
@@ -261,13 +266,14 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 		}
 
 		calls := parseToolCalls(answer)
-		if len(calls) == 0 {
+		delegations := parseDelegations(answer)
+		if len(calls) == 0 && len(delegations) == 0 {
 			// A resposta final entra no log inteira. Os deltas já foram
 			// entregues, mas eles são EFÊMEROS: quem abrir a conversa amanhã lê
 			// esta mensagem, não a soma de mil pedacinhos.
 			if err := s.emit(sessionID, turn, protocol.KindMessage, actor, protocol.Message{
 				Role:       "assistant",
-				Text:       stripToolBlocks(answer),
+				Text:       stripBlocks(answer),
 				Specialist: definition.ID,
 				Model:      entry.Model.ID,
 			}); err != nil {
@@ -277,9 +283,9 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 			return nil
 		}
 
-		// Houve ferramenta: a fala do modelo até aqui vale como mensagem, e o
-		// resultado das ferramentas volta como contexto do próximo giro.
-		visible := strings.TrimSpace(stripToolBlocks(answer))
+		// Houve ferramenta ou delegação: a fala do modelo até aqui vale como
+		// mensagem, e o que voltar delas entra como contexto do próximo giro.
+		visible := strings.TrimSpace(stripBlocks(answer))
 		if visible != "" {
 			if err := s.emit(sessionID, turn, protocol.KindMessage, actor, protocol.Message{
 				Role:       "assistant",
@@ -292,14 +298,36 @@ func (s *Supervisor) Prompt(parent context.Context, sessionID string, prompt pro
 		}
 		messages = append(messages, modelrouter.ChatMessage{Role: "assistant", Content: answer})
 
-		results := make([]string, 0, len(calls))
-		for _, call := range calls {
-			results = append(results, s.executeTool(ctx, sessionID, turn, actor, definition, call))
+		if len(calls) > 0 {
+			results := make([]string, 0, len(calls))
+			for _, call := range calls {
+				results = append(results, s.executeTool(ctx, sessionID, turn, actor, definition, call))
+			}
+			messages = append(messages, modelrouter.ChatMessage{
+				Role:    "user",
+				Content: "Resultado das ferramentas:\n\n" + strings.Join(results, "\n\n"),
+			})
 		}
-		messages = append(messages, modelrouter.ChatMessage{
-			Role:    "user",
-			Content: "Resultado das ferramentas:\n\n" + strings.Join(results, "\n\n"),
-		})
+
+		// A delegação volta como contexto, do mesmo jeito que a ferramenta —
+		// numa mensagem separada porque é outra coisa: quem responde continua
+		// sendo este especialista, e o texto que voltou é a fala de um colega,
+		// não a saída de um comando.
+		//
+		// O especialista e o modelo do turno NÃO mudam aqui, e o modo gravado na
+		// conversa também não: delegar é emprestar especialidade, não trocar de
+		// dono. Quem troca o modo é `/mode`.
+		if len(delegations) > 0 {
+			results := make([]string, 0, len(delegations))
+			for _, request := range delegations {
+				results = append(results,
+					s.delegate(ctx, sessionID, turn, definition, request, budget, firstDelegationDepth))
+			}
+			messages = append(messages, modelrouter.ChatMessage{
+				Role:    "user",
+				Content: "Resultado da delegação:\n\n" + strings.Join(results, "\n\n"),
+			})
+		}
 	}
 
 	s.fail(sessionID, turn, definition.ID, "laco_de_ferramenta",
@@ -390,9 +418,10 @@ func (s *Supervisor) runModel(
 //  1. prompt master do admin  (nenhum especialista o remove)
 //  2. prompt do especialista
 //  3. contrato de ferramentas (só se ele tiver ferramentas liberadas)
-//  4. memórias relevantes
-//  5. histórico da conversa
-//  6. arquivos citados com @
+//  4. contrato de delegação (só se sobrar alguém para chamar)
+//  5. memórias relevantes
+//  6. histórico da conversa
+//  7. arquivos citados com @
 func (s *Supervisor) buildMessages(
 	sessionID string,
 	definition specialist.Definition,
@@ -408,6 +437,9 @@ func (s *Supervisor) buildMessages(
 	messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: definition.System})
 
 	if contract := s.toolContract(definition); contract != "" {
+		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
+	}
+	if contract := s.delegateContract(definition, firstDelegationDepth); contract != "" {
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
 	}
 
