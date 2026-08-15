@@ -74,7 +74,13 @@ type providerView struct {
 	// NeedsKey diz se este tipo de provedor usa chave (o local não usa).
 	NeedsKey bool `json:"needsKey"`
 	// HasKey é o "cadastrada/ausente" da tela.
-	HasKey bool `json:"hasKey"`
+	HasKey    bool `json:"hasKey"`
+	CanDelete bool `json:"canDelete"`
+}
+
+type modelView struct {
+	modelrouter.Entry
+	CanDelete bool `json:"canDelete"`
 }
 
 /* ------------------------------ persistência ------------------------------ */
@@ -206,6 +212,7 @@ func (s *Server) catalogReady(w http.ResponseWriter) bool {
 // hora errada de descobrir um erro de digitação.
 var knownKinds = map[modelrouter.Kind]bool{
 	modelrouter.KindOpenAI:     true,
+	modelrouter.KindXAI:        true,
 	modelrouter.KindAnthropic:  true,
 	modelrouter.KindGemini:     true,
 	modelrouter.KindCompatible: true,
@@ -215,6 +222,7 @@ var knownKinds = map[modelrouter.Kind]bool{
 func kindList() string {
 	return strings.Join([]string{
 		string(modelrouter.KindOpenAI),
+		string(modelrouter.KindXAI),
 		string(modelrouter.KindAnthropic),
 		string(modelrouter.KindGemini),
 		string(modelrouter.KindCompatible),
@@ -286,9 +294,9 @@ func providerSecretRef(id string) string { return "provider:" + id }
 
 /* ---------------------------------- GET ----------------------------------- */
 
-// getCatalog devolve o catálogo COMPLETO do arquivo — inclusive provedores
-// desligados e modelos fora da política, porque esta é a tela de ADMINISTRAR,
-// não a de escolher modelo (essa é /v1/models, que já filtra).
+// getCatalog devolve a COMPOSIÇÃO completa — arquivo mais plugins — inclusive
+// provedores desligados e modelos fora da política. A tela administra o que o
+// runtime realmente enxerga; /v1/models continua sendo a visão utilizável.
 func (s *Server) getCatalog(w http.ResponseWriter, _ *http.Request) {
 	if !s.catalogReady(w) {
 		return
@@ -301,19 +309,30 @@ func (s *Server) getCatalog(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	views := make([]providerView, 0, len(document.Providers))
+	providers, models := s.models.Configuration()
+	persistedProviders := make(map[string]bool, len(document.Providers))
 	for _, provider := range document.Providers {
-		views = append(views, s.viewOf(provider))
+		persistedProviders[provider.ID] = true
 	}
-	models := document.Models
-	if models == nil {
-		models = []modelrouter.Entry{}
+	views := make([]providerView, 0, len(providers))
+	for _, provider := range providers {
+		view := s.viewOf(provider)
+		view.CanDelete = persistedProviders[provider.ID]
+		views = append(views, view)
+	}
+	persistedModels := make(map[string]bool, len(document.Models))
+	for _, model := range document.Models {
+		persistedModels[model.ID] = true
+	}
+	modelViews := make([]modelView, 0, len(models))
+	for _, model := range models {
+		modelViews = append(modelViews, modelView{Entry: model, CanDelete: persistedModels[model.ID]})
 	}
 	// `search` sai cru do arquivo: o dono do formato é o web.search, e esta
 	// rota só o repassa para a tela mostrar qual motor está configurado.
 	s.ok(w, map[string]any{
 		"providers": views,
-		"models":    models,
+		"models":    modelViews,
 		"search":    document.extras["search"],
 	})
 }
@@ -321,13 +340,14 @@ func (s *Server) getCatalog(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) viewOf(provider modelrouter.Provider) providerView {
 	needsKey := provider.Kind != modelrouter.KindLocal
 	return providerView{
-		ID:       provider.ID,
-		Name:     provider.Name,
-		Kind:     provider.Kind,
-		BaseURL:  provider.BaseURL,
-		Enabled:  provider.Enabled,
-		NeedsKey: needsKey,
-		HasKey:   provider.SecretRef != "" && s.vault.Has(provider.SecretRef),
+		ID:        provider.ID,
+		Name:      provider.Name,
+		Kind:      provider.Kind,
+		BaseURL:   provider.BaseURL,
+		Enabled:   provider.Enabled,
+		NeedsKey:  needsKey,
+		HasKey:    provider.SecretRef != "" && s.vault.Has(provider.SecretRef),
+		CanDelete: true,
 	}
 }
 
@@ -401,6 +421,11 @@ func (s *Server) postCatalogProvider(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("o provedor %q já existe — use PATCH para alterá-lo", body.ID))
 			return
 		}
+	}
+	if _, exists := s.models.ProviderConfig(body.ID); exists {
+		s.fail(w, http.StatusConflict, "provedor_existente",
+			fmt.Sprintf("o provedor %q já existe — use PATCH para alterá-lo", body.ID))
+		return
 	}
 
 	secretRef := ""
@@ -483,8 +508,16 @@ func (s *Server) patchCatalogProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if index < 0 {
-		s.fail(w, http.StatusNotFound, "not_found", fmt.Sprintf("provedor %q não existe no catálogo", providerID))
-		return
+		// Provedor de plugin ainda não existe no arquivo. O PATCH materializa
+		// uma camada de configuração da pessoa; o manifesto continua sendo o
+		// fallback que reaparece se esse override for removido fora daqui.
+		provider, exists := s.models.ProviderConfig(providerID)
+		if !exists {
+			s.fail(w, http.StatusNotFound, "not_found", fmt.Sprintf("provedor %q não existe no catálogo", providerID))
+			return
+		}
+		document.Providers = append(document.Providers, provider)
+		index = len(document.Providers) - 1
 	}
 	provider := document.Providers[index]
 
@@ -649,11 +682,16 @@ func (s *Server) postCatalogModel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if provider == nil {
-		s.fail(w, http.StatusBadRequest, "provedor_desconhecido",
-			fmt.Sprintf("o provedor %q não existe — cadastre-o antes do modelo", body.ProviderID))
-		return
+		if composed, exists := s.models.ProviderConfig(body.ProviderID); exists {
+			provider = &composed
+		} else {
+			s.fail(w, http.StatusBadRequest, "provedor_desconhecido",
+				fmt.Sprintf("o provedor %q não existe — cadastre-o antes do modelo", body.ProviderID))
+			return
+		}
 	}
-	for _, existing := range document.Models {
+	_, configuredModels := s.models.Configuration()
+	for _, existing := range configuredModels {
 		if existing.ID == body.ID {
 			s.fail(w, http.StatusConflict, "modelo_existente",
 				fmt.Sprintf("o modelo %q já existe no catálogo", body.ID))
@@ -759,8 +797,12 @@ func (s *Server) testCatalogProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if provider == nil {
-		s.fail(w, http.StatusNotFound, "not_found", fmt.Sprintf("provedor %q não existe no catálogo", providerID))
-		return
+		if composed, exists := s.models.ProviderConfig(providerID); exists {
+			provider = &composed
+		} else {
+			s.fail(w, http.StatusNotFound, "not_found", fmt.Sprintf("provedor %q não existe no catálogo", providerID))
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), testProviderTimeout)
@@ -786,7 +828,7 @@ func (s *Server) probeProvider(ctx context.Context, provider modelrouter.Provide
 	}
 
 	switch provider.Kind {
-	case modelrouter.KindOpenAI, modelrouter.KindCompatible, modelrouter.KindLocal:
+	case modelrouter.KindOpenAI, modelrouter.KindXAI, modelrouter.KindCompatible, modelrouter.KindLocal:
 		status, _, err := s.models.ProviderFetch(ctx, provider.ID, http.MethodGet, "/models", nil)
 		if err != nil {
 			// O erro do ProviderFetch já vem sem URL e sem chave (ele reescreve

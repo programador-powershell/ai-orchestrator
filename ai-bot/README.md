@@ -31,9 +31,9 @@
 > | openship | detecção de 47 stacks + Dockerfile correto (porta Apache-2.0) | **substitui** a geração; deploy automático no roteiro |
 > | Slate/Salte | templates por Capability Pack | parcial |
 >
-> **Verificado nesta versão**: gateway Go com build/vet/gofmt limpos e 17 pacotes
-> de teste verdes; Rust com clippy limpo e 136 testes; interface com tsc limpo e
-> 75 testes. Roteamento exercitado de ponta a ponta com provedor SSE de mentira.
+> **Verificado nesta versão**: gateway Go com gofmt e todos os pacotes de teste
+> verdes; Rust com clippy limpo e 136 testes; interface com tsc/build limpos e
+> 78 testes. Roteamento exercitado de ponta a ponta com provedor SSE de mentira.
 
 - **Tela única dinâmica** — sem abas, sem menu de modos. A barra lateral
   esquerda, a barra superior, o campo de texto e a cor de acento do app mudam
@@ -59,6 +59,13 @@
   (escolher o modelo é escolher quanto gastar). Aqui a precedência é
   *escolha do usuário > preferência do especialista > padrão do catálogo*, e a
   política decide o que entra no catálogo.
+- **xAI/Grok de ponta a ponta** — o catálogo semente traz `grok-4.5` e Grok
+  Imagine, com chave no cofre, Chat Completions em streaming, raciocínio separado
+  da resposta e afinidade de conversa para aproveitar o cache da xAI.
+- **Microkernel de plugins** — provedores/adaptadores LLM, modelos, MCP e
+  overlays de especialistas entram por manifestos, perfis e efeitos reversíveis.
+  Falha no meio da montagem faz rollback; unload remove todas as capacidades do
+  dono. Grok é o primeiro plugin embutido, não uma exceção hardcoded.
 - **Laboratório de avatares** — clicar no ícone do AI-BOT na barra lateral abre um
   personalizador: cada bot especialista tem retrato **procedural** (forma, olhos,
   boca, acessório, movimento, matiz, semente), com prévia nos três tamanhos reais
@@ -99,6 +106,16 @@
 ### :up: V.1.1
 ### :warning: Latest Changes
 
+- **Modo Grok nativo.** A xAI virou um dialeto de provedor próprio, com
+  `https://api.x.ai/v1`, Grok 4.5 (500 mil tokens) como padrão e Grok Imagine para
+  `image.generate`. A tela agora também permite inserir/trocar a chave e ligar ou
+  desligar provedores já existentes — antes os provedores semente apareciam, mas
+  não podiam ser ativados sem editar o catálogo fora do app.
+- **Arquitetura “tudo é plugin”.** Inspirada no DeepSeek Harness, a nova costura
+  registra adaptadores LLM, camadas de catálogo, servidores/ferramentas MCP e
+  overlays como contribuições com dono e disposer. Perfis resolvem dependências,
+  recusam ciclos e montam atomicamente; plugins locais só ativam quando listados
+  em `profiles/default.json`.
 - **Configuração de modelos LLM e chaves de API na tela.** Provedores e modelos
   agora se cadastram nas Configurações: a chave vai DIRETO para o cofre
   AES-256-GCM do gateway (o catalog.json guarda só a referência), tem teste de
@@ -391,6 +408,18 @@ Gera o build de produção.
 corepack pnpm --filter @aibot/desktop tauri build
 ```
 
+### Usar com Grok
+
+Na primeira execução, `xAI`, `grok-4.5` e `Grok Imagine` já aparecem no catálogo,
+mas o provedor nasce desligado para nenhum prompt sair da máquina sem escolha.
+Abra **Configurações → Modelos e provedores**, digite a chave na linha **xAI**,
+marque **habilitado**, salve e use **Testar**. Depois escolha **Grok 4.5** no
+seletor de modelo.
+
+Quem já tinha um `catalog.json` não precisa migrá-lo: o plugin embutido compõe
+xAI e os dois modelos por baixo do arquivo existente. Salvar a linha xAI na tela
+materializa somente a chave e o override local.
+
 ## :file_folder: Diretórios
 
 ```
@@ -438,3 +467,5 @@ O gateway **exige token** mesmo em loopback: o processo executa ferramenta, e
 ## :book: Documentação
 
 ### :link: [Wiki](docs/arquitetura.md)
+
+### :electric_plug: [Plugins e perfis](docs/plugins.md)

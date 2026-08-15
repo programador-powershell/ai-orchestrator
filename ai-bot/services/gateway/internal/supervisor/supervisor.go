@@ -498,8 +498,9 @@ func (s *Supervisor) runModel(
 ) (string, modelrouter.Usage, error) {
 	sink := &streamSink{supervisor: s, session: sessionID, turn: turn, actor: actor}
 	usage, err := s.deps.Models.Stream(ctx, modelrouter.Request{
-		Model:    model,
-		Messages: messages,
+		Model:          model,
+		Messages:       messages,
+		ConversationID: sessionID,
 	}, sink)
 	return sink.builder.String(), usage, err
 }

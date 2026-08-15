@@ -243,6 +243,32 @@ describe("post", () => {
     const transport = transportWithFetch({ ok: true, status: 204, text: async () => "" });
     await expect(transport.post("/v1/x", {})).resolves.toBeUndefined();
   });
+
+  it("envia PATCH autenticado com o corpo da alteração", async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      ({ ok: true, status: 200, text: async () => "{}" }) as Response
+    );
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.stubGlobal("fetch", fetch);
+    const transport = createTransport({
+      url: URL_GATEWAY,
+      token: "segredo",
+      onEnvelope: () => {},
+      onStatus: () => {}
+    });
+
+    await transport.patch("/v1/catalog/providers/xai", { enabled: true, apiKey: "xai-key" });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8799/v1/catalog/providers/xai",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ enabled: true, apiKey: "xai-key" })
+      })
+    );
+    const init = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer segredo");
+  });
 });
 
 describe("gatewayReason", () => {

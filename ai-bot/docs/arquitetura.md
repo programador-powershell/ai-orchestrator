@@ -46,6 +46,25 @@ Go       → cérebro           (services/gateway, binário `aibotd`)
  (Tauri)   (watch)   (ferramentas) (aibotd)
 ```
 
+## Microkernel de plugins
+
+`internal/plugins` é a camada de composição. O núcleo registra contratos de
+contribuição; manifestos fornecem implementações com dono e efeito reversível.
+O runtime monta atomicamente, resolve `requires`, recusa ciclos/colisões e faz
+rollback em ordem inversa.
+
+As costuras ativas são:
+
+- `llm.adapter`: liga um `kind` ao protocolo OpenAI, Anthropic ou Gemini;
+- `llm.catalog`: compõe provedores e modelos em camadas por prioridade;
+- `mcp.server`: registra o servidor e cada ferramenta no supervisor;
+- `specialist.overlay`: troca o catálogo e restaura o snapshot anterior.
+
+Grok é um plugin embutido que contribui adaptador xAI, provedor e modelos. A
+configuração da pessoa é uma camada superior, por isso chave/estado não alteram
+o manifesto. Plugins locais só montam quando escolhidos pelo perfil
+`profiles/default.json`. O formato completo está em [plugins.md](plugins.md).
+
 ## O roteamento — o coração do produto
 
 ### A conversa tem UM modo
@@ -177,7 +196,7 @@ A numeração (`seq`) é o que permite **replay**: quem cai reconecta dizendo o
 | roteamento, sessão, memória, permissão, segredo, barramento | `proc.run` **no ambiente local** (processo com Job Object), PTY (comandos `pty_*`, só para a janela) |
 | arquivos do projeto, git, worktree | `office.*`, `pdf.extract` (binário no disco da pessoa) |
 | `secrets.scan`, `sql.render`, `schema.export`, `osv.query`, `webhook.post` | `runtime.status` (processo local do modelo) |
-| chamada de modelo (OpenAI, Anthropic, Gemini, local) | cofre do SO, login OIDC em loopback, janelas |
+| chamada de modelo (xAI/Grok, OpenAI, Anthropic, Gemini, local) | cofre do SO, login OIDC em loopback, janelas |
 
 O critério é um só: **precisa de algo que a máquina tem e o servidor não?**
 ConPTY, Job Object e Credential Manager precisam. Ler arquivo, montar SQL e

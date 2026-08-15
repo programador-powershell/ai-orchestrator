@@ -54,6 +54,8 @@ type registration struct {
 	description string
 	fn          ToolFunc
 	host        bool
+	owner       string
+	token       uint64
 }
 
 // Registry é o catálogo executável.
@@ -61,6 +63,7 @@ type Registry struct {
 	mu     sync.RWMutex
 	tools  map[string]registration
 	bridge HostBridge
+	next   uint64
 }
 
 // NewRegistry monta um catálogo vazio.
@@ -72,14 +75,57 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(name, description string, fn ToolFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[name] = registration{description: description, fn: fn}
+	r.next++
+	r.tools[name] = registration{description: description, fn: fn, owner: "core", token: r.next}
 }
 
 // RegisterHost declara uma ferramenta que roda no host.
 func (r *Registry) RegisterHost(name, description string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.tools[name] = registration{description: description, host: true}
+	r.next++
+	r.tools[name] = registration{description: description, host: true, owner: "core", token: r.next}
+}
+
+// RegisterOwned publica uma ferramenta com dono e devolve o efeito reversível
+// que a remove. Plugins não podem substituir silenciosamente ferramenta de
+// outro dono: colisão é erro de composição, não ordem acidental de boot.
+func (r *Registry) RegisterOwned(owner, name, description string, fn ToolFunc) (func(), error) {
+	return r.registerOwned(owner, name, registration{description: description, fn: fn})
+}
+
+// RegisterHostOwned é a variante para capacidade implementada pela casca
+// nativa. O manifesto publica o contrato; o host continua sendo quem executa.
+func (r *Registry) RegisterHostOwned(owner, name, description string) (func(), error) {
+	return r.registerOwned(owner, name, registration{description: description, host: true})
+}
+
+func (r *Registry) registerOwned(owner, name string, entry registration) (func(), error) {
+	owner = strings.TrimSpace(owner)
+	name = strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return nil, errors.New("registro de ferramenta exige owner e name")
+	}
+	r.mu.Lock()
+	if current, exists := r.tools[name]; exists {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("ferramenta %s já pertence a %s", name, current.owner)
+	}
+	r.next++
+	entry.owner = owner
+	entry.token = r.next
+	token := entry.token
+	r.tools[name] = entry
+	r.mu.Unlock()
+
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		current, exists := r.tools[name]
+		if exists && current.owner == owner && current.token == token {
+			delete(r.tools, name)
+		}
+	}, nil
 }
 
 // SetBridge liga o despacho para o host. Sem ponte, ferramenta de host recusa

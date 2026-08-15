@@ -16,6 +16,13 @@ const contractsEntry = fileURLToPath(
 export default defineConfig({
   plugins: [react()],
 
+  // Este workspace não usa Tailwind/PostCSS. Tornar a configuração explícita
+  // impede o Vite de subir diretórios e herdar por acidente o postcss.config
+  // de outro aplicativo do monorepo (que pode ter dependências diferentes).
+  css: {
+    postcss: { plugins: [] }
+  },
+
   server: {
     /*
      * Porta FIXA, e strictPort obrigatório.

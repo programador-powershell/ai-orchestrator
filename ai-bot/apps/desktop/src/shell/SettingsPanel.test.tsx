@@ -15,7 +15,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { ProviderForm, keyLabel, type NewProvider } from "./SettingsPanel";
+import {
+  PROVIDER_KINDS,
+  ProviderConfigForm,
+  ProviderForm,
+  keyLabel,
+  type CatalogProvider,
+  type NewProvider
+} from "./SettingsPanel";
 
 declare global {
   // A bandeira que o React 19 procura para aceitar `act()` fora de uma suíte
@@ -130,10 +137,51 @@ describe("keyLabel", () => {
       name: "P",
       kind: "openai",
       baseUrl: "https://x",
-      enabled: true
+      enabled: true,
+      canDelete: true
     };
     expect(keyLabel({ ...base, needsKey: true, hasKey: true })).toBe("chave: cadastrada");
     expect(keyLabel({ ...base, needsKey: true, hasKey: false })).toBe("chave: ausente");
     expect(keyLabel({ ...base, needsKey: false, hasKey: false })).toBe("não usa chave");
+  });
+});
+
+describe("integração xAI", () => {
+  it("oferece xAI entre os dialetos configuráveis", () => {
+    expect(PROVIDER_KINDS).toContain("xai");
+  });
+
+  it("habilita provedor existente, envia a chave e limpa o segredo", async () => {
+    const provider: CatalogProvider = {
+      id: "xai",
+      name: "xAI",
+      kind: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      enabled: false,
+      needsKey: true,
+      hasKey: false,
+      canDelete: false
+    };
+    const submitted: Array<{ apiKey?: string; enabled: boolean }> = [];
+
+    act(() => {
+      root.render(
+        <ProviderConfigForm
+          provider={provider}
+          onSubmit={async (change) => {
+            submitted.push(change);
+          }}
+        />
+      );
+    });
+
+    const password = field("chave de API de xai");
+    type(password, "xai-segredo");
+    const enabled = field("habilitar xai");
+    act(() => enabled.click());
+    await submitForm();
+
+    expect(submitted).toEqual([{ apiKey: "xai-segredo", enabled: true }]);
+    expect(password.value).toBe("");
   });
 });

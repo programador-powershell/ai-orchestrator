@@ -22,6 +22,7 @@ import (
 
 	"aibot/gateway/internal/config"
 	"aibot/gateway/internal/modelrouter"
+	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/secrets"
 )
 
@@ -280,6 +281,50 @@ func TestCatalogAppliesHotWithoutReboot(t *testing.T) {
 	}
 }
 
+func TestCatalogShowsAndMaterializesPluginProvider(t *testing.T) {
+	server, router, vault, catalogPath := newCatalogHarness(t)
+	handler := server.Handler()
+	if err := router.SetCatalogLayer("plugin:grok:models", 10,
+		[]modelrouter.Provider{{
+			ID: "xai", Name: "xAI", Kind: modelrouter.KindXAI,
+			BaseURL: "https://api.x.ai/v1", SecretRef: "provider:xai",
+		}},
+		[]modelrouter.Entry{{
+			Model:      protocol.Model{ID: "grok-4.5", Provider: "xai", Label: "Grok 4.5"},
+			ProviderID: "xai", Default: true,
+		}},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	response := do(t, handler, http.MethodGet, "/v1/catalog", nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"id":"xai"`) ||
+		!strings.Contains(response.Body.String(), `"id":"grok-4.5"`) {
+		t.Fatalf("GET não compôs o plugin: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Count(response.Body.String(), `"canDelete":false`) < 2 {
+		t.Fatalf("itens só do plugin não podem oferecer remoção: %s", response.Body.String())
+	}
+
+	response = do(t, handler, http.MethodPatch, "/v1/catalog/providers/xai", map[string]any{
+		"enabled": true,
+		"apiKey":  "xai-plugin-key",
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH não materializou provedor do plugin: %d %s", response.Code, response.Body.String())
+	}
+	if !vault.Has("provider:xai") {
+		t.Fatal("a chave do provedor de plugin não chegou ao cofre")
+	}
+	raw, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"id": "xai"`) || strings.Contains(string(raw), "xai-plugin-key") {
+		t.Fatalf("override do plugin foi persistido de forma insegura:\n%s", raw)
+	}
+}
+
 func TestCatalogRewritePreservesForeignSections(t *testing.T) {
 	server, _, _, catalogPath := newCatalogHarness(t)
 	handler := server.Handler()
@@ -471,5 +516,36 @@ func TestCatalogTestProviderReportsWithoutEchoingKey(t *testing.T) {
 	// Provedor que não existe: 404 com frase, não pânico nem sucesso vazio.
 	if response := do(t, handler, http.MethodPost, "/v1/catalog/test/nao-existe", nil); response.Code != http.StatusNotFound {
 		t.Fatalf("teste de provedor inexistente tinha de dar 404, veio %d", response.Code)
+	}
+}
+
+func TestCatalogAcceptsAndProbesXAIProvider(t *testing.T) {
+	server, _, _, _ := newCatalogHarness(t)
+	handler := server.Handler()
+	const apiKey = "xai-chave-catalogo"
+
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+apiKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"grok-4.5"}]}`)
+	}))
+	defer fake.Close()
+
+	response := createProvider(t, handler, "xai", "xai", fake.URL, apiKey)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("POST xAI: esperava 201, veio %d: %s", response.Code, response.Body.String())
+	}
+	response = do(t, handler, http.MethodPost, "/v1/catalog/test/xai", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("teste xAI: esperava 200, veio %d: %s", response.Code, response.Body.String())
+	}
+	if okFlag, _ := decodeBody(t, response)["ok"].(bool); !okFlag {
+		t.Fatalf("teste xAI devia validar GET /models: %s", response.Body.String())
 	}
 }

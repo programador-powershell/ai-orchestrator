@@ -37,6 +37,7 @@ const STATUS_LABEL: Record<"connecting" | "ready" | "offline", string> = {
 export interface CatalogClient {
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
+  patch(path: string, body: unknown): Promise<unknown>;
   del(path: string): Promise<unknown>;
 }
 
@@ -48,6 +49,7 @@ export interface CatalogProvider {
   enabled: boolean;
   needsKey: boolean;
   hasKey: boolean;
+  canDelete: boolean;
 }
 
 export interface CatalogModel {
@@ -57,6 +59,7 @@ export interface CatalogModel {
   context: number;
   default?: boolean;
   local?: boolean;
+  canDelete: boolean;
 }
 
 interface CatalogSnapshot {
@@ -67,6 +70,7 @@ interface CatalogSnapshot {
 /** Os dialetos que o gateway aceita — a mesma lista fechada do catalog.go. */
 export const PROVIDER_KINDS = [
   "openai",
+  "xai",
   "anthropic",
   "gemini",
   "openai-compatible",
@@ -95,7 +99,8 @@ function parseCatalog(raw: unknown): CatalogSnapshot {
         baseUrl: typeof provider.baseUrl === "string" ? provider.baseUrl : "",
         enabled: provider.enabled === true,
         needsKey: provider.needsKey !== false,
-        hasKey: provider.hasKey === true
+        hasKey: provider.hasKey === true,
+        canDelete: provider.canDelete !== false
       });
     }
   }
@@ -110,7 +115,8 @@ function parseCatalog(raw: unknown): CatalogSnapshot {
         label: typeof model.label === "string" && model.label !== "" ? model.label : model.id,
         context: typeof model.context === "number" ? model.context : 0,
         default: model.default === true,
-        local: model.local === true
+        local: model.local === true,
+        canDelete: model.canDelete !== false
       });
     }
   }
@@ -125,6 +131,76 @@ function reasonOf(cause: unknown): string {
 export function keyLabel(provider: CatalogProvider): string {
   if (!provider.needsKey) return "não usa chave";
   return provider.hasKey ? "chave: cadastrada" : "chave: ausente";
+}
+
+/* ---------------------- configuração de provedor existente ---------------------- */
+
+/**
+ * Atualiza um provedor sem expor a chave atual. Campo vazio significa
+ * "preserve a chave no cofre"; quando há valor, ele zera no `finally` como no
+ * formulário de cadastro.
+ */
+export function ProviderConfigForm({
+  provider,
+  onSubmit
+}: {
+  provider: CatalogProvider;
+  onSubmit: (change: { apiKey?: string; enabled: boolean }) => Promise<void>;
+}) {
+  const [apiKey, setApiKey] = useState("");
+  const [enabled, setEnabled] = useState(provider.enabled);
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState("");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const change: { apiKey?: string; enabled: boolean } = { enabled };
+      if (apiKey !== "") change.apiKey = apiKey;
+      await onSubmit(change);
+      setFailure("");
+    } catch (cause) {
+      setFailure(reasonOf(cause));
+    } finally {
+      setApiKey("");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="settings-provider-config" onSubmit={submit}>
+      {provider.needsKey && (
+        <input
+          className="settings-input"
+          type="password"
+          aria-label={`chave de API de ${provider.id}`}
+          placeholder={provider.hasKey ? "nova chave (opcional)" : "chave de API"}
+          autoComplete="off"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+        />
+      )}
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          aria-label={`habilitar ${provider.id}`}
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />
+        habilitado
+      </label>
+      <button type="submit" className="button-secondary" disabled={busy}>
+        Salvar
+      </button>
+      {failure !== "" && (
+        <span className="settings-feedback" data-ok="false">
+          {failure}
+        </span>
+      )}
+    </form>
+  );
 }
 
 /* ------------------------- formulário de provedor ------------------------- */
@@ -422,6 +498,11 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
     }
   }
 
+  async function updateProvider(id: string, change: { apiKey?: string; enabled: boolean }) {
+    await gateway.patch(`/v1/catalog/providers/${encodeURIComponent(id)}`, change);
+    await reload();
+  }
+
   async function testProvider(id: string) {
     setTests((current) => ({ ...current, [id]: { ok: false, detail: "testando…" } }));
     try {
@@ -474,7 +555,7 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
         {providers.map((provider) => {
           const test = tests[provider.id];
           return (
-            <li key={provider.id} className="settings-item">
+            <li key={provider.id} className="settings-item settings-provider-item">
               <div className="settings-item-main">
                 <span>
                   {provider.name}
@@ -500,14 +581,20 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
                 <PlugZap size={13} aria-hidden />
                 Testar
               </button>
-              <button
-                type="button"
-                className="button-secondary"
-                aria-label={`remover provedor ${provider.id}`}
-                onClick={() => void removeProvider(provider.id)}
-              >
-                <Trash2 size={13} aria-hidden />
-              </button>
+              {provider.canDelete && (
+                <button
+                  type="button"
+                  className="button-secondary"
+                  aria-label={`remover provedor ${provider.id}`}
+                  onClick={() => void removeProvider(provider.id)}
+                >
+                  <Trash2 size={13} aria-hidden />
+                </button>
+              )}
+              <ProviderConfigForm
+                provider={provider}
+                onSubmit={(change) => updateProvider(provider.id, change)}
+              />
             </li>
           );
         })}
@@ -529,14 +616,16 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
                 {model.context > 0 ? ` · ${model.context.toLocaleString("pt-BR")} tokens` : ""}
               </span>
             </div>
-            <button
-              type="button"
-              className="button-secondary"
-              aria-label={`remover modelo ${model.id}`}
-              onClick={() => void removeModel(model.id)}
-            >
-              <Trash2 size={13} aria-hidden />
-            </button>
+            {model.canDelete && (
+              <button
+                type="button"
+                className="button-secondary"
+                aria-label={`remover modelo ${model.id}`}
+                onClick={() => void removeModel(model.id)}
+              >
+                <Trash2 size={13} aria-hidden />
+              </button>
+            )}
           </li>
         ))}
       </ul>

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "name": "grok",
+  "version": "1.0.0",
+  "contributes": [
+    {
+      "kind": "llm.adapter",
+      "id": "xai-openai",
+      "config": {
+        "kind": "xai",
+        "protocol": "openai",
+        "conversationHeader": "x-grok-conv-id",
+        "imageProtocol": "openai"
+      }
+    },
+    {
+      "kind": "llm.catalog",
+      "id": "models",
+      "config": {
+        "priority": 10,
+        "providers": [
+          {
+            "id": "xai",
+            "name": "xAI",
+            "kind": "xai",
+            "baseUrl": "https://api.x.ai/v1",
+            "secretRef": "provider:xai",
+            "enabled": false
+          }
+        ],
+        "models": [
+          {
+            "id": "grok-4.5",
+            "provider": "xai",
+            "label": "Grok 4.5",
+            "context": 500000,
+            "skills": ["chat", "code", "reasoning", "tools", "long-context", "vision"],
+            "providerId": "xai",
+            "default": true
+          },
+          {
+            "id": "grok-imagine-image-quality",
+            "provider": "xai",
+            "label": "Grok Imagine",
+            "context": 1024,
+            "skills": ["image", "vision"],
+            "providerId": "xai"
+          }
+        ]
+      }
+    }
+  ]
+}

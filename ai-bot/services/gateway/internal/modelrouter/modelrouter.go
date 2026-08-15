@@ -33,7 +33,12 @@ import (
 type Kind string
 
 const (
-	KindOpenAI     Kind = "openai"
+	KindOpenAI Kind = "openai"
+	// KindXAI fala o dialeto OpenAI, mas fica explícito no catálogo para que a
+	// interface ofereça a configuração pronta do Grok e para que ajustes
+	// específicos da xAI (como afinidade de conversa) não vazem para todos os
+	// provedores compatíveis.
+	KindXAI        Kind = "xai"
 	KindAnthropic  Kind = "anthropic"
 	KindGemini     Kind = "gemini"
 	KindCompatible Kind = "openai-compatible"
@@ -42,6 +47,27 @@ const (
 	// nem conta custo — e confundir os dois faria o app cobrar por token local.
 	KindLocal Kind = "local"
 )
+
+// AdapterOptions é o contrato entre um plugin de provedor e o roteador. O
+// core conhece protocolos estáveis; nomes comerciais (xai, outro compatível)
+// registram qual protocolo usam e ajustes estreitos, sem ganhar um switch novo.
+type AdapterOptions struct {
+	Protocol           string `json:"protocol"`
+	ConversationHeader string `json:"conversationHeader,omitempty"`
+	ImageProtocol      string `json:"imageProtocol,omitempty"`
+}
+
+const (
+	ProtocolOpenAI    = "openai"
+	ProtocolAnthropic = "anthropic"
+	ProtocolGemini    = "gemini"
+)
+
+type adapterRegistration struct {
+	options AdapterOptions
+	owner   string
+	token   uint64
+}
 
 // Provider é um endereço que serve modelos.
 type Provider struct {
@@ -81,6 +107,10 @@ type Request struct {
 	Messages    []ChatMessage
 	Temperature float64
 	MaxTokens   int
+	// ConversationID mantém chamadas da mesma conversa na mesma afinidade do
+	// provedor quando ele oferece esse recurso. Não faz parte do corpo nem do
+	// prompt e pode ficar vazio em classificadores e tarefas avulsas.
+	ConversationID string
 }
 
 // Usage é o que o turno custou.
@@ -118,22 +148,94 @@ type Router struct {
 	mu        sync.RWMutex
 	providers map[string]Provider
 	models    []Entry
+	// layers é a composição do catálogo. Provedores embutidos, plugins e a
+	// configuração da pessoa vivem em camadas separadas; prioridade maior
+	// sobrepõe a menor pelo id. Assim descarregar um plugin revela a camada de
+	// baixo em vez de reconstruir o roteador inteiro.
+	layers map[string]catalogLayer
+	// adapters é a costura definição/provedor/consumidor: o catálogo declara o
+	// kind, um plugin fornece o adaptador e Stream/GenerateImage o consomem.
+	adapters   map[Kind]adapterRegistration
+	adapterSeq uint64
 	// allowed limita o catálogo ao que a política liberou. nil = ninguém
 	// configurou (tudo passa); mapa vazio = a política liberou NADA. Ver
 	// SetAllowed para o porquê de os dois não serem a mesma coisa.
 	allowed map[string]bool
 }
 
+type catalogLayer struct {
+	priority  int
+	providers []Provider
+	models    []Entry
+}
+
+const userCatalogLayer = "user-catalog"
+
 // New monta o roteador.
 func New(client *http.Client, keys KeyProvider) *Router {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Router{
+	router := &Router{
 		client:    client,
 		keys:      keys,
 		providers: make(map[string]Provider),
+		layers:    make(map[string]catalogLayer),
+		adapters:  make(map[Kind]adapterRegistration),
 	}
+	router.registerCoreAdapter(KindOpenAI, AdapterOptions{Protocol: ProtocolOpenAI, ImageProtocol: ProtocolOpenAI})
+	router.registerCoreAdapter(KindCompatible, AdapterOptions{Protocol: ProtocolOpenAI, ImageProtocol: ProtocolOpenAI})
+	router.registerCoreAdapter(KindLocal, AdapterOptions{Protocol: ProtocolOpenAI, ImageProtocol: ProtocolOpenAI})
+	router.registerCoreAdapter(KindAnthropic, AdapterOptions{Protocol: ProtocolAnthropic})
+	router.registerCoreAdapter(KindGemini, AdapterOptions{Protocol: ProtocolGemini, ImageProtocol: ProtocolGemini})
+	return router
+}
+
+func (r *Router) registerCoreAdapter(kind Kind, options AdapterOptions) {
+	r.adapterSeq++
+	r.adapters[kind] = adapterRegistration{options: options, owner: "core", token: r.adapterSeq}
+}
+
+// RegisterAdapter publica um dialeto com dono e devolve seu efeito reversível.
+// Colisão é recusada para que a ordem de montagem não escolha silenciosamente
+// qual implementação recebe prompt e credencial.
+func (r *Router) RegisterAdapter(owner string, kind Kind, options AdapterOptions) (func(), error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" || strings.TrimSpace(string(kind)) == "" {
+		return nil, errors.New("adaptador exige owner e kind")
+	}
+	switch options.Protocol {
+	case ProtocolOpenAI, ProtocolAnthropic, ProtocolGemini:
+	default:
+		return nil, fmt.Errorf("protocolo de adaptador desconhecido: %q", options.Protocol)
+	}
+	if options.ImageProtocol != "" && options.ImageProtocol != ProtocolOpenAI && options.ImageProtocol != ProtocolGemini {
+		return nil, fmt.Errorf("protocolo de imagem desconhecido: %q", options.ImageProtocol)
+	}
+	r.mu.Lock()
+	if current, exists := r.adapters[kind]; exists {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("adaptador %s já pertence a %s", kind, current.owner)
+	}
+	r.adapterSeq++
+	token := r.adapterSeq
+	r.adapters[kind] = adapterRegistration{options: options, owner: owner, token: token}
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		current, exists := r.adapters[kind]
+		if exists && current.owner == owner && current.token == token {
+			delete(r.adapters, kind)
+		}
+	}, nil
+}
+
+func (r *Router) adapterFor(kind Kind) (AdapterOptions, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	adapter, ok := r.adapters[kind]
+	return adapter.options, ok
 }
 
 /* ------------------------------- catálogo ------------------------------- */
@@ -142,24 +244,136 @@ func New(client *http.Client, keys KeyProvider) *Router {
 func (r *Router) SetProviders(list []Provider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.providers = make(map[string]Provider, len(list))
-	for _, provider := range list {
-		r.providers[provider.ID] = provider
-	}
+	layer := r.layers[userCatalogLayer]
+	layer.priority = 100
+	layer.providers = cloneProviders(list)
+	r.layers[userCatalogLayer] = layer
+	r.rebuildCatalogLocked()
 }
 
 // SetModels substitui o catálogo.
 func (r *Router) SetModels(list []Entry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.models = make([]Entry, len(list))
-	copy(r.models, list)
+	layer := r.layers[userCatalogLayer]
+	layer.priority = 100
+	layer.models = cloneEntries(list)
+	r.layers[userCatalogLayer] = layer
+	r.rebuildCatalogLocked()
+}
+
+// SetCatalogLayer monta ou substitui uma camada inteira do catálogo.
+//
+// É a costura usada pelo kernel de plugins. A contribuição é copiada antes de
+// ser publicada, e provider/model com o mesmo id numa camada de prioridade
+// maior substitui a definição de baixo. Nome vazio é recusado para que toda
+// contribuição tenha um dono descarregável.
+func (r *Router) SetCatalogLayer(name string, priority int, providers []Provider, models []Entry) error {
+	name = strings.TrimSpace(name)
+	if name == "" || name == userCatalogLayer {
+		return fmt.Errorf("camada de catálogo inválida: %q", name)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.layers[name] = catalogLayer{
+		priority: priority, providers: cloneProviders(providers), models: cloneEntries(models),
+	}
+	r.rebuildCatalogLocked()
+	return nil
+}
+
+// RemoveCatalogLayer descarrega uma contribuição. É idempotente: o `dispose`
+// do plugin pode ser repetido durante recuperação de erro sem remover outra
+// camada por acidente.
+func (r *Router) RemoveCatalogLayer(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.layers, strings.TrimSpace(name))
+	r.rebuildCatalogLocked()
+}
+
+// Configuration devolve a composição completa, inclusive itens ainda sem
+// chave. A tela administrativa usa esta visão; Catalog continua sendo a lista
+// utilizável que o seletor de modelo enxerga.
+func (r *Router) Configuration() ([]Provider, []Entry) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	providers := make([]Provider, 0, len(r.providers))
+	for _, provider := range r.providers {
+		providers = append(providers, provider)
+	}
+	sort.Slice(providers, func(i, j int) bool { return providers[i].ID < providers[j].ID })
+	return providers, cloneEntries(r.models)
+}
+
+// ProviderConfig devolve um provedor da composição sem expor segredo (a struct
+// só carrega SecretRef). Permite à tela materializar um override de um
+// provedor trazido por plugin quando a pessoa salva chave/estado.
+func (r *Router) ProviderConfig(id string) (Provider, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	provider, ok := r.providers[id]
+	return provider, ok
+}
+
+func (r *Router) rebuildCatalogLocked() {
+	type namedLayer struct {
+		name string
+		catalogLayer
+	}
+	layers := make([]namedLayer, 0, len(r.layers))
+	for name, layer := range r.layers {
+		layers = append(layers, namedLayer{name: name, catalogLayer: layer})
+	}
+	sort.SliceStable(layers, func(i, j int) bool {
+		if layers[i].priority != layers[j].priority {
+			return layers[i].priority < layers[j].priority
+		}
+		return layers[i].name < layers[j].name
+	})
+
+	providers := make(map[string]Provider)
+	models := make(map[string]Entry)
+	for _, layer := range layers {
+		for _, provider := range layer.providers {
+			providers[provider.ID] = provider
+		}
+		for _, entry := range layer.models {
+			models[entry.ID] = entry
+		}
+	}
+	r.providers = providers
+	r.models = make([]Entry, 0, len(models))
+	for _, entry := range models {
+		r.models = append(r.models, entry)
+	}
 	sort.SliceStable(r.models, func(i, j int) bool {
 		if r.models[i].ProviderID != r.models[j].ProviderID {
 			return r.models[i].ProviderID < r.models[j].ProviderID
 		}
 		return r.models[i].Label < r.models[j].Label
 	})
+}
+
+func cloneProviders(list []Provider) []Provider {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]Provider, len(list))
+	copy(out, list)
+	return out
+}
+
+func cloneEntries(list []Entry) []Entry {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]Entry, len(list))
+	copy(out, list)
+	for i := range out {
+		out[i].Skills = append([]string(nil), list[i].Skills...)
+	}
+	return out
 }
 
 // SetAllowed limita o catálogo ao que a política liberou.
@@ -294,15 +508,19 @@ func (r *Router) Stream(ctx context.Context, request Request, sink Sink) (Usage,
 		return Usage{}, errors.New("sink nulo")
 	}
 
-	switch provider.Kind {
-	case KindAnthropic:
+	adapter, ok := r.adapterFor(provider.Kind)
+	if !ok {
+		return Usage{}, fmt.Errorf("nenhum plugin fornece adaptador para o provedor %s (%s)", provider.ID, provider.Kind)
+	}
+	switch adapter.Protocol {
+	case ProtocolAnthropic:
 		return r.streamAnthropic(ctx, provider, entry, request, sink)
-	case KindGemini:
+	case ProtocolGemini:
 		return r.streamGemini(ctx, provider, entry, request, sink)
-	case KindOpenAI, KindCompatible, KindLocal:
-		return r.streamOpenAI(ctx, provider, entry, request, sink)
+	case ProtocolOpenAI:
+		return r.streamOpenAI(ctx, provider, entry, request, sink, adapter)
 	default:
-		return Usage{}, fmt.Errorf("provedor de tipo desconhecido: %s", provider.Kind)
+		return Usage{}, fmt.Errorf("plugin do provedor %s registrou protocolo desconhecido: %s", provider.ID, adapter.Protocol)
 	}
 }
 

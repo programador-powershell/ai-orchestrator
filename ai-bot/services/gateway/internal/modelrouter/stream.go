@@ -172,6 +172,7 @@ func (r *Router) streamOpenAI(
 	entry Entry,
 	request Request,
 	sink Sink,
+	adapter AdapterOptions,
 ) (Usage, error) {
 	body := openAIRequest{
 		Model:    entry.Model.ID,
@@ -190,9 +191,15 @@ func (r *Router) streamOpenAI(
 
 	// O provedor local fala OpenAI mas o modelo dele é o arquivo carregado; o id
 	// do catálogo é o nome do GGUF e vai assim mesmo.
+	var extra map[string]string
+	if header := strings.TrimSpace(adapter.ConversationHeader); header != "" && strings.TrimSpace(request.ConversationID) != "" {
+		// A decisão de qual header carrega a afinidade pertence ao adaptador do
+		// plugin; o protocolo OpenAI base não precisa conhecer a xAI.
+		extra = map[string]string{header: request.ConversationID}
+	}
 	response, err := r.postJSON(ctx, provider,
 		endpoint(provider.BaseURL, "/chat/completions"), body,
-		"Authorization", "Bearer ", nil)
+		"Authorization", "Bearer ", extra)
 	if err != nil {
 		return Usage{}, err
 	}

@@ -40,6 +40,7 @@ import (
 	"aibot/gateway/internal/netguard"
 	"aibot/gateway/internal/pack"
 	"aibot/gateway/internal/permissions"
+	"aibot/gateway/internal/plugins"
 	"aibot/gateway/internal/policy"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/sandbox"
@@ -290,6 +291,31 @@ func serve() error {
 	// política que existe em struct e não tem chamador — que é como a anterior
 	// virou decoração.
 	models.SetAllowed(sessionPolicy.AllowedModels)
+
+	// O microkernel aplica capacidades como efeitos reversíveis. Grok é o
+	// primeiro plugin embutido: o adaptador xAI continua atrás do contrato do
+	// roteador, enquanto provedor e modelos vêm do manifesto declarativo.
+	pluginRuntime := plugins.NewRuntime()
+	defer func() {
+		if err := pluginRuntime.Close(); err != nil {
+			log.Warn("plugin(s) não descarregado(s) por completo", "motivo", err)
+		}
+	}()
+	if err := plugins.RegisterLLMCatalog(pluginRuntime, models); err != nil {
+		return err
+	}
+	if err := plugins.RegisterLLMAdapter(pluginRuntime, models); err != nil {
+		return err
+	}
+	builtinPlugins, err := plugins.Builtins()
+	if err != nil {
+		return err
+	}
+	if grok, ok := builtinPlugins["grok"]; !ok {
+		return errors.New("o build não contém o plugin embutido grok")
+	} else if err := pluginRuntime.Mount(context.Background(), grok); err != nil {
+		return fmt.Errorf("montar plugin grok: %w", err)
+	}
 	log.Info("catálogo carregado", "provedores", len(providers), "modelos", len(catalog),
 		"utilizaveis", len(models.Catalog()))
 
@@ -387,6 +413,19 @@ func serve() error {
 	// só agora está montado — por isso a validação é ligada aqui, e não dentro
 	// do pacote de especialistas (que o registro importa, e não o contrário).
 	specialist.SetToolChecker(registry.Has)
+
+	// MCP e especialistas entram no MESMO kernel depois de seus consumidores
+	// existirem. Um mcp.server publica cada tool no registro do supervisor; ao
+	// descarregar, ferramentas e servidor desaparecem juntos.
+	if err := plugins.RegisterMCP(pluginRuntime, hub, registry); err != nil {
+		return err
+	}
+	if err := plugins.RegisterSpecialistOverlay(pluginRuntime); err != nil {
+		return err
+	}
+	if err := mountPluginProfile(context.Background(), cfg.DataDir, pluginRuntime, builtinPlugins, log); err != nil {
+		return err
+	}
 
 	/* ------------------------- pacotes corporativos ------------------------ */
 
@@ -762,7 +801,10 @@ func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supe
 		return nil, nil, empty, noVPS, fmt.Errorf("ler %s: %w", path, err)
 	}
 
-	seed := defaultCatalog()
+	seed, err := defaultCatalog()
+	if err != nil {
+		return nil, nil, empty, noVPS, err
+	}
 	pretty, err := json.MarshalIndent(seed, "", "  ")
 	if err != nil {
 		return nil, nil, empty, noVPS, err
@@ -787,8 +829,8 @@ func protocolModel(id, provider, label string, window int, skills []string, loca
 	}
 }
 
-func defaultCatalog() catalogFile {
-	return catalogFile{
+func defaultCatalog() (catalogFile, error) {
+	seed := catalogFile{
 		Providers: []modelrouter.Provider{
 			{
 				ID: "anthropic", Name: "Anthropic", Kind: modelrouter.KindAnthropic,
@@ -814,7 +856,7 @@ func defaultCatalog() catalogFile {
 			{
 				Model: protocolModel("claude-opus-5", "anthropic", "Claude Opus 5", 200000,
 					[]string{"chat", "code", "reasoning", "tools", "long-context", "vision"}, false),
-				ProviderID: "anthropic", Default: true,
+				ProviderID: "anthropic",
 			},
 			{
 				Model: protocolModel("claude-sonnet-5", "anthropic", "Claude Sonnet 5", 200000,
@@ -843,4 +885,55 @@ func defaultCatalog() catalogFile {
 			},
 		},
 	}
+	grok, err := plugins.Builtin("grok")
+	if err != nil {
+		return catalogFile{}, err
+	}
+	providers, models, err := plugins.CatalogsOf(grok)
+	if err != nil {
+		return catalogFile{}, err
+	}
+	seed.Providers = append(seed.Providers, providers...)
+	seed.Models = append(seed.Models, models...)
+	return seed, nil
+}
+
+// mountPluginProfile carrega extensões locais somente quando o perfil default
+// as escolhe. Copiar uma pasta para DataDir/plugins não executa nada por
+// acidente; a ativação fica auditável em profiles/default.json.
+func mountPluginProfile(ctx context.Context, dataDir string, runtime *plugins.Runtime,
+	builtins map[string]plugins.Manifest, log *slog.Logger) error {
+	available := make(map[string]plugins.Manifest, len(builtins))
+	for name, manifest := range builtins {
+		available[name] = manifest
+	}
+	external, discoverErr := plugins.Discover(filepath.Join(dataDir, "plugins"))
+	if discoverErr != nil {
+		log.Warn("plugin(s) local(is) recusado(s)", "motivo", discoverErr)
+	}
+	for name, manifest := range external {
+		if _, reserved := available[name]; reserved {
+			log.Warn("plugin local não pode substituir plugin embutido", "plugin", name)
+			continue
+		}
+		available[name] = manifest
+	}
+
+	profilePath := filepath.Join(dataDir, "profiles", "default.json")
+	profile, err := plugins.LoadProfile(profilePath)
+	if errors.Is(err, os.ErrNotExist) {
+		if len(external) > 0 {
+			log.Info("plugins locais descobertos, mas não ativados — crie profiles/default.json",
+				"quantidade", len(external))
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := runtime.MountProfile(ctx, profile, available); err != nil {
+		return fmt.Errorf("montar perfil de plugins %s: %w", profile.Name, err)
+	}
+	log.Info("perfil de plugins montado", "perfil", profile.Name, "plugins", len(runtime.Mounted()))
+	return nil
 }

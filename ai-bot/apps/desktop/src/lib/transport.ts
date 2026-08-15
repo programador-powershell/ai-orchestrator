@@ -46,6 +46,8 @@ export interface Transport {
    * um segundo fetch com uma segunda cópia do token.
    */
   post(path: string, body: unknown): Promise<unknown>;
+  /** Um PATCH autenticado — usado para chave e estado de provedor existente. */
+  patch(path: string, body: unknown): Promise<unknown>;
   /** Um GET autenticado — mesma regra de token e de erro do `post`. */
   get(path: string): Promise<unknown>;
   /** Um DELETE autenticado — idem. `del` porque `delete` é palavra reservada. */
@@ -394,6 +396,10 @@ export function createTransport(options: TransportOptions): Transport {
 
     post(path: string, body: unknown): Promise<unknown> {
       return request("POST", path, body);
+    },
+
+    patch(path: string, body: unknown): Promise<unknown> {
+      return request("PATCH", path, body);
     },
 
     get(path: string): Promise<unknown> {

@@ -115,6 +115,13 @@ var hooks []func()
 // único caminho que não o instala é teste — no gateway de verdade o main liga.
 var toolChecker func(string) bool
 
+// State é um checkpoint opaco do catálogo. Plugins usam Capture/Restore para
+// que descarregar um overlay revele exatamente o estado anterior, inclusive
+// outro overlay que já estivesse ativo — ResetOverlay perderia essa camada.
+type State struct {
+	snapshot *snapshot
+}
+
 func init() {
 	active.Store(newSnapshot(originCompiled, catalog))
 }
@@ -169,6 +176,23 @@ func ResetOverlay() {
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	active.Store(newSnapshot(originCompiled, catalog))
+	notifyLocked()
+}
+
+// Capture registra o snapshot imutável atual sem copiar o caminho quente.
+func Capture() State {
+	return State{snapshot: active.Load()}
+}
+
+// Restore recoloca um checkpoint e avisa os mesmos caches que LoadOverlay.
+// Estado zero é ignorado para que um disposer parcial não apague o catálogo.
+func Restore(state State) {
+	if state.snapshot == nil {
+		return
+	}
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	active.Store(state.snapshot)
 	notifyLocked()
 }
 

@@ -131,13 +131,17 @@ func (r *Router) GenerateImage(ctx context.Context, request ImageRequest) (Image
 	if err != nil {
 		return ImageResult{}, err
 	}
+	adapter, ok := r.adapterFor(provider.Kind)
+	if !ok {
+		return ImageResult{}, fmt.Errorf("nenhum plugin fornece adaptador para o provedor %s (%s)", provider.ID, provider.Kind)
+	}
 
 	var (
 		url  string
 		body any
 	)
-	switch provider.Kind {
-	case KindOpenAI, KindCompatible, KindLocal:
+	switch adapter.ImageProtocol {
+	case ProtocolOpenAI:
 		url = endpoint(provider.BaseURL, "/images/generations")
 		payload := openAIImageRequest{Model: entry.Model.ID, Prompt: request.Prompt, N: count}
 		// `size` só vai quando pedido: cada modelo tem um padrão próprio e um
@@ -146,7 +150,7 @@ func (r *Router) GenerateImage(ctx context.Context, request ImageRequest) (Image
 			payload.Size = request.Size
 		}
 		body = payload
-	case KindGemini:
+	case ProtocolGemini:
 		url = endpoint(provider.BaseURL, "/models/"+entry.Model.ID+":predict")
 		body = geminiImageRequest{
 			Instances:  []geminiImageInstance{{Prompt: request.Prompt}},
@@ -177,7 +181,7 @@ func (r *Router) GenerateImage(ctx context.Context, request ImageRequest) (Image
 	}
 
 	var images []GeneratedImage
-	if provider.Kind == KindGemini {
+	if adapter.ImageProtocol == ProtocolGemini {
 		images, err = decodeGeminiImages(payload)
 	} else {
 		images, err = decodeOpenAIImages(payload)

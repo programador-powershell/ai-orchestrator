@@ -1512,6 +1512,22 @@ select {
   min-width: 0;
 }
 
+.settings-provider-item {
+  flex-wrap: wrap;
+}
+
+.settings-provider-config {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 0 100%;
+  padding-left: 8px;
+}
+
+.settings-provider-config .settings-input {
+  max-width: 240px;
+}
+
 /* Endereço e resultado de teste são para COPIAR num chamado, como o
    .settings-value: escapam do user-select: none do cromo. */
 .settings-item-sub {
