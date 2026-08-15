@@ -1,0 +1,194 @@
+{
+  "model": "Needle 2 baseline",
+  "source_tag": "v2.0.5",
+  "engine_reported_by_upstream": "2.0.2",
+  "samples": 20,
+  "specialty_accuracy": 0.15,
+  "capability_accuracy": 0.1,
+  "p50_latency_ms": 1883.3689890000187,
+  "p95_latency_ms": 2384.5195709999985,
+  "peak_ram_mb": 44.2,
+  "invalid_output_rate": 0.2,
+  "results": [
+    {
+      "expected": "code",
+      "predicted": "",
+      "latency_ms": 2622.9503269999555,
+      "confidence": 0.0002,
+      "peak_ram_mb": 41.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "office",
+      "predicted": "code",
+      "latency_ms": 2026.7816180000295,
+      "confidence": 0.0025,
+      "peak_ram_mb": 42.7,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "data",
+      "predicted": "data",
+      "latency_ms": 1752.9715979999878,
+      "confidence": 0.7015,
+      "peak_ram_mb": 42.7,
+      "correct": true,
+      "capability_correct": true
+    },
+    {
+      "expected": "fluxo",
+      "predicted": "work",
+      "latency_ms": 2118.8797199999954,
+      "confidence": 0.0653,
+      "peak_ram_mb": 43.2,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "fluxo",
+      "predicted": "work",
+      "latency_ms": 1600.2142049999861,
+      "confidence": 0.1954,
+      "peak_ram_mb": 43.6,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "code",
+      "predicted": "",
+      "latency_ms": 1385.9217090000016,
+      "confidence": 0.5272,
+      "peak_ram_mb": 43.6,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "design",
+      "predicted": "fluxo",
+      "latency_ms": 2032.0008999999573,
+      "confidence": 0.6765,
+      "peak_ram_mb": 43.6,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "security",
+      "predicted": "security",
+      "latency_ms": 1815.7515489999696,
+      "confidence": 0.5499,
+      "peak_ram_mb": 43.6,
+      "correct": true,
+      "capability_correct": true
+    },
+    {
+      "expected": "office",
+      "predicted": "office",
+      "latency_ms": 1986.028833999967,
+      "confidence": 0.0109,
+      "peak_ram_mb": 43.6,
+      "correct": true,
+      "capability_correct": false
+    },
+    {
+      "expected": "data",
+      "predicted": "work",
+      "latency_ms": 1502.9995699999859,
+      "confidence": 0.0,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "chat",
+      "predicted": "data",
+      "latency_ms": 1307.0550959999991,
+      "confidence": 0.4608,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "chat",
+      "predicted": "",
+      "latency_ms": 2384.5195709999985,
+      "confidence": 0.0,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "chat",
+      "predicted": "agent",
+      "latency_ms": 1968.2031760000314,
+      "confidence": 0.9312,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "fluxo",
+      "predicted": "security",
+      "latency_ms": 1618.668016000015,
+      "confidence": 0.2261,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "chat",
+      "predicted": "data",
+      "latency_ms": 1439.9612749999733,
+      "confidence": 0.0,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "design",
+      "predicted": "code",
+      "latency_ms": 1879.2325119999873,
+      "confidence": 0.0011,
+      "peak_ram_mb": 43.8,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "chat",
+      "predicted": "agent",
+      "latency_ms": 1883.3689890000187,
+      "confidence": 0.9396,
+      "peak_ram_mb": 43.9,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "fluxo",
+      "predicted": "design",
+      "latency_ms": 2079.5506380000006,
+      "confidence": 0.1727,
+      "peak_ram_mb": 43.9,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "agent",
+      "predicted": "tuning",
+      "latency_ms": 2099.5270639999717,
+      "confidence": 0.7568,
+      "peak_ram_mb": 43.9,
+      "correct": false,
+      "capability_correct": false
+    },
+    {
+      "expected": "code",
+      "predicted": "",
+      "latency_ms": 2335.074066000004,
+      "confidence": 0.0003,
+      "peak_ram_mb": 44.2,
+      "correct": false,
+      "capability_correct": false
+    }
+  ]
+}

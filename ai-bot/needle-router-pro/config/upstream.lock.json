@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/cactus-compute/needle.git",
+  "tag": "v2.0.5",
+  "commit": "c152cc4d9821a002285f85aaf58876c6d60541fe",
+  "python_distribution": "cactus-needle",
+  "engine_version_observed": "2.0.2",
+  "license": "Apache-2.0",
+  "model_repository": "Cactus-Compute/needle2",
+  "runtime_artifact": "needle2.cact"
+}

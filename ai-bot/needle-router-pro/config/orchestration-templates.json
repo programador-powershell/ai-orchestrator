@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "code/app-development": {
+      "goal_template": "Aplicação completa pronta para produção em {environment}",
+      "execution_mode": "multi_specialist",
+      "tasks": [
+        {"id":"architecture","specialty":"code","capability":"architecture","label":"Arquitetura definida","depends_on":[]},
+        {"id":"design","specialty":"design","capability":"ui-ux","label":"Interface criada","depends_on":["architecture"]},
+        {"id":"data","specialty":"data","capability":"database","label":"Banco modelado","depends_on":["architecture"]},
+        {"id":"implementation","specialty":"code","capability":"app-development","label":"Aplicação implementada","depends_on":["architecture","design","data"]},
+        {"id":"security","specialty":"security","capability":"code-security","label":"Revisão de segurança","depends_on":["implementation"]},
+        {"id":"tests","specialty":"code","capability":"testing","label":"Testes concluídos","depends_on":["implementation"]},
+        {"id":"deployment","specialty":"code","capability":"deployment","label":"Deploy concluído em {environment}","depends_on":["security","tests"]}
+      ]
+    }
+  }
+}
