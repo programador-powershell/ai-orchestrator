@@ -1,0 +1,30 @@
+{"text":"corrija este projeto React","specialty":"code","capability":"debugging","context":{"repository_detected":true}}
+{"text":"corrija as fórmulas de vendas.xlsx","specialty":"office","capability":"spreadsheet","context":{"attachments":["vendas.xlsx"]}}
+{"text":"faça uma apresentação com vendas.xlsx","specialty":"office","capability":"presentation","context":{"attachments":["vendas.xlsx"]}}
+{"text":"importe vendas.xlsx para PostgreSQL","specialty":"data","capability":"database","context":{"attachments":["vendas.xlsx"]}}
+{"text":"analise vendas.xlsx","specialty":"data","capability":"analytics","context":{"attachments":["vendas.xlsx"]}}
+{"text":"crie um app web para explorar vendas.xlsx","specialty":"code","capability":"web-development","context":{"attachments":["vendas.xlsx"]}}
+{"text":"faça security audit desse repo","specialty":"security","capability":"audit","context":{"repository_detected":true}}
+{"text":"quando chegar mensagem no WhatsApp envie email","specialty":"fluxo","capability":"workflow","context":{"connector_availability":["whatsapp","email"]}}
+{"text":"todo dia às 8 gere o relatório e mande para diretoria","specialty":"fluxo","capability":"schedule","context":{}}
+{"text":"crie um webhook que ao receber pedido atualize o CRM","specialty":"fluxo","capability":"webhook","context":{"connector_availability":["crm"]}}
+{"text":"por que esse fluxo está falhando no node de email?","specialty":"fluxo","capability":"workflow-debugging","context":{}}
+{"text":"crie um script Python que consulta WhatsApp e envia email","specialty":"code","capability":"coding","context":{}}
+{"text":"como funciona webhook?","specialty":"chat","capability":"research","context":{}}
+{"text":"crie um sistema de inventário para meu jogo","specialty":"game","capability":"inventory","context":{"active_game_project":true}}
+{"text":"adicione um ataque pesado ao personagem","specialty":"game","capability":"combat","context":{"active_game_project":true}}
+{"text":"gere uma imagem de uma arena medieval","specialty":"design","capability":"image","context":{}}
+{"text":"implemente essa arena no projeto do jogo","specialty":"game","capability":"level","context":{"active_game_project":true}}
+{"text":"corrija esse código C++","specialty":"code","capability":"debugging","context":{}}
+{"text":"corrija esse C++ do CharacterComponent do jogo","specialty":"game","capability":"game-debugging","context":{"active_game_project":true}}
+{"text":"como funciona Unreal Engine?","specialty":"chat","capability":"research","context":{}}
+{"text":"pesquise implemente duas opções teste revise segurança e publique","specialty":"agent","capability":"orchestration","context":{}}
+{"text":"faça isso","specialty":"chat","capability":"general","needs_clarification":true,"context":{}}
+{"text":"faça isso","specialty":"code","capability":"debugging","context":{"repository_detected":true,"selected_artifact":"auth.ts","diagnostics_available":true}}
+{"text":"prepare um PDF do relatório trimestral","specialty":"office","capability":"pdf","context":{}}
+{"text":"otimize esta query SQL","specialty":"data","capability":"sql","context":{}}
+{"text":"scan this repository for exposed secrets","specialty":"security","capability":"secrets","context":{"repository_detected":true}}
+{"text":"build a dashboard from this dataset","specialty":"data","capability":"dashboard","context":{}}
+{"text":"refactor the authentication module","specialty":"code","capability":"refactoring","context":{"repository_detected":true}}
+{"text":"design a responsive checkout screen","specialty":"design","capability":"ui-ux","context":{}}
+{"text":"fine tune a tiny local classifier","specialty":"tuning","capability":"fine-tuning","context":{}}

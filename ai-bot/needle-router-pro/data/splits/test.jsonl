@@ -1,0 +1,12 @@
+{"text":"arruma o auth desse repo e roda os tests","specialty":"code","capability":"debugging","context":{"repository_detected":true}}
+{"text":"conserte as células quebradas da planilha","specialty":"office","capability":"spreadsheet","context":{"attachments":["custos.xlsx"]}}
+{"text":"compare o faturamento por região na planilha","specialty":"data","capability":"analytics","context":{"attachments":["fat.xlsx"]}}
+{"text":"when a lead arrives notify sales by email","specialty":"fluxo","capability":"workflow","context":{"connector_availability":["email"]}}
+{"text":"the email node in my workflow keeps failing","specialty":"fluxo","capability":"workflow-debugging","context":{}}
+{"text":"write a TypeScript cron job that sends email","specialty":"code","capability":"coding","context":{}}
+{"text":"add stamina regeneration to the player","specialty":"game","capability":"gameplay-system","context":{"active_game_project":true}}
+{"text":"make a fantasy sword illustration","specialty":"design","capability":"image","context":{}}
+{"text":"audit our production IAM policy","specialty":"security","capability":"permissions","context":{}}
+{"text":"turn this doc into slides","specialty":"office","capability":"presentation","context":{"attachments":["brief.docx"]}}
+{"text":"create an ERD for customers and orders","specialty":"data","capability":"erd","context":{}}
+{"text":"what is database normalization?","specialty":"chat","capability":"knowledge","context":{}}
