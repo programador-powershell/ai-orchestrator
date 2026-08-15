@@ -1,0 +1,12 @@
+{
+  "model_id": "needle-router-pro-small",
+  "version": "0.1.0-candidate",
+  "upstream": "needle-v2.0.5",
+  "dataset_version": "router-pro-v1",
+  "benchmark_version": "router-bench-v1",
+  "confidence_threshold": 0.78,
+  "max_model_bytes": 209715200,
+  "route_only_on_new_conversation": true,
+  "owner_immutable_by_default": true,
+  "status": "CANDIDATE"
+}

@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "specialties": {
+    "chat": ["general", "research", "reasoning", "knowledge", "analysis", "web"],
+    "code": ["coding", "debugging", "architecture", "refactoring", "testing", "review", "git", "terminal", "build", "web-development", "app-development", "deployment"],
+    "office": ["document", "spreadsheet", "presentation", "pdf", "template", "report"],
+    "design": ["canvas", "ui-ux", "image", "diagram", "website", "site-cloning", "video", "visual-assets"],
+    "data": ["database", "erd", "sql", "table", "analytics", "chart", "dashboard", "dataset"],
+    "work": ["email", "calendar", "tasks", "corporate-apps", "integration"],
+    "security": ["audit", "code-security", "permissions", "secrets", "policy", "infrastructure", "compliance"],
+    "agent": ["autonomous", "orchestration", "swarm", "research-team", "coding-team", "specialist-team"],
+    "tuning": ["dataset", "evaluation", "benchmark", "fine-tuning", "local-models", "training", "optimization"],
+    "fluxo": ["workflow", "webhook", "schedule", "integration", "workflow-debugging", "workflow-template"],
+    "game": ["game-project", "gameplay-system", "level", "asset", "inventory", "combat", "build", "testing", "optimization", "game-debugging", "engine-integration"]
+  },
+  "reconciliation": {
+    "fluxo": {"evidence": ["flow.validate", "webhook.post", "mcp.call"], "unsupported_removed": ["workflow-monitoring", "retry", "branching"]},
+    "game": {"availability": false, "reason": "No real Game MCP/plugin/adapter is present in the audited ai-bot runtime; capabilities remain unavailable and must fall back rather than be simulated."}
+  }
+}
