@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"aibot/gateway/internal/modelrouter"
+	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/worktree"
@@ -30,6 +31,98 @@ import (
 
 // workerMaxRounds limita o vaivém de UM trabalhador.
 const workerMaxRounds = 6
+
+// maxWaveAttempts é quantas vezes uma onda pode ser executada — a primeira mais
+// os "refazer" do portão. Sem teto, um modelo que responde `retry` toda vez
+// (ou dois cliques por engano) prende a equipe num laço que só o cancelamento
+// interrompe.
+const maxWaveAttempts = 3
+
+/* ---------------------------- teto da árvore ----------------------------- */
+
+// Uma equipe pode montar OUTRA equipe: o especialista `agent` tem `task.dispatch`
+// no catálogo, e um trabalhador é um especialista rodando com as ferramentas
+// dele. Sem teto isso é recursão com fan-out, e cada nível multiplica por até
+// 128 tarefas — o custo explode antes de qualquer pessoa perceber, porque nada
+// no caminho parece errado.
+//
+// Os tetos não são constantes novas: são os três campos que a política JÁ
+// declarava, que o administrador já podia configurar por JSON e que nenhuma
+// linha do gateway lia. Limite que se configura e não se aplica é pior que
+// limite nenhum — quem o configurou passa a acreditar que está protegido.
+type crewDepthKey struct{}
+
+type crewBudgetKey struct{}
+
+// crewBudget conta os trabalhadores do TURNO INTEIRO, sub-equipes inclusive. É
+// compartilhado por ponteiro justamente para que a árvore não ganhe orçamento
+// novo a cada galho.
+type crewBudget struct {
+	mu      sync.Mutex
+	spawned int
+}
+
+func (b *crewBudget) take(count, limit int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if limit > 0 && b.spawned+count > limit {
+		return fmt.Errorf("este turno já usou %d trabalhador(es) e o teto da política é %d — "+
+			"junte tarefas ou resolva o que falta sem montar outra equipe", b.spawned, limit)
+	}
+	b.spawned += count
+	return nil
+}
+
+func withCrewBudget(ctx context.Context) context.Context {
+	return context.WithValue(ctx, crewBudgetKey{}, &crewBudget{})
+}
+
+// crewBudgetOf devolve o orçamento do turno. Sem orçamento no contexto — uma
+// ferramenta chamada fora de um turno — devolve um novo: degradar para "sem teto
+// compartilhado" é melhor que estourar nil, e o teto de PROFUNDIDADE, que é o
+// que segura a recursão, continua valendo.
+func crewBudgetOf(ctx context.Context) *crewBudget {
+	if budget, ok := ctx.Value(crewBudgetKey{}).(*crewBudget); ok && budget != nil {
+		return budget
+	}
+	return &crewBudget{}
+}
+
+func crewDepthOf(ctx context.Context) int {
+	depth, _ := ctx.Value(crewDepthKey{}).(int)
+	return depth
+}
+
+func withCrewDepth(ctx context.Context, depth int) context.Context {
+	return context.WithValue(ctx, crewDepthKey{}, depth)
+}
+
+// crewPolicy lê os tetos da política com piso para o que veio zerado.
+//
+// Zero é "não configurado", não "proibido tudo": uma política parcial vinda do
+// servidor do administrador não pode desligar a equipe inteira em silêncio. E o
+// paralelismo ainda passa pelo teto do planejador, senão um `maxChildren` alto
+// demais faria `PlanTasks` recusar o plano com erro de validação em vez de
+// simplesmente montar ondas menores.
+func (s *Supervisor) crewPolicy() permissions.Policy {
+	policy := permissions.DefaultPolicy()
+	if s.deps.Gate != nil {
+		configured := s.deps.Gate.Policy()
+		if configured.MaxDepth > 0 {
+			policy.MaxDepth = configured.MaxDepth
+		}
+		if configured.MaxChildren > 0 {
+			policy.MaxChildren = configured.MaxChildren
+		}
+		if configured.MaxTotal > 0 {
+			policy.MaxTotal = configured.MaxTotal
+		}
+	}
+	if policy.MaxChildren > concurrencyCeil {
+		policy.MaxChildren = concurrencyCeil
+	}
+	return policy
+}
 
 // InstallCrewTools registra as ferramentas que só o supervisor pode oferecer,
 // porque elas reentram nele.
@@ -53,14 +146,29 @@ func (s *Supervisor) toolDispatch(ctx context.Context, sessionID string, raw jso
 	if err := decodeArgs(raw, &request); err != nil {
 		return "", err
 	}
-	if request.MaxConcurrency <= 0 {
-		request.MaxConcurrency = 4
+	policy := s.crewPolicy()
+
+	// A profundidade é conferida ANTES de validar o plano: recusar a geração
+	// seguinte custa uma frase, montá-la custa até 128 modelos.
+	if depth := crewDepthOf(ctx); depth >= policy.MaxDepth {
+		return "", fmt.Errorf("esta equipe já está no nível %d e o teto da política é %d — "+
+			"execute estas tarefas você mesmo em vez de montar mais uma equipe", depth+1, policy.MaxDepth)
+	}
+
+	if request.MaxConcurrency <= 0 || request.MaxConcurrency > policy.MaxChildren {
+		request.MaxConcurrency = policy.MaxChildren
 	}
 	plan, err := PlanTasks(request.Tasks, request.MaxConcurrency)
 	if err != nil {
 		// O erro de plano volta como TEXTO para o modelo, não como exceção: ele
 		// precisa ler "a tarefa t3 depende de t9, que não existe" para corrigir
 		// o próprio plano em vez de reemitir o mesmo grafo quebrado.
+		return "", err
+	}
+	// O orçamento é debitado depois do plano e antes da execução: um plano
+	// inválido não deve gastar cota, e um plano válido não pode começar a rodar
+	// para só então descobrir que não cabia.
+	if err := crewBudgetOf(ctx).take(len(request.Tasks), policy.MaxTotal); err != nil {
 		return "", err
 	}
 	return s.runCrew(ctx, sessionID, request.Tasks, plan)
@@ -140,84 +248,129 @@ func (s *Supervisor) runCrew(
 	// diferente e o conjunto fica incoerente.
 	results := make(map[string]string, len(tasks))
 
+	// Os trabalhadores nascem um nível ABAIXO desta equipe. É esse número que
+	// `toolDispatch` compara com o teto quando um trabalhador `agent` tenta
+	// montar a própria equipe.
+	policy := s.crewPolicy()
+	workerCtx := withCrewDepth(ctx, crewDepthOf(ctx)+1)
+
 	for waveIndex, wave := range plan.Waves {
 		if err := ctx.Err(); err != nil {
 			return report.String(), err
 		}
 
-		// Slot por posição da onda: a tarefa que o plano citou e não existe deixa o
-		// slot zerado, e `TaskID` vazio é como o laço de baixo o reconhece.
-		outcomes := make([]protocol.WorkerDone, len(wave))
+		// `pending` é quem ainda não produziu resultado nesta onda. Começa com a
+		// onda inteira e, num "refazer", encolhe para só os que faltaram.
+		pending := wave
 
-		var group sync.WaitGroup
-		for position, taskID := range wave {
-			task, ok := byID[taskID]
-			if !ok {
-				continue
+		for attempt := 1; ; attempt++ {
+			// Slot por posição: a tarefa que o plano citou e não existe deixa o slot
+			// zerado, e `TaskID` vazio é como o laço de baixo o reconhece.
+			outcomes := make([]protocol.WorkerDone, len(pending))
+
+			var group sync.WaitGroup
+			for position, taskID := range pending {
+				task, ok := byID[taskID]
+				if !ok {
+					continue
+				}
+				// A tentativa entra no id do trabalhador: dois cartões com o mesmo id
+				// fariam a tela sobrescrever a primeira tentativa com a segunda, e quem
+				// olhasse depois não saberia que houve refação.
+				workerID := fmt.Sprintf("w-%d-%s", waveIndex+1, task.ID)
+				if attempt > 1 {
+					workerID = fmt.Sprintf("%s-r%d", workerID, attempt)
+				}
+
+				_ = s.emit(sessionID, turn, protocol.KindTaskDispatch, orchestrator, protocol.TaskDispatch{
+					Task:     task,
+					WorkerID: workerID,
+					Wave:     waveIndex + 1,
+				})
+
+				group.Add(1)
+				go func(position int, task protocol.Task, workerID string) {
+					defer group.Done()
+					outcomes[position] = s.runWorker(workerCtx, sessionID, turn, task, workerID, waveIndex+1, results)
+				}(position, task, workerID)
 			}
-			workerID := fmt.Sprintf("w-%d-%s", waveIndex+1, task.ID)
+			group.Wait()
 
-			_ = s.emit(sessionID, turn, protocol.KindTaskDispatch, orchestrator, protocol.TaskDispatch{
-				Task:     task,
-				WorkerID: workerID,
-				Wave:     waveIndex + 1,
-			})
-
-			group.Add(1)
-			go func(position int, task protocol.Task, workerID string) {
-				defer group.Done()
-				outcomes[position] = s.runWorker(ctx, sessionID, turn, task, workerID, waveIndex+1, results)
-			}(position, task, workerID)
-		}
-		group.Wait()
-
-		// Duas contagens, porque as duas perguntas são diferentes: `failures` é
-		// quem ERROU (é o rótulo, o ✗ do relatório e o número que a tela mostra);
-		// `escalations` é quem PAROU PARA PERGUNTAR. Nenhuma das duas produziu
-		// resultado, e é a soma que decide o portão — ver abaixo.
-		failures, escalations := 0, 0
-		for _, entry := range outcomes {
-			if entry.TaskID == "" {
-				continue
+			// Duas contagens, porque as duas perguntas são diferentes: `failures` é
+			// quem ERROU (é o rótulo, o ✗ do relatório e o número que a tela mostra);
+			// `escalations` é quem PAROU PARA PERGUNTAR. Nenhuma das duas produziu
+			// resultado, e é a soma que decide o portão — ver abaixo.
+			failures, escalations := 0, 0
+			unfinished := make([]string, 0, len(pending))
+			for _, entry := range outcomes {
+				if entry.TaskID == "" {
+					continue
+				}
+				_ = s.emit(sessionID, turn, protocol.KindWorkerDone, orchestrator, entry)
+				if entry.OK {
+					results[entry.TaskID] = entry.Result
+					fmt.Fprintf(&report, "✓ %s: %s\n", entry.TaskID, truncate(entry.Result, 400))
+					continue
+				}
+				unfinished = append(unfinished, entry.TaskID)
+				// Escalação sai do relatório com marca própria e fora de `failures`: quem
+				// lê o relatório (o modelo orquestrador, na volta) precisa distinguir a
+				// tarefa que não deu certo da que está esperando resposta, senão ele
+				// tenta refazer o trabalho em vez de responder a pergunta. A marca é
+				// escrita por extenso porque o modelo não recebe legenda de glifo.
+				if entry.Escalated {
+					escalations++
+					fmt.Fprintf(&report, "↑ %s (escalou e espera resposta): %s\n", entry.TaskID, entry.Error)
+					continue
+				}
+				failures++
+				fmt.Fprintf(&report, "✗ %s: %s\n", entry.TaskID, entry.Error)
 			}
-			_ = s.emit(sessionID, turn, protocol.KindWorkerDone, orchestrator, entry)
-			if entry.OK {
-				results[entry.TaskID] = entry.Result
-				fmt.Fprintf(&report, "✓ %s: %s\n", entry.TaskID, truncate(entry.Result, 400))
-				continue
-			}
-			// Escalação sai do relatório com marca própria e fora de `failures`: quem
-			// lê o relatório (o modelo orquestrador, na volta) precisa distinguir a
-			// tarefa que não deu certo da que está esperando resposta, senão ele
-			// tenta refazer o trabalho em vez de responder a pergunta. A marca é
-			// escrita por extenso porque o modelo não recebe legenda de glifo.
-			if entry.Escalated {
-				escalations++
-				fmt.Fprintf(&report, "↑ %s (escalou e espera resposta): %s\n", entry.TaskID, entry.Error)
-				continue
-			}
-			failures++
-			fmt.Fprintf(&report, "✗ %s: %s\n", entry.TaskID, entry.Error)
-		}
 
-		// Portão entre ondas: a onda que deixou tarefa SEM RESULTADO não segue em
-		// silêncio, porque as seguintes dependem do que ela deveria ter produzido.
-		//
-		// Escalação conta aqui, e só aqui. Ela não é falha — não entra em
-		// `failures`, não sai com ✗ e não pinta a tela de vermelho —, mas é
-		// igualmente uma tarefa sem resultado: `results` só é escrito no ramo OK,
-		// então a dependente receberia o bloco do upstream VAZIO e adivinharia
-		// exatamente o que o trabalhador se recusou a adivinhar. O plano terminaria
-		// plausível, com metade do trabalho inventado, que é o modo de falha que o
-		// cabeçalho deste arquivo existe para impedir. O que muda em relação à falha
-		// é o TEXTO do portão, não a pausa.
-		if failures+escalations > 0 && waveIndex+1 < len(plan.Waves) {
+			// Portão entre ondas: a onda que deixou tarefa SEM RESULTADO não segue em
+			// silêncio, porque as seguintes dependem do que ela deveria ter produzido.
+			//
+			// Escalação conta aqui, e só aqui. Ela não é falha — não entra em
+			// `failures`, não sai com ✗ e não pinta a tela de vermelho —, mas é
+			// igualmente uma tarefa sem resultado: `results` só é escrito no ramo OK,
+			// então a dependente receberia o bloco do upstream VAZIO e adivinharia
+			// exatamente o que o trabalhador se recusou a adivinhar. O plano terminaria
+			// plausível, com metade do trabalho inventado, que é o modo de falha que o
+			// cabeçalho deste arquivo existe para impedir. O que muda em relação à falha
+			// é o TEXTO do portão, não a pausa.
+			if failures+escalations == 0 || waveIndex+1 >= len(plan.Waves) {
+				break
+			}
+
 			decision := s.openGate(ctx, sessionID, turn, orchestrator, waveIndex+1, failures, escalations)
 			fmt.Fprintf(&report, "portão da onda %d: %s\n", waveIndex+1, decision)
 			if decision == protocol.GateAbort {
 				report.WriteString("execução abortada no portão\n")
 				return report.String(), nil
 			}
+			if decision != protocol.GateRetry {
+				break
+			}
+
+			// A partir daqui, REFAZER refaz. Antes esta decisão era aceita pela
+			// ferramenta, publicada, escrita no relatório — e depois caía no mesmo
+			// caminho de `proceed`: a onda nunca era reexecutada e quem clicou seguia
+			// para a onda seguinte com a dependência vazia, achando que mandou refazer.
+			if attempt >= maxWaveAttempts {
+				fmt.Fprintf(&report, "refazer pedido %d vez(es) na onda %d — seguindo com o que há\n",
+					attempt, waveIndex+1)
+				break
+			}
+			// Só quem NÃO produziu resultado volta à fila. Reexecutar quem deu certo
+			// gastaria modelo de novo e repetiria efeito colateral já aplicado — um
+			// commit, um arquivo escrito, uma mensagem enviada.
+			if err := crewBudgetOf(ctx).take(len(unfinished), policy.MaxTotal); err != nil {
+				fmt.Fprintf(&report, "refazer negado: %v\n", err)
+				break
+			}
+			pending = unfinished
+			fmt.Fprintf(&report, "refazendo %d tarefa(s) da onda %d (tentativa %d)\n",
+				len(pending), waveIndex+1, attempt+1)
 		}
 	}
 
@@ -329,9 +482,28 @@ func (s *Supervisor) runWorker(
 		}
 
 		calls := parseToolCalls(answer)
+
+		// O trabalhador JÁ é um bot chamado por outro, e delegar daqui reabriria a
+		// árvore que os tetos deste arquivo fecham. O bloco é recusado — mas com
+		// instrução, e não em silêncio: o trabalhador que pede ajuda e leva silêncio
+		// repete o pedido até acabar as rodadas e a tarefa morre por esgotamento,
+		// com "não concluiu em 6 rodadas" no lugar do motivo verdadeiro.
+		if len(calls) == 0 && len(parseDelegations(answer)) > 0 {
+			messages = append(messages,
+				modelrouter.ChatMessage{Role: "assistant", Content: answer},
+				modelrouter.ChatMessage{Role: "user", Content: "Dentro de uma equipe não se delega. " +
+					"Resolva com as suas próprias ferramentas ou escreva exatamente " +
+					"ESCALAR: <a pergunta> e pare."})
+			continue
+		}
+
 		if len(calls) == 0 {
 			done.OK = true
-			done.Result = stripToolBlocks(answer)
+			// stripBlocks, e não stripToolBlocks: a cerca de delegação que o modelo
+			// tenha emitido junto com o texto não pode sobrar no resultado. Ela iria
+			// para o relatório e para o prompt das tarefas dependentes como se fosse
+			// conteúdo — JSON cru servido de contexto para outro modelo.
+			done.Result = stripBlocks(answer)
 			return done
 		}
 

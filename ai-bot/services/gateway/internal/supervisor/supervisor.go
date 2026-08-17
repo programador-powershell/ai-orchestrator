@@ -168,6 +168,10 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// outra mensagem enquanto a resposta corre está corrigindo o rumo, e
 	// esperar a resposta abandonada terminar só atrasa a que interessa.
 	ctx, cancel := context.WithCancel(parent)
+	// O orçamento de equipe nasce AQUI, uma vez por turno, e desce por contexto
+	// até as sub-equipes. Criá-lo dentro de `task.dispatch` daria cota nova a cada
+	// nível da árvore, que é exatamente o que o teto existe para impedir.
+	ctx = withCrewBudget(ctx)
 	s.mu.Lock()
 	if previous, ok := s.running[sessionID]; ok {
 		previous.cancel()

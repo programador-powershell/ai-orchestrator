@@ -152,6 +152,39 @@ func stripBlocks(answer string) string {
 
 /* -------------------------------- limites ------------------------------- */
 
+// delegationLimits são os tetos EFETIVOS de uma delegação.
+//
+// Existem como parâmetro, em vez de as constantes serem lidas direto lá dentro,
+// porque o administrador pode apertá-los pela política — e assim a checagem
+// continua pura, que é o que permite testá-la sem supervisor.
+type delegationLimits struct {
+	depth   int
+	perTurn int
+}
+
+func defaultDelegationLimits() delegationLimits {
+	return delegationLimits{depth: maxDelegationDepth, perTurn: maxDelegationsPerTurn}
+}
+
+// effectiveDelegationLimits aperta os tetos com a política do administrador.
+//
+// Só APERTA: as constantes deste arquivo são o teto do produto, e uma política
+// frouxa (ou ausente) não as afrouxa. Com os padrões — MaxDepth 3 contra
+// profundidade 2, MaxTotal 24 contra 3 por turno — nada muda; quem baixar os
+// números na política passa a valer para a delegação e para a equipe do mesmo
+// jeito, que é o mínimo que se espera de um limite configurável.
+func (s *Supervisor) effectiveDelegationLimits() delegationLimits {
+	limits := defaultDelegationLimits()
+	policy := s.crewPolicy()
+	if policy.MaxDepth > 0 && policy.MaxDepth < limits.depth {
+		limits.depth = policy.MaxDepth
+	}
+	if policy.MaxTotal > 0 && policy.MaxTotal < limits.perTurn {
+		limits.perTurn = policy.MaxTotal
+	}
+	return limits
+}
+
 // delegationRefusal devolve o motivo pelo qual a delegação NÃO pode acontecer,
 // ou "" quando ela é legítima.
 //
@@ -159,7 +192,7 @@ func stripBlocks(answer string) string {
 // quando não há modelo, rede nem sessão para montar um teste. `allows` é o
 // `Gate.AllowsSpecialist` — passado como função para que o teste exercite a
 // política de verdade sem arrastar o supervisor inteiro.
-func delegationRefusal(from string, request delegateRequest, depth, used int, allows func(string) bool) string {
+func delegationRefusal(from string, request delegateRequest, depth, used int, allows func(string) bool, limits delegationLimits) string {
 	target := strings.TrimSpace(request.Specialist)
 
 	if target == "" {
@@ -182,13 +215,13 @@ func delegationRefusal(from string, request delegateRequest, depth, used int, al
 	if allows != nil && !allows(target) {
 		return fmt.Sprintf("o especialista %s não está liberado para esta sessão", target)
 	}
-	if depth > maxDelegationDepth {
+	if depth > limits.depth {
 		return fmt.Sprintf("limite de profundidade da delegação atingido (%d níveis) — "+
-			"resolva com o que você tem ou devolva a quem te chamou o que ficou faltando", maxDelegationDepth)
+			"resolva com o que você tem ou devolva a quem te chamou o que ficou faltando", limits.depth)
 	}
-	if used >= maxDelegationsPerTurn {
+	if used >= limits.perTurn {
 		return fmt.Sprintf("limite de %d delegações por turno atingido — termine com o que já veio",
-			maxDelegationsPerTurn)
+			limits.perTurn)
 	}
 	return ""
 }
@@ -226,7 +259,7 @@ func delegableSpecialists(from string, allows func(string) bool) []specialist.De
 // contrato some: um delegado no último nível não deve ser convidado a fazer o
 // que vai ser recusado.
 func (s *Supervisor) delegateContract(definition specialist.Definition, depth int) string {
-	if depth > maxDelegationDepth {
+	if depth > s.effectiveDelegationLimits().depth {
 		return ""
 	}
 	var allows func(string) bool
@@ -276,7 +309,7 @@ func (s *Supervisor) delegate(
 	if s.deps.Gate != nil {
 		allows = s.deps.Gate.AllowsSpecialist
 	}
-	if reason := delegationRefusal(origin.ID, request, depth, budget.used, allows); reason != "" {
+	if reason := delegationRefusal(origin.ID, request, depth, budget.used, allows, s.effectiveDelegationLimits()); reason != "" {
 		// Recusa NÃO publica envelope nenhum. O popup existe para anunciar o bot
 		// que ENTROU, e aqui não entrou ninguém; um popup que abre e fecha sozinho
 		// é ruído que a pessoa aprende a ignorar — inclusive no dia em que for de

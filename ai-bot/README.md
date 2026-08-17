@@ -229,9 +229,57 @@
   junto) e ela chega ao alerta do composer pelo desfazer do `setEnvironment`. O
   crachá do rodapé também passou a levar o motivo na dica: antes escrevia
   "indisponível" sem dizer o que fazer para passar a ser disponível.
+- **"Refazer" no portão da equipe agora refaz.** A tela tinha o botão, o
+  WebSocket levava a decisão, o gateway a validava, publicava e escrevia
+  "portão da onda 1: retry" no relatório — e `runCrew` só tratava `abort`. Retry
+  caía no mesmo caminho de `proceed`: a onda NUNCA era reexecutada e quem clicou
+  seguia para a onda seguinte com a dependência vazia, achando que tinha mandado
+  refazer. Agora a onda volta a rodar, só com as tarefas que ficaram sem
+  resultado — reexecutar quem deu certo repetiria efeito colateral já aplicado
+  (um commit, um arquivo escrito) — e no máximo três vezes, senão dois cliques
+  prendem a equipe num laço.
+- **A árvore de equipes tem fim.** O especialista `agent` tem `task.dispatch` no
+  catálogo, e um trabalhador é um especialista rodando com as ferramentas dele —
+  logo um trabalhador `agent` podia montar outra equipe, que montava outra, sem
+  teto nenhum, cada nível multiplicando por até 128 tarefas. A delegação tinha
+  dois limites desde sempre; este caminho não tinha nenhum.
+- **Os limites da política deixaram de ser decorativos.** `MaxDepth`,
+  `MaxChildren` e `MaxTotal` eram declarados, tinham padrão, podiam ser
+  configurados pelo JSON do administrador — e **nenhuma linha do gateway os
+  lia**. Agora governam a profundidade da árvore de equipes, o paralelismo de
+  cada onda e o total de trabalhadores do turno inteiro, e ainda APERTAM os tetos
+  da delegação (só para baixo: uma política frouxa não afrouxa o teto do
+  produto). Limite que se configura e não se aplica é pior que limite nenhum —
+  quem o configurou passa a acreditar que está protegido.
+- **O bloco de delegação de um trabalhador não vaza mais como texto.**
+  `runWorker` só entendia `aibot:tool`; um `aibot:delegate` emitido dentro de uma
+  equipe não era executado nem removido, e o JSON cru virava o "resultado" da
+  tarefa — ia para o relatório e era servido como contexto para as tarefas
+  dependentes. Agora o bloco é recusado com instrução (resolva ou escale) e o
+  resultado final passa por `stripBlocks`.
+- **O gateway volta a compilar em máquina com compilador C.** `needle_shim.c` não
+  tinha restrição de build, ao contrário do `session_cgo.go` que o acompanha. Onde
+  há gcc, `CGO_ENABLED` vale 1 por padrão, o Go passa a considerar os arquivos `.c`
+  do pacote e um `.c` sem nenhum `.go` importando "C" é **erro de compilação**.
+  Nesta estação, sem compilador C, `CGO_ENABLED` é 0 e nada disso aparecia; no
+  primeiro CI com gcc, `go build ./...` quebraria sem que uma linha tivesse mudado.
 
 ### :construction_worker: Refactors
 
+- **O motor multi-bot passou a ser executado nos testes, não só lido.** O que
+  existia cobria duas funções puras (`escalation` e `gateReason`); o CAMINHO —
+  de `task.dispatch` ao relatório de volta — nunca tinha rodado. A bancada nova
+  exercita os três modos de verdade: **um bot só** (uma chamada de modelo, uma
+  resposta, zero equipe), **um bot chamando outro** (duas delegações no mesmo
+  turno, cada popup com seu par abre/fecha) e **vários bots** (DAG em ondas, com
+  o resultado de uma tarefa chegando ao prompt de quem depende dela — a prova de
+  que a onda 2 não trabalhou às cegas). Três dos quatro defeitos corrigidos acima
+  foram encontrados por ela. O provedor de mentira roteia por **conteúdo**, não
+  por ordem: numa equipe os trabalhadores rodam concorrentes, e um roteiro
+  sequencial entregaria a fala de um trabalhador a outro conforme o escalonador
+  do dia — um teste que passa e falha sozinho é pior que teste nenhum. O
+  paralelismo é medido pelo **pico real de chamadas simultâneas**, não pela
+  confiança no que o plano prometeu.
 - **Desempenho medido, não achado.** Todo ganho abaixo saiu de um A/B **intercalado
   no mesmo processo**, e não de "antes" e "depois" em execuções separadas — esta
   máquina faz *throttling* térmico, e o mesmo código chegou a medir 21 µs numa

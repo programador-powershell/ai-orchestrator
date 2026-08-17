@@ -122,7 +122,7 @@ func TestParseDelegationsGuardaJSONInvalidoParaVoltarAoModelo(t *testing.T) {
 		t.Fatalf("o texto original se perdeu: obtive %q", requests[0].raw)
 	}
 
-	reason := delegationRefusal("code", requests[0], firstDelegationDepth, 0, allowAll)
+	reason := delegationRefusal("code", requests[0], firstDelegationDepth, 0, allowAll, defaultDelegationLimits())
 	requireRefusal(t, reason, "JSON válido")
 	if !strings.Contains(reason, `"goal":`) {
 		t.Errorf("a recusa precisa citar o que veio para o modelo consertar, obtive %q", reason)
@@ -140,7 +140,7 @@ func TestParseDelegationsRecusaBlocoSemEspecialista(t *testing.T) {
 	if requests[0].Specialist != "" {
 		t.Fatalf("esperava destino vazio, obtive %q", requests[0].Specialist)
 	}
-	requireRefusal(t, delegationRefusal("code", requests[0], firstDelegationDepth, 0, allowAll), "JSON válido")
+	requireRefusal(t, delegationRefusal("code", requests[0], firstDelegationDepth, 0, allowAll, defaultDelegationLimits()), "JSON válido")
 }
 
 func TestParseDelegationsSemBlocoNaoInventaNada(t *testing.T) {
@@ -201,7 +201,7 @@ func TestStripBlocksTiraFerramentaEDelegacao(t *testing.T) {
 /* -------------------------------- limites -------------------------------- */
 
 func TestDelegationRefusalLiberaPedidoLegitimo(t *testing.T) {
-	if reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, 0, allowAll); reason != "" {
+	if reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, 0, allowAll, defaultDelegationLimits()); reason != "" {
 		t.Fatalf("esperava delegação liberada, obtive a recusa %q", reason)
 	}
 }
@@ -210,21 +210,21 @@ func TestDelegationRefusalLiberaPedidoLegitimo(t *testing.T) {
 // este teto o pingue-pongue entre dois especialistas não termina sozinho.
 func TestDelegationRefusalRespeitaOTetoDeProfundidade(t *testing.T) {
 	for depth := 1; depth <= maxDelegationDepth; depth++ {
-		if reason := delegationRefusal("code", goodRequest(), depth, 0, allowAll); reason != "" {
+		if reason := delegationRefusal("code", goodRequest(), depth, 0, allowAll, defaultDelegationLimits()); reason != "" {
 			t.Errorf("profundidade %d deveria ser aceita, obtive %q", depth, reason)
 		}
 	}
-	reason := delegationRefusal("code", goodRequest(), maxDelegationDepth+1, 0, allowAll)
+	reason := delegationRefusal("code", goodRequest(), maxDelegationDepth+1, 0, allowAll, defaultDelegationLimits())
 	requireRefusal(t, reason, "profundidade")
 }
 
 func TestDelegationRefusalRespeitaOTetoPorTurno(t *testing.T) {
 	for used := 0; used < maxDelegationsPerTurn; used++ {
-		if reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, used, allowAll); reason != "" {
+		if reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, used, allowAll, defaultDelegationLimits()); reason != "" {
 			t.Errorf("a %dª delegação do turno deveria ser aceita, obtive %q", used+1, reason)
 		}
 	}
-	reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, maxDelegationsPerTurn, allowAll)
+	reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, maxDelegationsPerTurn, allowAll, defaultDelegationLimits())
 	requireRefusal(t, reason, "delegações por turno")
 }
 
@@ -234,14 +234,14 @@ func TestDelegationRefusalRecusaAutodelegacao(t *testing.T) {
 	request := goodRequest()
 	request.Specialist = "code"
 
-	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll), "si mesmo")
+	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll, defaultDelegationLimits()), "si mesmo")
 }
 
 func TestDelegationRefusalRecusaEspecialistaInexistente(t *testing.T) {
 	request := goodRequest()
 	request.Specialist = "juridico"
 
-	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll), "não existe")
+	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll, defaultDelegationLimits()), "não existe")
 }
 
 // O master existe no catálogo, e é justamente por isso que ele precisa de
@@ -251,7 +251,7 @@ func TestDelegationRefusalRecusaDelegarParaOMaster(t *testing.T) {
 	request := goodRequest()
 	request.Specialist = specialist.MasterID
 
-	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll), "master")
+	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll, defaultDelegationLimits()), "master")
 }
 
 // A política da sessão vale para a delegação. Sem isto, um especialista barrado
@@ -262,7 +262,7 @@ func TestDelegationRefusalRecusaEspecialistaForaDaPolitica(t *testing.T) {
 	policy.AllowedSpecialists = []string{"code"}
 	gate := permissions.NewGate(policy)
 
-	reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, 0, gate.AllowsSpecialist)
+	reason := delegationRefusal("code", goodRequest(), firstDelegationDepth, 0, gate.AllowsSpecialist, defaultDelegationLimits())
 
 	requireRefusal(t, reason, "não está liberado")
 	if !strings.Contains(reason, "data") {
@@ -276,7 +276,7 @@ func TestDelegationRefusalRecusaPedidoSemObjetivo(t *testing.T) {
 	request := goodRequest()
 	request.Goal = "   "
 
-	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll), "sem objetivo")
+	requireRefusal(t, delegationRefusal("code", request, firstDelegationDepth, 0, allowAll, defaultDelegationLimits()), "sem objetivo")
 }
 
 /* -------------------------------- contrato ------------------------------- */

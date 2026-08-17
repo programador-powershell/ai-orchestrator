@@ -1,4 +1,16 @@
+//go:build needle
+
 /*
+ * A restrição de build acima acompanha a de session_cgo.go, e sem ela o pacote
+ * não compila em máquina nenhuma que tenha um compilador C.
+ *
+ * O motivo é indireto: `CGO_ENABLED` vale 1 por padrão onde há gcc, e aí o Go
+ * passa a considerar os arquivos .c do pacote. Sem a tag `needle`, nenhum .go
+ * ativo importa "C" — e um .c sem cgo é erro de compilação, não arquivo
+ * ignorado. Nesta estação, que não tem compilador C, `CGO_ENABLED` é 0, os .c
+ * nem são olhados e o build passa; num CI com gcc, `go build ./...` quebraria
+ * na primeira execução, sem que nada tivesse mudado no código.
+ *
  * PONTO DE ADAPTAÇÃO — este é o único arquivo do projeto que conhece a API C do
  * Needle. Se a assinatura de lá mudar, muda aqui e em nenhum outro lugar.
  *
