@@ -182,8 +182,30 @@ func ParseModeCommand(text string) (mode string, rest string, ok bool) {
 	return candidate, strings.TrimSpace(remainder), true
 }
 
-// Route decide quem atende.
+// Route decide quem atende E monta o elenco de apoio.
+//
+// A decisão em si mora em `decide`; aqui em cima entra só o elenco, e por um
+// motivo de custo: ele é do PRIMEIRO input. A conversa que já tem dono já tem
+// elenco, e recalculá-lo a cada mensagem trocaria a barra lateral debaixo de
+// quem está trabalhando — além de gastar uma pontuação léxica em 90% das
+// mensagens, que é exatamente o caminho que a arquitetura promete custar zero.
 func (r *Router) Route(ctx context.Context, in RouteInput) protocol.Route {
+	decided := r.decide(ctx, in)
+	if decided.Reason == protocol.RouteSticky {
+		return decided
+	}
+
+	text := in.Text
+	if _, rest, found := ParseModeCommand(in.Text); found {
+		text = rest
+	}
+	candidates := candidatesFor(in.Allowed)
+	decided.Standby = Cast(text, decided.Specialist, Score(text, candidates), candidates)
+	return decided
+}
+
+// decide é a cascata: explícito → sticky → anexo → léxico → local → modelo.
+func (r *Router) decide(ctx context.Context, in RouteInput) protocol.Route {
 	candidates := candidatesFor(in.Allowed)
 	if len(candidates) == 0 {
 		return decorate(protocol.Route{
@@ -289,6 +311,32 @@ func (r *Router) Route(ctx context.Context, in RouteInput) protocol.Route {
 			})
 		}
 		scores = combined
+	}
+
+	// Dono ÚNICO do entregável decide sozinho, sem precisar de margem.
+	//
+	// A margem existe para empate de ASSUNTO ("revisa a segurança desse código"),
+	// e ali ela está certa. Mas "crie uma api ... com banco postgres" não é
+	// empate: o Código entrega a API, os Dados cuidam do que ela usa. Sem esta
+	// regra os dois saturam em 1,00, a margem zera e um pedido claríssimo cai na
+	// clarificação — exatamente o contrário do que o léxico deveria fazer.
+	if owner, single := soleDeliverable(scores); single {
+		// A confiança relatada tem PISO no limiar, e não é maquiagem: quem
+		// decidiu foi a regra, não a contagem de radicais. "Crie um site
+		// institucional" pontua 0,31 no léxico e mesmo assim é uma decisão
+		// firme — publicar 0,31 numa rota que decidiu faria o log e a tela
+		// contarem uma história que o código não viveu.
+		confidence := owner.Confidence
+		if confidence < MinConfidence {
+			confidence = MinConfidence
+		}
+		return decorate(protocol.Route{
+			Specialist: owner.ID,
+			Previous:   in.Current,
+			Reason:     protocol.RouteHeuristic,
+			Confidence: confidence,
+			Signals:    owner.Signals,
+		})
 	}
 
 	if len(scores) > 0 {
@@ -523,6 +571,9 @@ type Scored struct {
 	ID         string
 	Confidence float64
 	Signals    []string
+	// Deliverable marca quem entrega A COISA PEDIDA — o substantivo logo depois
+	// do verbo de construção. É REGRA, não peso: ver soleDeliverable.
+	Deliverable bool
 }
 
 // Score pontua cada candidato contra o texto, do maior para o menor.
@@ -583,6 +634,23 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 			}
 			signals = append(signals, trigger)
 		}
+		// O ENTREGÁVEL manda mais que a contagem de radicais.
+		//
+		// "Crie uma api de cobrança com banco postgres" pontua 1,00 em Dados
+		// (banco + postgres, dois radicais longos) e 0,25 em Código (api, três
+		// letras) — e mesmo assim o dono é o Código: a API é o que foi PEDIDO, o
+		// banco é o que ela usa. Contar radicais não distingue o pedido do
+		// ingrediente; a ordem das palavras em português distingue, porque o
+		// entregável vem logo depois do verbo de construção.
+		deliverable := deliverableAfterVerb(normalized, definition.Deliverables)
+		if deliverable {
+			raw += deliverableBonus
+			if signals == nil {
+				signals = make([]string, 0, 8)
+			}
+			signals = append(signals, "entregável do pedido")
+		}
+
 		if raw == 0 {
 			continue
 		}
@@ -590,7 +658,7 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 		if confidence > 1 {
 			confidence = 1
 		}
-		out = append(out, Scored{ID: definition.ID, Confidence: confidence, Signals: signals})
+		out = append(out, Scored{ID: definition.ID, Confidence: confidence, Signals: signals, Deliverable: deliverable})
 	}
 
 	// Ordem estável: confiança desc, depois id asc. Sem o desempate por id, dois
@@ -779,4 +847,81 @@ func allowedContains(candidates []specialist.Definition, id string) bool {
 		}
 	}
 	return false
+}
+
+/* ---------------------------- o entregável -------------------------------- */
+
+// deliverableBonus é o peso de ser O QUE FOI PEDIDO.
+//
+// Alto o bastante para virar uma disputa de radicais — 26 é a saturação, então
+// isto sozinho já leva à confiança 1,0 — porque a diferença entre pedido e
+// ingrediente não é de grau: quem constrói a coisa é o dono, e quem cuida do que
+// ela usa entra em espera. Ele NÃO dispensa a margem mínima: dois especialistas
+// com entregável no mesmo pedido continuam empatando, e empate sobe a cascata.
+const deliverableBonus = 8.0
+
+// buildVerbs são os verbos que anunciam um pedido de construção.
+//
+// Radicais, não palavras: "cri" cobre crie/criar/criando; "mont" cobre
+// monte/montar. A lista é curta de propósito — verbo genérico demais ("faça")
+// aparece em qualquer frase e transformaria o bônus em ruído constante.
+var buildVerbs = []string{"cri", "mont", "constr", "desenvolv", "implement", "ger", "desenh", "refaz", "refac"}
+
+// deliverableWindow é quantos caracteres depois do verbo ainda contam como "o
+// que ele pediu". Cobre "crie uma aplicação", "monte um portal de", "desenhe o
+// banco de dados" — e para antes da subordinada onde moram os ingredientes
+// ("… com banco postgres").
+const deliverableWindow = 28
+
+// deliverableAfterVerb diz se algum entregável deste especialista aparece logo
+// depois de um verbo de construção.
+func deliverableAfterVerb(normalized string, deliverables []string) bool {
+	if len(deliverables) == 0 {
+		return false
+	}
+	for _, verb := range buildVerbs {
+		start := 0
+		for {
+			index := strings.Index(normalized[start:], verb)
+			if index < 0 {
+				break
+			}
+			at := start + index
+			start = at + len(verb)
+			if !isWordStart(normalized, at) {
+				continue
+			}
+			janela := normalized[at:]
+			if len(janela) > deliverableWindow {
+				janela = janela[:deliverableWindow]
+			}
+			for _, noun := range deliverables {
+				if strings.Contains(janela, noun) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// soleDeliverable devolve o único especialista que entrega o que foi pedido.
+//
+// "Único" é a condição inteira: dois entregáveis no mesmo pedido ("crie o app e
+// o banco") são um empate de verdade, e empate sobe a cascata em vez de ser
+// resolvido no grito.
+func soleDeliverable(scores []Scored) (Scored, bool) {
+	found := Scored{}
+	count := 0
+	for _, score := range scores {
+		if !score.Deliverable {
+			continue
+		}
+		count++
+		if count > 1 {
+			return Scored{}, false
+		}
+		found = score
+	}
+	return found, count == 1
 }

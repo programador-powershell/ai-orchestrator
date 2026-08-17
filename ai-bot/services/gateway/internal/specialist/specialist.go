@@ -81,6 +81,40 @@ type Avatar struct {
 	Custom     bool `json:"custom,omitempty"`
 }
 
+// Relation é COMO o companheiro trabalha em relação ao dono.
+//
+// A distinção não é enfeite de tela: ela é o formato do plano. O Design pode
+// desenhar a identidade visual enquanto o Código monta o esqueleto — são
+// paralelos, e serializá-los dobraria o tempo por nada. Já a revisão de
+// Segurança precisa de código para revisar: pô-la em paralelo produziria um
+// parecer sobre um repositório vazio.
+type Relation string
+
+const (
+	// RelationParallel trabalha AO MESMO TEMPO que o dono.
+	RelationParallel Relation = "parallel"
+	// RelationAfter trabalha SOBRE o que o dono produziu.
+	RelationAfter Relation = "after"
+)
+
+// Companion é um especialista que entra em espera junto com o dono.
+type Companion struct {
+	// Specialist é quem entra.
+	Specialist string `json:"specialist"`
+	// When diz se ele trabalha junto ou depois.
+	When Relation `json:"when"`
+	// Requires são radicais que precisam aparecer no pedido para ele entrar.
+	// Vazio = entra sempre que este especialista for o dono.
+	//
+	// Existe porque companheiro incondicional vira ruído: nem todo pedido de
+	// código tem front-end, e um Design em espera numa correção de bug de
+	// backend só ensina a pessoa a ignorar o aviso.
+	Requires []string `json:"requires,omitempty"`
+	// Why é a frase que a tela mostra. Escrita para a PESSOA ler, não para o
+	// log: ela precisa entender por que aquele bot apareceu.
+	Why string `json:"why"`
+}
+
 // Definition é o especialista completo.
 type Definition struct {
 	ID      string   `json:"id"`
@@ -108,6 +142,26 @@ type Definition struct {
 	// Triggers alimentam o classificador léxico do roteador. São radicais em
 	// minúscula e sem acento — a normalização acontece no roteador.
 	Triggers []string `json:"triggers,omitempty"`
+
+	// Deliverables são os substantivos que ESTE especialista entrega.
+	//
+	// Existem porque contar radicais não distingue o pedido do ingrediente.
+	// "Crie uma API de cobrança com banco postgres" pontua muito mais alto em
+	// Dados (dois radicais longos: banco, postgres) do que em Código (um curto:
+	// api) — e mesmo assim quem é dono é o Código: a API é o que foi PEDIDO, o
+	// banco é o que ela usa. Quem desfaz o empate é a ordem das palavras em
+	// português: o entregável vem logo depois do verbo de construção.
+	Deliverables []string `json:"deliverables,omitempty"`
+
+	// Companions são os especialistas que ENTRAM EM ESPERA quando este aqui é
+	// escolhido dono da conversa.
+	//
+	// Escolher o dono nunca foi o trabalho todo: "crie uma aplicação completa"
+	// é do Código, mas se ela tem front-end o Design tem o que fazer, e depois
+	// de existir código alguém precisa revisar a segurança. Sem isto a pessoa
+	// teria de lembrar de pedir cada um — que é justamente o trabalho que o
+	// master existe para não devolver a ela.
+	Companions []Companion `json:"companions,omitempty"`
 
 	// PreferredSkills descrevem o que o modelo desta linha precisa saber fazer.
 	// O Model Router casa isso com o catálogo; o usuário pode sobrepor.
@@ -229,6 +283,31 @@ var catalog = []Definition{
 		Triggers: []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript",
 			"aplicac", "aplicativo", "next.js", "nextjs", "react", "vue.js", "angular", "django", "flask",
 			"api", "backend", "front-end", "frontend", "biblioteca", "framework", "microservic", "crud"},
+		Deliverables: []string{"aplicac", "aplicativo", "app", "api", "site", "portal", "sistema",
+			"backend", "frontend", "front-end", "servico", "microservic", "crud", "landing", "pagina", "programa"},
+		Companions: []Companion{
+			{
+				Specialist: "design", When: RelationParallel,
+				// Só com sinal de interface. Design em espera numa correção de bug
+				// de backend é ruído, e ruído ensina a ignorar o aviso.
+				Requires: []string{"aplicac", "aplicativo", "site", "tela", "interface", "front-end",
+					"frontend", "next.js", "nextjs", "react", "vue.js", "angular", "landing", "pagina", "portal"},
+				Why: "o pedido tem interface — o Design pode definir o visual enquanto o código é montado",
+			},
+			{
+				Specialist: "security", When: RelationAfter,
+				// DEPOIS: revisão de segurança sem código para revisar produz
+				// parecer sobre repositório vazio.
+				Requires: []string{"aplicac", "aplicativo", "site", "api", "backend", "endpoint",
+					"login", "autenticac", "deploy", "portal", "crud"},
+				Why: "aplicação nova pede revisão de segurança depois de existir código",
+			},
+			{
+				Specialist: "data", When: RelationParallel,
+				Requires: []string{"banco", "sql", "tabela", "schema", "crud", "cadastro", "postgres", "mysql"},
+				Why:      "há dados no pedido — o modelo do banco pode ser desenhado em paralelo",
+			},
+		},
 		PreferredSkills: []string{"code", "tools", "long-context"},
 		Avatar: Avatar{
 			Seed: 22, Shape: "squircle", Eyes: "visor", Mouth: "line",
@@ -257,6 +336,7 @@ var catalog = []Definition{
 		},
 		Tools:           []string{"fs.read", "fs.list", "office.open", "office.edit", "office.export", "pdf.extract"},
 		Triggers:        []string{"docx", "pptx", "pdf", "document", "planilha", "slide", "apresenta", "word", "powerpoint", "sumario", "paragrafo", "cabecalho", "rodape", "contrato", "relatorio", "ata", "oficio"},
+		Deliverables:    []string{"document", "apresenta", "slide", "planilha", "relatorio", "contrato", "ata", "oficio", "manual"},
 		PreferredSkills: []string{"chat", "long-context"},
 		Avatar: Avatar{
 			Seed: 33, Shape: "chip", Eyes: "arc", Mouth: "line",
@@ -317,6 +397,7 @@ var catalog = []Definition{
 		},
 		Tools:           []string{"fs.read", "fs.write", "schema.export", "sql.render", "memory.read"},
 		Triggers:        []string{"tabela", "schema", "sql", "banco", "erd", "migracao", "postgres", "mysql", "consulta", "query", "indice", "chave estrangeira", "modelagem", "normaliza", "join", "coluna"},
+		Deliverables:    []string{"banco", "schema", "tabela", "modelagem", "erd", "consulta", "query", "migracao"},
 		PreferredSkills: []string{"code", "chat"},
 		Avatar: Avatar{
 			Seed: 55, Shape: "hex", Eyes: "scan", Mouth: "grid",

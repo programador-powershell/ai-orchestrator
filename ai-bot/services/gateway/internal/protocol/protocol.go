@@ -426,6 +426,26 @@ type Route struct {
 	Model   string `json:"model"`
 	// Signals são os termos que pesaram na decisão (vazio quando veio do modelo).
 	Signals []string `json:"signals,omitempty"`
+	// Standby é o ELENCO DE APOIO: quem entra em espera junto com o dono.
+	//
+	// Escolher o dono nunca foi o trabalho todo. "Crie uma aplicação completa" é
+	// do Código, mas se ela tem interface o Design tem o que fazer, e depois de
+	// existir código alguém revisa a segurança. Sem isto a pessoa precisaria
+	// lembrar de pedir cada um — devolvendo a ela o roteamento que o master
+	// existe para fazer.
+	Standby []Standby `json:"standby,omitempty"`
+}
+
+// Standby é um especialista de apoio, e QUANDO ele entra.
+type Standby struct {
+	Specialist string `json:"specialist"`
+	// When é "parallel" (trabalha junto do dono) ou "after" (trabalha sobre o
+	// que o dono produziu). É o formato do plano, não enfeite: paralelizar quem
+	// depende produz um parecer sobre trabalho que ainda não existe, e
+	// serializar quem é independente dobra o tempo por nada.
+	When string `json:"when"`
+	// Why é a frase que a tela mostra, escrita para a pessoa ler.
+	Why string `json:"why"`
 }
 
 // Delta é um pedaço de resposta.

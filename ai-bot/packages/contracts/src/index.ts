@@ -287,12 +287,41 @@ export interface Prompt {
  * input passa pela cascata; do segundo em diante tudo vai para o mesmo
  * executor, até alguém escrever `/mode <id>`.
  */
+/** Um especialista de apoio, e QUANDO ele entra. */
+export interface Standby {
+  specialist: string;
+  /**
+   * "parallel" trabalha junto do dono; "after" trabalha sobre o que ele
+   * produziu. É o formato do plano, não enfeite: paralelizar quem depende
+   * produz um parecer sobre trabalho que ainda não existe, e serializar quem é
+   * independente dobra o tempo por nada.
+   */
+  when: "parallel" | "after";
+  /** A frase que a tela mostra, escrita para a pessoa ler. */
+  why: string;
+}
+
 export type RouteReason = "explicit" | "heuristic" | "needle" | "model" | "sticky" | "fallback";
 
 export interface Route {
   specialist: string;
   previous?: string;
   reason: RouteReason;
+  /**
+   * O ELENCO DE APOIO do primeiro input: quem fica **em espera** junto com o
+   * dono, e em que forma.
+   *
+   * Escolher o dono nunca foi o trabalho todo. "Crie uma aplicação completa" é
+   * do Código, mas se ela tem interface o Design tem o que fazer, e depois de
+   * existir código alguém revisa a segurança. Sem isto a pessoa precisaria
+   * lembrar de pedir cada um — devolvendo a ela o roteamento que o master
+   * existe para fazer.
+   *
+   * Só vem no PRIMEIRO input: conversa que já tem dono já tem elenco, e
+   * remontá-lo a cada mensagem trocaria a barra lateral debaixo de quem está
+   * trabalhando.
+   */
+  standby?: Standby[];
   confidence: number;
   surface: string;
   model: string;

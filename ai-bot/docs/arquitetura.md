@@ -210,6 +210,48 @@ E vale medir antes de investir: desde a calibração do léxico por palavra inte
 os pedidos comuns decidem no primeiro degrau. O degrau local rende menos hoje do
 que rendia quando foi desenhado.
 
+### O primeiro input escolhe um ELENCO, não só um dono
+
+Escolher quem atende nunca foi o trabalho todo. "Crie uma aplicação completa" é
+do Código — mas se ela tem interface, o Design tem o que fazer; depois de existir
+código, alguém revisa a segurança. Sem elenco, a pessoa precisaria lembrar de
+pedir cada um, devolvendo a ela o roteamento que o master existe para fazer.
+
+A rota passa a trazer `standby[]`, e cada apoio diz **quando** entra:
+
+| forma | significado | exemplo |
+| --- | --- | --- |
+| `parallel` | trabalha **junto** do dono | Design define o visual enquanto o Código monta o esqueleto |
+| `after` | trabalha **sobre** o que o dono produziu | Segurança revisa o que foi escrito |
+
+A distinção não é enfeite de tela — é o formato do plano. Paralelizar quem
+depende produz um parecer sobre trabalho que ainda não existe; serializar quem é
+independente dobra o tempo por nada.
+
+**Duas fontes montam o elenco.** As *companhias* declaradas no catálogo
+(`specialist.Companion`) são regra de ofício escrita como dado, com condição:
+Design só entra se houver sinal de interface, porque um Design em espera numa
+correção de bug de backend é ruído — e ruído ensina a ignorar o aviso. O
+*léxico* completa: quem pontuou forte e não ganhou provavelmente tem trabalho ali.
+
+**O elenco não executa.** Ele é intenção; quem despacha é a equipe e quem
+confirma é a pessoa. Um elenco que já saísse rodando transformaria "crie uma
+aplicação" em cinco modelos gastando dinheiro sem ninguém ter pedido.
+
+#### O entregável decide o dono
+
+Contar radicais não distingue o **pedido** do **ingrediente**. "Crie uma api de
+cobrança com banco postgres" pontua 1,00 em Dados (`banco`, `postgres` — dois
+radicais longos) e 0,25 em Código (`api` — três letras). E mesmo assim o dono é o
+Código: a API é o que foi pedido, o banco é o que ela usa.
+
+Quem desfaz isso é a ordem das palavras em português — **o entregável vem logo
+depois do verbo de construção**. Cada especialista declara seus `Deliverables`, e
+quem for o *único* a entregar o que veio depois de "crie/monte/construa/desenhe"
+decide sozinho, sem precisar de margem. Dois entregáveis na mesma frase ("crie o
+app **e** o banco") são empate de verdade, e empate sobe a cascata em vez de ser
+resolvido no grito.
+
 ### Cada linha carrega seu especialista
 
 O envelope traz `from.specialist`, e a interface desenha o ícone antes de cada
