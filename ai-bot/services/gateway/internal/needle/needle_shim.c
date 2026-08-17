@@ -12,27 +12,41 @@
  * na primeira execução, sem que nada tivesse mudado no código.
  *
  * PONTO DE ADAPTAÇÃO — este é o único arquivo do projeto que conhece a API C do
- * Needle. Se a assinatura de lá mudar, muda aqui e em nenhum outro lugar.
+ * motor. Se a assinatura de lá mudar, muda aqui e em nenhum outro lugar.
  *
  * ================== LEIA ANTES DE COMPILAR COM -tags needle ==================
  *
- * As chamadas marcadas com  >>> UPSTREAM <<<  precisam ser conferidas contra o
- * cabeçalho da release do Needle que você baixou (cactus-compute/needle). Elas
- * estão escritas contra a forma DOCUMENTADA da biblioteca — inicializa uma
- * sessão a partir de um arquivo de pesos, recebe prompt mais ferramentas em
- * formato function-calling e devolve JSON — mas o nome exato dos símbolos e a
- * ordem dos parâmetros são detalhe da versão, e conferir isso exige o header na
- * mão.
+ * ATENÇÃO: o esboço abaixo foi escrito contra uma API `needle_*` que NÃO EXISTE.
+ * A conferência do upstream (agosto/2026) mostrou outra coisa:
  *
- * Enquanto isso não for conferido numa máquina com a biblioteca, o projeto
- * compila e roda sem a tag `needle`: o esboço em session_stub.go assume, a
- * cascata pula o degrau local e o roteamento fica fast router → modelo grande.
- * Ligar a tag sem conferir daria erro de LINK, não comportamento errado em
- * silêncio — que é a falha certa para se ter aqui.
+ *   - `cactus-compute/needle` (Apache-2.0, fixado em v2.0.5 pelo
+ *     needle-router-pro/config/upstream.lock.json) é um pacote PYTHON de
+ *     inferência e fine-tuning LoRA — `pip install cactus-needle`. Não é uma
+ *     biblioteca C, e não existe `needle.h`.
+ *   - Quem tem API C é `cactus-compute/cactus`, o motor de inferência: header
+ *     `cactus_engine.h`, entrada `cactus_init`. E `cactus_init` carrega os pesos
+ *     de um DIRETÓRIO, não de um arquivo — a diferença muda a assinatura e muda
+ *     também o que `ResolveModelPath` precisa devolver.
  *
- * A biblioteca também é dependência de terceiro em processo que decide
- * roteamento e lê o prompt do usuário: precisa passar por TI/SI antes de virar
- * padrão (política da casa, item 4). A tag de build é o interruptor.
+ * Ou seja: ligar a tag hoje dá erro de compilação no `#include`, antes mesmo do
+ * link. É a falha certa para se ter aqui — barulhenta e imediata —, mas é bom
+ * saber que ela virá do header, e não de um símbolo.
+ *
+ * Quem for reconciliar isto precisa do header na mão. Os marcadores
+ * >>> UPSTREAM <<< abaixo dizem exatamente o que conferir em cada ponto.
+ *
+ * Enquanto isso, o projeto compila e roda sem a tag `needle`: o esboço em
+ * session_stub.go assume, a cascata pula o degrau local e o roteamento fica
+ * fast router → modelo grande. Desde a calibração do léxico por palavra inteira,
+ * os pedidos comuns já decidem no PRIMEIRO degrau, então o degrau local rende
+ * menos do que rendia — vale medir antes de investir na integração.
+ *
+ * DUAS TRAVAS ANTES DE ISTO VIRAR PADRÃO, e nenhuma delas é técnica:
+ *   1. `cactus` é um projeto SEPARADO e a licença dele não foi verificada aqui;
+ *      a Apache-2.0 do lock cobre o `needle`, não o motor.
+ *   2. É dependência de terceiro DENTRO do processo que lê o prompt do usuário e
+ *      decide roteamento. Vai a TI/SI antes (política da casa, item 4). A tag de
+ *      build é o interruptor.
  * ============================================================================
  */
 

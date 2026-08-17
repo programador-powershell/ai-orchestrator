@@ -158,6 +158,33 @@ Três detalhes que não são óbvios:
   conversa **inteira** ir para o executor errado, porque o modo é gravado e não se
   reavalia. Empurrar o caso duvidoso para o modelo grande custa segundos uma vez.
 
+#### O degrau local ainda não tem motor
+
+Vale escrever isto sem rodeio, porque o `.cact` instalado dá a impressão oposta:
+**o degrau 2 não roda hoje**, e o que falta não é o build — é o motor.
+
+| peça | o que é | estado |
+| --- | --- | --- |
+| `needle-router-pro.cact` | a especialização treinada (escolhe o dono do 1º input) | instalada |
+| `needle2.cact` | o modelo BASE do Needle (45 M), baixado por `needle fetch` | ausente |
+| motor de inferência | quem CARREGA um `.cact` | ausente, e é um projeto à parte |
+
+O `cactus-compute/needle` fixado no `upstream.lock.json` (Apache-2.0, v2.0.5) é
+um pacote **Python** de inferência e fine-tuning — **não existe `needle.h`**.
+Quem expõe API C é o `cactus-compute/cactus`: header `cactus_engine.h`, entrada
+`cactus_init`, que carrega pesos de um **diretório**, não de um arquivo. O
+`needle_shim.c` foi escrito contra a API que não existe e está marcado como tal;
+ligar `-tags needle` hoje quebra no `#include`, antes do link.
+
+Duas travas antes de isto virar padrão, e nenhuma é técnica: a licença do
+`cactus` **não foi verificada** (a Apache-2.0 do lock cobre o `needle`, não o
+motor), e é dependência de terceiro **dentro do processo que lê o prompt** — vai
+a TI/SI antes.
+
+E vale medir antes de investir: desde a calibração do léxico por palavra inteira,
+os pedidos comuns decidem no primeiro degrau. O degrau local rende menos hoje do
+que rendia quando foi desenhado.
+
 ### Cada linha carrega seu especialista
 
 O envelope traz `from.specialist`, e a interface desenha o ícone antes de cada

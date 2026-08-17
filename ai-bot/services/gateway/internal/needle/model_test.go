@@ -49,7 +49,7 @@ func TestResolveModelPathFindsTheDataDirModel(t *testing.T) {
 
 func TestResolveModelPathFallsBackToTheLegacyName(t *testing.T) {
 	dataDir := t.TempDir()
-	legacy := filepath.Join(dataDir, "models", legacyModelFileName)
+	legacy := filepath.Join(dataDir, "models", BaseModelFileName)
 	writeModel(t, legacy)
 
 	path, found := ResolveModelPath("", dataDir)
