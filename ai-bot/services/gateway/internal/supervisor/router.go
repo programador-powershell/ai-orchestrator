@@ -64,11 +64,15 @@ const saturation = 26.0
 // NeedleMinConfidence é a confiança mínima para aceitar o veredito do modelo
 // local. Abaixo dela a decisão sobe para o modelo grande.
 //
-// 0.70 e não 0.5: um modelo de 45 milhões de parâmetros erra, e o custo do erro
-// aqui é a conversa INTEIRA ir para o executor errado — o modo é gravado e não
-// se reavalia. Empurrar o caso duvidoso para o modelo grande custa alguns
-// segundos uma vez; errar o modo custa a conversa toda.
-const NeedleMinConfidence = 0.70
+// 0.78 é o limiar CALIBRADO pelo harness de pesquisa
+// (needle-router-pro/config/router.json, `confidence_threshold`), medido sobre
+// holdout — não um chute redondo. O próprio harness avisa que o Needle 2.0.5
+// desabilita a confiança calibrada em pesos LoRA, então o `.cact` treinado só
+// vale com este portão externo por cima. Um modelo de 45 milhões de parâmetros
+// erra, e o custo do erro aqui é a conversa INTEIRA ir para o executor errado —
+// o modo é gravado e não se reavalia. Empurrar o caso duvidoso para o modelo
+// grande custa alguns segundos uma vez; errar o modo custa a conversa toda.
+const NeedleMinConfidence = 0.78
 
 // NeedleToolBudget é quantos candidatos são declarados ao Needle.
 //

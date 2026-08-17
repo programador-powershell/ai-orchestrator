@@ -118,7 +118,7 @@ Modo é contexto, e contexto não se renegocia a cada frase.
            │                     │
            ▼                     ▼
        executor              ┌────────────┐
-                             │  NEEDLE    │  45M params, 14 MB, cgo
+                             │  NEEDLE    │  Router Pro (.cact, ~23 MB), cgo
                              │ internal/  │  milissegundos, offline
                              │  needle    │  sem custo por token
                              └─────┬──────┘
@@ -127,7 +127,7 @@ Modo é contexto, e contexto não se renegocia a cada frase.
                                    │
                    ┌───────────────┴──────────────┐
                    │                              │
-            confiança ≥ 0.70                   incerto
+            confiança ≥ 0.78                   incerto
                    │                              │
                    ▼                              ▼
                executor                    ┌─────────────┐
@@ -154,7 +154,7 @@ Três detalhes que não são óbvios:
   escolha para um campo de string livre, enquanto o esquema de ferramentas vira
   gramática na decodificação — e gramática não deixa o modelo inventar um nome
   que não existe.
-- **Limiar de 0.70, não 0.5.** Um modelo de 45 M erra, e o custo do erro aqui é a
+- **Limiar de 0.78, calibrado — não 0.5 chutado.** O número vem do harness de pesquisa (needle-router-pro/config/router.json), medido sobre holdout; o próprio harness avisa que o Needle 2.0.5 desabilita a confiança calibrada em pesos LoRA, então o .cact treinado só vale com este portão externo. Um modelo de 45 M erra, e o custo do erro aqui é a
   conversa **inteira** ir para o executor errado, porque o modo é gravado e não se
   reavalia. Empurrar o caso duvidoso para o modelo grande custa segundos uma vez.
 

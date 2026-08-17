@@ -488,15 +488,28 @@ func serve() error {
 	// A cascata: fast router (Go puro) → Needle (local, cgo) → modelo grande.
 	// O degrau local é OPCIONAL — sem a tag de build `needle` ou sem o arquivo
 	// de pesos ele não existe, e a cascata encurta em vez de falhar.
+	//
+	// O cérebro do degrau é o Needle Router Pro: o modelo do harness de pesquisa
+	// (needle-router-pro/), treinado SÓ para entender o contexto do primeiro
+	// input e chamar o especialista dono. A descoberta procura o `.cact` no
+	// caminho apontado, no diretório de dados e ao lado do executável — e o log
+	// abaixo separa os DOIS pré-requisitos (arquivo de pesos e binding nativo),
+	// porque "indisponível" sem dizer qual dos dois falta manda a pessoa
+	// depurar o lado errado.
+	modelPath, modelFound := needle.ResolveModelPath(os.Getenv("AIBOT_NEEDLE_MODEL"), cfg.DataDir)
 	localRouter, err := supervisor.NewNeedleClassifier(needle.Options{
-		ModelPath: os.Getenv("AIBOT_NEEDLE_MODEL"),
+		ModelPath: modelPath,
 		MaxTokens: 96,
 	})
 	if err != nil {
+		modelState := "presente em " + modelPath
+		if !modelFound {
+			modelState = "AUSENTE — instale o needle-router-pro.cact em " + modelPath
+		}
 		log.Info("roteador local indisponível — o primeiro input vai do fast router direto ao modelo grande",
-			"motivo", err, "biblioteca", needle.Version())
+			"motivo", err, "biblioteca", needle.Version(), "modelo", modelState)
 	} else {
-		log.Info("roteador local pronto", "biblioteca", needle.Version())
+		log.Info("roteador local pronto", "biblioteca", needle.Version(), "modelo", modelPath)
 		defer localRouter.Close()
 	}
 

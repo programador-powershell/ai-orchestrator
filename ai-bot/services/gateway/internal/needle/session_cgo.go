@@ -69,15 +69,13 @@ func Open(options Options) (*Session, error) {
 	return &Session{handle: handle}, nil
 }
 
-// defaultModelPath procura o modelo ao lado do executável — que é onde o
-// instalador o coloca. Não procura no diretório de trabalho: o gateway sobe como
-// sidecar e herda o cwd do aplicativo, que muda conforme o projeto aberto.
+// defaultModelPath delega à descoberta de model.go — quem chama Open sem
+// caminho (uso direto da biblioteca) acha o mesmo arquivo que o gateway acharia.
+// Não procura no diretório de trabalho: o gateway sobe como sidecar e herda o
+// cwd do aplicativo, que muda conforme o projeto aberto.
 func defaultModelPath() string {
-	executable, err := os.Executable()
-	if err != nil {
-		return "needle2.bin"
-	}
-	return filepath.Join(filepath.Dir(executable), "models", "needle2.bin")
+	path, _ := ResolveModelPath("", "")
+	return path
 }
 
 // Ready diz se a sessão está utilizável.
