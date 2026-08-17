@@ -199,6 +199,13 @@ func (r *Router) Route(ctx context.Context, in RouteInput) protocol.Route {
 	if _, rest, found := ParseModeCommand(in.Text); found {
 		text = rest
 	}
+	// Pergunta não tem elenco. O elenco é o formato de um PLANO — quem trabalha
+	// junto, quem trabalha depois —, e uma dúvida não produz artefato para
+	// ninguém trabalhar em cima. Anunciar "Segurança entra depois" para quem
+	// perguntou o que é SQL injection promete um trabalho que não existe.
+	if IntentOf(Normalize(text)) == IntentQuestion {
+		return decided
+	}
 	candidates := candidatesFor(in.Allowed)
 	decided.Standby = Cast(text, decided.Specialist, Score(text, candidates), candidates)
 	return decided
@@ -311,6 +318,27 @@ func (r *Router) decide(ctx context.Context, in RouteInput) protocol.Route {
 			})
 		}
 		scores = combined
+	}
+
+	// PERGUNTA não vira modo de trabalho.
+	//
+	// "Qual a sintaxe correta de um for em python?" tem `python` no meio e o
+	// léxico o entrega ao Código — mas a pessoa não pediu código, tirou uma
+	// dúvida. E o custo do engano não é uma resposta ruim: o modo fica GRAVADO na
+	// conversa, a tela troca de superfície e tudo o que vier depois vai para o
+	// executor errado. Responder dúvida é da Conversa.
+	//
+	// Vem antes do entregável e do limiar de propósito: os dois olham ASSUNTO, e
+	// assunto é justamente o que engana aqui. Só o `/mode` e o sticky passam na
+	// frente — quem escolheu na mão já disse o que quer.
+	if IntentOf(Normalize(text)) == IntentQuestion && allowedContains(candidates, specialist.DefaultID) {
+		return decorate(protocol.Route{
+			Specialist: specialist.DefaultID,
+			Previous:   in.Current,
+			Reason:     protocol.RouteHeuristic,
+			Confidence: MinConfidence,
+			Signals:    []string{"pergunta, não pedido"},
+		})
 	}
 
 	// Dono ÚNICO do entregável decide sozinho, sem precisar de margem.

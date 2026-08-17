@@ -64,6 +64,19 @@ type sidecarRequest struct {
 	// shortlist muda por política e por conversa — mandar o catálogo inteiro
 	// deixaria o modelo escolher quem a sessão não liberou.
 	Candidates []string `json:"candidates"`
+	// Tools é o MESMO conjunto, DESCRITO — e é o que faz um especialista novo
+	// funcionar sem retreinar nada.
+	//
+	// O modelo não sabe o que é "fluxo": ele lê a descrição e decide. Como o
+	// catálogo é dado (e as atualizações trazem especialistas novos por ele), a
+	// descrição chega ao modelo em toda pergunta, e o degrau local aprende o
+	// elenco novo na primeira mensagem depois da atualização — sem pesos novos,
+	// sem retreino, sem release do gateway.
+	//
+	// Mandar só o id seria o oposto: "escolha entre code, fluxo, tune" não diz
+	// nada a um modelo de 45 milhões de parâmetros, e o especialista recém-
+	// instalado nunca seria escolhido.
+	Tools []Tool `json:"tools"`
 }
 
 // sidecarResponse é a linha de volta.
@@ -235,6 +248,10 @@ func (s *Sidecar) Classify(
 		ids = append(ids, candidate.ID)
 		allowed[candidate.ID] = true
 	}
+	// A MESMA descrição que o caminho nativo usa: uma fonte só para o que o
+	// modelo lê, senão as duas rotas do degrau decidiriam diferente com o mesmo
+	// modelo.
+	tools := ToolsFor(candidates)
 	if len(ids) == 0 {
 		return Verdict{}, errors.New("sem candidatos para o degrau local")
 	}
@@ -245,7 +262,7 @@ func (s *Sidecar) Classify(
 		return Verdict{}, errors.New("o degrau local não está pronto")
 	}
 
-	payload, err := json.Marshal(sidecarRequest{Prompt: prompt, Candidates: ids})
+	payload, err := json.Marshal(sidecarRequest{Prompt: prompt, Candidates: ids, Tools: tools})
 	if err != nil {
 		return Verdict{}, err
 	}

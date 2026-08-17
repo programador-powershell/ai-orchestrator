@@ -76,7 +76,7 @@ def carregar_modelo():
     return modelo, None
 
 
-def decidir(modelo, prompt: str, candidatos: list[str]) -> dict:
+def decidir(modelo, prompt: str, candidatos: list[str], tools: list[dict]) -> dict:
     """Classifica um prompt entre os candidatos.
 
     Uma FERRAMENTA POR ESPECIALISTA, sem argumento: o nome da ferramenta é a
@@ -85,13 +85,17 @@ def decidir(modelo, prompt: str, candidatos: list[str]) -> dict:
     vira gramática na decodificação e impede o modelo de inventar um id que não
     existe.
     """
+    # As DESCRIÇÕES vêm do gateway, e é isso que faz especialista novo funcionar
+    # sem retreinar nada: o catálogo é dado, a atualização traz gente nova nele,
+    # e a descrição chega aqui em toda pergunta. Um id nu ("fluxo") não diz nada
+    # a um modelo de 45 M de parâmetros — a descrição diz.
     ferramentas = [
         {
-            "name": id_especialista,
-            "description": f"Atender o pedido com o especialista {id_especialista}.",
-            "parameters": {"type": "object", "properties": {}},
+            "name": t["name"],
+            "description": t.get("description") or t["name"],
+            "parameters": t.get("parameters") or {"type": "object", "properties": {}},
         }
-        for id_especialista in candidatos
+        for t in tools
     ]
 
     resultado = modelo.complete(prompt, tools=ferramentas)
@@ -140,8 +144,14 @@ def main() -> int:
             responder({"error": "pedido sem candidatos"})
             continue
 
+        # Sem `tools` (gateway antigo), cai no id nu — funciona, decide pior, e
+        # é melhor que recusar a pergunta.
+        tools = pedido.get("tools") or [
+            {"name": c, "description": f"Especialista {c}."} for c in candidatos
+        ]
+
         try:
-            responder(decidir(modelo, str(pedido.get("prompt", "")), candidatos))
+            responder(decidir(modelo, str(pedido.get("prompt", "")), candidatos, tools))
         except Exception as falha:  # noqa: BLE001
             # NUNCA morrer por uma pergunta. O gateway trata o erro como "pule o
             # degrau" e segue para o modelo grande; derrubar o processo custaria

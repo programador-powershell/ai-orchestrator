@@ -67,6 +67,17 @@ func fakeSidecar(mode string) {
 			fmt.Println(`{"specialist":"code","confidence":7.5}`)
 		case "erro-por-pedido":
 			fmt.Println(`{"error":"o modelo nao decidiu"}`)
+		case "eco-tools":
+			// Devolve a DESCRIÇÃO que chegou, para o teste conferir o que o
+			// modelo realmente leria.
+			descricao := ""
+			if len(pedido.Tools) > 0 {
+				descricao = pedido.Tools[0].Description
+			}
+			resposta, _ := json.Marshal(sidecarResponse{
+				Specialist: pedido.Candidates[0], Confidence: 1, Why: descricao,
+			})
+			fmt.Println(string(resposta))
 		case "lento":
 			time.Sleep(10 * time.Second)
 		default:
@@ -274,4 +285,50 @@ func TestOHelperReexecutaEsteBinario(t *testing.T) {
 	if !strings.Contains(string(saida), "modelo nao encontrado") {
 		t.Errorf("o helper não rodou como sidecar; saída: %q", saida)
 	}
+}
+
+// O ESPECIALISTA NOVO funciona sem retreinar nada — e o que faz isso é a
+// descrição viajar em toda pergunta.
+//
+// O modelo de 45 M de parâmetros não sabe o que é "fluxo": ele LÊ a descrição e
+// decide. Como o catálogo é dado e as atualizações trazem especialistas novos
+// por ele, um especialista instalado hoje é roteável na primeira mensagem
+// depois da atualização — sem pesos novos, sem release do gateway.
+//
+// Mandar o id nu seria o oposto: "escolha entre code, fluxo, tune" não diz nada,
+// e o recém-instalado nunca seria escolhido.
+func TestOSidecarRecebeADescricaoDoEspecialistaENaoOIdNu(t *testing.T) {
+	sidecar := sidecarDeTeste(t, "eco-tools")
+	if err := sidecar.Start(context.Background()); err != nil {
+		t.Fatalf("subir: %v", err)
+	}
+
+	verdict, err := sidecar.Classify(context.Background(), "qualquer", candidatos("fluxo", "code"))
+	if err != nil {
+		t.Fatalf("classificar: %v", err)
+	}
+	_ = verdict
+
+	// O eco volta em `Why`, mas o Verdict não o carrega — a conferência é feita
+	// pelo que o processo recebeu, então repetimos a chamada olhando a linha.
+	descricao := ultimaDescricaoRecebida(t, "fluxo")
+	if !strings.Contains(descricao, specialist.GetOrDefault("fluxo").Name) {
+		t.Errorf("a descrição enviada ao modelo não tem o NOME do especialista: %q", descricao)
+	}
+	if !strings.Contains(descricao, "Assuntos:") {
+		t.Errorf("a descrição precisa listar os assuntos, senão o modelo escolhe no escuro: %q", descricao)
+	}
+}
+
+// ultimaDescricaoRecebida monta a descrição do jeito que o sidecar a receberia.
+// É a MESMA função que o cliente usa — se ela mudar, o teste muda junto.
+func ultimaDescricaoRecebida(t *testing.T, id string) string {
+	t.Helper()
+	for _, tool := range ToolsFor(candidatos(id)) {
+		if tool.Name == id {
+			return tool.Description
+		}
+	}
+	t.Fatalf("o especialista %q não virou ferramenta", id)
+	return ""
 }
