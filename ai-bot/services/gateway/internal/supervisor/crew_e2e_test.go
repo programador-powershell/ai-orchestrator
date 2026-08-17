@@ -806,3 +806,109 @@ func TestDecisaoDoPortaoEcoaNoLog(t *testing.T) {
 		}
 	}
 }
+
+// Montar equipe não é atalho para escapar do portão de aprovação.
+//
+// Esta é a fronteira que sustenta o multi-bot inteiro. O especialista `agent`
+// tem `proc.run` no catálogo; o `chat`, não. Se o trabalhador fosse avaliado com
+// o catálogo de QUEM DESPACHOU, bastaria o `agent` criar uma tarefa `chat` e
+// mandá-la rodar um comando — a aprovação viraria opcional para qualquer um que
+// soubesse pedir uma equipe. A regra é a mesma da delegação: despachar não pede
+// permissão; o que o trabalhador FAZ pede, com o catálogo DELE.
+func TestFerramentaDoTrabalhadorPassaPeloCatalogoDeleMesmo(t *testing.T) {
+	plano := `{"tasks":[{"id":"t1","title":"tenta rodar","specialist":"chat","goal":"rode algo"}],` +
+		`"maxConcurrency":1}`
+
+	tentativa := toolFence + "\n{\"tool\":\"proc.run\",\"args\":{\"command\":\"whoami\"}}\n```"
+
+	fixture := newCrewFixture(t, "agent", []route{
+		{trigger: "Resultado das ferramentas", answer: "desisti do comando"},
+		{trigger: "Tarefa t1", answer: tentativa},
+		{trigger: "monte e rode", answer: dispatchFence(plano)},
+	}, "sem rota")
+
+	// A ferramenta EXISTE no registro e conta quem a alcançou. Registro vazio
+	// provaria menos: o erro seria "ferramenta desconhecida", que acontece depois
+	// do portão e diria o contrário do que este teste afirma.
+	var executada int32
+	fixture.supervisor.deps.Tools.Register("proc.run", "roda comando",
+		func(context.Context, string, json.RawMessage) (string, error) {
+			atomic.AddInt32(&executada, 1)
+			return "rodou", nil
+		})
+
+	if err := fixture.supervisor.Prompt(motorContext(t), fixture.session,
+		protocol.Prompt{Text: "monte e rode"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	if atomic.LoadInt32(&executada) != 0 {
+		t.Error("um trabalhador `chat` executou `proc.run` — a ferramenta foi avaliada com o " +
+			"catálogo de quem despachou, e despachar virou o jeito barato de fugir da aprovação")
+	}
+	// E a recusa precisa VOLTAR ao trabalhador em texto, senão ele repete o
+	// comando até esgotar as rodadas e a tarefa morre com o motivo errado.
+	if !fixture.provider.sawRequestContaining("não usa a ferramenta") {
+		t.Error("a recusa do portão não voltou ao trabalhador como resultado de ferramenta")
+	}
+}
+
+// Parar no meio para a equipe inteira — e o turno TERMINA.
+//
+// O botão de parar precisa valer para os trabalhadores, que rodam em goroutines
+// próprias, e não só para o turno que os despachou. A regressão que este teste
+// caça não erra o resultado: ela TRAVA, deixando a pessoa diante de um orbe que
+// gira para sempre porque o turno espera goroutines que ninguém mandou parar.
+func TestPararNoMeioEncerraAEquipeEOTurno(t *testing.T) {
+	plano := `{"tasks":[` +
+		`{"id":"t1","title":"primeira","specialist":"chat","goal":"faca"},` +
+		`{"id":"t2","title":"segunda","specialist":"chat","goal":"faca","dependsOn":["t1"]},` +
+		`{"id":"t3","title":"terceira","specialist":"chat","goal":"faca","dependsOn":["t2"]}` +
+		`],"maxConcurrency":1}`
+
+	fixture := newCrewFixture(t, "agent", []route{
+		{trigger: "Resultado das ferramentas", answer: "fim"},
+		{trigger: "Tarefa t", answer: "ok"},
+		{trigger: "toque longo", answer: dispatchFence(plano)},
+	}, "sem rota")
+
+	// Assim que o primeiro trabalhador for despachado, para tudo.
+	go func() {
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(taskDispatchesQuiet(fixture)) > 0 {
+				fixture.supervisor.Cancel(fixture.session)
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	// O erro é aceitável — cancelar É um encerramento. O que não é aceitável é
+	// esta chamada não voltar: o contexto do teste tem prazo, e estourá-lo aqui
+	// significa que o turno ficou preso esperando a equipe.
+	_ = fixture.supervisor.Prompt(motorContext(t), fixture.session,
+		protocol.Prompt{Text: "toque longo"})
+
+	// E a equipe não seguiu para as ondas seguintes depois do cancelamento.
+	if got := len(taskDispatches(t, fixture)); got > 2 {
+		t.Errorf("a equipe despachou %d tarefas depois do cancelamento — as ondas seguintes "+
+			"continuaram rodando", got)
+	}
+}
+
+// taskDispatchesQuiet lê os despachos sem `t` — é chamada de dentro de uma
+// goroutine, e `t.Fatalf` fora da goroutine do teste é corrida, não falha.
+func taskDispatchesQuiet(fixture *crewFixture) []protocol.Envelope {
+	envelopes, err := fixture.store.Since(fixture.session, 0, 1000)
+	if err != nil {
+		return nil
+	}
+	out := make([]protocol.Envelope, 0, 2)
+	for _, envelope := range envelopes {
+		if envelope.Kind == protocol.KindTaskDispatch {
+			out = append(out, envelope)
+		}
+	}
+	return out
+}
