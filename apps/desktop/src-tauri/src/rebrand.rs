@@ -1,10 +1,11 @@
 //! Migração do rebranding — o dado do usuário atravessa a troca de nome.
 //!
 //! O produto já se chamou "AI Orchestrator" (até a 0.10) e "Multiplike-AI"
-//! (0.11). Nesta versão ele volta a ser "AI-Orchestrator", e a migração passa
-//! a conhecer as DUAS gerações: quem vem da 0.11 migra de Multiplike-AI; quem
-//! nunca saiu da 0.10 migra direto de AI Orchestrator. A troca alcança coisas
-//! que NÃO são cosmética: o nome do
+//! (0.11). O nome atual é "AI-BOT", e a migração conhece as gerações
+//! anteriores: quem vem da 0.11 migra de Multiplike-AI; quem nunca saiu da
+//! 0.10 migra direto de AI Orchestrator. ("AI-Orchestrator", com hífen, foi um
+//! nome de transição que nunca chegou a uma release — não há dado sob ele para
+//! migrar.) A troca alcança coisas que NÃO são cosmética: o nome do
 //! serviço no cofre do sistema operacional, os diretórios de dados e o
 //! `identifier` do Tauri. Cada uma dessas é uma chave de busca — mudá-la sem
 //! mais nada não apaga nada, e é justamente por isso que engana: o arquivo
@@ -48,12 +49,11 @@ pub const SERVICOS_ANTIGOS: [&str; 2] = ["Multiplike-AI", "AI Orchestrator"];
 /// Compatibilidade com quem consulta um único legado (o mais recente).
 pub const SERVICO_ANTIGO: &str = SERVICOS_ANTIGOS[0];
 /// Nome atual.
-pub const SERVICO: &str = "AI-Orchestrator";
+pub const SERVICO: &str = "AI-BOT";
 
-/// Identifiers antigos. O pré-0.11 é IGUAL ao atual — quem nunca saiu da 0.10
-/// já está no lugar certo, então só a geração Multiplike migra.
-const IDENTIFIERS_ANTIGOS: [&str; 1] = ["com.multiplike.desktop"];
-const IDENTIFIER: &str = "com.aiorchestrator.desktop";
+/// Identifiers antigos, na mesma ordem dos serviços: a geração 0.11 e a 0.10.
+const IDENTIFIERS_ANTIGOS: [&str; 2] = ["com.multiplike.desktop", "com.aiorchestrator.desktop"];
+const IDENTIFIER: &str = "com.aibot.desktop";
 
 /// Renomeia `antigo` para `novo` quando faz sentido. Devolve `true` se migrou.
 ///

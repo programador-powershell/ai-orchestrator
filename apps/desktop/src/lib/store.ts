@@ -10,7 +10,7 @@ import {
   type ResearchReport,
   type RuntimeStatus,
   type UiMode
-} from "@orchestrator/contracts";
+} from "@ai-bot/contracts";
 import { criarArmazenamentoPersistido } from "./persistStorage";
 import type { ChatMessage, GatewaySession } from "./gateway";
 import type { ToolCard } from "./toolcard";

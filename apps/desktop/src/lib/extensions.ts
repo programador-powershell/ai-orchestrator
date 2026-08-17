@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ExtensionBundle } from "@orchestrator/contracts";
+import type { ExtensionBundle } from "@ai-bot/contracts";
 
 export const extensions = {
   inspect: (path: string) => invoke<ExtensionBundle>("extension_inspect", { path }),

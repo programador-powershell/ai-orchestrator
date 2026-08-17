@@ -956,7 +956,7 @@ async fn fetch_public_text(source: &str) -> Result<(reqwest::Url, String), ApiEr
             .get(current.clone())
             .header(
                 reqwest::header::USER_AGENT,
-                "AI-Orchestrator-Design-Capture/0.1",
+                "AI-BOT-Design-Capture/0.1",
             )
             .send()
             .await

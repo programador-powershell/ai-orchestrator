@@ -22,7 +22,7 @@ impl Metrics {
         self.fallbacks.fetch_add(1, Ordering::Relaxed);
     }
     pub fn render(&self) -> String {
-        format!("# TYPE ai_orchestrator_requests_total counter\nai_orchestrator_requests_total {}\n# TYPE ai_orchestrator_provider_failures_total counter\nai_orchestrator_provider_failures_total {}\n# TYPE ai_orchestrator_fallbacks_total counter\nai_orchestrator_fallbacks_total {}\n",self.requests.load(Ordering::Relaxed),self.provider_failures.load(Ordering::Relaxed),self.fallbacks.load(Ordering::Relaxed))
+        format!("# TYPE ai_bot_requests_total counter\nai_bot_requests_total {}\n# TYPE ai_bot_provider_failures_total counter\nai_bot_provider_failures_total {}\n# TYPE ai_bot_fallbacks_total counter\nai_bot_fallbacks_total {}\n",self.requests.load(Ordering::Relaxed),self.provider_failures.load(Ordering::Relaxed),self.fallbacks.load(Ordering::Relaxed))
     }
 }
 

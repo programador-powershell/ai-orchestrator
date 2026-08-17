@@ -21,7 +21,7 @@ import (
 // configuracaoDeTeste é uma VPS completa e bem formada.
 func configuracaoDeTeste() VPSConfig {
 	return VPSConfig{
-		Host:        "vps.orchestrator.example",
+		Host:        "vps.aibot.example",
 		Port:        2222,
 		User:        "aibot",
 		Workdir:     "/srv/projetos/ai-bot",
@@ -50,12 +50,12 @@ func (r *stdinRecorder) exec(_ context.Context, stdin, name string, args []strin
 func runnerDeTeste(config VPSConfig, presented string) (*VPSRunner, *recorder, *stdinRecorder) {
 	calls := &recorder{answer: func(name string, _ []string) (Result, error) {
 		if name == "ssh-keyscan" {
-			return Result{Stdout: "vps.orchestrator.example ssh-ed25519 AAAAC3Nza..."}, nil
+			return Result{Stdout: "vps.aibot.example ssh-ed25519 AAAAC3Nza..."}, nil
 		}
 		return Result{Stdout: "rodou na vps"}, nil
 	}}
 	keygen := &stdinRecorder{answer: func(_, _ string, _ []string) (Result, error) {
-		return Result{Stdout: "256 " + presented + " vps.orchestrator.example (ED25519)"}, nil
+		return Result{Stdout: "256 " + presented + " vps.aibot.example (ED25519)"}, nil
 	}}
 	runner := NewVPSRunner(config)
 	runner.lookPath = found
@@ -95,7 +95,7 @@ func TestSSHArgsSemSenhaESemStrictNo(t *testing.T) {
 	if !hasPair(args, "-p", "2222") {
 		t.Fatalf("a porta tinha de ir como par -p 2222: %q", args)
 	}
-	if args[len(args)-2] != "aibot@vps.orchestrator.example" {
+	if args[len(args)-2] != "aibot@vps.aibot.example" {
 		t.Fatalf("destino inesperado: %q", args[len(args)-2])
 	}
 	// O comando remoto é o ÚLTIMO elemento, inteiro: o ssh junta argumentos
@@ -116,7 +116,7 @@ func TestSSHArgsSemPortaESemUsuarioHerdaOSSHConfig(t *testing.T) {
 			t.Fatalf("sem porta no catálogo o ssh_config decide — a flag não podia aparecer: %q", args)
 		}
 	}
-	if args[len(args)-2] != "vps.orchestrator.example" {
+	if args[len(args)-2] != "vps.aibot.example" {
 		t.Fatalf("sem usuário no catálogo o destino é só o host: %q", args[len(args)-2])
 	}
 }

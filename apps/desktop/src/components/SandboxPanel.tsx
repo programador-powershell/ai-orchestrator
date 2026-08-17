@@ -16,7 +16,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FlaskConical, Play, ShieldAlert } from "lucide-react";
-import type { SandboxResult } from "@orchestrator/contracts";
+import type { SandboxResult } from "@ai-bot/contracts";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 

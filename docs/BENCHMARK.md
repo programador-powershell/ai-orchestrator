@@ -1,4 +1,4 @@
-# Benchmark funcional — AI-Orchestrator vs líderes de mercado
+# Benchmark funcional — AI-BOT vs líderes de mercado
 
 Data: 2026-08-10 · Método: **nenhuma vitória sem evidência executável.** Cada "ganha/empata"
 aponta para código e teste real; o que o líder faz melhor está declarado em "Lacunas".
@@ -7,7 +7,7 @@ rotula isso explicitamente em vez de fingir.
 
 ## Evidência global
 
-- **237 testes vitest verdes** em 14 arquivos (`corepack pnpm --filter @orchestrator/desktop test`).
+- **237 testes vitest verdes** em 14 arquivos (`corepack pnpm --filter @ai-bot/desktop test`).
 - **E2E real com rede**: `src/lib/osv.e2e.test.ts` parseia o `pnpm-lock.yaml` real deste repo
   e consulta a API OSV.dev ao vivo (controle lodash@4.17.15 → advisories GHSA reais com resumo,
   CVSS e versão corrigida). Gate por `OSV_E2E=1`.
@@ -83,7 +83,7 @@ import SQL é subset; diff não detecta rename (vira DROP+CREATE, documentado).
 | Labels, due dates com atraso REAL, editor de cartão | Empata | `isOverdue` testado; revalidação por minuto; verificado vivo |
 | Log de execuções com horário real | Empata | painel de log; verificado vivo após regra disparar |
 | Export/Import do quadro em Markdown | Ganha (Trello não tem import md) | `exportBoardMarkdown` round-trip testado |
-| Conectores M365 | Lacuna declarada | cards dizem "não conectado — requer aprovação de TI" (política Orchestrator) |
+| Conectores M365 | Lacuna declarada | cards dizem "não conectado — requer aprovação de TI" (política AI-BOT) |
 
 **Lacunas:** integrações reais de e-mail/calendário (exigem OAuth aprovado pela TI);
 agendamento cron em background; colaboração multi-usuário na nuvem.

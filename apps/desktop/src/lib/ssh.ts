@@ -19,7 +19,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { FsEntry, TerminalResult } from "@orchestrator/contracts";
+import type { FsEntry, TerminalResult } from "@ai-bot/contracts";
 
 import type { DeployServer } from "./ship/server";
 import { useApp } from "./store";

@@ -1,8 +1,8 @@
 <div align="center">
 
-# Orchestrator-AI
+# AI-BOT
 
-![App Screenshot](https://placehold.co/960x540?text=Orchestrator-AI)
+![App Screenshot](https://placehold.co/960x540?text=AI-BOT)
 
 🧠
 
@@ -43,7 +43,7 @@
 ### :up: V.11
 ### :warning: Latest Changes
 
-- **O produto passou a se chamar Orchestrator-AI.** Nome visível, título da janela, instalador, escopo de pacote (`@Orchestrator/*`), identificador do app (`com.Orchestrator.desktop`) e nomes de crate — 192 ocorrências em 114 arquivos. **As chaves de armazenamento local ficaram como estavam** (`orchestrator.v2`, `aio.*`): renomear chave não migra dado, só faz o app abrir sem as conversas, os fluxos e o schema que a pessoa já tinha. O rename também quebrou, e consertou, uma coisa que passaria em silêncio: o crate do gateway virou `Orchestrator-ai-gateway` enquanto o `RUST_LOG` continuava filtrando o nome antigo — o log sairia mudo.
+- **O produto passou a se chamar AI-BOT.** Nome visível, título da janela, instalador, escopo de pacote (`@ai-bot/*`), identificador do app (`com.aibot.desktop`) e nomes de crate — 192 ocorrências em 114 arquivos. **As chaves de armazenamento local ficaram como estavam** (`orchestrator.v2`, `aio.*`): renomear chave não migra dado, só faz o app abrir sem as conversas, os fluxos e o schema que a pessoa já tinha. O rename também quebrou, e consertou, uma coisa que passaria em silêncio: o crate do gateway virou `ai-bot-gateway` enquanto o `RUST_LOG` continuava filtrando o nome antigo — o log sairia mudo.
 - **O terminal da aba Code virou um terminal de verdade.** O que existia era um scrollback de linhas tipadas, com cada linha recebendo uma cor do app: lê bem um `git status` e não é um terminal — `vim`, `htop`, `nano`, um menu de instalador, qualquer coisa que desenhe posicionando o cursor numa grade, saía como lixo ou como nada. Agora quem desenha é o **xterm.js** (MIT) ligado direto no **PTY** que já existia no Rust e não tinha tela nenhuma: grade, cursor, regiões de rolagem, modos de teclado, redimensionamento propagado (`ptyResize` — sem ele o shell segue achando que tem 80 colunas e o `less` quebra na coluna errada). O painel tem **duas metades**: *Shell* (o emulador, padrão) e *Assistido* (o prompt anterior, com `ai <pergunta>`, execução de arquivo e o gate de código colado) — o assistido não é terminal, é um lançador com IA, e apagá-lo teria jogado fora recurso que funciona.
 - **A paleta do terminal é PRÓPRIA, e acompanha o tema.** As 16 cores ANSI vivem em `lib/termTheme.ts` nos dois temas, não derivadas dos tokens de papel do app: quem escreve `\e[31m` está pedindo a cor 1 do ANSI, e um programa qualquer não sabe nada sobre a identidade visual daqui. O tema claro **não é a paleta escura com o fundo trocado** — cada cor foi rebaixada mantendo o matiz, senão `#67d38a` sobre branco fica ilegível. A mesma paleta alimenta o emulador e o interpretador do scrollback, para as duas metades da tela nunca pintarem o mesmo verde de dois jeitos.
 - **47 stacks e o gerador de Dockerfile, portados do openship** (Apache-2.0, atribuição em `NOTICE`, licença em `licenses/`). São 11 linguagens e 47 stacks com imagem de build e de runtime, diretório de saída, porta, comando de build e de start, caminhos de produção e regra de detecção — conhecimento operacional acumulado (que o Nuxt sai em `.output`, que o Rails precisa de `Gemfile` **mais** `config/routes.rb`, que o Create React App só se identifica pela dependência porque `public/`+`src/` é layout de meio mundo). O Dockerfile sai multi-estágio quando a imagem de build difere da de runtime, com install e build num `RUN` só (um por passo custaria uma layer commitada por passo) e as marcas de progresso impressas de dentro do build, porque o Docker não expõe progresso dentro de um `RUN`. **Não portamos** a constante que buscava logo de framework num CDN externo: isso entrega a um terceiro a lista de frameworks que o usuário tem, quebra o app offline e depende de uma URL móvel.
@@ -51,7 +51,7 @@
 - **O terminal não perde mais o começo da sessão.** A thread de leitura do Rust emite no instante em que o filho nasce; o front só assinava depois do `pty_spawn` voltar, mais três round-trips de IPC. Evento do Tauri sem ouvinte é **descartado**, não enfileirado — o que se perdia era a faixa do shell e o primeiro prompt, e o terminal parecia travado até o primeiro Enter. A inscrição agora acontece **antes** do spawn e o id é amarrado depois.
 - **O produtor tem freio.** O buffer de escrita do xterm.js descarta acima de 5×10⁷ bytes pendentes: um `cat` de arquivo grande não ficava lento, ficava **faltando pedaço no meio**, calado. O Rust passou a emitir no máximo 256 blocos sem confirmação e a parar de ler o PTY passando disso — o freio chega ao processo filho, que bloqueia na escrita, como em qualquer terminal (é o que faz `comando | head` terminar). A confirmação sai do callback do `term.write`, que é quando a tela **de fato** processou o pedaço.
 - **A saída da aba Assistido saiu do texto cru.** `parseAnsi` existia, com testes, e não era chamado por ninguém: `git status`, `npm`, `cargo` e `docker` despejavam `ESC[32m` visível no meio da frase. Agora cada trecho é pintado com a cor que o próprio programa pediu, usando a mesma paleta do emulador.
-- **O ciclo do deploy fecha: o Dockerfile gerado agora é CONSTRUÍDO.** Ele era exibido na tela e parava aí. Agora o painel grava `Dockerfile.Orchestrator` no projeto (nunca por cima do `Dockerfile` de quem já tem um) e acrescenta o passo de imagem ao pipeline. O interruptor nasce desligado, e diz o que vai acontecer no disco — gravar arquivo no projeto de alguém sem avisar é o tipo de surpresa que derruba a confiança na ferramenta inteira.
+- **O ciclo do deploy fecha: o Dockerfile gerado agora é CONSTRUÍDO.** Ele era exibido na tela e parava aí. Agora o painel grava `Dockerfile.aibot` no projeto (nunca por cima do `Dockerfile` de quem já tem um) e acrescenta o passo de imagem ao pipeline. O interruptor nasce desligado, e diz o que vai acontecer no disco — gravar arquivo no projeto de alguém sem avisar é o tipo de surpresa que derruba a confiança na ferramenta inteira.
 - **Carga Docker roda em microVM, quando há `sbx`.** O isolamento do app é um Job Object: ele contém a árvore de processos, mata neto órfão e limita memória — e não tem como isolar um `docker build`, porque o processo contido é o CLIENTE, não o daemon. Um `Dockerfile` com `RUN curl … | sh` roda com o alcance do daemon: a rede, o socket e as imagens do host. O [Docker Sandboxes](https://github.com/docker/sbx-releases) fecha essa lacuna com daemon, filesystem e rede próprios. **Só Docker passa por ele**; todo o resto continua no Job Object, que é o isolamento certo para os demais comandos. Sem `sbx` instalado nada quebra: o build roda como antes, e `sbx_status` diz qual garantia está valendo — o app não afirma "sandbox" entregando execução direta.
 - **O prazo de um comando passou a ser de quem chama.** Eram 120 s fixos, que matavam `docker build` de qualquer projeto real — e o erro chegava como "excedeu o limite", mandando a pessoa procurar defeito no Dockerfile. Agora o passo de imagem pede 45 min e os demais 10, com o Rust prendendo o valor entre 1 s e 1 h.
 
@@ -136,8 +136,8 @@ corepack pnpm build
 
 | Nome                          | Descrição                                                                          |
 | ----------------------------- | ---------------------------------------------------------------------------------- |
-| Orchestrator-AI-Setup.exe     | Instalador para o usuário final; baixa, valida e instala por usuário (sem UAC)      |
-| build-local-installer.ps1     | Gera `artifacts/local/Orchestrator-AI-Setup-Local.exe` com o NSIS incorporado       |
+| AI-BOT-Setup.exe     | Instalador para o usuário final; baixa, valida e instala por usuário (sem UAC)      |
+| build-local-installer.ps1     | Gera `artifacts/local/AI-BOT-Setup-Local.exe` com o NSIS incorporado       |
 | build-bootstrapper.ps1        | Compila o bootstrapper (instalador gráfico pequeno)                                 |
 | sign-windows.ps1              | Assinatura Authenticode dos binários Windows                                        |
 | configure-release.ps1         | Configura repositório e chaves para o primeiro release                              |
@@ -151,7 +151,7 @@ Para o gateway local acesse http://127.0.0.1:8787
 
 O app desktop não usa credencial padrão — a autenticação é via OIDC.
 
-![App Screenshot](https://placehold.co/960x540?text=Orchestrator-AI)
+![App Screenshot](https://placehold.co/960x540?text=AI-BOT)
 
 ## :book: Documentação
 

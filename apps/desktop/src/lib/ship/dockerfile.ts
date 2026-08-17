@@ -145,7 +145,7 @@ export function generateDockerfile(plan: DockerfilePlan): string {
   const start = plan.startCommand ?? stack.defaultStartCommand;
 
   const linhas: string[] = [];
-  linhas.push(`# Gerado por AI-Orchestrator para a stack "${stack.name}".`);
+  linhas.push(`# Gerado por AI-BOT para a stack "${stack.name}".`);
   linhas.push(multiEstagio ? `FROM ${buildImage} AS builder` : `FROM ${runtimeImage}`);
   linhas.push("WORKDIR /workspace");
   linhas.push("COPY . /workspace");

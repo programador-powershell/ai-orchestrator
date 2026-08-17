@@ -11,7 +11,7 @@ import "../styles/modes/security.css";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { FsEntry, SecurityFinding } from "@orchestrator/contracts";
+import type { FsEntry, SecurityFinding } from "@ai-bot/contracts";
 import {
   Bot,
   Boxes,

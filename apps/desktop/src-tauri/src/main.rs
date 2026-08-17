@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    ai_orchestrator_desktop_lib::run();
+    ai_bot_desktop_lib::run();
 }

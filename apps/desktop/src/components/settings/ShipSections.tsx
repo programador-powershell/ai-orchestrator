@@ -243,7 +243,7 @@ export function VpsServerSection() {
   return (
     <Section
       title="Servidor VPS"
-      detail="O VPS ao qual o Orchestrator se conecta para build e deploy. Sem senha e sem chave privada neste formulário."
+      detail="O VPS ao qual o AI-BOT se conecta para build e deploy. Sem senha e sem chave privada neste formulário."
     >
       <div className="setx-card">
         <div className="setx-card-title">

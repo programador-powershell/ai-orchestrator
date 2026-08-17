@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn reconhece_carga_docker_pelo_primeiro_token() {
-        assert!(e_carga_docker("docker build -f Dockerfile.orchestrator -t app:1 ."));
+        assert!(e_carga_docker("docker build -f Dockerfile.aibot -t app:1 ."));
         assert!(e_carga_docker("  docker   ps"));
         assert!(e_carga_docker("docker-compose up -d"));
         assert!(e_carga_docker("buildx bake"));

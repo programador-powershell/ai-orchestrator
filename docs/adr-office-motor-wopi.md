@@ -17,7 +17,7 @@ O Office Command Engine (`lib/office/commands.ts`) já resolve a parte de govern
 
 ### Por que o caminho Microsoft está fechado — dois bloqueios independentes
 
-1. **Cloud Storage Partner Program.** Apontar o iframe para o Office for the web público exige participar do CSPP, e a documentação é literal: o programa é para ISVs cujo negócio *é* armazenamento em nuvem, e **não é aberto a clientes do Microsoft 365 diretamente**. A Orchestrator é cliente M365, não ISV de storage. Ter todos os usuários licenciados não muda isso.
+1. **Cloud Storage Partner Program.** Apontar o iframe para o Office for the web público exige participar do CSPP, e a documentação é literal: o programa é para ISVs cujo negócio *é* armazenamento em nuvem, e **não é aberto a clientes do Microsoft 365 diretamente**. A AI-BOT é cliente M365, não ISV de storage. Ter todos os usuários licenciados não muda isso.
 2. **Office Online Server tem retirement em 2027-01-01.** Em agosto de 2026 são ~5 meses de suporte. Não se constrói produto novo sobre infra que morre no ano seguinte.
 
 ### Por que Microsoft também não entregaria o "ao vivo"
@@ -40,7 +40,7 @@ Escrever no arquivo por fora (PutFile direto) também não funciona, e o problem
 
 **A edição ao vivo NÃO passa por WOPI.** Ela passa pela API de automação do editor (postMessage/UNO). São dois canais separados e devem ser dois módulos separados no código. O `OfficeCommand` continua sendo o vocabulário validado; só o `apply()` deixa de mexer numa string e passa a despachar UNO no iframe.
 
-Isso é o que o `lib/office/adapter.ts` já antecipou: trocar o motor não muda o resto do Orchestrator, só a implementação de um adapter.
+Isso é o que o `lib/office/adapter.ts` já antecipou: trocar o motor não muda o resto do AI-BOT, só a implementação de um adapter.
 
 ## Consequências
 
@@ -58,7 +58,7 @@ Isso é o que o `lib/office/adapter.ts` já antecipou: trocar o motor não muda 
 
 **Concorrência IA × usuário.** O usuário digita no iframe enquanto a IA despacha operações. Não há transação: se o cursor mudou entre a leitura da estrutura e o dispatch, a IA edita o lugar errado. O painel de aprovação (>3 comandos) não cobre o caso de 1 comando aplicado direto.
 
-**Dados em trânsito.** O Collabora recebe o conteúdo integral dos documentos. Só faz sentido self-hosted em infra da Orchestrator, com imagem homologada — fora disso é vazamento de documento corporativo.
+**Dados em trânsito.** O Collabora recebe o conteúdo integral dos documentos. Só faz sentido self-hosted em infra da AI-BOT, com imagem homologada — fora disso é vazamento de documento corporativo.
 
 **Granularidade do UNO.** UNO é API de comandos de UI, não de modelo de documento. "Aplicar fórmula na coluna inteira" ou "inserir tabela 3x4 formatada" podem exigir sequências frágeis de seleção+comando. **Por isso o PoC vem antes do WOPI host.**
 

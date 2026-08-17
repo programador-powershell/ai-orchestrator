@@ -9,7 +9,7 @@ import type {
   SchemaRelation,
   SchemaTable,
   SqlDialect as SqlDialectBase
-} from "@orchestrator/contracts";
+} from "@ai-bot/contracts";
 import type { StructuredOp } from "./ops";
 
 /* ------------------------------ Constantes ------------------------------- */

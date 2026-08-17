@@ -8,7 +8,7 @@
 import "../styles/modes/chat.css";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ResearchSource } from "@orchestrator/contracts";
+import type { ResearchSource } from "@ai-bot/contracts";
 import {
   Brain,
   Check,

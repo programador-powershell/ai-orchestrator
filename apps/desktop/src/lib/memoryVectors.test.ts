@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MemoryItem } from "@orchestrator/contracts";
+import type { MemoryItem } from "@ai-bot/contracts";
 
 import { loadCache, missingVectors, sameSpace, saveCache, textHash, vectorScores } from "./memoryVectors";
 import { memoryText } from "./semantic";

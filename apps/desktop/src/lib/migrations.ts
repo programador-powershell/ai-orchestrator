@@ -1,4 +1,4 @@
-const MIGRATION_KEY = "ai-orchestrator.migration.local-runtime.v1";
+const MIGRATION_KEY = "ai-bot.migration.local-runtime.v1";
 
 /**
  * Preserva escolhas antigas sem iniciar downloads ou processos. A antiga seleção

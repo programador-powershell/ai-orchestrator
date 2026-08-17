@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SchemaTable } from "@orchestrator/contracts";
+import type { SchemaTable } from "@ai-bot/contracts";
 
 import {
   alca,

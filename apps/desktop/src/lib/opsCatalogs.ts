@@ -1,4 +1,4 @@
-import type { UiMode } from "@orchestrator/contracts";
+import type { UiMode } from "@ai-bot/contracts";
 
 /**
  * Contratos dos canais de operação chat→superfície.

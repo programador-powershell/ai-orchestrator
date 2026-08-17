@@ -287,9 +287,9 @@ mod tests {
     #[test]
     fn troca_dentro_de_um_unico_run() {
         let xml = para("<w:r><w:t>Olá mundo</w:t></w:r>");
-        let (out, n) = replace_in_xml(&xml, "mundo", "Orchestrator", &DOCX);
+        let (out, n) = replace_in_xml(&xml, "mundo", "AI-BOT", &DOCX);
         assert_eq!(n, 1);
-        assert!(out.contains("<w:t>Olá Orchestrator</w:t>"), "saiu: {out}");
+        assert!(out.contains("<w:t>Olá AI-BOT</w:t>"), "saiu: {out}");
     }
 
     /// O caso que o spike mediu falhando: 92% dos parágrafos reais têm o texto
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn troca_agulha_que_atravessa_dois_runs() {
         let xml = para("<w:r><w:t>Ola Mul</w:t></w:r><w:r><w:t>tiplike hoje</w:t></w:r>");
-        let (out, n) = replace_in_xml(&xml, "Orchestrator", "ACME", &DOCX);
+        let (out, n) = replace_in_xml(&xml, "AI-BOT", "ACME", &DOCX);
         assert_eq!(n, 1, "deveria achar atravessando runs; saiu: {out}");
         let texto = crate::office::xml_text(&out, &["w:p"]);
         assert!(texto.contains("Ola ACME hoje"), "texto final: {texto}");
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn contagem_de_tags_nao_muda() {
         let xml = para("<w:r><w:rPr><w:b/></w:rPr><w:t>Ola Mul</w:t></w:r><w:r><w:t>tiplike</w:t></w:r>");
-        let (out, _) = replace_in_xml(&xml, "Orchestrator", "ACME", &DOCX);
+        let (out, _) = replace_in_xml(&xml, "AI-BOT", "ACME", &DOCX);
         assert_eq!(xml.matches("<w:t>").count(), out.matches("<w:t>").count());
         assert_eq!(xml.matches("<w:r>").count(), out.matches("<w:r>").count());
         assert!(out.contains("<w:b/>"), "formatação foi perdida: {out}");
@@ -755,7 +755,7 @@ mod roundtrip {
         let saida = office_replace_text(
             raiz,
             "contrato.docx".into(),
-            "Orchestrator Ltda".into(),
+            "AI-BOT Ltda".into(),
             "ACME S.A.".into(),
         )
         .expect("edição deveria funcionar");
@@ -785,7 +785,7 @@ mod roundtrip {
 
         // O texto mudou e a formatação sobreviveu.
         let doc = parte(&depois, "word/document.xml");
-        assert!(!doc.contains("Orchestrator"), "texto antigo ficou: {doc}");
+        assert!(!doc.contains("AI-BOT"), "texto antigo ficou: {doc}");
         assert!(doc.contains("<w:b/>"), "negrito perdido: {doc}");
         assert!(doc.contains("<w:sectPr>"), "sectPr perdido: {doc}");
         assert_eq!(
@@ -821,7 +821,7 @@ mod roundtrip {
         let caminho = escrever_temporario("limpo.docx", &docx_de_teste());
         let dir = caminho.parent().unwrap().to_path_buf();
         let raiz = dir.to_string_lossy().into_owned();
-        office_replace_text(raiz, "limpo.docx".into(), "Orchestrator".into(), "ACME".into())
+        office_replace_text(raiz, "limpo.docx".into(), "AI-BOT".into(), "ACME".into())
             .expect("edição");
         let restos: Vec<_> = std::fs::read_dir(&dir)
             .expect("listar")

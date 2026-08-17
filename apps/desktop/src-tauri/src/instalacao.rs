@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn NAO_barra_comando_comum() {
         assert!(!barrado("git status"));
-        assert!(!barrado("docker build -f Dockerfile.orchestrator -t app:1 ."));
+        assert!(!barrado("docker build -f Dockerfile.aibot -t app:1 ."));
         assert!(!barrado("ls -la"));
         assert!(!barrado("curl -sS https://api.exemplo/dados.json -o dados.json"));
         assert!(!barrado(""));

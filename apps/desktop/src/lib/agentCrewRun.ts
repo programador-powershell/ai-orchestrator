@@ -22,7 +22,7 @@
 import {
   classifyComplexity,
   orchestratorRequest,
-  parseOrchestrator,
+  parseCrewPlan,
   planCrew,
   roleStageLabel,
   ROLE_STAGE,
@@ -126,7 +126,7 @@ async function decideComplexity(
   try {
     const pedido = orchestratorRequest(options.goal, options.corrections);
     const bruto = await options.orchestrate({ ...pedido, signal: options.signal });
-    const lido = parseOrchestrator(bruto);
+    const lido = parseCrewPlan(bruto);
     if (!lido) {
       return {
         verdict: reserva,

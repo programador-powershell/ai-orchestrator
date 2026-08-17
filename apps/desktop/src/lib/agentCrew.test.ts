@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyComplexity,
   orchestratorRequest,
-  parseOrchestrator,
+  parseCrewPlan,
   pendingWaves,
   planCrew,
   ROLE_STAGE,
@@ -91,9 +91,9 @@ describe("orchestratorRequest", () => {
   });
 });
 
-describe("parseOrchestrator", () => {
+describe("parseCrewPlan", () => {
   it("lê a decisão e o motivo", () => {
-    expect(parseOrchestrator('{"complexity":"alta","reason":"módulo novo inteiro"}')).toEqual({
+    expect(parseCrewPlan('{"complexity":"alta","reason":"módulo novo inteiro"}')).toEqual({
       complexity: "alta",
       reason: "módulo novo inteiro"
     });
@@ -101,29 +101,29 @@ describe("parseOrchestrator", () => {
 
   it("tolera cerca de markdown e texto em volta", () => {
     const bruto = 'Claro!\n```json\n{"complexity":"simples","reason":"uma entrega"}\n```\nQualquer coisa.';
-    expect(parseOrchestrator(bruto)?.complexity).toBe("simples");
+    expect(parseCrewPlan(bruto)?.complexity).toBe("simples");
   });
 
   it('aceita "média" com acento, que é como o modelo escreve em português', () => {
-    expect(parseOrchestrator('{"complexity":"Média"}')?.complexity).toBe("media");
+    expect(parseCrewPlan('{"complexity":"Média"}')?.complexity).toBe("media");
   });
 
   it("nível inventado vira null — escalar por alucinação seria pior que a heurística", () => {
-    expect(parseOrchestrator('{"complexity":"gigantesca"}')).toBeNull();
-    expect(parseOrchestrator('{"complexity":""}')).toBeNull();
+    expect(parseCrewPlan('{"complexity":"gigantesca"}')).toBeNull();
+    expect(parseCrewPlan('{"complexity":""}')).toBeNull();
   });
 
   it("resposta sem JSON vira null", () => {
-    expect(parseOrchestrator("acho que é complexo")).toBeNull();
-    expect(parseOrchestrator("")).toBeNull();
+    expect(parseCrewPlan("acho que é complexo")).toBeNull();
+    expect(parseCrewPlan("")).toBeNull();
   });
 
   it("JSON quebrado vira null em vez de exceção", () => {
-    expect(parseOrchestrator('{"complexity":"alta",}}')).toBeNull();
+    expect(parseCrewPlan('{"complexity":"alta",}}')).toBeNull();
   });
 
   it("motivo ausente não invalida a decisão", () => {
-    expect(parseOrchestrator('{"complexity":"trivial"}')).toEqual({ complexity: "trivial", reason: "" });
+    expect(parseCrewPlan('{"complexity":"trivial"}')).toEqual({ complexity: "trivial", reason: "" });
   });
 });
 

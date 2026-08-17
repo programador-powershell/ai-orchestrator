@@ -25,7 +25,7 @@ import {
   type RuntimeStatus,
   type UiMode,
   type WorkspaceSummary
-} from "@orchestrator/contracts";
+} from "@ai-bot/contracts";
 import {
   Bot,
   Brain,
@@ -1105,7 +1105,7 @@ function ProvidersSection() {
   return (
     <Section
       title="Provedores (BYOK)"
-      detail="Traga sua própria chave por provedor. No app desktop ela vai direto ao keyring nativo do Windows; no navegador fica no armazenamento local deste perfil (com aviso). Política Orchestrator: gestão e rotação das chaves no cofre corporativo (Vaultwarden) — cole aqui apenas para uso local, nunca no chat."
+      detail="Traga sua própria chave por provedor. No app desktop ela vai direto ao keyring nativo do Windows; no navegador fica no armazenamento local deste perfil (com aviso). Política AI-BOT: gestão e rotação das chaves no cofre corporativo (Vaultwarden) — cole aqui apenas para uso local, nunca no chat."
     >
       {!isTauriHost && (
         <p className="setx-notice warn">
@@ -1788,7 +1788,7 @@ function McpSection() {
   return (
     <Section
       title="Conectores (MCP)"
-      detail="Servidores MCP externos (JSON-RPC sobre HTTP). As ferramentas de cada servidor entram no catálogo do agente com o nome mcp:<conector>:<ferramenta> e passam pelo mesmo diálogo de aprovação. Política Orchestrator: use apenas conectores homologados pela TI/SI e guarde o token no cofre corporativo."
+      detail="Servidores MCP externos (JSON-RPC sobre HTTP). As ferramentas de cada servidor entram no catálogo do agente com o nome mcp:<conector>:<ferramenta> e passam pelo mesmo diálogo de aprovação. Política AI-BOT: use apenas conectores homologados pela TI/SI e guarde o token no cofre corporativo."
     >
       <div className="setx-card">
         <div className="setx-card-title">
@@ -2311,7 +2311,7 @@ export function SettingsPanel() {
             </span>
             <div>
               <strong>Configurações</strong>
-              <small>AI-Orchestrator</small>
+              <small>AI-BOT</small>
             </div>
           </div>
           <div className="setx-spacer" />

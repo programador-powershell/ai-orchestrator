@@ -29,7 +29,7 @@ use tokio::time::{timeout, Duration};
 
 #[tauri::command]
 fn credential_store(account: String, token: String) -> Result<(), String> {
-    keyring::Entry::new("AI-Orchestrator", &account)
+    keyring::Entry::new("AI-BOT", &account)
         .map_err(|error| error.to_string())?
         .set_password(&token)
         .map_err(|error| error.to_string())
@@ -272,5 +272,5 @@ pub fn run() {
         // novo obriga a decidir em qual edição ele existe.
         .invoke_handler(handlers())
         .run(tauri::generate_context!())
-        .expect("failed to run AI-Orchestrator");
+        .expect("failed to run AI-BOT");
 }

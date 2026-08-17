@@ -4,7 +4,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { BootstrapResponse } from "@orchestrator/contracts";
+import type { BootstrapResponse } from "@ai-bot/contracts";
 import { useApp } from "./store";
 import { usePlugins } from "./pluginStore";
 

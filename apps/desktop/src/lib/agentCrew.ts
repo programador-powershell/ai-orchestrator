@@ -282,7 +282,7 @@ export function orchestratorRequest(goal: string, corrections?: string): { syste
  * de reserva. Aceitar um nível inventado seria escalar uma equipe pelo acaso
  * de uma alucinação.
  */
-export function parseOrchestrator(raw: string): { complexity: Complexity; reason: string } | null {
+export function parseCrewPlan(raw: string): { complexity: Complexity; reason: string } | null {
   const texto = raw.replace(/```(?:json)?/gi, "").trim();
   const inicio = texto.indexOf("{");
   const fim = texto.lastIndexOf("}");

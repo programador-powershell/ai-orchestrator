@@ -27,8 +27,8 @@
  * gateway configurado, libera; com gateway e sem resposta, segura.
  */
 
-import type { BootstrapPolicy } from "@orchestrator/contracts";
-import type { EngineSelection } from "@orchestrator/contracts";
+import type { BootstrapPolicy } from "@ai-bot/contracts";
+import type { EngineSelection } from "@ai-bot/contracts";
 
 export interface ContextoDePolitica {
   policy: BootstrapPolicy | null;

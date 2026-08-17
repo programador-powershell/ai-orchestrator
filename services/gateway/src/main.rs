@@ -221,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!(address=%config.bind,"AI-Orchestrator gateway listening");
+    tracing::info!(address=%config.bind,"AI-BOT gateway listening");
     axum::serve(listener, app).await?;
     Ok(())
 }

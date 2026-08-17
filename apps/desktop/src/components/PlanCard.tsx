@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, ListChecks, Play, X } from "lucide-react";
-import type { ExecutionPlan } from "@orchestrator/contracts";
+import type { ExecutionPlan } from "@ai-bot/contracts";
 
 export function PlanCard({
   plan,

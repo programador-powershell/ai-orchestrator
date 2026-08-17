@@ -7,7 +7,7 @@
  * inspeção visual rápida e são triviais de cobrir com teste.
  */
 
-import type { SchemaTable } from "@orchestrator/contracts";
+import type { SchemaTable } from "@ai-bot/contracts";
 
 /** Sufixo da alça da TABELA — ligar por aqui deixa o campo para a soltura. */
 export const SUFIXO_TABELA = "tbl";

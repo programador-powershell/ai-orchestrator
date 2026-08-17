@@ -1,5 +1,5 @@
 {
-  "name": "@orchestrator/desktop",
+  "name": "@ai-bot/desktop",
   "version": "0.11.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@orchestrator/contracts": "workspace:*",
+    "@ai-bot/contracts": "workspace:*",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-javascript": "^6.2.5",

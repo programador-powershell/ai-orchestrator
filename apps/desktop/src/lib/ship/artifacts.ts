@@ -19,7 +19,7 @@
 import { fsWrite } from "../fsx";
 
 /** Nome do arquivo gerado. Fixo: o comando de build precisa saber qual é. */
-export const DOCKERFILE_GERADO = "Dockerfile.orchestrator";
+export const DOCKERFILE_GERADO = "Dockerfile.aibot";
 
 /** Nome do arquivo que o projeto já trazia. */
 export const DOCKERFILE_PROPRIO = "Dockerfile";

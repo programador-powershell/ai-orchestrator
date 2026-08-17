@@ -15,7 +15,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import type { UiMode } from "@orchestrator/contracts";
+import type { UiMode } from "@ai-bot/contracts";
 import { exportFileName, groupByProject, toJson, toMarkdown } from "../lib/conversations";
 import { useApp, type Conversation } from "../lib/store";
 

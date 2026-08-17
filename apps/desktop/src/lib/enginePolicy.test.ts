@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BootstrapPolicy, EngineSelection } from "@orchestrator/contracts";
+import type { BootstrapPolicy, EngineSelection } from "@ai-bot/contracts";
 
 import { avaliarSelecao, selecaoEfetiva, type ContextoDePolitica } from "./enginePolicy";
 

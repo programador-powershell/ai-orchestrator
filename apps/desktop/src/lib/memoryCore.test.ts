@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { MemoryItem, MemorySearchHit } from "@orchestrator/contracts";
+import type { MemoryItem, MemorySearchHit } from "@ai-bot/contracts";
 
 // memory.ts referencia `window` e importa @tauri-apps/api no topo do módulo.
 // Para testar as funções puras em ambiente node, mockamos o invoke e stubamos
@@ -185,7 +185,7 @@ describe("parseClaudeMemoryMarkdown", () => {
   });
 
   it("cai para description quando o corpo é vazio e mapeia type project", () => {
-    const md = "---\nname: Orchestrator\ndescription: App desktop Tauri\ntype: project\n---\n";
+    const md = "---\nname: AI-BOT\ndescription: App desktop Tauri\ntype: project\n---\n";
     const entries = parseClaudeMemoryMarkdown("orchestrator.md", md);
     expect(entries[0].kind).toBe("project");
     expect(entries[0].content).toBe("App desktop Tauri");
@@ -236,12 +236,12 @@ describe("parseOpenAiMemoryExport", () => {
 
   it("aceita objeto {memories: [...]} com campos memory/content/text", () => {
     const payload = JSON.stringify({
-      memories: [{ memory: "usa Windows 11" }, { content: "trabalha na Orchestrator" }, { text: "gosta de TDD" }]
+      memories: [{ memory: "usa Windows 11" }, { content: "trabalha na AI-BOT" }, { text: "gosta de TDD" }]
     });
     const entries = parseOpenAiMemoryExport(payload);
     expect(entries.map((entry) => entry.content)).toEqual([
       "usa Windows 11",
-      "trabalha na Orchestrator",
+      "trabalha na AI-BOT",
       "gosta de TDD"
     ]);
   });

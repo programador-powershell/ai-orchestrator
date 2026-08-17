@@ -68,7 +68,7 @@ pub(crate) struct ReleaseComponent {
 
 fn root_dir() -> Result<PathBuf, String> {
     dirs::data_local_dir()
-        .map(|path| path.join("AI-Orchestrator").join("Runtime"))
+        .map(|path| path.join("AI-BOT").join("Runtime"))
         .ok_or_else(|| "LOCALAPPDATA indisponível".into())
 }
 
@@ -111,7 +111,7 @@ async fn models() -> Result<Vec<LocalModel>, String> {
 async fn status(manager: &RuntimeManager) -> Result<RuntimeStatus, String> {
     let root = root_dir()?;
     let variant_path = root.join("variant.txt");
-    let installed = root.join("ai-orchestrator-runtime.exe").exists();
+    let installed = root.join("ai-bot-runtime.exe").exists();
     let variant = fs::read_to_string(variant_path)
         .await
         .ok()
@@ -180,7 +180,7 @@ pub(crate) async fn release_component_by_id(id: &str) -> Result<ReleaseComponent
         .verify(&payload, &signature)
         .map_err(|_| "manifesto do runtime não é confiável".to_string())?;
     let manifest: ReleaseManifest = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
-    if manifest.product != "AI-Orchestrator" {
+    if manifest.product != "AI-BOT" {
         return Err("manifesto pertence a outro produto".into());
     }
     manifest
@@ -247,7 +247,7 @@ pub async fn runtime_install(
     verified_download(
         &component.url,
         &component.sha256,
-        &root.join("ai-orchestrator-runtime.exe"),
+        &root.join("ai-bot-runtime.exe"),
     )
     .await?;
     fs::write(root.join("variant.txt"), variant)
@@ -263,7 +263,7 @@ pub async fn runtime_start(
 ) -> Result<RuntimeStatus, String> {
     let id = safe_id(&model_id)?;
     let root = root_dir()?;
-    let executable = root.join("ai-orchestrator-runtime.exe");
+    let executable = root.join("ai-bot-runtime.exe");
     let model = root.join("models").join(format!("{id}.gguf"));
     if !executable.exists() || !model.exists() {
         return Err("runtime ou modelo não instalado".into());

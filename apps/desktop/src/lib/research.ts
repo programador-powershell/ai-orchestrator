@@ -11,7 +11,7 @@
  * 4. Monta o ResearchReport com confiança e questões em aberto.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { ResearchReport, ResearchSource } from "@orchestrator/contracts";
+import type { ResearchReport, ResearchSource } from "@ai-bot/contracts";
 import { blockedMessage, blockedUrl } from "./blocklist";
 import type { ChatMessage } from "./gateway";
 import { useApp } from "./store";

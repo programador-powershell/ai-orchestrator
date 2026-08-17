@@ -1,4 +1,4 @@
-import type { DesignReplicationRequest, DesignReplicationResult, Mode, OrchestrationGraph, OrchestrationPlan, WorkspaceSummary } from "@orchestrator/contracts";
+import type { DesignReplicationRequest, DesignReplicationResult, Mode, OrchestrationGraph, OrchestrationPlan, WorkspaceSummary } from "@ai-bot/contracts";
 
 export interface GatewaySession {
   baseUrl: string;

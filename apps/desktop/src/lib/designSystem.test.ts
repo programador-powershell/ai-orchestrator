@@ -22,7 +22,7 @@ import {
 /** Sistema com paleta, escala e raios — o caso completo. */
 function marca(): DesignSystem {
   return {
-    ...emptySystem("Orchestrator"),
+    ...emptySystem("AI-BOT"),
     colors: [
       { name: "primária", value: "#2563eb" },
       { name: "tinta", value: "#111827" },
@@ -283,7 +283,7 @@ describe("persistência", () => {
 describe("toMarkdown", () => {
   it("exporta as seções preenchidas", () => {
     const md = toMarkdown(marca());
-    expect(md).toContain("# Orchestrator");
+    expect(md).toContain("# AI-BOT");
     expect(md).toContain("**primária** — `#2563eb`");
     expect(md).toContain("## Princípios");
   });

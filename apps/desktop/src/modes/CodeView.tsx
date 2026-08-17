@@ -40,7 +40,7 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import type { FsEntry, OrchestrationGraph } from "@orchestrator/contracts";
+import type { FsEntry, OrchestrationGraph } from "@ai-bot/contracts";
 import {
   CodeEditor,
   type CodeEditorApi,
@@ -1078,7 +1078,7 @@ export function CodeView() {
       : undefined;
 
   /* ------------------------------- Render --------------------------- */
-  const rootLabel = root === "." ? "ai-orchestrator" : root.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? root;
+  const rootLabel = root === "." ? "ai-bot" : root.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? root;
   const diffChanges = diffView ? diffStats(diffView.lines) : null;
   const diffHasChanges = !!diffChanges && diffChanges.added + diffChanges.removed > 0;
   const patch = diffView?.patch;

@@ -1,5 +1,5 @@
 {
-  "name": "@orchestrator/bootstrapper",
+  "name": "@ai-bot/bootstrapper",
   "version": "0.1.0",
   "private": true,
   "type": "module",

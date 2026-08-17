@@ -1,4 +1,4 @@
-# Gateway do AI-Orchestrator
+# Gateway do AI-BOT
 
 API multiworkspace em Rust/Axum. O gateway mantém chaves de provedores somente no
 servidor, criptografadas com AES-256-GCM, e nunca persiste prompts ou respostas.

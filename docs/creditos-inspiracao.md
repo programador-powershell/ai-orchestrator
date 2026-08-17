@@ -1,6 +1,6 @@
 # Créditos e inspiração (clean-room)
 
-O AI-Orchestrator **não embute código de terceiros**: todas as funcionalidades
+O AI-BOT **não embute código de terceiros**: todas as funcionalidades
 abaixo são implementações próprias em TypeScript/Rust, escritas em regime
 clean-room a partir de levantamentos funcionais (telas, fluxos e semântica de
 API descritos em palavras próprias) — nunca a partir do código-fonte. Os

@@ -272,7 +272,7 @@ pub async fn research_fetch(url: String) -> Result<FetchedPage, String> {
     // app buscar serviços internos (metadados de nuvem, admin em localhost).
     // As guardas (rede pública + blocklist do admin) rodam a CADA salto, e o
     // IP aprovado é fixado antes de conectar.
-    let (_, body) = fetch_guarded(parsed, "AI-Orchestrator Research/1.0", Duration::from_secs(15)).await?;
+    let (_, body) = fetch_guarded(parsed, "AI-BOT Research/1.0", Duration::from_secs(15)).await?;
     let html = String::from_utf8_lossy(&body).into_owned();
     let title = extract_title(&html);
     let links = extract_links(&html);
@@ -301,7 +301,7 @@ pub async fn page_fetch(url: String) -> Result<FetchedPage, String> {
     // A URL FINAL importa: se houve redirect, os caminhos relativos do HTML
     // são relativos a ela, não à que o usuário digitou.
     let (url_final, body) =
-        fetch_guarded(parsed, "AI-Orchestrator Design/1.0", Duration::from_secs(20)).await?;
+        fetch_guarded(parsed, "AI-BOT Design/1.0", Duration::from_secs(20)).await?;
     let final_url = url_final.to_string();
     let html = String::from_utf8_lossy(&body).into_owned();
 

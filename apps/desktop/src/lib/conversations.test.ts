@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { UiMode } from "@orchestrator/contracts";
+import type { UiMode } from "@ai-bot/contracts";
 import {
   addProject,
   assignProject,

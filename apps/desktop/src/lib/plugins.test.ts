@@ -239,7 +239,7 @@ describe("pluginPrompt", () => {
 
 describe("checkPattern", () => {
   it("aceita expressão comum", () => {
-    expect(checkPattern("guardOrchestrator\\(")).toBeNull();
+    expect(checkPattern("guardAI-BOT\\(")).toBeNull();
   });
 
   it("recusa expressão inválida, com o motivo do motor", () => {

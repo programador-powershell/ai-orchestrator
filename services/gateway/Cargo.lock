@@ -1165,7 +1165,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-orchestrator-gateway"
+name = "ai-bot-gateway"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

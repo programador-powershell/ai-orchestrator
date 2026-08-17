@@ -1,4 +1,4 @@
-# AI-Orchestrator — "Liquid Glass" — Design Spec
+# AI-BOT — "Liquid Glass" — Design Spec
 
 Data: 2026-08-10 · Status: aprovado por execução autônoma (pedido detalhado do usuário)
 
@@ -25,11 +25,11 @@ e modo planejamento.
 | Code | Explorer FS real (comandos Rust fs_*), editor CodeMirror 6, terminal existente (10 runtimes), diff, orquestrador DAG, seletor modelo/fusion | "Roda nativamente qualquer linguagem" já coberto por terminal.rs + catálogo de runtimes |
 | Design | Canvas infinito (pan/zoom), replicação de site via gateway (existe), inspector de tokens, painel de vídeo estilo OpenCut (timeline, clipes, trim; export requer ffmpeg detectado) | Incorporar OpenCut como superfície de vídeo |
 | Data | Editor ERD estilo drawdb 100% funcional: criar/arrastar tabelas, editar campos/tipos, relações FK (SVG), zoom/pan, chat-to-schema (ops JSON aplicadas ao diagrama), export SQL PostgreSQL/MySQL/ANSI, import básico de CREATE TABLE | Pedido explícito |
-| Work | Kanban + automações (receitas) + conectores Microsoft 365 (somente conectores aprovados, conta corporativa — política Orchestrator refletida na copy) | Superior ao cowork: integrações declaradas, tarefas automatizáveis |
+| Work | Kanban + automações (receitas) + conectores Microsoft 365 (somente conectores aprovados, conta corporativa — política AI-BOT refletida na copy) | Superior ao cowork: integrações declaradas, tarefas automatizáveis |
 | Security | Pasta do projeto → scan (heurísticas locais de segredos + revisão multi-modelo via fusion), findings com patch em diff lado a lado, aplicar/rejeitar por hunk (fs_write), execução em sandbox estilo ai-jail (`sandbox_execute`: env limpo, cwd isolado, timeout) | Pedido explícito; interface estilo Cursor |
 | Agent | Canvas DAG, roster de agentes, config fusion por papel, validação via gateway (existe) | Melhor que Hermes: DAG validável + fusion por papel |
 | Settings | Gateway/OIDC (mantém), Providers & Fusion, Memória (CRUD/import/export), Extensões (plugins/skills Claude/OpenAI — bridge Rust existente), Runtime local (mantém), Aparência | Import de plugins, skills e memória no Settings |
-| Segredos | Chaves só no gateway ou keyring nativo (comando existente); nunca em localStorage; copy orienta cofre corporativo | Política Orchestrator |
+| Segredos | Chaves só no gateway ou keyring nativo (comando existente); nunca em localStorage; copy orienta cofre corporativo | Política AI-BOT |
 
 ## Módulos Rust novos (compilação ocorre em máquina com Rust/CI)
 

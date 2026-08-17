@@ -3,7 +3,7 @@
  *
  * O agente NÃO sabe se está num .docx ou num .xlsx: ele chama getStructure()
  * e apply(command). Trocar o motor de edição (ONLYOFFICE, WOPI, nativo) não
- * muda o resto do Orchestrator — só a implementação de um adapter.
+ * muda o resto do AI-BOT — só a implementação de um adapter.
  */
 import type { OfficeCommand, OfficeFormat } from "./commands";
 

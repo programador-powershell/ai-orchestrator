@@ -18,7 +18,7 @@ import type { FlowOp } from "./ops";
 import { useFluxo } from "./store";
 import { chatOnce, type EngineContext } from "../engine";
 import { useApp } from "../store";
-import type { EngineSelection } from "@orchestrator/contracts";
+import type { EngineSelection } from "@ai-bot/contracts";
 
 /** Uma linha do histórico: o que a operação fez, em português. */
 export function descreveOp(op: FlowOp): string | null {

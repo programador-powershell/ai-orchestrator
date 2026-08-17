@@ -21,7 +21,7 @@ use tokio::{
     time::sleep,
 };
 
-const PRODUCT: &str = "AI-Orchestrator";
+const PRODUCT: &str = "AI-BOT";
 const BOOTSTRAPPER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const OFFLINE_INSTALLER: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/offline-desktop-installer.exe"));
@@ -138,11 +138,11 @@ fn https_only(value: &str) -> Result<(), String> {
 
 async fn signed_manifest() -> Result<ReleaseManifest, String> {
     let url = option_env!("RELEASE_MANIFEST_URL").ok_or_else(|| {
-        "Este instalador é um build de desenvolvimento e não possui um canal de download. Baixe o AI-Orchestrator Setup em uma Release publicada.".to_string()
+        "Este instalador é um build de desenvolvimento e não possui um canal de download. Baixe o AI-BOT Setup em uma Release publicada.".to_string()
     })?;
     if url.contains("__") {
         return Err(
-            "Este instalador foi gerado sem configurar o canal de distribuição. Baixe novamente o AI-Orchestrator Setup em uma Release publicada."
+            "Este instalador foi gerado sem configurar o canal de distribuição. Baixe novamente o AI-BOT Setup em uma Release publicada."
                 .into(),
         );
     }
@@ -489,7 +489,7 @@ async fn run_install(app: AppHandle, state: InstallState) -> Result<(), String> 
     fs::create_dir_all(&cache)
         .await
         .map_err(|e| e.to_string())?;
-    let installer = cache.join(format!("AI-Orchestrator-{}-setup.exe", manifest.version));
+    let installer = cache.join(format!("AI-BOT-{}-setup.exe", manifest.version));
     let needs_materialization = if installer.exists() {
         match verify_sha256(&installer, &component.sha256).await {
             Ok(()) => false,
@@ -568,9 +568,9 @@ async fn run_install(app: AppHandle, state: InstallState) -> Result<(), String> 
         component.size,
         0,
         Some(0),
-        "Abrindo o AI-Orchestrator…",
+        "Abrindo o AI-BOT…",
     );
-    let executable = destination.join("ai-orchestrator-desktop.exe");
+    let executable = destination.join("ai-bot-desktop.exe");
     if !executable.exists() {
         return Err("a instalação terminou, mas o aplicativo não foi encontrado".into());
     }

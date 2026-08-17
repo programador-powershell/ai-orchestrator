@@ -40,7 +40,7 @@ import (
 // O truque é do original e é bom: o Docker não expõe progresso de dentro de um
 // `RUN`, então o próprio comando imprime a marca e quem lê o log a reconhece.
 // Sem isso, `docker build` é uma caixa preta que fica minutos calada.
-const BuildEventPrefix = "[orchestrator-build]"
+const BuildEventPrefix = "[aibot-build]"
 
 // BuildStep é um passo do build que imprime marca.
 type BuildStep string
@@ -250,7 +250,7 @@ func Dockerfile(stack Stack, options Options) (string, error) {
 	}
 
 	var lines []string
-	lines = append(lines, fmt.Sprintf("# Gerado por AI-Orchestrator para a stack %q.", stack.Name))
+	lines = append(lines, fmt.Sprintf("# Gerado por AI-BOT para a stack %q.", stack.Name))
 	if multiStage {
 		lines = append(lines, fmt.Sprintf("FROM %s AS builder", buildImage))
 	} else {

@@ -6,7 +6,7 @@
  * Assim a memória sobrevive à troca do modelo/fornecedor que estiver no "motor".
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { MemoryItem, MemoryKind, MemorySearchHit } from "@orchestrator/contracts";
+import type { MemoryItem, MemoryKind, MemorySearchHit } from "@ai-bot/contracts";
 import { buildIdf, memoryText, semanticScore } from "./semantic";
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
