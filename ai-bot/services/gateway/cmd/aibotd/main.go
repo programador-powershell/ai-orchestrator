@@ -503,20 +503,50 @@ func serve() error {
 	// porque "indisponível" sem dizer qual dos dois falta manda a pessoa
 	// depurar o lado errado.
 	modelPath, modelFound := needle.ResolveModelPath(os.Getenv("AIBOT_NEEDLE_MODEL"), cfg.DataDir)
-	localRouter, err := supervisor.NewNeedleClassifier(needle.Options{
-		ModelPath: modelPath,
-		MaxTokens: 96,
-	})
-	if err != nil {
-		modelState := "presente em " + modelPath
-		if !modelFound {
-			modelState = "AUSENTE — instale o needle-router-pro.cact em " + modelPath
+
+	// Duas rotas para o MESMO degrau, e a por processo vem primeiro.
+	//
+	// O sidecar Python roda em qualquer máquina que tenha o `cactus-needle`
+	// instalado; o binding cgo é mais rápido, mas exige toolchain C em quem
+	// compila e um header que vive noutro projeto. Quem configurou o sidecar
+	// pediu o degrau explicitamente — respeitar isso evita o pior dos mundos,
+	// que é subir dois modelos e usar um.
+	var localRouter supervisor.IntentClassifier
+	sidecar, sidecarErr := supervisor.NewSidecarClassifier(context.Background(),
+		os.Getenv(needle.EnvSidecarCommand))
+	switch {
+	case sidecar.Ready():
+		log.Info("roteador local pronto (processo)", "comando", os.Getenv(needle.EnvSidecarCommand))
+		localRouter = sidecar
+		defer sidecar.Close()
+
+	case sidecar.Configured():
+		// Configurado e não subiu é PROBLEMA, e diferente de "ninguém pediu":
+		// alguém montou o sidecar e ele não está atendendo.
+		log.Info("o sidecar do roteador local não subiu — o primeiro input vai do fast router ao modelo grande",
+			"motivo", sidecarErr, "comando", os.Getenv(needle.EnvSidecarCommand))
+
+	default:
+		// Sem sidecar, tenta o binding nativo. O log separa os DOIS
+		// pré-requisitos (arquivo de pesos e biblioteca), porque "indisponível"
+		// sem dizer qual dos dois falta manda a pessoa depurar o lado errado.
+		native, err := supervisor.NewNeedleClassifier(needle.Options{
+			ModelPath: modelPath,
+			MaxTokens: 96,
+		})
+		if err != nil {
+			modelState := "presente em " + modelPath
+			if !modelFound {
+				modelState = "AUSENTE — instale o needle-router-pro.cact em " + modelPath
+			}
+			log.Info("roteador local indisponível — o primeiro input vai do fast router direto ao modelo grande",
+				"motivo", err, "biblioteca", needle.Version(), "modelo", modelState,
+				"alternativa", "defina "+needle.EnvSidecarCommand+" para usar o sidecar Python")
+		} else {
+			log.Info("roteador local pronto (nativo)", "biblioteca", needle.Version(), "modelo", modelPath)
+			localRouter = native
+			defer native.Close()
 		}
-		log.Info("roteador local indisponível — o primeiro input vai do fast router direto ao modelo grande",
-			"motivo", err, "biblioteca", needle.Version(), "modelo", modelState)
-	} else {
-		log.Info("roteador local pronto", "biblioteca", needle.Version(), "modelo", modelPath)
-		defer localRouter.Close()
 	}
 
 	router := supervisor.NewRouter(localRouter, supervisor.NewModelClassifier(models, ""))

@@ -158,7 +158,32 @@ Três detalhes que não são óbvios:
   conversa **inteira** ir para o executor errado, porque o modo é gravado e não se
   reavalia. Empurrar o caso duvidoso para o modelo grande custa segundos uma vez.
 
-#### O degrau local ainda não tem motor
+#### O degrau local roda por PROCESSO (e o binário normal já o tem)
+
+O caminho que funciona hoje não é o cgo: é um **sidecar**. O gateway sobe um
+processo (`AIBOT_NEEDLE_CMD`), aperta a mão, e passa a perguntar por linha JSON
+em stdin/stdout. Do lado de lá, `services/needle-sidecar/needle_sidecar.py` usa
+o `cactus-needle`, que baixa um binário único de ~14 MB com modelo, tokenizer e
+engine selados dentro.
+
+Três propriedades sustentam isso, e as três existem porque o degrau é
+**opcional** — ele acelera o primeiro input e nunca pode ser o motivo de a
+conversa não andar:
+
+1. **Nada ali derruba o roteamento.** Sidecar que não sobe, morre no meio,
+   responde lixo ou demora mais de 3 s deixa o degrau fora, e a cascata segue
+   para o modelo grande.
+2. **A resposta é conferida** contra os candidatos. É processo de terceiro
+   falando por texto; aceitar o id que ele mandar deixaria um especialista fora
+   da política atender a conversa.
+3. **Uma pergunta por vez.** É uma sessão só do outro lado, e duas perguntas
+   concorrentes na mesma stdin devolveriam a resposta da pergunta do vizinho.
+
+O ganho que mais importa: **sem tag de build e sem cgo**, o degrau existe no
+binário padrão. `cmd/fakeneedle` fala o mesmo protocolo e permite exercitar a
+fiação inteira sem Python.
+
+#### E por que o caminho nativo (cgo) ficou parado
 
 Vale escrever isto sem rodeio, porque o `.cact` instalado dá a impressão oposta:
 **o degrau 2 não roda hoje**, e o que falta não é o build — é o motor.
