@@ -16,8 +16,18 @@
 //	go run ./cmd/fakeprovider            # escuta em 127.0.0.1:8790
 //	go run ./cmd/fakeprovider -addr :9000
 //
-// E no catalog.json, um provedor `openai-compatible` apontando para
-// http://127.0.0.1:8790/v1 com `enabled: true`.
+// E no catalog.json, um provedor de kind `local` apontando para
+// http://127.0.0.1:8790/v1 com `enabled: true`:
+//
+//	{"providers":[{"id":"fake","kind":"local","label":"Mentira",
+//	  "baseURL":"http://127.0.0.1:8790/v1","enabled":true}],
+//	 "models":[{"id":"fake-1","provider":"fake","label":"Fake","context":32000,
+//	  "skills":["chat","code","reasoning","tools","long-context"]}]}
+//
+// O kind é `local` — os valores aceitos são `openai`, `anthropic` e `local`, e
+// não `openai-compatible`, que este comentário dizia e custou uma subida com
+// "utilizaveis=0". `local` é também o semanticamente certo: é servidor de modelo
+// na própria estação, e é o único kind que dispensa chave sem exceção.
 package main
 
 import (
@@ -187,10 +197,58 @@ func classify(prompt string) string {
 
 // sample devolve uma resposta com markdown de verdade — títulos, cerca de código,
 // lista e ênfase —, porque é isso que exercita o renderizador em streaming.
+// O roteiro da DELEGAÇÃO.
+//
+// Um provedor que só devolve prosa exercita metade do produto: a outra metade só
+// aparece quando um especialista chama outro. Estas três respostas encenam o
+// caminho inteiro — o dono fala e delega, o convidado responde, o dono conclui —
+// para dar para VER na tela o popup abrindo, o ícone do delegado na linha dele e
+// a conclusão voltando assinada por quem atendeu.
+const delegateGoal = "defina a identidade visual: paleta, tipografia e espaçamento"
+
+func buildsSomething(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	for _, verb := range []string{"crie", "criar", "monte", "montar", "faca", "faça", "construa"} {
+		if !strings.Contains(lower, verb) {
+			continue
+		}
+		for _, thing := range []string{"aplicac", "aplicação", "app", "site", "landing", "next"} {
+			if strings.Contains(lower, thing) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func sample(prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+
+	// 3ª volta: o resultado do delegado voltou; o dono conclui.
+	if strings.HasPrefix(trimmed, "Resultado da delegação") {
+		return "## Pronto\n\nEstrutura criada e visual aplicado.\n\n" +
+			"- `app/layout.tsx` e `app/page.tsx` com App Router;\n" +
+			"- `app/globals.css` com os tokens que o **Design** definiu;\n" +
+			"- `package.json` com `next`, `react` e `react-dom`.\n\n" +
+			"```bash\nnpm install && npm run dev\n```\n\n" +
+			"Falta você dizer se quer TypeScript estrito e qual gerenciador de pacotes.\n"
+	}
+
+	// 2ª volta: é o DELEGADO respondendo — o prompt dele é o objetivo.
+	if strings.Contains(trimmed, "identidade visual") {
+		return "Paleta: `#0B0F14` de fundo, `#E6EDF3` de texto, `#3FB950` de acento.\n" +
+			"Tipografia: Inter 16/24, títulos em 28/34. Espaçamento base de 8px.\n"
+	}
+
+	// 1ª volta de um pedido de construção: fala e CHAMA o design.
+	if buildsSomething(trimmed) {
+		return "Vou montar o esqueleto do projeto e chamar o **Design** para o visual.\n\n" +
+			"```aibot:delegate\n{\"specialist\":\"design\",\"goal\":\"" + delegateGoal + "\"}\n```\n"
+	}
+
 	return "## Resposta de mentira\n\n" +
 		"Este texto vem do `fakeprovider`, não de um modelo. O pedido foi:\n\n> " +
-		strings.TrimSpace(prompt) + "\n\n" +
+		trimmed + "\n\n" +
 		"Alguns pontos:\n\n" +
 		"- o **streaming** está funcionando (você viu o texto aparecer aos poucos);\n" +
 		"- o *markdown* é renderizado de forma incremental;\n" +
