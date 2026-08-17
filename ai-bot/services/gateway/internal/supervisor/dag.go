@@ -84,6 +84,25 @@ func PlanTasks(tasks []protocol.Task, maxConcurrency int) (Plan, error) {
 		if len(task.DependsOn) > maxDependencies {
 			return Plan{}, fmt.Errorf("a tarefa %q depende de %d outras; o limite é %d", task.ID, len(task.DependsOn), maxDependencies)
 		}
+		// O especialista da tarefa passa pelas MESMAS duas regras da delegação
+		// (ver delegationRefusal): existir no catálogo e não ser o master.
+		//
+		// Sem elas o caminho da equipe é a porta dos fundos do que a delegação
+		// fecha na porta da frente. Um id inexistente não falhava: `GetOrDefault`
+		// devolvia o `chat` calado, e o relatório dizia que a tarefa de segurança
+		// tinha sido feita — por outro especialista, com outro prompt e outras
+		// ferramentas. E o master não executa nada: ele só decide quem atende.
+		requested := strings.TrimSpace(task.Specialist)
+		if requested == "" {
+			return Plan{}, fmt.Errorf("a tarefa %q está sem especialista", task.ID)
+		}
+		if requested == specialist.MasterID {
+			return Plan{}, fmt.Errorf("a tarefa %q pede o master, que só decide quem atende — "+
+				"escolha uma especialidade que execute", task.ID)
+		}
+		if !specialist.Exists(requested) {
+			return Plan{}, fmt.Errorf("a tarefa %q pede o especialista %q, que não existe", task.ID, requested)
+		}
 		indexByID[task.ID] = index
 	}
 

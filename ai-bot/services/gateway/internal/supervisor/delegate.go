@@ -443,15 +443,11 @@ func (s *Supervisor) delegateMessages(
 ) []modelrouter.ChatMessage {
 	messages := make([]modelrouter.ChatMessage, 0, 6)
 
-	// O prompt master do admin entra AQUI TAMBÉM. É a mesma regra do cabeçalho de
-	// supervisor.go — nenhum especialista remove a política —, e ela vale ainda
-	// mais aqui, onde quem escolheu o especialista foi um modelo e não a pessoa.
-	if s.deps.PromptMaster != nil {
-		if master := strings.TrimSpace(s.deps.PromptMaster()); master != "" {
-			messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: master})
-		}
-	}
-	messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: target.System})
+	// A política do admin entra AQUI TAMBÉM — nenhum especialista a remove —, e
+	// ela vale ainda mais aqui, onde quem escolheu o especialista foi um modelo e
+	// não a pessoa. Pelo cabeçalho compartilhado, que traz junto o prompt dos
+	// pacotes corporativos: esta montagem à mão o perdia.
+	messages = append(messages, s.policyHeader(target)...)
 	if contract := s.toolContract(target); contract != "" {
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
 	}

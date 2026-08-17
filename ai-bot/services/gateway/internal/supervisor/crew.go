@@ -158,6 +158,20 @@ func (s *Supervisor) toolDispatch(ctx context.Context, sessionID string, raw jso
 	if request.MaxConcurrency <= 0 || request.MaxConcurrency > policy.MaxChildren {
 		request.MaxConcurrency = policy.MaxChildren
 	}
+	// A POLÍTICA do administrador vale para a equipe como vale para a delegação.
+	// `PlanTasks` confere o catálogo (existe? não é o master?); quem sabe o que a
+	// SESSÃO liberou é o portão, e ele não chega até lá — por isso a checagem
+	// mora aqui, antes de qualquer trabalhador nascer.
+	if s.deps.Gate != nil {
+		for _, task := range request.Tasks {
+			id := strings.TrimSpace(task.Specialist)
+			if id != "" && !s.deps.Gate.AllowsSpecialist(id) {
+				return "", fmt.Errorf("a tarefa %q pede o especialista %s, que não está liberado "+
+					"para esta sessão — refaça o plano com quem está", task.ID, id)
+			}
+		}
+	}
+
 	plan, err := PlanTasks(request.Tasks, request.MaxConcurrency)
 	if err != nil {
 		// O erro de plano volta como TEXTO para o modelo, não como exceção: ele
@@ -440,9 +454,12 @@ func (s *Supervisor) runWorker(
 		"tarefa precisa saber. Se você NÃO conseguir decidir algo sozinho, escreva " +
 		"exatamente ESCALAR: <a pergunta> e pare.")
 
-	messages := []modelrouter.ChatMessage{
-		{Role: "system", Content: definition.System},
-	}
+	// Cabeçalho de política COMPLETO, igual ao do dono da conversa e ao do
+	// delegado. Antes daqui saía só `definition.System`: bastava o modo agente
+	// despachar uma tarefa para que o trabalhador rodasse sem a política do admin
+	// e sem o prompt dos pacotes corporativos — em silêncio, porque nada falha
+	// quando um system prompt simplesmente não vai junto.
+	messages := s.policyHeader(definition)
 	if contract := s.toolContract(definition); contract != "" {
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
 	}
@@ -499,12 +516,23 @@ func (s *Supervisor) runWorker(
 		}
 
 		if len(calls) == 0 {
-			done.OK = true
 			// stripBlocks, e não stripToolBlocks: a cerca de delegação que o modelo
 			// tenha emitido junto com o texto não pode sobrar no resultado. Ela iria
 			// para o relatório e para o prompt das tarefas dependentes como se fosse
 			// conteúdo — JSON cru servido de contexto para outro modelo.
-			done.Result = stripBlocks(answer)
+			result := stripBlocks(answer)
+			// Resposta VAZIA não é tarefa concluída. O provedor devolve stream sem
+			// conteúdo por vários motivos banais (filtro de conteúdo, completion
+			// vazia, só espaço em branco), e marcar isso como sucesso escrevia
+			// `results[t1] = ""`: o relatório saía com ✓, o portão não abria, e a
+			// tarefa dependente recebia o bloco do upstream vazio e adivinhava. O
+			// plano terminava plausível com metade do trabalho inventado.
+			if strings.TrimSpace(result) == "" {
+				done.Error = "o trabalhador terminou sem produzir resultado"
+				return done
+			}
+			done.OK = true
+			done.Result = result
 			return done
 		}
 

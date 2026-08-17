@@ -155,8 +155,23 @@ type turnOptions struct {
 
 // runTurn é o turno de verdade; Prompt e as continuações de Reply chegam aqui.
 func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt protocol.Prompt, opts turnOptions) error {
+	// Anexo sem texto É um pedido — e o composer o deixa passar de propósito
+	// ("Anexo sem texto vale como envio"). Antes ele morria aqui, na PRIMEIRA
+	// linha do turno, antes de existir um id de turno para carimbar qualquer
+	// envelope: nada chegava à tela, o `busy` do cliente nunca fechava, o orbe
+	// girava e o chip do anexo já tinha sido apagado. A pessoa perdia o arquivo e
+	// o pedido sem uma palavra.
+	//
+	// O texto é sintetizado a partir dos nomes porque é exatamente o que o resto
+	// do motor espera receber: o roteamento por extensão resolve `.docx` para o
+	// especialista de escritório com confiança 1 (ver combineAttachments), e o
+	// modelo precisa de uma frase para responder.
 	if strings.TrimSpace(prompt.Text) == "" {
-		return errors.New("prompt vazio")
+		names := attachmentNames(prompt.Attachments)
+		if len(names) == 0 {
+			return errors.New("prompt vazio")
+		}
+		prompt.Text = "Analise o(s) anexo(s): " + strings.Join(names, ", ")
 	}
 
 	// O id sai ANTES do registro porque ele é a identidade do turno no mapa de
@@ -522,29 +537,41 @@ func (s *Supervisor) runModel(
 //  7. memórias relevantes
 //  8. histórico da conversa
 //  9. arquivos citados com @
+//
+// policyHeader é o cabeçalho de system que TODO modelo desta casa recebe, seja
+// ele o dono da conversa, um delegado ou um trabalhador de equipe: a política do
+// admin primeiro, depois o system do especialista, depois o que os pacotes
+// corporativos acrescentam.
+//
+// Existe como um lugar só porque já foram três montagens à mão e uma delas
+// esquecia o master: o trabalhador de equipe recebia apenas `definition.System`.
+// Bastava o modo agente despachar uma tarefa — para qualquer especialista — e a
+// política corporativa deixava de valer, sem erro e sem aviso. A ordem importa e
+// é sempre esta: pacote complementa o especialista, e nem pacote nem
+// especialista passam por cima do admin.
+func (s *Supervisor) policyHeader(definition specialist.Definition) []modelrouter.ChatMessage {
+	header := make([]modelrouter.ChatMessage, 0, 3)
+	if s.deps.PromptMaster != nil {
+		if master := strings.TrimSpace(s.deps.PromptMaster()); master != "" {
+			header = append(header, modelrouter.ChatMessage{Role: "system", Content: master})
+		}
+	}
+	header = append(header, modelrouter.ChatMessage{Role: "system", Content: definition.System})
+	if s.deps.PackPrompt != nil {
+		if extra := strings.TrimSpace(s.deps.PackPrompt(definition.ID)); extra != "" {
+			header = append(header, modelrouter.ChatMessage{Role: "system", Content: extra})
+		}
+	}
+	return header
+}
+
 func (s *Supervisor) buildMessages(
 	sessionID string,
 	definition specialist.Definition,
 	question string,
 ) ([]modelrouter.ChatMessage, error) {
 	messages := make([]modelrouter.ChatMessage, 0, maxHistoryMessages+6)
-
-	if s.deps.PromptMaster != nil {
-		if master := strings.TrimSpace(s.deps.PromptMaster()); master != "" {
-			messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: master})
-		}
-	}
-	messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: definition.System})
-
-	// O prompt de PACOTE entra colado ao system do especialista — depois dele,
-	// porque complementa (o plano de contas da empresa, o tom do jurídico), e
-	// depois do master, porque pacote nenhum passa por cima da política do
-	// admin. Vem por função para o supervisor não importar internal/pack.
-	if s.deps.PackPrompt != nil {
-		if extra := strings.TrimSpace(s.deps.PackPrompt(definition.ID)); extra != "" {
-			messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: extra})
-		}
-	}
+	messages = append(messages, s.policyHeader(definition)...)
 
 	if contract := s.toolContract(definition); contract != "" {
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
@@ -942,6 +969,27 @@ func (s *Supervisor) fail(sessionID, turn, specialistID, code, message string, r
 			Error: code + ": " + message,
 		})
 	}
+}
+
+// ReportTurnFailure publica na sessão um erro que aconteceu ANTES de o turno
+// existir.
+//
+// `runTurn` tem saídas antecipadas — prompt inválido, sessão que não abre, log
+// que recusa a escrita — que devolvem `error` sem nunca ter carimbado um id de
+// turno, e portanto sem emitir envelope nenhum. Quem chama só registrava no log
+// do SERVIDOR. Do lado de cá do fio isso é indistinguível de um turno que
+// simplesmente nunca responde: a tela mantém `busy`, o orbe gira e o único botão
+// vivo é o de parar.
+//
+// Existe como método exportado porque quem descobre a falha é o transporte, e
+// ele não tem (nem deve ter) acesso ao barramento por fora do supervisor.
+func (s *Supervisor) ReportTurnFailure(sessionID string, err error) {
+	if s == nil || err == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	// Turno vazio de propósito: não houve turno. O cliente fecha o `busy` pelo
+	// verbo, não pelo id.
+	s.fail(sessionID, "", "", "turno_nao_iniciou", err.Error(), true)
 }
 
 /* -------------------------------- apoio --------------------------------- */

@@ -163,7 +163,15 @@ func ParseModeCommand(text string) (mode string, rest string, ok bool) {
 	if after == "" {
 		return "", text, false
 	}
-	candidate, remainder, _ := strings.Cut(after, " ")
+	// Corta no primeiro ESPAÇO EM BRANCO, não no literal " ": quem escreve
+	// `/mode office`, aperta Shift+Enter e digita o pedido na linha de baixo
+	// mandava o candidato "office\ncorrige", que não existe no catálogo — o
+	// comando era devolvido como texto comum e a troca de modo simplesmente não
+	// acontecia, sem uma palavra de aviso.
+	candidate, remainder := after, ""
+	if index := strings.IndexFunc(after, unicode.IsSpace); index >= 0 {
+		candidate, remainder = after[:index], after[index:]
+	}
 	candidate = strings.ToLower(strings.TrimSpace(candidate))
 	if !specialist.Exists(candidate) || candidate == specialist.MasterID {
 		// Modo inexistente NÃO é comando: fica como texto e o master trata como
@@ -188,9 +196,49 @@ func (r *Router) Route(ctx context.Context, in RouteInput) protocol.Route {
 	text := in.Text
 	explicit := in.Explicit
 	// `/mode` vence o seletor: é a escolha mais recente e a mais deliberada.
+	denied := ""
 	if requested, rest, found := ParseModeCommand(in.Text); found {
-		explicit = requested
-		text = rest
+		if allowedContains(candidates, requested) {
+			explicit = requested
+			text = rest
+		} else {
+			// O modo pedido existe no catálogo mas a POLÍTICA o barra.
+			//
+			// Antes o pedido era aceito aqui, o texto era esvaziado junto, e só
+			// depois o id caía fora na checagem de permissão — a cascata inteira
+			// descia com prompt VAZIO, gastando o Needle e o modelo grande para
+			// classificar nada, e gravava na conversa um modo que ninguém pediu.
+			// Agora o comando é reconhecido e RECUSADO: o modo não troca, e o
+			// pedido que veio junto continua com quem já atendia.
+			denied = requested
+			text = rest
+		}
+	}
+
+	if denied != "" {
+		blocked := "modo " + denied + " bloqueado pela política desta sessão"
+		// Com dono, a conversa fica onde está. Sem dono E sem pedido junto, não há
+		// o que classificar — devolver o padrão aqui evita descer a cascata com
+		// texto vazio.
+		if keep := in.Current; keep != "" && allowedContains(candidates, keep) {
+			return decorate(protocol.Route{
+				Specialist: keep,
+				Previous:   in.Current,
+				Reason:     protocol.RouteSticky,
+				Confidence: 1,
+				Signals:    []string{blocked},
+			})
+		}
+		if strings.TrimSpace(text) == "" {
+			return decorate(protocol.Route{
+				Specialist: candidates[0].ID,
+				Previous:   in.Current,
+				Reason:     protocol.RouteFallback,
+				Signals:    []string{blocked},
+			})
+		}
+		// Sobrou pedido de verdade numa conversa sem dono: a cascata decide pelo
+		// conteúdo, como decidiria se o `/mode` não tivesse sido escrito.
 	}
 
 	// --- escolha explícita ---

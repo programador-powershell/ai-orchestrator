@@ -222,6 +222,10 @@ func (s *Server) handleInbound(ctx context.Context, sessionID string, envelope p
 			defer cancel()
 			if err := s.sup.Prompt(turnCtx, sessionID, prompt); err != nil {
 				s.log.Error("turno falhou", "sessao", sessionID, "erro", err)
+				// E também PARA A PESSOA: as saídas antecipadas de runTurn devolvem
+				// erro sem ter emitido envelope nenhum, e um log de servidor não
+				// fecha o `busy` de quem está olhando a tela.
+				s.sup.ReportTurnFailure(sessionID, err)
 			}
 		}()
 

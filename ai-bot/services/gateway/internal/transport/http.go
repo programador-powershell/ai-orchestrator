@@ -330,6 +330,7 @@ func (s *Server) postPrompt(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := s.sup.Prompt(ctx, sessionID, prompt); err != nil {
 			s.log.Error("turno falhou", "sessao", sessionID, "erro", err)
+			s.sup.ReportTurnFailure(sessionID, err)
 		}
 	}()
 

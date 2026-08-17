@@ -257,6 +257,37 @@
   tarefa — ia para o relatório e era servido como contexto para as tarefas
   dependentes. Agora o bloco é recusado com instrução (resolva ou escale) e o
   resultado final passa por `stripBlocks`.
+- **Anexo sem texto voltou a ser um pedido.** O composer libera esse envio de
+  propósito, e o turno o recusava na PRIMEIRA linha — antes de existir id de
+  turno para carimbar qualquer envelope. Nada chegava à tela: o `busy` do cliente
+  nunca fechava, o orbe girava, e o chip do anexo já tinha sido apagado. A pessoa
+  perdia o arquivo e o pedido sem uma palavra, justamente no caso que o
+  roteamento por extensão existe para atender (`.docx` resolve para o
+  especialista de escritório com confiança 1). Agora o texto é sintetizado dos
+  nomes. E, como rede independente, **toda** saída antecipada do turno passou a
+  publicar um erro na sessão em vez de só registrar no log do servidor.
+- **`task.dispatch` deixou de ser a porta dos fundos da política.** O plano da
+  equipe agora passa pelas mesmas regras da delegação: o especialista tem de
+  existir no catálogo, não pode ser o `master` — que só decide quem atende — e
+  precisa estar liberado pela política da sessão. O id inexistente era o pior dos
+  três, porque não falhava: `GetOrDefault` devolvia o `chat` calado, e o
+  relatório dizia que a tarefa de segurança tinha sido feita, por outro
+  especialista e com outras ferramentas.
+- **A política do admin chega ao trabalhador da equipe.** Ele recebia apenas o
+  `system` do especialista: bastava o modo agente despachar uma tarefa para que a
+  política corporativa e o prompt dos pacotes deixassem de valer, em silêncio —
+  nada falha quando um system prompt simplesmente não vai junto. As três
+  montagens (turno, delegação, trabalhador) passaram a usar **um** cabeçalho só.
+- **`/mode <id>` com quebra de linha volta a ser comando.** O corte era no
+  literal `" "`, nunca em `\n` ou `\t`: quem escrevia `/mode office`, apertava
+  Shift+Enter e digitava o pedido na linha de baixo não trocava de modo, e sem
+  aviso. E **`/mode` de especialista barrado pela política** agora é recusado com
+  o motivo, em vez de esvaziar o texto, descer a cascata inteira classificando
+  nada e gravar na conversa um modo que ninguém pediu.
+- **Trabalhador que não escreve nada não conta como concluído.** Resposta vazia
+  do provedor (filtro de conteúdo, completion vazia, só espaço em branco) virava
+  ✓ no relatório com resultado vazio: o portão não abria e a tarefa dependente
+  recebia o bloco do upstream em branco e adivinhava.
 - **Duas equipes ao mesmo tempo não disputam a mesma cópia isolada.** O id da
   tarefa vem do modelo, e modelo gera `t1`; a cópia do repositório era criada com
   esse id e nada mais. Duas equipes coincidindo no tempo — duas conversas
