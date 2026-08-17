@@ -331,7 +331,13 @@ func TestStartTiraSnapshotsPeriodicos(t *testing.T) {
 	root := dataDir(t)
 	service := New(root, Options{Every: 20 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Cancelar E esperar. Só cancelar deixava o relógio montando um tar enquanto
+	// o `t.TempDir` já removia a pasta debaixo dele — o teste falhava na limpeza,
+	// não na asserção, e só quando a máquina estava carregada.
+	defer func() {
+		cancel()
+		service.Wait()
+	}()
 	service.Start(ctx)
 
 	directory := filepath.Join(root, "backups")

@@ -587,13 +587,34 @@ func (s *Supervisor) openGate(
 	timer := time.NewTimer(gateTimeout)
 	defer timer.Stop()
 
+	// O ECO da decisão é o que fecha o cartão — e o que o mantém fechado.
+	//
+	// A tela fecha o portão na hora, sem esperar resposta, e por isso a falta do
+	// eco não aparece enquanto a conversa está aberta. Ela aparece depois: o
+	// `gate` gravado no log não tinha decisão nenhuma, então REABRIR a conversa
+	// reencenava o pedido e convidava a pessoa a decidir uma onda que terminou
+	// faz tempo. Uma segunda janela na mesma sessão também nunca ficava sabendo.
+	//
+	// O motivo vai junto porque o eco também é o registro de quem decidiu: sem
+	// ele, "proceed" por escolha e "proceed" por esgotamento do prazo ficariam
+	// idênticos no log.
+	echo := func(decision protocol.GateDecision, reason string) protocol.GateDecision {
+		_ = s.emit(sessionID, turn, protocol.KindGate, actor, protocol.Gate{
+			GateID:   gateID,
+			Decision: decision,
+			Reason:   reason,
+		})
+		return decision
+	}
+
 	select {
 	case decision := <-channel:
-		return decision.Decision
+		return echo(decision.Decision, "decidido")
 	case <-timer.C:
-		return protocol.GateProceed
+		return echo(protocol.GateProceed, fmt.Sprintf(
+			"ninguém decidiu em %s — seguindo com o que há", gateTimeout))
 	case <-ctx.Done():
-		return protocol.GateAbort
+		return echo(protocol.GateAbort, "o turno foi cancelado")
 	}
 }
 

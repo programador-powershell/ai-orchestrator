@@ -257,6 +257,14 @@
   tarefa — ia para o relatório e era servido como contexto para as tarefas
   dependentes. Agora o bloco é recusado com instrução (resolva ou escale) e o
   resultado final passa por `stripBlocks`.
+- **A decisão do portão ecoa no log — e reabrir a conversa não repete a
+  pergunta.** A tela fecha o cartão na hora, sem esperar resposta, então nada
+  parecia errado enquanto a conversa estava aberta. O `gate` GRAVADO, porém, não
+  tinha decisão nenhuma — e o log é reencenado ao reabrir: o cartão voltava, em
+  `role="alertdialog"`, chamando a pessoa para decidir uma onda que terminou faz
+  tempo. Uma segunda janela na mesma sessão também nunca ficava sabendo. Agora a
+  decisão é publicada com o motivo junto, o que de quebra distingue no log o
+  "seguir" escolhido do "seguir" por esgotamento do prazo de dois minutos.
 - **O gateway volta a compilar em máquina com compilador C.** `needle_shim.c` não
   tinha restrição de build, ao contrário do `session_cgo.go` que o acompanha. Onde
   há gcc, `CGO_ENABLED` vale 1 por padrão, o Go passa a considerar os arquivos `.c`

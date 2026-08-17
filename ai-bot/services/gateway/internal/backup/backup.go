@@ -136,6 +136,13 @@ type Service struct {
 	// coincidir, e dois tars sendo montados juntos dobrariam o IO para
 	// produzir dois arquivos quase idênticos.
 	mu sync.Mutex
+
+	// lifecycle guarda `done` e NÃO é o `mu` acima de propósito: `mu` fica preso
+	// durante um snapshot inteiro, e quem chama Wait() no encerramento ficaria
+	// bloqueado antes mesmo de conseguir ler o canal que precisa esperar.
+	lifecycle sync.Mutex
+	// done fecha quando o laço do relógio termina. Nil antes do Start.
+	done chan struct{}
 }
 
 // New monta o serviço. Zero values de Options caem nos padrões.
@@ -172,7 +179,34 @@ func (s *Service) Start(ctx context.Context) {
 	if s == nil {
 		return
 	}
-	go s.loop(ctx)
+	done := make(chan struct{})
+	s.lifecycle.Lock()
+	s.done = done
+	s.lifecycle.Unlock()
+	go func() {
+		defer close(done)
+		s.loop(ctx)
+	}()
+}
+
+// Wait espera o relógio terminar depois de o contexto ser cancelado.
+//
+// Cancelar o contexto só impede a PRÓXIMA volta: um snapshot já em andamento
+// continua montando o tar, renomeando o `.partial` e aplicando a retenção depois
+// de quem cancelou já ter seguido em frente. Sem esta espera não havia como
+// saber que o serviço parou de escrever — e isso aparecia como intermitência no
+// teste do relógio, que sob carga via a limpeza do diretório temporário
+// esbarrar num arquivo nascendo.
+func (s *Service) Wait() {
+	if s == nil {
+		return
+	}
+	s.lifecycle.Lock()
+	done := s.done
+	s.lifecycle.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (s *Service) loop(ctx context.Context) {

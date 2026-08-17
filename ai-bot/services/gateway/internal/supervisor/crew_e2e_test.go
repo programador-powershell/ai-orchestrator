@@ -721,3 +721,88 @@ func TestPoliticaApertaOsTetosDaDelegacaoSemAfrouxar(t *testing.T) {
 			frouxo.depth, frouxo.perTurn)
 	}
 }
+
+// A decisão do portão ecoa no log, e é o eco que fecha o cartão.
+//
+// A tela fecha o portão na hora, sem esperar resposta — então a falta do eco não
+// aparecia enquanto a conversa estava aberta. Aparecia depois: o `gate` gravado
+// não tinha decisão nenhuma, e REABRIR a conversa reencenava o pedido, chamando
+// a pessoa para decidir uma onda encerrada. O cartão é `alertdialog`: ele para o
+// que ela estiver fazendo para perguntar algo já respondido.
+func TestDecisaoDoPortaoEcoaNoLog(t *testing.T) {
+	plano := `{"tasks":[` +
+		`{"id":"t1","title":"falha","specialist":"chat","goal":"quebra"},` +
+		`{"id":"t2","title":"depois","specialist":"chat","goal":"segue","dependsOn":["t1"]}` +
+		`],"maxConcurrency":2}`
+
+	fixture := newCrewFixture(t, "agent", []route{
+		{trigger: "Tarefa t1", answer: "@@500"},
+		{trigger: "Tarefa t2", answer: "segui"},
+		{trigger: "Resultado das ferramentas", answer: "fim"},
+		{trigger: "toque e siga", answer: dispatchFence(plano)},
+	}, "sem rota")
+
+	parar := make(chan struct{})
+	pronto := make(chan struct{})
+	go func() {
+		defer close(pronto)
+		decididos := map[string]bool{}
+		for {
+			select {
+			case <-parar:
+				return
+			default:
+			}
+			envelopes, err := fixture.store.Since(fixture.session, 0, 1000)
+			if err == nil {
+				for _, envelope := range envelopes {
+					var gate protocol.Gate
+					if envelope.Kind != protocol.KindGate || envelope.Decode(&gate) != nil {
+						continue
+					}
+					if gate.GateID == "" || gate.Decision != "" || decididos[gate.GateID] {
+						continue
+					}
+					decididos[gate.GateID] = true
+					_ = fixture.supervisor.DecideGate(protocol.Gate{
+						GateID: gate.GateID, Decision: protocol.GateProceed,
+					})
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+	defer func() { close(parar); <-pronto }()
+
+	if err := fixture.supervisor.Prompt(motorContext(t), fixture.session,
+		protocol.Prompt{Text: "toque e siga"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	pedidos, ecos := map[string]int{}, map[string]protocol.GateDecision{}
+	for _, envelope := range envelopesByKind(t, fixture.store, fixture.session, protocol.KindGate) {
+		var gate protocol.Gate
+		if err := envelope.Decode(&gate); err != nil {
+			t.Fatalf("decodificar gate: %v", err)
+		}
+		if gate.Decision == "" {
+			pedidos[gate.GateID]++
+			continue
+		}
+		ecos[gate.GateID] = gate.Decision
+	}
+	if len(pedidos) == 0 {
+		t.Fatal("a onda 1 falhou e nenhum portão foi pedido")
+	}
+	for gateID := range pedidos {
+		decision, ok := ecos[gateID]
+		if !ok {
+			t.Errorf("o portão %s foi pedido e nunca ecoou a decisão — ao reabrir a conversa "+
+				"o cartão volta a pedir o que já foi decidido", gateID)
+			continue
+		}
+		if decision != protocol.GateProceed {
+			t.Errorf("o portão %s ecoou %q, esperava %q", gateID, decision, protocol.GateProceed)
+		}
+	}
+}

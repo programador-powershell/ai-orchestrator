@@ -659,6 +659,20 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "gate": {
       const gate = payloadOf<Gate>(envelope);
       if (!gate) return state;
+      /*
+       * Portão COM decisão é o ECO de algo já resolvido: ele FECHA o cartão em
+       * vez de abrir outro. O pedido vem sem `decision`; a resposta vem com ela.
+       *
+       * Sem esta distinção, reabrir a conversa reencenava o log inteiro e o
+       * pedido voltava à tela — convidando a pessoa a decidir uma onda que
+       * terminou faz tempo. O cartão daqui é `alertdialog`: ele para o que a
+       * pessoa está fazendo para perguntar algo que já foi respondido.
+       */
+      if (gate.decision) {
+        return state.crew.gate?.gateId === gate.gateId
+          ? { ...state, crew: { ...state.crew, gate: null } }
+          : state;
+      }
       return { ...state, crew: { ...state.crew, gate } };
     }
 

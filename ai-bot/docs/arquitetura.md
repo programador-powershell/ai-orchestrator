@@ -166,6 +166,48 @@ linha nova entra com a faixa **"agora é X"** e o motivo da rota. Guardar o
 especialista só na conversa faria a conversa inteira mudar de ícone ao trocar de
 modo — apagando de quem era cada resposta anterior.
 
+### Um bot, dois bots, muitos bots — e onde a árvore para
+
+São três mecanismos distintos, e vale saber qual é qual:
+
+| | quem decide | o que acontece | quem paga |
+| --- | --- | --- | --- |
+| **um bot** | a rota do 1º input | o dono da conversa responde | 1 modelo |
+| **delegação** | o próprio especialista, sem perguntar | um sub-turno com o prompt e as ferramentas do colega; o dono continua o mesmo | 1 modelo por delegado |
+| **equipe** | o especialista `agent`, por `task.dispatch` | um DAG em ondas, com um trabalhador por tarefa e portão entre ondas | 1 modelo por trabalhador, por rodada |
+
+Os três podem se encadear, e é aí que mora o risco: **cada nível multiplica**.
+Um plano aceita até 128 tarefas; se um trabalhador `agent` pudesse montar outra
+equipe sem teto, três níveis seriam mais de dois milhões de chamadas de modelo.
+O laço não erra em nenhum passo — cada despacho, sozinho, é uma decisão
+plausível —, e é justamente por isso que ele não se interrompe sozinho.
+
+Os tetos vêm da **política do administrador** (`internal/permissions.Policy`), e
+não de constantes escondidas:
+
+- `MaxDepth` (3) — quantos níveis de equipe. O trabalhador que tenta montar
+  equipe além disso recebe uma recusa em texto, e replaneja.
+- `MaxChildren` (4) — o paralelismo de cada onda. O plano que pede mais é
+  cortado, não recusado: ondas menores entregam o mesmo resultado.
+- `MaxTotal` (24) — trabalhadores do **turno inteiro**, sub-equipes e refações
+  incluídas. Desce por contexto, num ponteiro compartilhado; um orçamento novo
+  por nível não limitaria nada.
+
+Os mesmos números **apertam** a delegação (`maxDelegationDepth` 2,
+`maxDelegationsPerTurn` 3) — só para baixo. Uma política frouxa não afrouxa o
+teto do produto, senão bastaria publicar um JSON permissivo para desligar o
+limite que impede dois especialistas de delegarem em pingue-pongue até o turno
+acabar.
+
+**O portão entre ondas.** A onda que deixou tarefa sem resultado não segue em
+silêncio: as seguintes dependem do que ela deveria ter produzido, e receberiam o
+bloco de upstream vazio — o plano terminaria plausível, com metade do trabalho
+inventado. `retry` reexecuta **só as tarefas sem resultado** (refazer quem deu
+certo repetiria um commit, um arquivo escrito, uma mensagem enviada), no máximo
+três tentativas. Sem decisão em dois minutos o portão **segue**, ao contrário da
+aprovação de ferramenta, que recusa: continuar um plano gasta tokens, executar
+algo irreversível sem ninguém olhando é outra coisa.
+
 ## Canonical Agent Protocol
 
 Um envelope, append-only, numerado por sessão:

@@ -250,7 +250,13 @@ func serve() error {
 	backups := backup.New(cfg.DataDir, backup.OptionsFromEnv(log))
 	backups.SetLogger(log)
 	backupCtx, stopBackup := context.WithCancel(context.Background())
-	defer stopBackup()
+	// Parar E esperar: cancelar só impede a próxima volta do relógio, e um
+	// snapshot já em andamento seguiria montando o tar depois de o processo ter
+	// dado o encerramento por concluído.
+	defer func() {
+		stopBackup()
+		backups.Wait()
+	}()
 	backups.Start(backupCtx)
 
 	/* ------------------------------ política ----------------------------- */
