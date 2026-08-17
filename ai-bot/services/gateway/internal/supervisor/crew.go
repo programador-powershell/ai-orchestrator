@@ -412,10 +412,11 @@ func (s *Supervisor) runWorker(
 	// existe para impedir, e ele não avisa: o trabalho sai plausível e metade
 	// dele desaparece por cima do do vizinho.
 	if task.Worktree {
-		if created, err := s.createWorktree(ctx, task.ID); err == nil {
+		worktreeID := crewWorktreeID(turn, task.ID)
+		if created, err := s.createWorktree(ctx, worktreeID); err == nil {
 			done.Worktree = created.Path
 			done.Branch = created.Branch
-			defer s.dropWorktree(task.ID)
+			defer s.dropWorktree(worktreeID)
 		} else {
 			done.Error = fmt.Sprintf("não foi possível isolar a tarefa: %v", err)
 			return done
@@ -520,6 +521,24 @@ func (s *Supervisor) runWorker(
 
 	done.Error = fmt.Sprintf("o trabalhador não concluiu em %d rodadas", workerMaxRounds)
 	return done
+}
+
+// crewWorktreeID compõe o id da cópia isolada de uma tarefa.
+//
+// O id da TAREFA sozinho não serve, e o motivo é que ele vem do MODELO: modelo
+// gera "t1". Duas equipes rodando ao mesmo tempo — duas conversas abertas, ou
+// uma sub-equipe ao lado da equipe que a criou — pediriam a mesma cópia, e
+// `git worktree add` recusa a segunda porque o diretório e o ramo já existem. A
+// tarefa falharia com "não foi possível isolar a tarefa", um erro que não tem
+// nada a ver com o trabalho dela e que só aparece quando duas equipes coincidem
+// no tempo — o tipo de defeito que não se reproduz na mesa de quem depura.
+//
+// O turno da equipe é único (`nextID` carimba milissegundo e contador), então
+// prefixá-lo basta. O teto de 64 caracteres do `worktree.Manager` continua
+// valendo e passa a ser alcançado mais cedo; quando for, o erro é explícito e
+// atinge só tarefas que pediram isolamento.
+func crewWorktreeID(turn, taskID string) string {
+	return turn + "-" + taskID
 }
 
 // escalation detecta o pedido de escalação na resposta.

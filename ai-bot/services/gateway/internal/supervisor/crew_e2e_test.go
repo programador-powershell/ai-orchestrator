@@ -912,3 +912,30 @@ func taskDispatchesQuiet(fixture *crewFixture) []protocol.Envelope {
 	}
 	return out
 }
+
+// Duas equipes ao mesmo tempo não disputam a mesma cópia isolada.
+//
+// O id da tarefa vem do modelo, e modelo gera "t1". Se a cópia isolada fosse
+// nomeada só por ele, a segunda equipe a pedir "t1" levaria recusa do
+// `git worktree add` — diretório e ramo já existem — e a tarefa morreria com
+// "não foi possível isolar a tarefa", um erro que não tem nada a ver com o
+// trabalho dela e que só aparece quando duas equipes coincidem no tempo.
+func TestCopiaIsoladaNaoColideEntreEquipes(t *testing.T) {
+	const taskID = "t1"
+	primeira := crewWorktreeID("crew-1755439200123-7", taskID)
+	segunda := crewWorktreeID("crew-1755439200456-9", taskID)
+
+	if primeira == segunda {
+		t.Fatalf("duas equipes distintas geraram o mesmo id de cópia isolada (%q) — "+
+			"a segunda vai levar recusa do git", primeira)
+	}
+	// E o id continua carregando a tarefa, senão ninguém acha a cópia pelo nome
+	// quando precisar olhar o que sobrou de um trabalho que deu errado.
+	if !strings.HasSuffix(primeira, "-"+taskID) {
+		t.Errorf("o id da cópia perdeu a tarefa: %q", primeira)
+	}
+	// Dentro da MESMA equipe, tarefas diferentes seguem diferentes.
+	if crewWorktreeID("crew-1", "a") == crewWorktreeID("crew-1", "b") {
+		t.Error("duas tarefas da mesma equipe geraram o mesmo id de cópia")
+	}
+}
