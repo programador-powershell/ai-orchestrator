@@ -44,7 +44,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import type { FsEntry } from "@multiplike/contracts";
+import type { FsEntry } from "@orchestrator/contracts";
 import { opsBus, type StructuredOp } from "../lib/ops";
 import { isTauriFs } from "../lib/fsx";
 import {
@@ -1197,7 +1197,7 @@ export function WorkView() {
             ))}
             <p className="workx-policy">
               <ShieldCheck size={13} />
-              Política Multiplike: conectores externos só entram após análise da TI/SI, sempre com a conta corporativa
+              Política Orchestrator: conectores externos só entram após análise da TI/SI, sempre com a conta corporativa
               Microsoft.
             </p>
 

@@ -30,7 +30,7 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@multiplike/contracts':
+      '@orchestrator/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@tauri-apps/api':
@@ -113,7 +113,7 @@ describe("parsePnpmLock (formato v9 real deste repo)", () => {
   });
 
   it("ignora links de workspace e chaves reservadas, e deduplica", () => {
-    expect(keys.some((entry) => entry.startsWith("@multiplike/contracts"))).toBe(false);
+    expect(keys.some((entry) => entry.startsWith("@orchestrator/contracts"))).toBe(false);
     expect(keys.filter((entry) => entry === "react@19.2.8")).toHaveLength(1);
     expect(keys).not.toContain("specifier");
     expect(keys.some((entry) => entry.startsWith("version@"))).toBe(false);

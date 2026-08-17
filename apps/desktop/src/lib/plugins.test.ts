@@ -26,7 +26,7 @@ const manifest = (over: Partial<PluginManifest> = {}): PluginManifest => ({
       name: "buscar",
       description: "Busca o endereço de um CEP",
       kind: "http",
-      target: "https://interno.multiplike.local/cep/{cep}",
+      target: "https://interno.orchestrator.local/cep/{cep}",
       params: [{ name: "cep", description: "CEP com 8 dígitos", required: true }]
     }
   ],
@@ -239,7 +239,7 @@ describe("pluginPrompt", () => {
 
 describe("checkPattern", () => {
   it("aceita expressão comum", () => {
-    expect(checkPattern("guardMultiplike\\(")).toBeNull();
+    expect(checkPattern("guardOrchestrator\\(")).toBeNull();
   });
 
   it("recusa expressão inválida, com o motivo do motor", () => {
@@ -369,7 +369,7 @@ describe("fillTarget", () => {
 
   it("preenche o parâmetro", () => {
     const resultado = fillTarget(tool, { cep: "01001000" });
-    expect(resultado).toEqual({ ok: true, target: "https://interno.multiplike.local/cep/01001000" });
+    expect(resultado).toEqual({ ok: true, target: "https://interno.orchestrator.local/cep/01001000" });
   });
 
   it("codifica o valor no HTTP — o modelo preenche esse campo", () => {

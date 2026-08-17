@@ -32,7 +32,7 @@ type Notice = { text: string; tone: "ok" | "warn" | "danger" } | null;
 
 const isTauriHost = "__TAURI_INTERNALS__" in window;
 
-const VAULT_URL = "https://vault.multiplikelabs.com/";
+const VAULT_URL = "o cofre de segredos da sua organização";
 
 function Section({ title, detail, children }: { title: string; detail: string; children: ReactNode }) {
   return (

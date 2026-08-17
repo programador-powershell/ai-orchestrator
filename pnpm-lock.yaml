@@ -44,9 +44,6 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@multiplike/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
       '@codemirror/lang-css':
         specifier: ^6.3.1
         version: 6.3.1
@@ -77,6 +74,9 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
+      '@orchestrator/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@tauri-apps/api':
         specifier: ^2.8.0
         version: 2.11.1

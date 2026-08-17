@@ -29,7 +29,7 @@
  * Módulo puro: sem rede, sem DOM. Coberto por securityReview.test.ts.
  */
 
-import type { SecurityFinding } from "@multiplike/contracts";
+import type { SecurityFinding } from "@orchestrator/contracts";
 
 import type { ChatMessage } from "./gateway";
 import { runWithLimit } from "./pool";

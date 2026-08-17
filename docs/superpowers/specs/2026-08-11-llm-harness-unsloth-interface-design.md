@@ -4,7 +4,7 @@ Data: 2026-08-11 · Status: **aprovado pelo usuário** (brainstorm concluído)
 
 ## Problema
 
-O Multiplike-AI embute clones completos de terceiros (`third_party/`: soup,
+O AI-Orchestrator embute clones completos de terceiros (`third_party/`: soup,
 opencode, drawdb) e o fluxo de fine-tuning depende de um único job em
 localStorage, sem histórico nem backend. O usuário quer um **harness de LLM**
 com a **interface do Unsloth Studio**, reescrito por completo em tecnologia
@@ -47,7 +47,7 @@ telas do Studio — escopo inviável) e C (só motor, sem a interface pedida).
   `dynamic(() => import('../src/App'), { ssr: false })` — evita tocar nos ~14
   módulos com `window` no top-level.
 - `next.config.ts`: `output: 'export'`, `images.unoptimized: true`,
-  `transpilePackages: ['@multiplike/contracts']`, `reactStrictMode: true`.
+  `transpilePackages: ['@orchestrator/contracts']`, `reactStrictMode: true`.
 - `tauri.conf.json`: `frontendDist: '../out'`; dev = `next dev -p 1420`
   (devUrl mantido); remover Vite/`index.html`/`main.tsx` (side-effects de boot
   migram para `useEffect` no shell); apagar `dist/` antigo. Vitest intocado.
@@ -141,7 +141,7 @@ README versiona **V.3** ao final (mudança de UI/UX = versão inteira).
 - **AGPL-3.0 (unsloth e drawdb): processo clean-room.** Implementar somente a
   partir dos relatórios funcionais desta pesquisa; nunca copiar código/markup/
   CSS/strings/assets. Zero verde #17b88b, sem mascote, sem fonte Hellix.
-- **Política Multiplike (item 4):** submeter a TI/SI o uso do unsloth como
+- **Política Orchestrator (item 4):** submeter a TI/SI o uso do unsloth como
   referência de UX antes da implementação. (Mesmo trilho já usado p/ drawdb.)
 - **LGPD:** datasets JSONL podem conter dado pessoal; definir retenção e
   mascaramento antes de persistir no gateway.

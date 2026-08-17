@@ -24,7 +24,7 @@ import { buildImageFor, runtimeImageFor, type StackDefinition } from "./stacks";
  * `RUN`, então o próprio comando imprime a marca e quem lê o log a reconhece.
  * Sem isso, `docker build` é uma caixa preta que fica minutos calada.
  */
-export const BUILD_EVENT_PREFIX = "[multiplike-build]";
+export const BUILD_EVENT_PREFIX = "[orchestrator-build]";
 
 export type BuildStep = "clone" | "install" | "build" | "deploy";
 export type BuildStepStatus = "running" | "completed" | "skipped";
@@ -145,7 +145,7 @@ export function generateDockerfile(plan: DockerfilePlan): string {
   const start = plan.startCommand ?? stack.defaultStartCommand;
 
   const linhas: string[] = [];
-  linhas.push(`# Gerado por Multiplike-AI para a stack "${stack.name}".`);
+  linhas.push(`# Gerado por AI-Orchestrator para a stack "${stack.name}".`);
   linhas.push(multiEstagio ? `FROM ${buildImage} AS builder` : `FROM ${runtimeImage}`);
   linhas.push("WORKDIR /workspace");
   linhas.push("COPY . /workspace");

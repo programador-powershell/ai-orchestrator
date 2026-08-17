@@ -1,13 +1,13 @@
 {
-  "name": "multiplike-ai",
+  "name": "ai-orchestrator",
   "version": "0.11.0",
   "private": true,
   "packageManager": "pnpm@10.15.1",
   "scripts": {
     "build": "corepack pnpm -r --if-present build",
     "check": "corepack pnpm -r --if-present check",
-    "dev:desktop": "corepack pnpm --filter @multiplike/desktop tauri dev",
-    "dev:bootstrapper": "corepack pnpm --filter @multiplike/bootstrapper tauri dev",
+    "dev:desktop": "corepack pnpm --filter @orchestrator/desktop tauri dev",
+    "dev:bootstrapper": "corepack pnpm --filter @orchestrator/bootstrapper tauri dev",
     "build:installer:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-installer.ps1",
     "test": "corepack pnpm -r --if-present test && node scripts/test-release-manifests.mjs",
     "test:release": "node scripts/test-release-manifests.mjs"

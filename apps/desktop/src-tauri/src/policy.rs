@@ -23,7 +23,7 @@ const MANAGED: bool = cfg!(feature = "managed");
 fn policy_path() -> Result<PathBuf, String> {
     let directory = dirs::data_dir()
         .ok_or("diretório de dados indisponível")?
-        .join("Multiplike-AI");
+        .join("AI-Orchestrator");
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     Ok(directory.join("policy.json"))
 }

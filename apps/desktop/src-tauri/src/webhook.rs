@@ -24,7 +24,7 @@ use std::time::Duration;
 
 /// Prefixo da conta no cofre — mantém os webhooks num espaço próprio, longe
 /// das chaves de provedor.
-const KEYRING_SERVICE: &str = "Multiplike-AI";
+const KEYRING_SERVICE: &str = "AI-Orchestrator";
 const SECRET_PREFIX: &str = "webhook.";
 /// A resposta é conteúdo NÃO CONFIÁVEL e vai para o log renderizado no rail.
 const MAX_RESPONSE_BYTES: usize = 2 * 1024;
@@ -80,7 +80,7 @@ pub async fn webhook_post(secret_ref: String, body: String) -> Result<WebhookOut
     let response = client
         .post(target)
         .header("Content-Type", "application/json")
-        .header("User-Agent", "Multiplike-AI Work/1.0")
+        .header("User-Agent", "AI-Orchestrator Work/1.0")
         .body(body)
         .send()
         .await

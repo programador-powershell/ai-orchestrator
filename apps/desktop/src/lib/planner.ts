@@ -2,7 +2,7 @@
  * Modo planejamento — disponível em todas as abas.
  * O modelo devolve um plano JSON; o usuário aprova antes de executar.
  */
-import type { ExecutionPlan, Mode, PlanStep, UiMode } from "@multiplike/contracts";
+import type { ExecutionPlan, Mode, PlanStep, UiMode } from "@orchestrator/contracts";
 import type { ChatMessage } from "./gateway";
 
 const modeGoal: Record<string, string> = {

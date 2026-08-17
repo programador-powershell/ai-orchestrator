@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BootstrapPolicy } from "@multiplike/contracts";
+import type { BootstrapPolicy } from "@orchestrator/contracts";
 import { clampEffort, effectiveAgentTools, effectiveApproval, effectiveModes, promptMasterMessages, safeMode } from "./policy";
 
 const policy = (patch: Partial<BootstrapPolicy> = {}): BootstrapPolicy => ({

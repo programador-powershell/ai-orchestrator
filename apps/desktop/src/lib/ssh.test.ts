@@ -6,7 +6,7 @@ import { asTerminalResult, resolveRoute, routeLabel, toTarget } from "./ssh";
 const servidor = (over: Partial<DeployServer> = {}): DeployServer => ({
   id: "s1",
   name: "Openship",
-  host: "vps.multiplike.local",
+  host: "vps.orchestrator.local",
   port: 22,
   user: "deploy",
   authMethod: "agent",
@@ -33,7 +33,7 @@ describe("resolveRoute", () => {
   it("VPS com um servidor habilitado roteia por SSH", () => {
     const rota = resolveRoute("vps", [servidor()]);
     expect(rota.kind).toBe("ssh");
-    if (rota.kind === "ssh") expect(rota.server.host).toBe("vps.multiplike.local");
+    if (rota.kind === "ssh") expect(rota.server.host).toBe("vps.orchestrator.local");
   });
 
   it("VPS sem servidor cadastrado BLOQUEIA, com o motivo", () => {
@@ -57,7 +57,7 @@ describe("resolveRoute", () => {
 
 describe("routeLabel", () => {
   it("mostra o destino real na barra de status", () => {
-    expect(routeLabel(resolveRoute("vps", [servidor()]))).toBe("deploy@vps.multiplike.local");
+    expect(routeLabel(resolveRoute("vps", [servidor()]))).toBe("deploy@vps.orchestrator.local");
     expect(routeLabel({ kind: "local" })).toBe("estação");
     expect(routeLabel({ kind: "blocked", reason: "x" })).toBe("sem rota");
   });
@@ -67,7 +67,7 @@ describe("toTarget", () => {
   it("leva só metadado — nada de segredo", () => {
     const alvo = toTarget(servidor({ keyPath: "C:/Users/x/.ssh/id_ed25519" }));
     expect(alvo).toEqual({
-      host: "vps.multiplike.local",
+      host: "vps.orchestrator.local",
       port: 22,
       user: "deploy",
       authMethod: "agent",

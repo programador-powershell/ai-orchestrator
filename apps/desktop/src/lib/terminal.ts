@@ -11,7 +11,7 @@
  * local em silêncio seria repetir o engano com uma cara nova.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { LanguageRuntime, TerminalResult } from "@multiplike/contracts";
+import type { LanguageRuntime, TerminalResult } from "@orchestrator/contracts";
 
 import { asTerminalResult, resolveRoute, ssh, toTarget } from "./ssh";
 import { useApp } from "./store";

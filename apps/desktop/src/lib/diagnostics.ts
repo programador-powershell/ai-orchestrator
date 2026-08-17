@@ -26,7 +26,7 @@ export function diagnosticCommand(path: string): string | null {
     case "ts":
     case "tsx":
       // Type-check do pacote desktop (o tsconfig cobre app/ e src/).
-      return "corepack pnpm --filter @multiplike/desktop -s check";
+      return "corepack pnpm --filter @orchestrator/desktop -s check";
     case "rs":
       return "cargo check --manifest-path services/gateway/Cargo.toml";
     case "py":

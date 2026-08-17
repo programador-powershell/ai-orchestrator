@@ -11,7 +11,7 @@
  * gateway para o próprio servidor de publicação.
  *
  * A PRIVADA sai em PEM na saída padrão e **nunca entra no repositório**. Ela vai
- * para o cofre da TI (Vaultwarden — https://vault.multiplikelabs.com/ — ou AWS
+ * para o cofre da TI (Vaultwarden — o cofre de segredos da sua organização — ou AWS
  * Secrets Manager, para o que é de DEV) e de lá para
  * `AIBOT_UPDATE_PRIVATE_KEY`, na máquina que publica. Quem tem essa chave
  * publica atualização para todas as estações: é o mesmo poder de quem assina o
@@ -62,7 +62,7 @@ export function main(argumentos) {
 
   stdout.write("\n");
   stdout.write("# CHAVE PRIVADA — para o COFRE, nunca para o repositório.\n");
-  stdout.write("#   Vaultwarden (https://vault.multiplikelabs.com/) ou AWS Secrets Manager;\n");
+  stdout.write("#   Vaultwarden (o cofre de segredos da sua organização) ou AWS Secrets Manager;\n");
   stdout.write("#   de lá ela vira AIBOT_UPDATE_PRIVATE_KEY na máquina que publica.\n");
   stdout.write(privadaPem.endsWith("\n") ? privadaPem : `${privadaPem}\n`);
 

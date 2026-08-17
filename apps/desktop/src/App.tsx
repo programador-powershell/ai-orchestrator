@@ -10,7 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
-import { UI_MODES, type UiMode } from "@multiplike/contracts";
+import { UI_MODES, type UiMode } from "@orchestrator/contracts";
 import {
   LoaderCircle,
   Maximize2,
@@ -365,7 +365,7 @@ function App() {
           <span className="brand-mark">
             <Sparkles size={17} />
           </span>
-          {railOpen && <strong>Multiplike-AI</strong>}
+          {railOpen && <strong>AI-Orchestrator</strong>}
           <button
             className="icon-button rail-toggle"
             onClick={() => setRailOpen(!railOpen)}

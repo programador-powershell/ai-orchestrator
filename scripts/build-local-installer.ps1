@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $workspace = Split-Path -Parent $PSScriptRoot
 $output = Join-Path $workspace $OutputDirectory
 $desktopTarget = Join-Path $workspace 'apps\desktop\src-tauri\target\release\bundle\nsis'
-$bootstrapper = Join-Path $workspace 'apps\bootstrapper\src-tauri\target\release\multiplike-ai-bootstrapper.exe'
+$bootstrapper = Join-Path $workspace 'apps\bootstrapper\src-tauri\target\release\ai-orchestrator-bootstrapper.exe'
 
 # Resolve o pnpm sem depender do PATH da máquina: binário direto quando
 # existir, senão via corepack (vem com o Node.js — cenário padrão aqui).
@@ -31,7 +31,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'A validação TypeScript falhou.' }
 
     Write-Host '[2/4] Gerando o NSIS local do cliente...'
-    Invoke-Pnpm --filter '@multiplike/desktop' tauri build --config src-tauri/tauri.local.conf.json --bundles nsis
+    Invoke-Pnpm --filter '@orchestrator/desktop' tauri build --config src-tauri/tauri.local.conf.json --bundles nsis
     if ($LASTEXITCODE -ne 0) { throw 'A geração do NSIS desktop falhou.' }
   }
 
@@ -46,14 +46,14 @@ try {
     $env:LOCAL_DESKTOP_VERSION = $Version
     $env:RELEASE_MANIFEST_URL = $null
     $env:INSTALLER_MANIFEST_PUBLIC_KEY = $null
-    Invoke-Pnpm --filter '@multiplike/bootstrapper' tauri build --no-bundle
+    Invoke-Pnpm --filter '@orchestrator/bootstrapper' tauri build --no-bundle
     if ($LASTEXITCODE -ne 0) { throw 'A geração do Setup local falhou.' }
   }
   if (-not (Test-Path -LiteralPath $bootstrapper)) { throw 'O executável do Setup local não foi produzido.' }
 
   Write-Host '[4/4] Validando e publicando o artefato local...'
   New-Item -ItemType Directory -Path $output -Force | Out-Null
-  $setup = Join-Path $output 'Multiplike-AI-Setup-Local.exe'
+  $setup = Join-Path $output 'AI-Orchestrator-Setup-Local.exe'
   $copied = $false
   foreach ($attempt in 1..20) {
     try {

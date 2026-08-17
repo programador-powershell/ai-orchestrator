@@ -1,6 +1,6 @@
 # Créditos e inspiração (clean-room)
 
-O Multiplike-AI **não embute código de terceiros**: todas as funcionalidades
+O AI-Orchestrator **não embute código de terceiros**: todas as funcionalidades
 abaixo são implementações próprias em TypeScript/Rust, escritas em regime
 clean-room a partir de levantamentos funcionais (telas, fluxos e semântica de
 API descritos em palavras próprias) — nunca a partir do código-fonte. Os
@@ -22,4 +22,4 @@ repositórios de referência NÃO fazem parte deste repositório desde a V.3
 2. Referências externas são estudadas fora do repo e registradas como
    levantamento funcional em `docs/superpowers/specs/`.
 3. Uso de qualquer ferramenta/referência externa nova deve ser submetido à
-   análise de TI/SI (política de segurança Multiplike, item 4).
+   análise de TI/SI (política de segurança da empresa, item 4).

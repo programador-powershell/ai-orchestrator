@@ -27,7 +27,7 @@ describe("expandCommand", () => {
   });
 
   it("expande variáveis nomeadas na ordem dos argumentos", () => {
-    expect(expandCommand("/saudar Ana Multiplike", commands)).toBe("Olá, Ana! Bem-vindo ao Multiplike.");
+    expect(expandCommand("/saudar Ana Orchestrator", commands)).toBe("Olá, Ana! Bem-vindo ao Orchestrator.");
   });
 
   it("nome herdado do protótipo não vira comando", () => {

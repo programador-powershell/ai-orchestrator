@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolvePresetForMode } from "./fusionResolve";
-import type { FusionPreset } from "@multiplike/contracts";
+import type { FusionPreset } from "@orchestrator/contracts";
 
 const base: FusionPreset = {
   id: "p1",

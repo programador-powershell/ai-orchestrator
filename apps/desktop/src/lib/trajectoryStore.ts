@@ -10,7 +10,7 @@
 
 import { create } from "zustand";
 
-import type { UiMode } from "@multiplike/contracts";
+import type { UiMode } from "@orchestrator/contracts";
 
 import { createTrajectory, type ContextSource, type Trajectory, type TrajectoryEvent } from "./trajectory";
 import type { HarnessMode } from "./contextAssembly";

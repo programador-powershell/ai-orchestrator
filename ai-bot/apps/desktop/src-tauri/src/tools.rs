@@ -1604,17 +1604,17 @@ mod tests {
     #[test]
     fn troca_dentro_de_um_unico_no() {
         let xml = paragrafo("<w:r><w:t>Olá mundo</w:t></w:r>");
-        let (out, trocas) = replace_in_xml(&xml, "mundo", "Multiplike", &DOCX_DIALECT);
+        let (out, trocas) = replace_in_xml(&xml, "mundo", "Orchestrator", &DOCX_DIALECT);
         assert_eq!(trocas, 1);
-        assert!(out.contains("<w:t>Olá Multiplike</w:t>"), "saiu: {out}");
+        assert!(out.contains("<w:t>Olá Orchestrator</w:t>"), "saiu: {out}");
     }
 
     /// O caso que o `replace` ingênuo perde: o Word parte o texto em vários
     /// `<w:t>` e a agulha atravessa a fronteira.
     #[test]
     fn troca_agulha_que_atravessa_dois_nos() {
-        let xml = paragrafo("<w:r><w:t>Ola Mul</w:t></w:r><w:r><w:t>tiplike hoje</w:t></w:r>");
-        let (out, trocas) = replace_in_xml(&xml, "Multiplike", "ACME", &DOCX_DIALECT);
+        let xml = paragrafo("<w:r><w:t>Ola Orche</w:t></w:r><w:r><w:t>strator hoje</w:t></w:r>");
+        let (out, trocas) = replace_in_xml(&xml, "Orchestrator", "ACME", &DOCX_DIALECT);
         assert_eq!(trocas, 1, "deveria achar atravessando nós; saiu: {out}");
         assert!(xml_text(&out, &["w:p"]).contains("Ola ACME hoje"), "saiu: {out}");
     }
@@ -1633,9 +1633,9 @@ mod tests {
     #[test]
     fn contagem_de_tags_nao_muda() {
         let xml = paragrafo(
-            "<w:r><w:rPr><w:b/></w:rPr><w:t>Ola Mul</w:t></w:r><w:r><w:t>tiplike</w:t></w:r>",
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>Ola Orche</w:t></w:r><w:r><w:t>strator</w:t></w:r>",
         );
-        let (out, _) = replace_in_xml(&xml, "Multiplike", "ACME", &DOCX_DIALECT);
+        let (out, _) = replace_in_xml(&xml, "Orchestrator", "ACME", &DOCX_DIALECT);
         assert_eq!(xml.matches("<w:t>").count(), out.matches("<w:t>").count());
         assert_eq!(xml.matches("<w:r>").count(), out.matches("<w:r>").count());
         assert!(out.contains("<w:b/>"), "a formatação foi perdida: {out}");
@@ -1709,7 +1709,7 @@ mod tests {
             out.push_str(r#"<w:r><w:t> contratante d</w:t></w:r>"#);
             if indice % 4 == 0 {
                 // A agulha ATRAVESSANDO a fronteira de dois nós: o caso caro.
-                out.push_str(r#"<w:r><w:t>a Multi</w:t></w:r><w:r><w:t>plike </w:t></w:r>"#);
+                out.push_str(r#"<w:r><w:t>a Orche</w:t></w:r><w:r><w:t>strator </w:t></w:r>"#);
             } else {
                 out.push_str(r#"<w:r><w:t>a empresa </w:t></w:r>"#);
             }
@@ -1729,7 +1729,7 @@ mod tests {
     fn bench_replace_in_xml_documento_grande() {
         let xml = corpus_document_xml(3_000);
         let (tempo, (saida, trocas)) =
-            crate::bench::median(|| replace_in_xml(&xml, "Multiplike", "ACME S.A.", &DOCX_DIALECT));
+            crate::bench::median(|| replace_in_xml(&xml, "Orchestrator", "ACME S.A.", &DOCX_DIALECT));
         assert_eq!(trocas, 750, "o corpus tem uma agulha a cada quatro parágrafos");
         assert!(saida.contains("ACME S.A."), "a troca não saiu no XML");
         crate::bench::report(

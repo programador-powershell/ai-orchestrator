@@ -12,7 +12,7 @@ pub struct Config {
     /// Audiencias ACEITAS, em ordem de preferencia.
     ///
     /// Lista, e nao valor unico, por causa do rebranding: o `aud` mudou de
-    /// "ai-orchestrator" para "multiplike-ai" e um redeploy pelo manifesto
+    /// "ai-orchestrator" para "ai-orchestrator" e um redeploy pelo manifesto
     /// passa a exigir o novo enquanto o IdP ainda emite o antigo — todo login
     /// devolveria 401 sem nada no log dizendo por que. Aceitar as duas durante
     /// a virada e o unico jeito de trocar sem janela de indisponibilidade.

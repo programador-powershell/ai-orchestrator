@@ -5,7 +5,7 @@
  *
  * Política: valores de segredos NUNCA aparecem em findings — são mascarados.
  */
-import type { SecurityFinding } from "@multiplike/contracts";
+import type { SecurityFinding } from "@orchestrator/contracts";
 import type { ChatMessage } from "./gateway";
 
 type Severity = SecurityFinding["severity"];
@@ -21,7 +21,7 @@ interface SecretRule {
 }
 
 const VAULT_HINT =
-  "mova para o cofre — Vaultwarden (https://vault.multiplikelabs.com/) ou AWS Secrets Manager (DEV)";
+  "mova para o cofre — Vaultwarden (o cofre de segredos da sua organização) ou AWS Secrets Manager (DEV)";
 
 const SECRET_RULES: SecretRule[] = [
   {

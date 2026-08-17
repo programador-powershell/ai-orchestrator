@@ -557,7 +557,7 @@ mod tests {
 
     fn alvo() -> SshTarget {
         SshTarget {
-            host: "vps.multiplike.local".into(),
+            host: "vps.orchestrator.local".into(),
             port: 22,
             user: "deploy".into(),
             auth_method: "agent".into(),
@@ -588,7 +588,7 @@ mod tests {
         let args = build_args(&alvo(), "ls");
         assert!(args.contains(&"-p".to_string()));
         assert!(args.contains(&"22".to_string()));
-        assert!(args.contains(&"deploy@vps.multiplike.local".to_string()));
+        assert!(args.contains(&"deploy@vps.orchestrator.local".to_string()));
     }
 
     #[test]
@@ -733,7 +733,7 @@ mod tests {
         let mut sem_dir = alvo();
         sem_dir.remote_workdir = None;
         let args = build_interactive_args(&sem_dir);
-        assert_eq!(args.last().map(String::as_str), Some("deploy@vps.multiplike.local"));
+        assert_eq!(args.last().map(String::as_str), Some("deploy@vps.orchestrator.local"));
         assert!(!args.iter().any(|a| a.contains("&&")));
     }
 

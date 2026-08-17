@@ -1,4 +1,4 @@
-name: Release Multiplike-AI
+name: Release AI-Orchestrator
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
         with:
           context: services/gateway
           push: false
-          tags: multiplike-ai-gateway:test
+          tags: ai-orchestrator-gateway:test
 
   runtime:
     if: ${{ vars.RUNTIME_REPOSITORY != '' }}
@@ -49,7 +49,7 @@ jobs:
           cmake -S . -B build-cpu -DGGML_VULKAN=OFF -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-cpu --config Release --target llama-server --parallel
           New-Item -ItemType Directory -Force artifacts | Out-Null
-          Copy-Item (Get-ChildItem build-cpu -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\multiplike-ai-runtime-cpu.exe
+          Copy-Item (Get-ChildItem build-cpu -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\ai-orchestrator-runtime-cpu.exe
       - name: Install Vulkan SDK
         uses: humbletim/install-vulkan-sdk@v1.1.1
         with:
@@ -60,7 +60,7 @@ jobs:
         run: |
           cmake -S . -B build-vulkan -DGGML_VULKAN=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-vulkan --config Release --target llama-server --parallel
-          Copy-Item (Get-ChildItem build-vulkan -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\multiplike-ai-runtime-vulkan.exe
+          Copy-Item (Get-ChildItem build-vulkan -Recurse -Filter llama-server.exe | Select-Object -First 1).FullName artifacts\ai-orchestrator-runtime-vulkan.exe
       - uses: actions/upload-artifact@v4
         with:
           name: local-runtime
@@ -144,7 +144,7 @@ jobs:
       - name: Check frontend contracts
         run: pnpm check
       - name: Build desktop executable
-        run: pnpm --filter @multiplike/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc
+        run: pnpm --filter @orchestrator/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc
       # Edição MANAGED: as portas de saída direta ao provedor (provider_*) e o
       # runtime local são compilados FORA (feature do Cargo); a chave pública
       # da política é embarcada e o cliente RECUSA bootstrap sem assinatura.
@@ -156,17 +156,17 @@ jobs:
         shell: pwsh
         run: |
           if (-not $env:POLICY_PUBLIC_KEY) { throw "POLICY_PUBLIC_KEY ausente: edicao managed exige a chave publica da politica" }
-          pnpm --filter @multiplike/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc -- --features managed
-          Copy-Item apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\multiplike-ai-desktop.exe apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\multiplike-ai-desktop-managed.exe
+          pnpm --filter @orchestrator/desktop tauri build --no-bundle --target x86_64-pc-windows-msvc -- --features managed
+          Copy-Item apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop.exe apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop-managed.exe
       - name: Authenticode sign desktop executable
         if: env.IS_STABLE == 'true'
         shell: pwsh
         env:
           CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: .\scripts\sign-windows.ps1 -Files apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\multiplike-ai-desktop.exe -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD
+        run: .\scripts\sign-windows.ps1 -Files apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-desktop.exe -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD
       - name: Bundle per-user NSIS client
-        run: pnpm --filter @multiplike/desktop tauri bundle --bundles nsis --target x86_64-pc-windows-msvc
+        run: pnpm --filter @orchestrator/desktop tauri bundle --bundles nsis --target x86_64-pc-windows-msvc
       - name: Collect and sign release assets
         shell: pwsh
         env:
@@ -177,30 +177,30 @@ jobs:
           $version = $env:TAG_NAME.TrimStart('v')
           $nsis = Get-ChildItem apps\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis -Filter '*setup.exe' | Select-Object -First 1
           if (-not $nsis) { throw 'NSIS não foi produzido.' }
-          $desktopSetup = "release-assets\Multiplike-AI-$version-setup.exe"
+          $desktopSetup = "release-assets\AI-Orchestrator-$version-setup.exe"
           Copy-Item $nsis.FullName $desktopSetup
           if ($env:IS_STABLE -eq 'true') {
             $filesToSign = @($desktopSetup)
-            $runtimeFiles = @(Get-ChildItem release-assets -Filter 'multiplike-ai-runtime-*.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
+            $runtimeFiles = @(Get-ChildItem release-assets -Filter 'ai-orchestrator-runtime-*.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
             if ($runtimeFiles.Count -gt 0) { $filesToSign += $runtimeFiles }
             .\scripts\sign-windows.ps1 -Files $filesToSign -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD
           }
           "DESKTOP_SETUP=$desktopSetup" | Add-Content $env:GITHUB_ENV
           if ($env:HAS_UPDATER -eq 'true') {
-            pnpm --filter @multiplike/desktop tauri signer sign -k $env:TAURI_SIGNING_PRIVATE_KEY -p $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD $desktopSetup
+            pnpm --filter @orchestrator/desktop tauri signer sign -k $env:TAURI_SIGNING_PRIVATE_KEY -p $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD $desktopSetup
             "UPDATER_ARCHIVE=$desktopSetup" | Add-Content $env:GITHUB_ENV
             "UPDATER_SIGNATURE=$desktopSetup.sig" | Add-Content $env:GITHUB_ENV
           }
       - name: Build small bootstrapper
-        run: pnpm --filter @multiplike/bootstrapper tauri build --no-bundle --target x86_64-pc-windows-msvc
+        run: pnpm --filter @orchestrator/bootstrapper tauri build --no-bundle --target x86_64-pc-windows-msvc
       - name: Collect bootstrapper
         shell: pwsh
         env:
           CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          $target = "release-assets\Multiplike-AI-Setup.exe"
-          Copy-Item apps\bootstrapper\src-tauri\target\x86_64-pc-windows-msvc\release\multiplike-ai-bootstrapper.exe $target
+          $target = "release-assets\AI-Orchestrator-Setup.exe"
+          Copy-Item apps\bootstrapper\src-tauri\target\x86_64-pc-windows-msvc\release\ai-orchestrator-bootstrapper.exe $target
           if ($env:IS_STABLE -eq 'true') { .\scripts\sign-windows.ps1 -Files $target -CertificateBase64 $env:CERTIFICATE -CertificatePassword $env:CERTIFICATE_PASSWORD }
           $size = (Get-Item $target).Length
           if ($size -gt 15MB) { throw "Bootstrapper excedeu 15 MB: $size bytes" }
@@ -209,8 +209,8 @@ jobs:
         run: |
           $arguments = @('scripts\generate-release-manifests.mjs', '--version', $env:TAG_NAME, '--base-url', $env:RELEASE_BASE_URL, '--publisher', $env:WINDOWS_PUBLISHER, '--desktop', $env:DESKTOP_SETUP, '--output', 'release-assets')
           if ($env:HAS_UPDATER -eq 'true') { $arguments += @('--updater', $env:UPDATER_ARCHIVE, '--updater-signature', $env:UPDATER_SIGNATURE) }
-          if (Test-Path 'release-assets\multiplike-ai-runtime-cpu.exe') { $arguments += @('--runtime-cpu', 'release-assets\multiplike-ai-runtime-cpu.exe') }
-          if (Test-Path 'release-assets\multiplike-ai-runtime-vulkan.exe') { $arguments += @('--runtime-vulkan', 'release-assets\multiplike-ai-runtime-vulkan.exe') }
+          if (Test-Path 'release-assets\ai-orchestrator-runtime-cpu.exe') { $arguments += @('--runtime-cpu', 'release-assets\ai-orchestrator-runtime-cpu.exe') }
+          if (Test-Path 'release-assets\ai-orchestrator-runtime-vulkan.exe') { $arguments += @('--runtime-vulkan', 'release-assets\ai-orchestrator-runtime-vulkan.exe') }
           node @arguments
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

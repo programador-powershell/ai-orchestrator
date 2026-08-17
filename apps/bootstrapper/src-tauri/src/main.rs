@@ -13,5 +13,5 @@ fn main() {
             installer::close_installer
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Multiplike-AI installer");
+        .expect("failed to run AI-Orchestrator installer");
 }

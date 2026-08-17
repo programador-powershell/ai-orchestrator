@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Sparkles } from "lucide-react";
-import type { EngineSelection, UiMode } from "@multiplike/contracts";
+import type { EngineSelection, UiMode } from "@orchestrator/contracts";
 
 import { describeSelection } from "../lib/engine";
 import { useApp } from "../lib/store";

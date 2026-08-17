@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SchemaTable } from "@multiplike/contracts";
+import type { SchemaTable } from "@orchestrator/contracts";
 
 import {
   alca,

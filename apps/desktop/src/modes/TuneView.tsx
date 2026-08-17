@@ -610,7 +610,7 @@ export function TuneView() {
                     <input
                       value={suffix}
                       onChange={(event) => setSuffix(event.target.value)}
-                      placeholder="ex.: multiplike"
+                      placeholder="ex.: orchestrator"
                       spellCheck={false}
                     />
                   </label>

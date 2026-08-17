@@ -1,4 +1,4 @@
-import type { DesignReplicationRequest, DesignReplicationResult, Mode, OrchestrationGraph, OrchestrationPlan, WorkspaceSummary } from "@multiplike/contracts";
+import type { DesignReplicationRequest, DesignReplicationResult, Mode, OrchestrationGraph, OrchestrationPlan, WorkspaceSummary } from "@orchestrator/contracts";
 
 export interface GatewaySession {
   baseUrl: string;

@@ -24,7 +24,7 @@
 name = "aibot-desktop"
 version = "0.1.0"
 description = "AI-BOT — cliente desktop"
-authors = ["Multiplike"]
+authors = ["Orchestrator"]
 edition = "2021"
 
 [lib]

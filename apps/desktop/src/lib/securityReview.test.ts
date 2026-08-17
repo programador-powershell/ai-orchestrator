@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { SecurityFinding } from "@multiplike/contracts";
+import type { SecurityFinding } from "@orchestrator/contracts";
 
 import {
   buildInvestigationPrompt,
@@ -71,9 +71,9 @@ describe("findCandidates", () => {
 
   it("aceita matchers de fora — é o gancho dos plugins do admin", () => {
     const meu: Matcher[] = [
-      { id: "multi", label: "usa o guard interno", pattern: /guardMultiplike/, weight: 9 }
+      { id: "multi", label: "usa o guard interno", pattern: /guardOrchestrator/, weight: 9 }
     ];
-    const { candidates } = findCandidates([{ path: "a.ts", content: "guardMultiplike(req)" }], {
+    const { candidates } = findCandidates([{ path: "a.ts", content: "guardOrchestrator(req)" }], {
       matchers: meu
     });
     expect(candidates[0].reasons).toEqual(["usa o guard interno"]);

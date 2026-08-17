@@ -1165,7 +1165,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "multiplike-ai-gateway"
+name = "ai-orchestrator-gateway"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

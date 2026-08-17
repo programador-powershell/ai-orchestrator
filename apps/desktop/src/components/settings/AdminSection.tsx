@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CircleCheck, LoaderCircle, ShieldCheck, Trash2, UsersRound } from "lucide-react";
-import { UI_MODES, type UiMode } from "@multiplike/contracts";
+import { UI_MODES, type UiMode } from "@orchestrator/contracts";
 import { useApp } from "../../lib/store";
 import { UsageReport } from "./UsageReport";
 import { AgentAuditLog } from "./AgentAuditLog";
@@ -487,7 +487,7 @@ export function AdminSection() {
             value={masterContent}
             onChange={(event) => setMasterContent(event.target.value)}
             rows={6}
-            placeholder="Você é o assistente corporativo da Multiplike…"
+            placeholder="Você é o assistente corporativo da Orchestrator…"
             spellCheck={false}
           />
         </label>

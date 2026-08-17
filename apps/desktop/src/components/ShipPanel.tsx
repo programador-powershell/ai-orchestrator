@@ -188,7 +188,7 @@ export function ShipPanel({ root }: { root: string }) {
               */}
               <span>
                 Construir imagem ao executar
-                <small>grava <code>Dockerfile.multiplike</code> e roda <code>docker build</code></small>
+                <small>grava <code>Dockerfile.orchestrator</code> e roda <code>docker build</code></small>
               </span>
             </label>
           </div>

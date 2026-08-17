@@ -17,7 +17,7 @@
  * orquestrador DECOMPÕE a tarefa em focos complementares, um por executor.
  * Módulo 100% puro — testável sem rede.
  */
-import type { Mode, UiMode } from "@multiplike/contracts";
+import type { Mode, UiMode } from "@orchestrator/contracts";
 import type { ChatMessage } from "./gateway";
 
 export type AnyMode = Mode | UiMode;

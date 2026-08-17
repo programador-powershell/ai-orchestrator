@@ -25,7 +25,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, Square, Users, Wand2 } from "lucide-react";
 
 import { ThinkingOrb, type ThinkingKind } from "./ThinkingOrb";
-import type { EngineSelection } from "@multiplike/contracts";
+import type { EngineSelection } from "@orchestrator/contracts";
 
 import { Markdown } from "./Markdown";
 import {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const directory = mkdtempSync(join(tmpdir(), "multiplike-ai-release-"));
+const directory = mkdtempSync(join(tmpdir(), "ai-orchestrator-release-"));
 const desktop = join(directory, "desktop-setup.exe");
 const updater = join(directory, "desktop.nsis.zip");
 const updaterSignature = `${updater}.sig`;
@@ -17,7 +17,7 @@ const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" });
 const result = spawnSync(process.execPath, [
   resolve("scripts/generate-release-manifests.mjs"),
   "--version", "v1.2.3", "--base-url", "https://example.invalid/releases/v1.2.3",
-  "--publisher", "Multiplike-AI Test Publisher", "--desktop", desktop,
+  "--publisher", "AI-Orchestrator Test Publisher", "--desktop", desktop,
   "--updater", updater, "--updater-signature", updaterSignature, "--output", directory
 ], {
   encoding: "utf8",
@@ -33,15 +33,15 @@ const tampered = Buffer.from(payload);
 tampered[0] ^= 1;
 if (verify(null, tampered, publicKey, signature)) throw new Error("tampered manifest was accepted");
 const parsed = JSON.parse(payload);
-if (parsed.product !== "Multiplike-AI" || parsed.components[0].size !== 22) throw new Error("release payload contract mismatch");
+if (parsed.product !== "AI-Orchestrator" || parsed.components[0].size !== 22) throw new Error("release payload contract mismatch");
 const latest = JSON.parse(readFileSync(join(directory, "latest.json"), "utf8"));
 if (!latest.platforms["windows-x86_64"].url.endsWith("desktop.nsis.zip")) throw new Error("updater URL mismatch");
 
-const manifestOnlyDirectory = mkdtempSync(join(tmpdir(), "multiplike-ai-bootstrapper-"));
+const manifestOnlyDirectory = mkdtempSync(join(tmpdir(), "ai-orchestrator-bootstrapper-"));
 const manifestOnly = spawnSync(process.execPath, [
   resolve("scripts/generate-release-manifests.mjs"),
   "--version", "v1.2.4-beta.1", "--base-url", "https://example.invalid/releases/v1.2.4-beta.1",
-  "--publisher", "Multiplike-AI Test Publisher", "--desktop", desktop,
+  "--publisher", "AI-Orchestrator Test Publisher", "--desktop", desktop,
   "--output", manifestOnlyDirectory
 ], {
   encoding: "utf8",

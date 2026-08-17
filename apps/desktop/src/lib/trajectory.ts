@@ -26,7 +26,7 @@
  * Módulo puro: sem rede, sem DOM. Coberto por trajectory.test.ts.
  */
 
-import type { UiMode } from "@multiplike/contracts";
+import type { UiMode } from "@orchestrator/contracts";
 
 /** De onde veio o texto que entrou no prompt. */
 export type ContextSource =

@@ -45,7 +45,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import type { DesignReplicationResult } from "@multiplike/contracts";
+import type { DesignReplicationResult } from "@orchestrator/contracts";
 import { replicateDesign } from "../lib/gateway";
 import { terminal } from "../lib/terminal";
 import { buildCompose, type ComposeClip, type TransitionKind } from "../lib/videoCompose";

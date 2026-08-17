@@ -135,7 +135,7 @@ describe("deploySteps", () => {
     });
     expect(passos).toHaveLength(1);
     expect(passos[0].step).toBe("Imagem");
-    expect(passos[0].command).toBe("docker build -f Dockerfile.multiplike -t site:11 .");
+    expect(passos[0].command).toBe("docker build -f Dockerfile.orchestrator -t site:11 .");
     expect(passos[0].command).not.toContain("&&");
     expect(passos[0].command.length).toBeLessThan(8192);
   });
@@ -158,7 +158,7 @@ describe("writeDockerfile", () => {
      * absoluto, `~`, `:` e `..`. Um caminho com a raiz do Windows passa no
      * ambiente local e falha só contra o VPS — o pior lugar para descobrir.
      */
-    expect(caminhoRelativoSeguro("Dockerfile.multiplike")).toBe(true);
+    expect(caminhoRelativoSeguro("Dockerfile.orchestrator")).toBe(true);
     expect(caminhoRelativoSeguro("apps/web/Dockerfile")).toBe(true);
     expect(caminhoRelativoSeguro("C:\\Users\\x\\Dockerfile")).toBe(false);
     expect(caminhoRelativoSeguro("/etc/Dockerfile")).toBe(false);
@@ -171,10 +171,10 @@ describe("writeDockerfile", () => {
   it("grava com quebra de linha final e devolve o caminho do build", async () => {
     vi.mocked(fsWrite).mockClear();
     const saida = await writeDockerfile("C:/proj", "FROM node:22\nEXPOSE 3000");
-    expect(saida).toEqual({ caminho: "Dockerfile.multiplike", gravado: true });
+    expect(saida).toEqual({ caminho: "Dockerfile.orchestrator", gravado: true });
     expect(vi.mocked(fsWrite)).toHaveBeenCalledWith(
       "C:/proj",
-      "Dockerfile.multiplike",
+      "Dockerfile.orchestrator",
       "FROM node:22\nEXPOSE 3000\n"
     );
   });

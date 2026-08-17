@@ -27,7 +27,7 @@
  * Módulo puro: sem rede, sem DOM. Coberto por plugins.test.ts.
  */
 
-import type { UiMode } from "@multiplike/contracts";
+import type { UiMode } from "@orchestrator/contracts";
 
 export type PluginScope = "global" | "user";
 
@@ -68,7 +68,7 @@ export interface PluginTool {
  *
  * O caso de uso que motivou: as convenções de auth e de camada de dados são
  * de CADA empresa, e a lista padrão não as conhece. O admin declara os padrões
- * da Multiplike e eles valem para o grupo; a pessoa acrescenta os do projeto
+ * da Orchestrator e eles valem para o grupo; a pessoa acrescenta os do projeto
  * dela.
  */
 export interface PluginScanner {

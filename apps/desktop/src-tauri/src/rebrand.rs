@@ -1,7 +1,10 @@
 //! Migração do rebranding — o dado do usuário atravessa a troca de nome.
 //!
-//! A versão 0.11.0 renomeou o produto de "AI Orchestrator" para
-//! "Multiplike-AI". A troca alcançou coisas que NÃO são cosmética: o nome do
+//! O produto já se chamou "AI Orchestrator" (até a 0.10) e "Multiplike-AI"
+//! (0.11). Nesta versão ele volta a ser "AI-Orchestrator", e a migração passa
+//! a conhecer as DUAS gerações: quem vem da 0.11 migra de Multiplike-AI; quem
+//! nunca saiu da 0.10 migra direto de AI Orchestrator. A troca alcança coisas
+//! que NÃO são cosmética: o nome do
 //! serviço no cofre do sistema operacional, os diretórios de dados e o
 //! `identifier` do Tauri. Cada uma dessas é uma chave de busca — mudá-la sem
 //! mais nada não apaga nada, e é justamente por isso que engana: o arquivo
@@ -38,13 +41,19 @@
 
 use std::path::PathBuf;
 
-/// Nome antigo do produto, usado em pasta e no cofre até a 0.10.
-pub const SERVICO_ANTIGO: &str = "AI Orchestrator";
+/// Nomes antigos do produto, do MAIS recente para o mais velho. A ordem
+/// importa: quem atualizou 0.10 → 0.11 tem os dados sob o nome do meio, e
+/// migrar primeiro o mais velho deixaria a geração intermediária para trás.
+pub const SERVICOS_ANTIGOS: [&str; 2] = ["Multiplike-AI", "AI Orchestrator"];
+/// Compatibilidade com quem consulta um único legado (o mais recente).
+pub const SERVICO_ANTIGO: &str = SERVICOS_ANTIGOS[0];
 /// Nome atual.
-pub const SERVICO: &str = "Multiplike-AI";
+pub const SERVICO: &str = "AI-Orchestrator";
 
-const IDENTIFIER_ANTIGO: &str = "com.aiorchestrator.desktop";
-const IDENTIFIER: &str = "com.multiplike.desktop";
+/// Identifiers antigos. O pré-0.11 é IGUAL ao atual — quem nunca saiu da 0.10
+/// já está no lugar certo, então só a geração Multiplike migra.
+const IDENTIFIERS_ANTIGOS: [&str; 1] = ["com.multiplike.desktop"];
+const IDENTIFIER: &str = "com.aiorchestrator.desktop";
 
 /// Renomeia `antigo` para `novo` quando faz sentido. Devolve `true` se migrou.
 ///
@@ -80,28 +89,35 @@ pub fn migrar_diretorios() -> Vec<String> {
         }
     };
 
-    // Roaming (%APPDATA%): memória, política e o banco dos runs.
-    tentar(
-        dirs::data_dir(),
-        SERVICO_ANTIGO,
-        SERVICO,
-        "dados (memória, política, runs)",
-    );
-    // Local (%LOCALAPPDATA%): runtimes, modelos GGUF e extensões.
-    tentar(
-        dirs::data_local_dir(),
-        SERVICO_ANTIGO,
-        SERVICO,
-        "runtime (modelos e extensões)",
-    );
+    // Do legado mais RECENTE para o mais velho: se os dois existirem, vale o
+    // mais novo (é o que a pessoa estava usando); o renomear seguinte encontra
+    // o destino ocupado e não sobrescreve nada.
+    for antigo in SERVICOS_ANTIGOS {
+        // Roaming (%APPDATA%): memória, política e o banco dos runs.
+        tentar(
+            dirs::data_dir(),
+            antigo,
+            SERVICO,
+            "dados (memória, política, runs)",
+        );
+        // Local (%LOCALAPPDATA%): runtimes, modelos GGUF e extensões.
+        tentar(
+            dirs::data_local_dir(),
+            antigo,
+            SERVICO,
+            "runtime (modelos e extensões)",
+        );
+    }
     // A origem do webview — conversas, configurações, tema, tudo o que vive
     // no localStorage.
-    tentar(
-        dirs::data_local_dir(),
-        IDENTIFIER_ANTIGO,
-        IDENTIFIER,
-        "conversas e configurações",
-    );
+    for antigo in IDENTIFIERS_ANTIGOS {
+        tentar(
+            dirs::data_local_dir(),
+            antigo,
+            IDENTIFIER,
+            "conversas e configurações",
+        );
+    }
 
     migrados
 }
@@ -121,8 +137,12 @@ pub fn segredo_com_fallback(conta: &str) -> Option<String> {
         }
     }
 
-    let antiga = keyring::Entry::new(SERVICO_ANTIGO, conta).ok()?;
-    let valor = antiga.get_password().ok()?;
+    // Tenta cada geração de nome, da mais recente para a mais velha.
+    let (antiga, valor) = SERVICOS_ANTIGOS.iter().find_map(|servico| {
+        let entrada = keyring::Entry::new(servico, conta).ok()?;
+        let valor = entrada.get_password().ok()?;
+        Some((entrada, valor))
+    })?;
 
     // Regrava sob o nome novo. Se falhar, ainda devolvemos o valor: ler é o
     // que o chamador pediu, e uma migração malsucedida não deve virar

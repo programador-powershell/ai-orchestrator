@@ -1,5 +1,5 @@
 {
-  "name": "@multiplike/desktop",
+  "name": "@orchestrator/desktop",
   "version": "0.11.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@multiplike/contracts": "workspace:*",
+    "@orchestrator/contracts": "workspace:*",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-javascript": "^6.2.5",

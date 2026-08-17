@@ -45,7 +45,7 @@ em silêncio, que é a falha certa para se ter num lugar como este.
 2. Referência externa é estudada **fora** do repositório e registrada aqui como
    levantamento funcional.
 3. Toda ferramenta, biblioteca ou referência externa nova é submetida à análise
-   de **TI/SI** antes de virar padrão (política de segurança Multiplike, item 4).
+   de **TI/SI** antes de virar padrão (política de segurança da empresa, item 4).
    A aprovação é **por dependência** — aprovar uma não aprova a seguinte.
 4. Dependência de terceiro **no gateway** exige justificativa escrita. Hoje são
    **zero**: `services/gateway/go.mod` não tem um único `require`. WebSocket,

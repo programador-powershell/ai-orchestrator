@@ -16,7 +16,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { KeyRound, Link2, Table2 } from "lucide-react";
-import type { SchemaTable } from "@multiplike/contracts";
+import type { SchemaTable } from "@orchestrator/contracts";
 
 import { alca } from "../../lib/erdLinks";
 import { TABLE_GEOMETRY } from "../../lib/schema";

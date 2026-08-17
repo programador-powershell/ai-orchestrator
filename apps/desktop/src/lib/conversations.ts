@@ -2,7 +2,7 @@
  * Lógica pura de conversas: projetos (pastas), exportação (.md/.json) e
  * busca global entre todas as abas. Sem React e sem store — 100% testável.
  */
-import { UI_MODES, type UiMode } from "@multiplike/contracts";
+import { UI_MODES, type UiMode } from "@orchestrator/contracts";
 import { normalizeSearchText, searchSnippet, type ChatLikeMessage } from "./chatUtils";
 
 /** Pasta de organização — global, compartilhada por todas as abas. */
@@ -39,7 +39,7 @@ export function toMarkdown(conversation: ExportConversation): string {
   const title = conversation.title.trim() || "Conversa sem título";
   const lines = [`# ${title}`];
   if (Number.isFinite(conversation.updatedAt)) {
-    lines.push("", `_Exportado do Multiplike-AI — atualizado em ${new Date(conversation.updatedAt).toISOString()}_`);
+    lines.push("", `_Exportado do AI-Orchestrator — atualizado em ${new Date(conversation.updatedAt).toISOString()}_`);
   }
   for (const message of conversation.messages) {
     const content = message.content.trim();

@@ -30,7 +30,7 @@ if (args["runtime-vulkan"]) components.push(fileComponent("runtime-vulkan", true
 
 const payload = Buffer.from(JSON.stringify({
   schemaVersion: 1,
-  product: "Multiplike-AI",
+  product: "AI-Orchestrator",
   channel: args.version.includes("-") ? "beta" : "stable",
   version: args.version.replace(/^v/, ""),
   minimumBootstrapperVersion: "0.1.0",
@@ -50,7 +50,7 @@ if (args.updater) {
   const updaterSignature = readFileSync(args["updater-signature"], "utf8").trim();
   const latest = {
     version: args.version.replace(/^v/, ""),
-    notes: "Atualização do Multiplike-AI",
+    notes: "Atualização do AI-Orchestrator",
     pub_date: new Date().toISOString(),
     platforms: {
       "windows-x86_64": {

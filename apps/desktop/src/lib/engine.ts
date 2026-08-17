@@ -11,7 +11,7 @@
  * interface continue navegável e verificável.
  */
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { MODES, type EngineSelection, type FusionPreset, type Mode, type ModelTarget, type UiMode } from "@multiplike/contracts";
+import { MODES, type EngineSelection, type FusionPreset, type Mode, type ModelTarget, type UiMode } from "@orchestrator/contracts";
 import { byok, providerExtraHeaders } from "./byok";
 import {
   buildBriefRequest,

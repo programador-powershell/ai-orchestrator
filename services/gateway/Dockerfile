@@ -9,7 +9,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --home /nonexistent orchestrator
-COPY --from=builder /build/target/release/multiplike-ai-gateway /usr/local/bin/gateway
+COPY --from=builder /build/target/release/ai-orchestrator-gateway /usr/local/bin/gateway
 USER orchestrator
 EXPOSE 8787
 ENV GATEWAY_BIND=0.0.0.0:8787

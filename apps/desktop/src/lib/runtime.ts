@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { RuntimeStatus } from "@multiplike/contracts";
+import type { RuntimeStatus } from "@orchestrator/contracts";
 
 export const runtime = {
   status: () => invoke<RuntimeStatus>("runtime_status"),

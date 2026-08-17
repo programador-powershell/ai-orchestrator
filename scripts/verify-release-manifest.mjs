@@ -8,5 +8,5 @@ const payload = Buffer.from(envelope.payload, "base64");
 const signature = Buffer.from(envelope.signature, "base64");
 if (!verify(null, payload, createPublicKey(readFileSync(publicKeyPath)), signature)) throw new Error("invalid Ed25519 signature");
 const parsed = JSON.parse(payload);
-if (parsed.schemaVersion !== 1 || parsed.product !== "Multiplike-AI") throw new Error("incompatible release manifest");
+if (parsed.schemaVersion !== 1 || parsed.product !== "AI-Orchestrator") throw new Error("incompatible release manifest");
 console.log(`verified ${parsed.product} ${parsed.version}`);

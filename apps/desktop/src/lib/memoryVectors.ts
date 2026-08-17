@@ -20,7 +20,7 @@
  * Coberto por memoryVectors.test.ts.
  */
 
-import type { MemoryItem } from "@multiplike/contracts";
+import type { MemoryItem } from "@orchestrator/contracts";
 
 import { cosine, memoryText } from "./semantic";
 

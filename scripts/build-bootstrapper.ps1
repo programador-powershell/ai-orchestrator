@@ -16,7 +16,7 @@ if ($ManifestPublicKey.Contains('__') -or $ManifestPublicKey.Trim().Length -lt 4
   throw 'ManifestPublicKey não parece ser uma chave Ed25519 em Base64.'
 }
 
-$arguments = @('--filter', '@multiplike/bootstrapper', 'tauri', 'build')
+$arguments = @('--filter', '@orchestrator/bootstrapper', 'tauri', 'build')
 if ($NoBundle) { $arguments += '--no-bundle' }
 
 # Resolve o pnpm sem depender do PATH: binário direto ou via corepack (Node).

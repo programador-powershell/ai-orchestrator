@@ -215,7 +215,7 @@ pub fn extension_import(path: String) -> Result<ExtensionBundle, String> {
     let source = PathBuf::from(&bundle.source_path);
     let destination = dirs::data_local_dir()
         .ok_or("LOCALAPPDATA indisponível")?
-        .join("Multiplike-AI")
+        .join("AI-Orchestrator")
         .join("Extensions")
         .join(safe_name(&bundle.name));
     if destination.exists() {
@@ -229,7 +229,7 @@ pub fn extension_import(path: String) -> Result<ExtensionBundle, String> {
 pub fn extension_list() -> Result<Vec<ExtensionBundle>, String> {
     let root = dirs::data_local_dir()
         .ok_or("LOCALAPPDATA indisponível")?
-        .join("Multiplike-AI")
+        .join("AI-Orchestrator")
         .join("Extensions");
     if !root.exists() {
         return Ok(Vec::new());

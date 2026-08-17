@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { MemoryItem, MemorySearchHit } from "@multiplike/contracts";
+import type { MemoryItem, MemorySearchHit } from "@orchestrator/contracts";
 
 // memory.ts referencia `window` e importa @tauri-apps/api no topo do módulo.
 // Para testar as funções puras em ambiente node, mockamos o invoke e stubamos
@@ -236,12 +236,12 @@ describe("parseOpenAiMemoryExport", () => {
 
   it("aceita objeto {memories: [...]} com campos memory/content/text", () => {
     const payload = JSON.stringify({
-      memories: [{ memory: "usa Windows 11" }, { content: "trabalha na Multiplike" }, { text: "gosta de TDD" }]
+      memories: [{ memory: "usa Windows 11" }, { content: "trabalha na Orchestrator" }, { text: "gosta de TDD" }]
     });
     const entries = parseOpenAiMemoryExport(payload);
     expect(entries.map((entry) => entry.content)).toEqual([
       "usa Windows 11",
-      "trabalha na Multiplike",
+      "trabalha na Orchestrator",
       "gosta de TDD"
     ]);
   });
