@@ -257,6 +257,14 @@
   tarefa — ia para o relatório e era servido como contexto para as tarefas
   dependentes. Agora o bloco é recusado com instrução (resolva ou escale) e o
   resultado final passa por `stripBlocks`.
+- **Duas equipes ao mesmo tempo não disputam a mesma cópia isolada.** O id da
+  tarefa vem do modelo, e modelo gera `t1`; a cópia do repositório era criada com
+  esse id e nada mais. Duas equipes coincidindo no tempo — duas conversas
+  abertas, ou uma sub-equipe ao lado da que a criou — pediam a MESMA cópia, o
+  `git worktree add` recusava a segunda e a tarefa morria com "não foi possível
+  isolar a tarefa", um erro sem relação nenhuma com o trabalho dela. Agora o
+  turno da equipe (único) prefixa o id. O isolamento em si nunca esteve furado: a
+  falha era ruidosa, não silenciosa.
 - **A decisão do portão ecoa no log — e reabrir a conversa não repete a
   pergunta.** A tela fecha o cartão na hora, sem esperar resposta, então nada
   parecia errado enquanto a conversa estava aberta. O `gate` GRAVADO, porém, não
