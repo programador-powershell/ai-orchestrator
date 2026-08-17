@@ -499,6 +499,36 @@ select {
   color: var(--faint);
 }
 
+/* Presença: o bot da vez fazendo a animação do estado (ver PresenceCard no
+   Rail.tsx). O campo do avatar extrapola o SVG de propósito — o overflow
+   visível é o que deixa balões, colchetes e gráficos respirarem ao redor da
+   esfera dentro dos 236px do trilho. */
+.rail-presence {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 12px 6px 6px;
+}
+.rail-presence .grok-host {
+  margin-bottom: 8px;
+}
+.rail-presence-name {
+  margin: 0;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink);
+}
+.rail-presence-state {
+  margin: 0;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.rail-task-head .grok-host {
+  flex: none;
+}
+
 .rail-list {
   display: flex;
   flex-direction: column;

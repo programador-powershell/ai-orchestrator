@@ -106,60 +106,43 @@
 ### :up: V.1.3
 ### :warning: Latest Changes
 
-- **O degrau local do roteamento passou a funcionar — por processo, e no binário
-  normal.** O caminho nativo (cgo) estava parado por duas paredes que não são
-  técnicas: o motor C do Needle vive num projeto à parte, com licença própria e
-  header `cactus_engine.h` (o shim tinha sido escrito contra uma API `needle_*`
-  que **não existe**), e ligar a tag exigiria toolchain C em toda máquina que
-  compila o gateway. O caminho por Python contorna as duas — `pip install
-  cactus-needle` e `needle fetch` trazem um binário único de ~14 MB com modelo,
-  tokenizer e engine **selados dentro**. O gateway sobe o processo, aperta a mão
-  e pergunta por linha JSON; se ele não subir, morrer, responder lixo ou passar
-  de 3 s, o degrau sai e a cascata segue para o modelo grande. A resposta é
-  **conferida** contra os candidatos — processo de terceiro não escolhe
-  especialista que a política da sessão não liberou. Ver
-  `services/needle-sidecar/`.
-- **Cascata completa, exercitada de ponta a ponta contra o gateway de verdade:**
-  `"crie uma aplicação em next.js completa"` decide no **degrau 1** (léxico, µs,
-  sem processo e sem rede) e `"melhora isso aqui"` — que o léxico não resolve —
-  decide no **degrau 2**, o processo local. `cmd/fakeneedle` fala o mesmo
-  protocolo do script Python, para exercitar a fiação inteira em máquina sem
-  Python.
-
-- **Os bots aparecem na barra lateral com PRESENÇA: cinco estados animados por
-  especialista.** O retrato procedural ganhou uma camada de estado
-  (`avatar/presence.ts`) que diz COMO o bot está agora, sem tocar o contrato
-  `Avatar` nem o Go: **ativo** (olhar passeando, piscada em ritmo próprio),
-  **dono da conversa** (anel de ouro pulsando — é o especialista sticky do
-  primeiro input), **trabalhando**, **em espera** (pálpebra caída, esmaecido),
-  **concluído** (pulinho único e os olhos viram arcos felizes) e **falhou**
-  (postura caída, dessaturado). A vida mora nos olhos: o rosto inteiro desliza e
-  pisca por keyframes com `animation-delay` derivado da SEMENTE — dez bots na
-  mesma lista não piscam em coro, e nada usa `Math.random`.
-- **Trabalhando mostra O QUE o especialista faz, não só que está ocupado.** Cada
-  ofício varre com os olhos do seu jeito — o Código LÊ linha a linha, Dados
-  sobem DEGRAUS, a Revisão faz o PÊNDULO, o Design segue a CURVA — e um adereço
-  animado aparece ao lado do corpo: cursor piscando entre colchetes (code),
-  lápis traçando (design), barras medindo (data), pena escrevendo (office),
-  escudo pulsando (security), engrenagem girando (work), faders buscando o ponto
-  (tune), pacote viajando entre nós (fluxo), balão digitando (chat) e delegação
-  pulsando (agent/master). O mapa é `craftOf(id)` em `lib/specialists.ts` — id
-  desconhecido coordena, como o master.
-- **A lista de conversas e as tarefas da equipe trocaram o ícone chapado pelo
-  bot vivo.** Cada conversa mostra o avatar do especialista dono; a ABERTA ganha
-  presença (dono da conversa → trabalhando durante o turno → concluído por
-  alguns segundos quando a resposta chega) e as demais ficam paradas — uma lista
-  inteira de bots agitados seria ruído. Nas tarefas da equipe o tom que
-  `taskState` já derivava vira presença: planejada espera, despachada trabalha,
-  concluída celebra, falha entristece — e quem escalou ESPERA, porque fez uma
-  pergunta e está parado, não quebrado. O master no topo é o termômetro do app:
-  atento em repouso, coordenando durante o turno.
-- **Sem presença, nada muda — garantido por teste.** O SVG exportado pelo
-  laboratório sai byte-idêntico ao de antes; `prefers-reduced-motion` desliga o
-  movimento sem apagar a informação (o esmaecido da espera e a postura da falha
-  são regra estática); e a presença entra na CHAVE do CSS, então o mesmo retrato
-  em estados diferentes não colide no documento. `avatar/presence.test.ts` cobre
-  as três garantias.
+- **O bot de especialista da barra lateral é o "Grok bot": a esfera preta de
+  olhos brancos, animada pelas EXPRESSÕES do Avatar Lab.** A arquitetura é a da
+  especificação fornecida em 2026-08-17 (`avatar/grokSpecialistAvatar.ts`,
+  mantida verbatim): o retrato vem de um MÓDULO carregado por URL com a
+  interface do export JavaScript do Bible Strong Avatar Lab (`createAvatar` +
+  `availableAnimations`), e o wrapper escolhe a ANIMAÇÃO NOMEADA certa para
+  cada especialista em cada estado — o Código trabalha em `working` e celebra
+  em `celebrate`, a Segurança vigia em `suspicious` e varre em `searching`, o
+  Chat atende em `listening`, todo mundo dorme em `sleeping` na espera e se
+  orgulha em `proud` quando é o dono da conversa.
+- **Os cinco estados viram cues visuais ao redor da esfera, nunca no rosto:**
+  ativo respira com um anel sutil; **owner** gira um anel tracejado com três
+  pontos de coroa; **trabalhando** acelera um anel pontilhado com partículas;
+  **em espera** apaga o campo e solta "Zz"; **concluído** pulsa e sela o
+  check. O glifo do ofício (balão, `< >`, gráfico, bézier, rede, pipeline,
+  faders, escudo) fica no canto, na cor do especialista.
+- **O módulo do avatar é SUBSTITUÍVEL sem tocar código.** Hoje
+  `public/avatars/grok-avatar.js` é um stand-in próprio (esfera + 13 animações
+  nomeadas, nenhuma linha do Lab); quando o pacote exportado do estúdio for
+  aprovado (o Lab é AGPL — análise TI/SI pendente, ver
+  `docs/creditos-inspiracao.md`), basta trocar esse arquivo pelo export. A URL
+  do módulo é absoluta de propósito: o dev server do Vite recusa import de
+  `/public` por caminho relativo.
+- **O trilho ganhou o CARTÃO DE PRESENÇA e as tarefas ganharam o bot do
+  trabalhador.** No topo do corpo do trilho, o bot da vez (124px) faz a
+  animação do estado — dono da conversa em repouso (roteamento sticky),
+  trabalhando durante o turno, concluído por alguns segundos quando a resposta
+  chega, master quando a conversa não tem dono. Cada tarefa da equipe mostra o
+  bot do especialista no estado que `taskState` deriva; a falha não existe no
+  vocabulário do wrapper (cinco estados, por decisão da especificação) — o bot
+  dorme e quem diz "falhou" é o ícone e o rótulo da linha. O retrato
+  personalizável do laboratório continua intocado no topo da barra.
+- **Cobertura:** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
+  runtime→estado (`grokVisualStateFromRuntime`), o catálogo de comportamento
+  (8 especialistas × 5 estados), o controller (monta, troca animação por
+  estado, desmonta sem vazar) com um módulo fake injetado por `data:` URL — o
+  mesmo mecanismo do export real — e a interface do stand-in público.
 
 ## :wrench: Instalação
 

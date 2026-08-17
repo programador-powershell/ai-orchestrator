@@ -31,11 +31,18 @@ import {
   Workflow,
   type LucideIcon
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { RailKind, Task } from "@aibot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { BotAvatar } from "../avatar/BotAvatar";
+import {
+  GROK_STATE_LABELS,
+  GrokAvatar,
+  grokSpecialistOf,
+  type GrokSpecialistState
+} from "../avatar/GrokAvatar";
 
 /** O recorte do store que os componentes do crew leem. Deriva do próprio store
  *  para não virar uma segunda declaração do contrato, que envelheceria sozinha. */
@@ -62,6 +69,47 @@ function RailEmpty({ icon: Icon, hint }: { icon: LucideIcon; hint: string }) {
       <Icon size={18} aria-hidden />
       <p className="rail-empty-title">Nada aqui ainda.</p>
       <p className="rail-empty-hint">{hint}</p>
+    </div>
+  );
+}
+
+/* --------------------------- presença do bot ------------------------------ */
+
+/** Quanto tempo o bot comemora depois que a resposta chega. */
+const CELEBRACAO_MS = 4000;
+
+/**
+ * O CARTÃO DE PRESENÇA: o bot da vez, grande o bastante para o campo do ofício
+ * ser legível, fazendo a animação do estado. É a resposta direta ao pedido
+ * "quando fizer a chamada, o especialista aparece na barra lateral animando":
+ * dono da conversa em repouso (roteamento sticky), trabalhando durante o turno,
+ * concluído por alguns segundos quando a resposta chega — e o master quando a
+ * conversa ainda não tem dono.
+ */
+function PresenceCard() {
+  const specialists = useApp((state) => state.specialists);
+  const activeSpecialist = useApp((state) => state.activeSpecialist);
+  const busy = useApp((state) => state.busy);
+
+  const [celebrando, setCelebrando] = useState(false);
+  const antes = useRef(busy);
+  useEffect(() => {
+    const estava = antes.current;
+    antes.current = busy;
+    if (!estava || busy) return;
+    setCelebrando(true);
+    const timer = setTimeout(() => setCelebrando(false), CELEBRACAO_MS);
+    return () => clearTimeout(timer);
+  }, [busy]);
+
+  const state: GrokSpecialistState = busy ? "working" : celebrando ? "completed" : activeSpecialist ? "owner" : "active";
+  const quem = activeSpecialist ? specialistById(specialists, activeSpecialist) : MASTER;
+
+  return (
+    <div className="rail-presence" data-state={state}>
+      <GrokAvatar specialist={grokSpecialistOf(quem.id)} state={state} size={124} title={`${quem.name} — ${GROK_STATE_LABELS[state]}`} />
+      <p className="rail-presence-name">{quem.name}</p>
+      <p className="rail-presence-state">{GROK_STATE_LABELS[state]}</p>
     </div>
   );
 }
@@ -180,17 +228,34 @@ function ToneIcon({ tone }: { tone: TaskTone }) {
   return <Activity size={13} aria-hidden />;
 }
 
+/**
+ * O tom da tarefa É um estado do bot: planejada espera, despachada trabalha,
+ * concluída celebra — e quem escalou fez uma pergunta e está PARADO até a
+ * resposta: espera, não falha. A falha não tem estado no vocabulário do
+ * wrapper (cinco estados, por decisão da especificação): o bot dorme em
+ * espera e quem diz "falhou" é o ícone e o rótulo da própria linha.
+ */
+const TONE_STATE: Record<TaskTone, GrokSpecialistState> = {
+  idle: "waiting",
+  run: "working",
+  ok: "completed",
+  fail: "waiting",
+  ask: "waiting"
+};
+
 function TaskList({ tasks, crew }: { tasks: Task[]; crew: Crew }) {
   return (
     <ul className="rail-list">
       {tasks.map((task) => {
         const state = taskState(task.id, crew);
-        const Icon = SPECIALIST_ICON[task.specialist] ?? Bot;
         return (
           <li key={task.id}>
             <div className="rail-task" data-tone={state.tone} title={task.goal}>
               <span className="rail-task-head">
-                <Icon size={13} aria-hidden />
+                {/* O bot do trabalhador no estado da tarefa: os olhos dizem o
+                    estado (fechados = espera, sorrindo = concluída) e o campo
+                    ao redor diz o ofício, mesmo neste tamanho. */}
+                <GrokAvatar specialist={grokSpecialistOf(task.specialist)} state={TONE_STATE[state.tone]} size={26} />
                 <span className="rail-item-label">{task.title}</span>
               </span>
               <span className="rail-task-state">
@@ -438,6 +503,7 @@ export function Rail() {
 
       {railOpen ? (
         <div className="rail-body">
+          <PresenceCard />
           <p className="rail-kind">{RAIL_TITLE[active.rail] ?? active.rail}</p>
           {renderRail(active.rail)}
         </div>
