@@ -212,7 +212,23 @@ var catalog = []Definition{
 			// que edita o repositório, sem portão de execução.
 			"ship.detect", "ship.dockerfile",
 		},
-		Triggers:        []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript"},
+		// Os radicais de PEDIDO DE CONSTRUÇÃO entraram depois de uma sonda mostrar
+		// que "crie uma aplicação em next.js completa" — o jeito mais comum de
+		// pedir software — não pontuava em NENHUM especialista e caía na
+		// clarificação. A lista antiga só conhecia o vocabulário de quem já está
+		// DENTRO do código (bug, refator, stack trace), e não o de quem está
+		// pedindo um.
+		//
+		// A régua para entrar aqui: o radical tem de tornar ESTE especialista mais
+		// provável que os outros. "repositorio", "sistema", "programa", "docker" e
+		// "login" foram tentados e REMOVIDOS — aparecem tanto num pedido de
+		// segurança quanto num de código, e o efeito medido foi o oposto do
+		// pretendido: "faça uma auditoria de segurança no repositório" passou a
+		// empatar com `security`, a margem mínima matou a decisão dos dois, e o
+		// pedido caiu na clarificação.
+		Triggers: []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript",
+			"aplicac", "aplicativo", "next.js", "nextjs", "react", "vue.js", "angular", "django", "flask",
+			"api", "backend", "front-end", "frontend", "biblioteca", "framework", "microservic", "crud"},
 		PreferredSkills: []string{"code", "tools", "long-context"},
 		Avatar: Avatar{
 			Seed: 22, Shape: "squircle", Eyes: "visor", Mouth: "line",

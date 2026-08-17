@@ -89,6 +89,6 @@ describe("applyEnvelope: notice", () => {
     expect(after.busy).toBe(true);
     expect(after.thinking).toBe("trabalhando");
     expect(after.lines).toEqual(before.lines);
-    expect(after.pendingApproval).toBeNull();
+    expect(after.pendingApprovals).toEqual([]);
   });
 });

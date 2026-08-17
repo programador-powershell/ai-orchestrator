@@ -42,7 +42,12 @@ function clock(ms: number) {
 }
 
 export function ApprovalCard() {
-  const request = useApp((state) => state.pendingApproval);
+  // A CABEÇA da fila. Os outros pedidos continuam vivos atrás dela — antes o
+  // segundo sobrescrevia o primeiro e os invisíveis morriam no relógio,
+  // segurando a onda da equipe inteira.
+  const queue = useApp((state) => state.pendingApprovals);
+  const request = queue[0] ?? null;
+  const waiting = Math.max(0, queue.length - 1);
   const decide = useApp((state) => state.decide);
 
   const [remaining, setRemaining] = useState(APPROVAL_TTL_MS);
@@ -105,6 +110,17 @@ export function ApprovalCard() {
             <Clock size={13} aria-hidden />
             {expired ? "expirado" : `expira em ${clock(remaining)}`}
           </span>
+          {waiting > 0 ? (
+            // Sem este contador, decidir um cartão e ver outro aparecer no lugar
+            // parece defeito — e é justamente o que acontece numa onda de equipe.
+            <span
+              className="approval-queue"
+              title="Outros pedidos desta onda esperando decisão"
+              aria-label={`mais ${waiting} pedido(s) na fila`}
+            >
+              +{waiting} na fila
+            </span>
+          ) : null}
         </header>
 
         <p id="approval-summary" className="approval-summary">

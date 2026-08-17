@@ -214,8 +214,9 @@ func (g *Gate) Evaluate(specialistID, tool string, risk protocol.Risk, digest st
 			return DecisionAllow, "você já aprovou esta ferramenta com estes mesmos argumentos"
 		}
 	}
-	if _, ok := g.session[tool]; ok {
-		return DecisionAllow, fmt.Sprintf("%s foi liberada para a sessão inteira", tool)
+	if _, ok := g.session[sessionGrantKey(specialistID, tool)]; ok {
+		return DecisionAllow, fmt.Sprintf("%s foi liberada para %s nesta sessão",
+			tool, definition.Name)
 	}
 
 	// (5) O modo.
@@ -256,8 +257,17 @@ func (g *Gate) Evaluate(specialistID, tool string, risk protocol.Risk, digest st
 // prender, a concessão viraria exatamente o cheque em branco por nome de
 // ferramenta que este pacote existe para impedir. Escopo desconhecido também
 // não guarda nada, pelo mesmo motivo de sempre — na dúvida, fecha.
-func (g *Gate) Grant(scope, tool, digest string) {
+// Grant registra o que a pessoa liberou.
+//
+// `specialistID` entra na chave do escopo "session" porque a frase da tela é
+// "liberada para a sessão", e não "liberada para todo mundo": sem ele, aprovar
+// `fs.write` olhando o especialista de código liberava a mesma ferramenta para o
+// de design, que também a tem no catálogo. O escopo "digest" já vem preso ao
+// par (projeto, especialista) pelo próprio digest — ver `digestOf` no
+// supervisor.
+func (g *Gate) Grant(scope, specialistID, tool, digest string) {
 	scope = strings.ToLower(strings.TrimSpace(scope))
+	specialistID = strings.TrimSpace(specialistID)
 	tool = strings.TrimSpace(tool)
 	digest = strings.TrimSpace(digest)
 	if tool == "" {
@@ -273,8 +283,13 @@ func (g *Gate) Grant(scope, tool, digest string) {
 		}
 		g.digests[grantKey(tool, digest)] = struct{}{}
 	case "session":
-		g.session[tool] = struct{}{}
+		g.session[sessionGrantKey(specialistID, tool)] = struct{}{}
 	}
+}
+
+// sessionGrantKey prende a liberação de sessão ao especialista que a recebeu.
+func sessionGrantKey(specialistID, tool string) string {
+	return specialistID + grantSeparator + tool
 }
 
 // Revoke apaga tudo o que foi concedido. É o que o botão "revogar aprovações"
@@ -299,8 +314,10 @@ func (g *Gate) Granted() []string {
 		tool, digest, _ := strings.Cut(key, grantSeparator)
 		out = append(out, fmt.Sprintf("%s — argumentos %s", tool, shortDigest(digest)))
 	}
-	for tool := range g.session {
-		out = append(out, fmt.Sprintf("%s — sessão inteira", tool))
+	for key := range g.session {
+		specialistID, tool, _ := strings.Cut(key, grantSeparator)
+		out = append(out, fmt.Sprintf("%s — %s nesta sessão",
+			tool, specialist.GetOrDefault(specialistID).Name))
 	}
 	sort.Strings(out)
 	return out

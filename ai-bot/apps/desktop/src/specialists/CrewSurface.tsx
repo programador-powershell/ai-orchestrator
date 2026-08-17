@@ -429,10 +429,26 @@ export function CrewSurface() {
                 </p>
               ) : settled ? (
                 <p className="card-body">
-                  Resposta enviada como prompt — o orquestrador retoma a tarefa a partir dela.
+                  Resposta enviada como mensagem nova — o orquestrador replaneja a partir dela.
                 </p>
               ) : (
                 <>
+                  {crew.gate ? (
+                    /*
+                     * O aviso existe porque a ação daqui NÃO é a que ela parece.
+                     * Responder envia uma MENSAGEM NOVA, e mensagem nova cancela o
+                     * turno em curso — que, com o portão aberto, é justamente o
+                     * turno que está segurando a equipe. O plano morre no portão e
+                     * a onda seguinte nunca é despachada. Quem quer só destravar a
+                     * onda usa os botões do portão; responder aqui recomeça pelo
+                     * orquestrador, com o trabalho da onda 1 já registrado no log.
+                     */
+                    <p className="card-body card-warn" role="note">
+                      A equipe está parada no portão. Responder aqui <strong>encerra este plano</strong>{" "}
+                      e recomeça pelo orquestrador — para só seguir com a onda seguinte, use os
+                      botões do portão.
+                    </p>
+                  ) : null}
                   {escalation.options && escalation.options.length > 0 ? (
                     <div className="crew-escalation-options">
                       {escalation.options.map((option) => (

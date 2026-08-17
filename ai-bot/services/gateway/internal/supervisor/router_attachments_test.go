@@ -187,8 +187,11 @@ func TestRouteExplicitBeatsAttachment(t *testing.T) {
 // Anexo cujo dono está fora da política NÃO pontua: rotear para quem o admin
 // barrou seria usar o anexo como porta de trás da lista.
 func TestRouteAttachmentOutsideAllowedIsIgnored(t *testing.T) {
+	// Texto SEM sinal léxico, para o anexo ser a única coisa capaz de decidir —
+	// é ele que está sob teste. Com um texto que decide sozinho, o cenário
+	// passaria pelo motivo errado.
 	route := NewRouter(nil, nil).Route(context.Background(), RouteInput{
-		Text:        bugText,
+		Text:        noSignalText,
 		Allowed:     []string{"chat", "code"},
 		Attachments: []string{"contrato.docx"},
 	})

@@ -257,6 +257,56 @@
   tarefa — ia para o relatório e era servido como contexto para as tarefas
   dependentes. Agora o bloco é recusado com instrução (resolva ou escale) e o
   resultado final passa por `stripBlocks`.
+- **"Crie uma aplicação em next.js completa" agora vai para o Código — no
+  primeiro degrau, sem gastar modelo.** Uma sonda no roteador mostrou que o jeito
+  mais comum de pedir software não pontuava em especialista NENHUM: o léxico só
+  conhecia o vocabulário de quem já está DENTRO do código (bug, refator, stack
+  trace), e não o de quem está pedindo um. O pedido caía na clarificação. Junto
+  veio o segundo problema: o peso de um radical era o COMPRIMENTO dele, e "sql",
+  "erd", "css" e "gif" têm três letras sem ser ambíguos em nada — "desenhe o
+  banco e exporte o SQL" pontuava 0,46, abaixo do limiar, e ia para o modelo
+  grande decidir o óbvio. **Palavra inteira** passou a pesar mais que prefixo, o
+  que de quebra desinfla o falso positivo de "cor" dentro de "corta". Medido:
+  aplicação Next.js 0,00 → **1,00**; banco+SQL 0,46 → **0,68**; vídeo 0,46 →
+  **0,60**; equipe em paralelo 0,46 → **0,68**.
+- **Uma fila de aprovações, no lugar de um slot.** Uma onda de equipe com quatro
+  trabalhadores dispara quatro pedidos ao mesmo tempo, e o segundo SOBRESCREVIA o
+  primeiro: a pessoa via um cartão, decidia um, e os outros ficavam presos até o
+  prazo de dez minutos — recusados por silêncio, segurando a onda, o despacho e o
+  turno do dono da conversa junto. Com `maxConcurrency` até 32, 31 pedidos podiam
+  morrer sem nunca aparecer na tela. O cartão agora mostra "+N na fila".
+- **A concessão de aprovação ficou presa a quem a recebeu.** "Aprovar sempre" com
+  digest de `ferramenta+argumentos` puro valia em qualquer lugar: o sim dado
+  olhando o Código no repositório A liberava o mesmo caminho relativo no
+  repositório B, e liberava também o Design, que tem `fs.write` no catálogo.
+  Agora o digest carrega o par (projeto, especialista), e a liberação "para a
+  sessão" é por especialista.
+- **A decisão humana entra no log durável.** Ficava `tool.call → approval.request
+  → tool.result(ok)`, e lendo depois não dava para distinguir "a pessoa
+  autorizou" de "a política era aprovar tudo" — sumia justamente o registro do
+  último degrau antes do efeito colateral.
+- **Orçamento de contexto: a colagem grande não mata mais a conversa.** O corte
+  era por CONTAGEM (40 mensagens) e nunca por tamanho, e a janela do modelo
+  (`Model.Context`) não era lida em lugar nenhum. Colar 116 KB de log fazia o
+  turno 1 falhar com 400 — e o turno 2 ("oi") falhar com o MESMO 400, para
+  sempre, porque a colagem voltava no prompt. Agora o prompt é cortado por
+  tamanho, mensagem de sistema nunca é descartada (a política não é negociável) e
+  uma colagem que não cabe sozinha entra truncada com a marca do corte.
+- **O resultado das ferramentas voltou ao histórico.** Só `KindMessage` era
+  dobrado: no turno seguinte o modelo via a própria afirmação ("o arquivo diz
+  42") e nenhum traço do que o arquivo continha. Ou relia — custo e nova
+  aprovação — ou seguia em cima da própria alegação, que é como resposta
+  plausível vira invenção.
+- **Cada bot fala na própria bolha.** Numa onda, dois trabalhadores streamavam no
+  mesmo turno e o segundo não abria linha: o texto dos dois era concatenado, token
+  a token, sob o avatar do primeiro. E depois de uma delegação, a conclusão de
+  quem delegou caía na bolha aberta pelo delegado — a resposta final aparecia
+  assinada pelo bot errado. A linha agora é achada por `turn` + **quem falou**.
+- **O cartão da escalação parou de prometer o que não cumpre.** Responder por ali
+  envia uma mensagem nova, e mensagem nova cancela o turno em curso — que, com o
+  portão aberto, é o turno que segura a equipe. O plano morria enquanto o texto
+  dizia "o orquestrador retoma a tarefa". Agora o cartão avisa, e quem quer só
+  destravar a onda usa os botões do portão.
 - **Anexo sem texto voltou a ser um pedido.** O composer libera esse envio de
   propósito, e o turno o recusava na PRIMEIRA linha — antes de existir id de
   turno para carimbar qualquer envelope. Nada chegava à tela: o `busy` do cliente

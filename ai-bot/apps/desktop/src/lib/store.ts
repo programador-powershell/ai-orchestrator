@@ -98,7 +98,17 @@ export interface AppData {
   busy: boolean;
   /** Rótulo do orbe; "" quando parado. */
   thinking: string;
-  pendingApproval: ApprovalRequest | null;
+  /**
+   * Os pedidos de aprovação ABERTOS, em ordem de chegada.
+   *
+   * Fila, e não um slot só: uma onda de equipe com quatro trabalhadores dispara
+   * quatro pedidos ao mesmo tempo, e o slot único fazia o segundo SOBRESCREVER o
+   * primeiro. A pessoa via um cartão, decidia um, e os outros ficavam presos até
+   * o prazo de dez minutos — recusados por silêncio, segurando a onda inteira,
+   * o despacho e o turno do dono da conversa junto. Com `maxConcurrency` até 32,
+   * 31 pedidos podiam morrer sem nunca aparecer na tela.
+   */
+  pendingApprovals: ApprovalRequest[];
   /**
    * A pergunta que o supervisor fez e está esperando responder. Enquanto ela
    * existe o turno está PARADO do outro lado — sem mostrá-la, o orbe gira até o
@@ -210,7 +220,7 @@ export function initialAppData(): AppData {
     specialistOverride: "",
     busy: false,
     thinking: "",
-    pendingApproval: null,
+    pendingApprovals: [],
     pendingAsk: null,
     crew: emptyCrew(),
     environment: DEFAULT_ENVIRONMENT,
@@ -255,11 +265,29 @@ function isSurface(value: string): value is Surface {
  * mais de uma resposta: fechada a primeira, o delta seguinte tem de abrir linha
  * nova em vez de reescrever a que a pessoa já leu.
  */
-function openLineIndex(lines: ConversationLine[], turn: string | undefined): number {
+/**
+ * A linha ABERTA do turno **daquele falante**.
+ *
+ * O falante entra na chave porque o turno sozinho não identifica uma bolha. Dois
+ * casos provavam isso:
+ *
+ * - numa onda de equipe, dois trabalhadores streamam no mesmo turno (`crew-…`) e
+ *   o segundo não abria linha nova — o texto dele era concatenado na do primeiro,
+ *   token a token, sob o avatar do primeiro;
+ * - depois de uma delegação, o delegado deixava uma bolha aberta e a resposta
+ *   FINAL de quem delegou caía dentro dela, assinada pelo bot errado.
+ */
+function openLineIndex(
+  lines: ConversationLine[],
+  turn: string | undefined,
+  speakerId?: string
+): number {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
     if (!line) continue;
-    if (line.role === "assistant" && line.turn === turn && line.streaming === true) return index;
+    if (line.role !== "assistant" || line.turn !== turn || line.streaming !== true) continue;
+    if (speakerId !== undefined && line.speakerId !== speakerId) continue;
+    return index;
   }
   return -1;
 }
@@ -280,6 +308,7 @@ function newLine(envelope: Envelope, patch: Partial<ConversationLine>): Conversa
     seq: envelope.seq,
     turn: envelope.turn,
     role: "assistant",
+    speakerId: envelope.from.id,
     text: "",
     ts: envelope.ts,
     ...patch
@@ -357,6 +386,37 @@ function openDelegationIndex(list: Delegate[], incoming: Delegate): number {
  * para a UI não ter de deduzir do estado da tela — deduzir dá certo até a
  * conversa trocar de especialista no meio, que aqui é o caso normal.
  */
+/**
+ * Tira UM pedido da fila pelo `callId`, devolvendo a MESMA fila quando não havia
+ * o que tirar.
+ *
+ * A identidade importa: o redutor é comparado por referência lá em cima para
+ * decidir se houve mudança, e devolver um array novo a cada `tool.result`
+ * repintaria a tela inteira a cada resultado de ferramenta.
+ */
+function dropApproval(queue: ApprovalRequest[], callId: string): ApprovalRequest[] {
+  if (!queue.some((item) => item.callId === callId)) return queue;
+  return queue.filter((item) => item.callId !== callId);
+}
+
+/**
+ * O índice da ÚLTIMA fala de assistente do turno, de quem quer que seja.
+ *
+ * Serve para uma pergunta só: "alguém falou depois de mim?". Os deltas de uma
+ * equipe chegam intercalados e cada trabalhador acha a própria bolha pelo id;
+ * já a MENSAGEM final de quem delegou não pode voltar para uma bolha antiga
+ * quando outro bot falou no meio — a conclusão apareceria acima da consulta que
+ * a produziu, e a conversa se leria de trás para a frente.
+ */
+function lastAssistantIndex(lines: ConversationLine[], turn: string | undefined): number {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line) continue;
+    if (line.role === "assistant" && line.turn === turn) return index;
+  }
+  return -1;
+}
+
 function speakerOf(envelope: Envelope, fallback: string): string {
   const specialist = envelope.from.specialist;
   if (typeof specialist === "string" && specialist !== "") return specialist;
@@ -439,16 +499,18 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "delta": {
       const delta = payloadOf<Delta>(envelope);
       if (!delta || delta.text === "") return state;
-      const index = openLineIndex(state.lines, envelope.turn);
+      const speaker = speakerOf(envelope, state.activeSpecialist);
+      const index = openLineIndex(state.lines, envelope.turn, envelope.from.id);
       if (index < 0) {
-        // Delta sem rota antes (transporte sem stream, replay parcial): abre a
-        // linha com o especialista corrente em vez de perder o texto.
+        // Delta sem rota antes (transporte sem stream, replay parcial), ou o
+        // primeiro delta de OUTRO falante no mesmo turno: abre linha própria em
+        // vez de perder o texto — ou de colá-lo na bolha de quem não o disse.
         return {
           ...state,
           lines: [
             ...state.lines,
             newLine(envelope, {
-              specialist: speakerOf(envelope, state.activeSpecialist),
+              specialist: speaker,
               model: state.activeModel,
               text: delta.text,
               streaming: true
@@ -488,8 +550,12 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
         };
       }
 
-      const index = openLineIndex(state.lines, envelope.turn);
       const specialist = speakerOf(envelope, message.specialist ?? state.activeSpecialist);
+      // A bolha só é reaproveitada se ainda for a ÚLTIMA do turno. Se outro bot
+      // falou no meio — o delegado, um trabalhador —, a conclusão abre bolha
+      // nova, no fim, que é onde quem lê espera encontrá-la.
+      const aberta = openLineIndex(state.lines, envelope.turn, envelope.from.id);
+      const index = aberta >= 0 && aberta === lastAssistantIndex(state.lines, envelope.turn) ? aberta : -1;
       if (index < 0) {
         return {
           ...state,
@@ -513,7 +579,11 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
         lines: patchLine(state.lines, index, {
           text: message.text,
           streaming: false,
-          specialist: line.specialist ?? specialist,
+          // A AUTORIA DO ENVELOPE VENCE. Antes era `line.specialist ?? specialist`,
+          // e `??` só cai no fallback com null/undefined — a bolha aberta pelo
+          // delegado já vinha com `specialist` preenchido, então a conclusão de
+          // quem delegou saía assinada pelo bot errado.
+          specialist,
           model: line.model ?? message.model
         })
       };
@@ -555,15 +625,12 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       if (!result) return state;
       // A ferramenta executou (ou falhou): o pedido de aprovação dela morreu.
       // Sem isto, o modal ficaria de pé sobre uma decisão que já aconteceu.
-      const pendingApproval =
-        state.pendingApproval && state.pendingApproval.callId === result.callId
-          ? null
-          : state.pendingApproval;
+      const pendingApprovals = dropApproval(state.pendingApprovals, result.callId);
       const index = currentLineIndex(state.lines, envelope.turn);
       if (index < 0) {
         return {
           ...state,
-          pendingApproval,
+          pendingApprovals,
           lines: [
             ...state.lines,
             newLine(envelope, {
@@ -578,7 +645,7 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       if (!line) return state;
       return {
         ...state,
-        pendingApproval,
+        pendingApprovals,
         lines: patchLine(state.lines, index, { toolResults: [...(line.toolResults ?? []), result] })
       };
     }
@@ -586,17 +653,18 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "approval.request": {
       const request = payloadOf<ApprovalRequest>(envelope);
       if (!request) return state;
-      return { ...state, pendingApproval: request };
+      // Reentrega do mesmo pedido (replay, reconexão) não duplica o cartão.
+      if (state.pendingApprovals.some((item) => item.callId === request.callId)) return state;
+      return { ...state, pendingApprovals: [...state.pendingApprovals, request] };
     }
 
     case "approval.decision": {
       const decision = payloadOf<ApprovalDecision>(envelope);
       if (!decision) return state;
       // Eco da decisão (outra janela, ou a nossa de volta pelo log).
-      if (state.pendingApproval && state.pendingApproval.callId === decision.callId) {
-        return { ...state, pendingApproval: null };
-      }
-      return state;
+      const restantes = dropApproval(state.pendingApprovals, decision.callId);
+      if (restantes === state.pendingApprovals) return state;
+      return { ...state, pendingApprovals: restantes };
     }
 
     case "ask": {
@@ -841,7 +909,7 @@ function conversationReset(): Partial<AppData> {
     notices: [],
     busy: false,
     thinking: "",
-    pendingApproval: null,
+    pendingApprovals: [],
     // A pergunta pertencia ao turno da conversa anterior; mantê-la de pé sobre
     // outra conversa pediria resposta para algo que ninguém mais vai ler.
     pendingAsk: null,
@@ -936,7 +1004,7 @@ export const useApp = create<AppState>()(
 
       decide: (callId, allow, scope) => {
         transport?.send<ApprovalDecision>("approval.decision", { callId, allow, scope });
-        set({ pendingApproval: null });
+        set((state) => ({ pendingApprovals: dropApproval(state.pendingApprovals, callId) }));
       },
 
       decideGate: (gateId, decision) => {

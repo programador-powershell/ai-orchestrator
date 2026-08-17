@@ -557,8 +557,18 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 			// Radical específico vale mais que genérico: "vulnerab" só aparece
 			// em pedido de segurança, "test" aparece em qualquer lugar.
 			weight := float64(len(needle))
-			if isWordStart(normalized, position) {
-				// Casar no começo da palavra distingue "cor" de "corrige".
+			switch {
+			case isWholeWord(normalized, position, len(needle)):
+				// PALAVRA INTEIRA é o sinal mais forte que este degrau tem, e o
+				// comprimento sozinho não o captura: "sql", "erd", "css" e "gif"
+				// têm três letras e não são ambíguos em nada. Sem este bônus, um
+				// pedido limpo como "desenhe o banco de dados e exporte o SQL"
+				// pontuava 0,46 — abaixo do limiar — e ia parar na clarificação ou
+				// no modelo grande, gastando rede para decidir o óbvio.
+				weight *= 2.2
+			case isWordStart(normalized, position):
+				// Casar só no começo da palavra é mais fraco, e de propósito: é
+				// aqui que mora o falso positivo de "cor" dentro de "corta".
 				weight *= 1.5
 			}
 			raw += weight
@@ -596,6 +606,24 @@ func Score(text string, candidates []specialist.Definition) []Scored {
 }
 
 // isWordStart diz se a posição começa uma palavra.
+// isWholeWord diz se o radical casou como PALAVRA, e não como pedaço de outra.
+//
+// O texto já passou por `Normalize` (minúsculas, sem acento), então basta olhar
+// os vizinhos: letra ou dígito de qualquer um dos lados significa que o radical
+// é um pedaço — "cor" dentro de "corta". O ponto NÃO conta como letra, e é por
+// isso que "next.js" casa inteiro em "em next.js completa".
+func isWholeWord(text string, position, length int) bool {
+	if !isWordStart(text, position) {
+		return false
+	}
+	end := position + length
+	if end >= len(text) {
+		return true
+	}
+	next := rune(text[end])
+	return !unicode.IsLetter(next) && !unicode.IsDigit(next)
+}
+
 func isWordStart(text string, position int) bool {
 	if position == 0 {
 		return true

@@ -269,7 +269,7 @@ func TestGrantDigestUnlocksOnlyTheSameArguments(t *testing.T) {
 
 	assertDecision(t, gate, "code", tool, protocol.RiskWrite, digest, DecisionAsk)
 
-	gate.Grant("digest", tool, digest)
+	gate.Grant("digest", "code", tool, digest)
 
 	reason := assertDecision(t, gate, "code", tool, protocol.RiskWrite, digest, DecisionAllow)
 	if !strings.Contains(reason, "mesmos argumentos") {
@@ -289,19 +289,19 @@ func TestGrantIgnoresScopesThatWouldWidenTheYes(t *testing.T) {
 
 	// "once" não guarda nada: a chamada em curso já foi liberada por quem
 	// clicou, e guardar transformaria uma resposta pontual em regra.
-	gate.Grant("once", "fs.write", digest)
+	gate.Grant("once", "code", "fs.write", digest)
 	assertDecision(t, gate, "code", "fs.write", protocol.RiskWrite, digest, DecisionAsk)
 
 	// digest vazio com escopo "digest" seria o cheque em branco por nome.
-	gate.Grant("digest", "fs.write", "   ")
+	gate.Grant("digest", "code", "fs.write", "   ")
 	assertDecision(t, gate, "code", "fs.write", protocol.RiskWrite, digest, DecisionAsk)
 
 	// Escopo desconhecido não guarda nada.
-	gate.Grant("para-sempre", "fs.write", digest)
+	gate.Grant("para-sempre", "code", "fs.write", digest)
 	assertDecision(t, gate, "code", "fs.write", protocol.RiskWrite, digest, DecisionAsk)
 
 	// Ferramenta vazia não guarda nada.
-	gate.Grant("session", "   ", digest)
+	gate.Grant("session", "code", "   ", digest)
 	if granted := gate.Granted(); len(granted) != 0 {
 		t.Errorf("Granted: esperava nenhuma concessão guardada, obteve %v", granted)
 	}
@@ -311,13 +311,13 @@ func TestGrantSessionScopeIsWiderAndRevokeClearsEverything(t *testing.T) {
 	gate := editsGate(t)
 	const tool = "fs.write"
 
-	gate.Grant("session", tool, "")
+	gate.Grant("session", "code", tool, "")
 	reason := assertDecision(t, gate, "code", tool, protocol.RiskWrite, "qualquer-digest", DecisionAllow)
-	if !strings.Contains(reason, "sessão inteira") {
-		t.Errorf("motivo da liberação por sessão: esperava dizer que vale para a sessão inteira, obteve %q", reason)
+	if !strings.Contains(reason, "nesta sessão") {
+		t.Errorf("motivo da liberação por sessão: esperava dizer que vale para o especialista nesta sessão, obteve %q", reason)
 	}
 
-	gate.Grant("digest", "fs.patch", "aprovado0001")
+	gate.Grant("digest", "code", "fs.patch", "aprovado0001")
 	if granted := gate.Granted(); len(granted) != 2 {
 		t.Fatalf("Granted: esperava 2 concessões descritas, obteve %v", granted)
 	}
@@ -383,4 +383,21 @@ func TestPolicyIsolaAFatiaDeModelos(t *testing.T) {
 	if got := gate.Policy(); got.AllowedModels[0] != "gpt-5" {
 		t.Fatalf("a lista de modelos foi reescrita por fora: %v", got.AllowedModels)
 	}
+}
+
+// A liberação "para a sessão" fica presa a QUEM a recebeu.
+//
+// O mapa era `map[tool]`: aprovar `fs.write` olhando o especialista de código
+// liberava a mesma ferramenta para o de design, que também a tem no catálogo. O
+// "sim" foi dado olhando um bot; é a ele que ele pertence.
+func TestSessionGrantNaoVazaParaOutroEspecialista(t *testing.T) {
+	gate := editsGate(t)
+	const tool = "fs.write"
+
+	gate.Grant("session", "code", tool, "")
+
+	// Quem recebeu passa.
+	assertDecision(t, gate, "code", tool, protocol.RiskWrite, "qualquer", DecisionAllow)
+	// Quem NÃO recebeu continua perguntando, mesmo tendo a ferramenta no catálogo.
+	assertDecision(t, gate, "design", tool, protocol.RiskWrite, "qualquer", DecisionAsk)
 }

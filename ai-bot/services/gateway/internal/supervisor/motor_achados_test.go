@@ -356,3 +356,160 @@ func TestCabecalhoDePoliticaMantemAOrdem(t *testing.T) {
 		t.Errorf("sem admin e sem pacote esperava só o especialista, vieram %d", len(magro))
 	}
 }
+
+/* ------------------------ o pedido real de quem usa ----------------------- */
+
+// Os pedidos como as pessoas realmente os escrevem decidem no PRIMEIRO degrau.
+//
+// A sonda que originou este teste mostrou o buraco: "crie uma aplicação em
+// next.js completa" — o jeito mais comum de pedir software — não pontuava em
+// especialista NENHUM e ia parar na clarificação. O léxico só conhecia o
+// vocabulário de quem já está dentro do código (bug, refator, stack trace), e
+// não o de quem está pedindo um. E pedidos limpos como "exporte o SQL"
+// pontuavam 0,46, abaixo do limiar, porque o peso era o COMPRIMENTO do radical:
+// "sql" tem três letras e não é ambíguo em nada.
+//
+// Decidir aqui é o que torna o produto barato: zero rede, zero token, µs.
+func TestPedidosComunsDecidemNoFastRouter(t *testing.T) {
+	casos := []struct{ texto, dono string }{
+		{"crie uma aplicação em next.js completa", "code"},
+		{"crie um app react com login e api", "code"},
+		{"desenhe o banco de dados de cobrança e exporte o SQL", "data"},
+		{"monte a apresentação do trimestre em pptx", "office"},
+		{"faça uma auditoria de segurança no repositório", "security"},
+		{"quebre esse projeto em tarefas e toque em paralelo", "agent"},
+	}
+	router := NewRouter(nil, forbiddenClassifier{t})
+	for _, caso := range casos {
+		t.Run(caso.dono, func(t *testing.T) {
+			rota := router.Route(context.Background(), RouteInput{Text: caso.texto})
+			if rota.Specialist != caso.dono {
+				t.Errorf("%q foi para %q (motivo %s, conf %.2f); esperava %q",
+					caso.texto, rota.Specialist, rota.Reason, rota.Confidence, caso.dono)
+			}
+			if rota.Reason != protocol.RouteHeuristic {
+				t.Errorf("%q decidiu por %q — o fast router tinha de resolver sozinho, "+
+					"sem gastar modelo", caso.texto, rota.Reason)
+			}
+		})
+	}
+}
+
+// Palavra inteira pesa mais que prefixo — é o que separa "sql" de "cor" dentro
+// de "corta".
+func TestPalavraInteiraPesaMaisQuePrefixo(t *testing.T) {
+	candidatos := specialist.All()
+
+	inteira := Score("exporte o sql", candidatos)
+	prefixo := Score("exporte o sqlite3zzz", candidatos)
+	if len(inteira) == 0 || len(prefixo) == 0 {
+		t.Fatal("os dois textos tinham de pontuar em alguém")
+	}
+	if inteira[0].Confidence <= prefixo[0].Confidence {
+		t.Errorf("palavra inteira (%.3f) tinha de pesar mais que prefixo (%.3f)",
+			inteira[0].Confidence, prefixo[0].Confidence)
+	}
+}
+
+// O cenário do produto, de ponta a ponta: "crie uma aplicação em next.js
+// completa".
+//
+// O que este teste exercita DE VERDADE é o roteamento — offline, determinístico,
+// sem modelo nenhum: o pedido tem de virar uma conversa de CÓDIGO, e o dono tem
+// de ficar GRAVADO na sessão. A fala do modelo é roteirizada (não há provedor
+// configurado nesta estação), e serve para exercitar o resto do caminho: o dono
+// chama o especialista de design no meio do turno, o popup abre e fecha, e quem
+// conclui é o dono — não o convidado.
+func TestPedidoDeAplicacaoViraConversaDeCodigoEChamaODesign(t *testing.T) {
+	dataStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("abrir o store: %v", err)
+	}
+	t.Cleanup(func() { dataStore.Close() })
+
+	// Conversa NOVA: sem dono. É o primeiro input que decide.
+	const sessionID = "s-nextjs"
+	if _, err := dataStore.CreateSession(store.SessionMeta{ID: sessionID, Model: "m1"}); err != nil {
+		t.Fatalf("criar sessão: %v", err)
+	}
+
+	bloco := delegateFence + "\n{\"specialist\":\"design\",\"goal\":\"defina a identidade visual e o tema\"}\n```"
+
+	provider := newRoutedProvider(t, []route{
+		{trigger: "Resultado da delegação", answer: "App Next.js pronto: rotas, layout e o tema que o design definiu."},
+		{trigger: "identidade visual", answer: "paleta escura, tipografia Inter, cantos 12px"},
+		{trigger: "next.js", answer: "vou montar o projeto e pedir o visual ao design\n\n" + bloco},
+	}, "sem rota")
+
+	registry := NewRegistry()
+	supervisor := New(Deps{
+		Store:  dataStore,
+		Bus:    eventbus.New(dataStore),
+		Models: scriptedRouter(provider.server.URL),
+		Gate:   permissions.NewGate(permissions.Policy{Mode: permissions.ModeAll, AgentTools: true}),
+		Tools:  registry,
+		// Sem Needle e sem classificador de modelo: se o fast router não decidir,
+		// o turno vira pergunta de clarificação e o teste falha — que é
+		// exatamente o que acontecia antes.
+		Router: NewRouter(nil, nil),
+	})
+
+	if err := supervisor.Prompt(motorContext(t), sessionID,
+		protocol.Prompt{Text: "crie uma aplicação em next.js completa"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	// 1. O dono da conversa é o CODE, decidido no primeiro degrau e GRAVADO.
+	meta, err := dataStore.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("ler a sessão: %v", err)
+	}
+	if meta.Specialist != "code" {
+		t.Errorf("o dono gravado na conversa é %q; esperava \"code\"", meta.Specialist)
+	}
+	rotas := envelopesByKind(t, dataStore, sessionID, protocol.KindRoute)
+	if len(rotas) != 1 {
+		t.Fatalf("esperava 1 envelope de rota, obtive %d", len(rotas))
+	}
+	var rota protocol.Route
+	if err := rotas[0].Decode(&rota); err != nil {
+		t.Fatalf("decodificar a rota: %v", err)
+	}
+	if rota.Reason != protocol.RouteHeuristic {
+		t.Errorf("a rota saiu por %q — este pedido tem de ser resolvido pelo fast router, "+
+			"sem gastar modelo nenhum", rota.Reason)
+	}
+	if rota.Surface != string(specialist.SurfaceEditor) {
+		t.Errorf("a tela devia virar o editor de código, veio %q", rota.Surface)
+	}
+
+	// 2. Nenhuma pergunta de clarificação: o pedido era claro.
+	if perguntas := envelopesByKind(t, dataStore, sessionID, protocol.KindAsk); len(perguntas) != 0 {
+		t.Errorf("o motor perguntou de quem era o pedido %d vez(es) — ele decidia sozinho", len(perguntas))
+	}
+
+	// 3. O design foi chamado no meio do turno, e o popup abriu E fechou.
+	delegacoes := delegateEnvelopes(t, dataStore, sessionID)
+	if len(delegacoes) != 2 {
+		t.Fatalf("esperava o par abre/fecha da delegação, obtive %d: %+v", len(delegacoes), delegacoes)
+	}
+	if delegacoes[0].From != "code" || delegacoes[0].To != "design" {
+		t.Errorf("de/para da delegação: %+v", delegacoes[0])
+	}
+	if delegacoes[0].Done || !delegacoes[1].Done {
+		t.Errorf("o popup precisa abrir aberto e fechar concluído: %+v", delegacoes)
+	}
+	if !provider.sawRequestContaining("identidade visual") {
+		t.Error("o design não chegou a rodar")
+	}
+
+	// 4. Quem CONCLUI é o dono, e a conversa NÃO trocou de dono por causa disso.
+	respostas := messageTexts(t, dataStore, sessionID, "assistant")
+	if len(respostas) == 0 || !strings.Contains(respostas[len(respostas)-1], "App Next.js pronto") {
+		t.Errorf("a conclusão não é a de quem atendeu: %q", respostas)
+	}
+	if meta, err := dataStore.GetSession(sessionID); err == nil && meta.Specialist != "code" {
+		t.Errorf("delegar trocou o dono da conversa para %q — delegar é emprestar "+
+			"especialidade, não trocar de modo", meta.Specialist)
+	}
+}

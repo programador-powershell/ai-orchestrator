@@ -547,6 +547,13 @@ export interface ConversationLine {
   turn?: string;
   role: "user" | "assistant" | "system";
   specialist?: string;
+  /**
+   * Quem FALOU esta linha (`envelope.from.id`), que não é o mesmo que o
+   * especialista: numa equipe, dois trabalhadores podem ser do mesmo
+   * especialista e ainda assim precisam de bolhas separadas. É por este campo
+   * que o texto de cada um acha a própria linha.
+   */
+  speakerId?: string;
   model?: string;
   text: string;
   /** Preenchido enquanto o texto ainda está chegando. */

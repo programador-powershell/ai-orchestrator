@@ -316,7 +316,7 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		Specialist: definition.ID,
 	}
 
-	messages, err := s.buildMessages(sessionID, definition, question)
+	messages, err := s.buildMessages(sessionID, definition, question, entry.Model.Context)
 	if err != nil {
 		s.fail(sessionID, turn, definition.ID, "contexto", err.Error(), false)
 		return err
@@ -569,6 +569,7 @@ func (s *Supervisor) buildMessages(
 	sessionID string,
 	definition specialist.Definition,
 	question string,
+	contextTokens int,
 ) ([]modelrouter.ChatMessage, error) {
 	messages := make([]modelrouter.ChatMessage, 0, maxHistoryMessages+6)
 	messages = append(messages, s.policyHeader(definition)...)
@@ -605,7 +606,11 @@ func (s *Supervisor) buildMessages(
 
 	// O prompt já foi gravado como mensagem e volta pelo histórico; acrescentá-lo
 	// de novo faria o modelo ver a pergunta duas vezes.
-	return messages, nil
+	//
+	// O corte por TAMANHO é o último passo, e é o que impede a conversa de morrer
+	// depois de uma colagem grande: o corte por contagem (40 mensagens) não olha
+	// o que cada uma pesa. Ver context_budget.go.
+	return fitToContext(messages, contextTokens), nil
 }
 
 // history reconstrói a conversa a partir do log.
@@ -630,17 +635,55 @@ func (s *Supervisor) history(sessionID string) ([]modelrouter.ChatMessage, error
 	}
 	out := make([]modelrouter.ChatMessage, 0, len(envelopes))
 	for _, envelope := range envelopes {
-		if envelope.Kind != protocol.KindMessage {
-			continue
+		switch envelope.Kind {
+		case protocol.KindMessage:
+			var message protocol.Message
+			if err := envelope.Decode(&message); err != nil {
+				continue
+			}
+			if strings.TrimSpace(message.Text) == "" {
+				continue
+			}
+			out = append(out, modelrouter.ChatMessage{Role: message.Role, Content: message.Text})
+
+		// A EVIDÊNCIA volta ao histórico.
+		//
+		// Antes só `KindMessage` era dobrado, e o par chamada+resultado sumia entre
+		// um turno e o seguinte: o modelo entrava no turno 2 vendo "o arquivo diz
+		// 42" — a própria afirmação dele — e nenhum traço do que o arquivo continha
+		// nem de que houve leitura. Ou relia (custo, e aprovação de novo), ou seguia
+		// em cima da própria alegação, que é como resposta plausível vira invenção.
+		// Pior justamente no especialista de código, onde a evidência é o arquivo.
+		case protocol.KindToolCall:
+			var call protocol.ToolCall
+			if err := envelope.Decode(&call); err != nil || call.Tool == "" {
+				continue
+			}
+			out = append(out, modelrouter.ChatMessage{
+				Role:    "assistant",
+				Content: "Chamei a ferramenta " + call.Tool + ".",
+			})
+
+		case protocol.KindToolResult:
+			var result protocol.ToolResult
+			if err := envelope.Decode(&result); err != nil || result.Tool == "" {
+				continue
+			}
+			body := result.Output
+			if !result.OK {
+				body = "falhou: " + result.Error
+			}
+			if strings.TrimSpace(body) == "" {
+				continue
+			}
+			// Truncado bem mais curto que os 20 000 do log: aqui o texto disputa a
+			// janela do modelo com a conversa inteira, e a saída de um `fs.read`
+			// grande sozinha empurraria tudo para fora.
+			out = append(out, modelrouter.ChatMessage{
+				Role:    "user",
+				Content: toolEvidence(result.Tool, truncate(body, 2000)),
+			})
 		}
-		var message protocol.Message
-		if err := envelope.Decode(&message); err != nil {
-			continue
-		}
-		if strings.TrimSpace(message.Text) == "" {
-			continue
-		}
-		out = append(out, modelrouter.ChatMessage{Role: message.Role, Content: message.Text})
 	}
 	// Corta pelo FIM: o começo da conversa é o que menos importa para o próximo
 	// turno, e cortar pelo começo descartaria justamente a pergunta atual.
@@ -758,7 +801,14 @@ func (s *Supervisor) executeTool(
 	}
 
 	callID := s.nextID("c")
-	digest := digestOf(call.Tool, call.Args)
+	// O digest carrega o ESCOPO, e não só a ferramenta e os argumentos.
+	//
+	// "Aprovar sempre" com digest de `tool+args` puro dava um cheque que valia em
+	// qualquer lugar: aprovar `fs.write` em `deploy/ci.yml` olhando o `code` no
+	// repositório A liberava o MESMO caminho relativo no repositório B, e liberava
+	// também o `design`, que tem `fs.write` no catálogo. O "sim" foi dado olhando
+	// um projeto e um especialista; é a esses dois que ele tem de ficar preso.
+	digest := digestOf(s.approvalScope(sessionID, definition.ID), call.Tool, call.Args)
 	risk := permissions.RiskOf(call.Tool)
 
 	_ = s.emit(sessionID, turn, protocol.KindToolCall, actor, protocol.ToolCall{
@@ -857,8 +907,23 @@ func (s *Supervisor) askApproval(
 
 	select {
 	case decision := <-channel:
+		// A decisão vira ENVELOPE DURÁVEL antes de qualquer efeito.
+		//
+		// Sem ela o log ficava `tool.call → approval.request → tool.result(ok)`, e
+		// lendo depois não dava para distinguir "a pessoa autorizou" de "a política
+		// era aprovar tudo" ou "havia concessão anterior" — sumia justamente o
+		// registro do último degrau antes do efeito colateral. O verbo já existia no
+		// protocolo e no reducer da tela, e não tinha emissor nenhum no gateway; é
+		// também por ele que uma segunda janela fecha o cartão.
+		_ = s.emit(sessionID, turn, protocol.KindApprovalDecision,
+			protocol.Actor{Kind: protocol.ActorUser}, protocol.ApprovalDecision{
+				CallID:  callID,
+				Allow:   decision.Allow,
+				Scope:   decision.Scope,
+				Comment: decision.Comment,
+			})
 		if decision.Allow {
-			s.deps.Gate.Grant(decision.Scope, call.Tool, digest)
+			s.deps.Gate.Grant(decision.Scope, actor.Specialist, call.Tool, digest)
 			return true, ""
 		}
 		if decision.Comment != "" {
@@ -1004,9 +1069,28 @@ func mustPayload(value any) json.RawMessage {
 	return raw
 }
 
-func digestOf(tool string, args json.RawMessage) string {
-	sum := sha256.Sum256(append([]byte(tool+"\x00"), args...))
+func digestOf(scope, tool string, args json.RawMessage) string {
+	sum := sha256.Sum256(append([]byte(scope+"\x00"+tool+"\x00"), args...))
 	return hex.EncodeToString(sum[:8])
+}
+
+// approvalScope é o par (projeto, especialista) a que uma concessão fica presa.
+//
+// A raiz vem da SESSÃO porque é ela que define onde as ferramentas de arquivo
+// escrevem; o portão, esse, é um só no processo. Sessão sem raiz cai numa marca
+// fixa em vez de string vazia: assim duas sessões sem projeto compartilham o
+// escopo entre si, mas nenhuma delas empresta a concessão para uma sessão que
+// TEM projeto.
+func (s *Supervisor) approvalScope(sessionID, specialistID string) string {
+	root := "sem-projeto"
+	if s.deps.Store != nil {
+		if meta, err := s.deps.Store.GetSession(sessionID); err == nil {
+			if cwd := strings.TrimSpace(meta.CWD); cwd != "" {
+				root = cwd
+			}
+		}
+	}
+	return root + "\x00" + specialistID
 }
 
 func truncate(text string, limit int) string {
