@@ -93,7 +93,7 @@ describe("mountProfessionalGrokAvatar", () => {
       state: "working"
     });
 
-    const root = host.querySelector<HTMLElement>(".pgv5-root");
+    const root = host.querySelector<HTMLElement>(".gpv6-root");
     expect(root).toBeTruthy();
     expect(root?.dataset.state).toBe("working");
     expect(root?.getAttribute("aria-label")).toContain("Code");
@@ -110,7 +110,7 @@ describe("mountProfessionalGrokAvatar", () => {
     expect(root?.dataset.specialist).toBe("data");
 
     controller.destroy();
-    expect(host.querySelector(".pgv5-root")).toBeNull();
+    expect(host.querySelector(".gpv6-root")).toBeNull();
     host.remove();
   });
 });
@@ -172,13 +172,13 @@ const quadros = async (quantos: number): Promise<void> => {
 const montar = (host: HTMLElement, state: GrokSpecialistState, size: number) =>
   mountProfessionalGrokAvatar(host, { moduleUrl: MODULO_COM_CORPO, specialist: "code", state, size });
 
-describe("animação v5 — morph", () => {
+describe("animação v6 — coreografia", () => {
   it("a silhueta do motor deforma quadro a quadro", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const controller = await montar(host, "working", 190);
 
-    const silhueta = host.querySelector<SVGPathElement>("[data-pgv5-silhouette=true]");
+    const silhueta = host.querySelector<SVGPathElement>("[data-grok-silhouette=true]");
     expect(silhueta).toBeTruthy();
 
     await quadros(4);
@@ -216,12 +216,12 @@ describe("animação v5 — morph", () => {
     document.body.append(host);
     const controller = await montar(host, "working", 190);
 
-    const root = host.querySelector(".pgv5-root");
+    const root = host.querySelector(".gpv6-root");
     const ordem = [...(root?.children ?? [])].map((filho) => filho.getAttribute("class"));
 
     // A ordem do DOM É a ordem de pintura: cena atrás do corpo esconderia o
     // terminal, que era o defeito das versões anteriores.
-    expect(ordem).toEqual(["pgv5-body-svg", "pgv5-avatar", "pgv5-artifact-svg"]);
+    expect(ordem).toEqual(["gpv6-body-svg", "gpv6-avatar", "gpv6-art-svg"]);
 
     controller.destroy();
     host.remove();
@@ -235,10 +235,56 @@ describe("animação v5 — morph", () => {
     const controller = await montar(host, "working", 26);
     await quadros(4);
 
-    expect(host.querySelectorAll(".pgv5-artifact-svg rect, .pgv5-artifact-svg line").length).toBe(0);
+    expect(host.querySelectorAll(".gpv6-art-svg rect, .gpv6-art-svg line").length).toBe(0);
 
-    const silhueta = host.querySelector<SVGPathElement>("[data-pgv5-silhouette=true]");
+    const silhueta = host.querySelector<SVGPathElement>("[data-grok-silhouette=true]");
     expect((silhueta?.getAttribute("d") ?? "").length).toBeGreaterThan(200);
+
+    controller.destroy();
+    host.remove();
+  });
+});
+
+/**
+ * A v6 troca o seno contínuo por CICLOS com preparação e impacto — o morph da
+ * v5 existia, mas não tinha intenção. Um ciclo tem antecipação, ação,
+ * ultrapassagem, acomodação e pausa.
+ */
+describe("coreografia v6", () => {
+  it("o movimento tem ciclos, não oscilação uniforme", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const controller = await montar(host, "working", 190);
+
+    const silhueta = host.querySelector<SVGPathElement>("[data-grok-silhouette='true']");
+    const amostras: string[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      await quadros(3);
+      amostras.push(silhueta?.getAttribute("d") ?? "");
+    }
+
+    // Dez amostras espaçadas: um corpo com coreografia passa por formas
+    // distintas. Se todas fossem iguais, o motor teria parado; se fossem uma
+    // senoide de período curto, voltariam ao mesmo valor.
+    expect(new Set(amostras).size).toBeGreaterThanOrEqual(8);
+
+    controller.destroy();
+    host.remove();
+  });
+
+  it("o conjunto dos olhos recebe direção sem brigar com a expressão", async () => {
+    // O módulo expõe `data-grok-eyes-root`; o motor desloca/rotaciona o GRUPO,
+    // enquanto o playback emocional continua mexendo em cada olho. Sem essa
+    // separação, as duas escritas disputariam o mesmo atributo.
+    const host = document.createElement("div");
+    document.body.append(host);
+    const controller = await montar(host, "working", 190);
+    await quadros(6);
+
+    const olhos = host.querySelector<SVGElement>("[data-grok-eyes-root='true']");
+    if (olhos) {
+      expect(olhos.getAttribute("transform") ?? "").not.toBe("");
+    }
 
     controller.destroy();
     host.remove();

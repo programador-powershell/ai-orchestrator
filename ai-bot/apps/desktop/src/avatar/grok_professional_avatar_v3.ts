@@ -1,30 +1,20 @@
 /**
  * grok_professional_avatar_v3.ts
  *
- * V5 — morphing professional creature.
+ * V6 — Grok-like elastic choreography.
  *
- * Keeps the public filename/API used by the project, but replaces the old
- * "round avatar + external professional icon" approach.
+ * This keeps the public filename/API already used by the project.
  *
- * Main idea:
- * - Avatar Lab / grok-avatar.js still owns the white eyes / emotional playback.
- * - The original round body is hidden.
- * - A single organic black SVG silhouette is rendered underneath the eyes.
- * - That SAME silhouette continuously morphs into the professional gesture.
- * - No robot body. No fixed round ball with badges.
+ * What changed from V5:
+ * - no more "continuous sine-wave screensaver" as the main motion;
+ * - each specialist now has a choreographed action cycle:
+ *     anticipation -> action -> overshoot -> settle -> hold;
+ * - the SAME black body morphs into the professional gesture;
+ * - the eyes follow the mass and the task target;
+ * - external props are secondary and only support the gesture;
+ * - waiting collapses, Owner rises, completed rebounds.
  *
- * Working semantics:
- *   chat     -> body reaches toward alternating conversation bubbles
- *   code     -> body crouches over terminal and grows two typing pseudopods
- *   data     -> body stretches toward the active data point
- *   design   -> body grows one elastic lobe that drags a Bézier handle
- *   agent    -> body buds / dispatches small child agents
- *   flow     -> body becomes a horizontal flowing amoeba following a packet
- *   tuning   -> body grows pseudopods toward live slider knobs
- *   security -> body becomes shield-like while a scan sweeps through it
- *
- * Five states:
- *   active, owner, working, waiting, completed
+ * Avatar Lab / grok-avatar.js still supplies the white-eye emotional playback.
  */
 
 export type Specialist =
@@ -103,9 +93,27 @@ type ShapeTarget = {
   rx: number;
   ry: number;
   rotation: number;
-  flattenTop?: number;
-  flattenBottom?: number;
+  topPressure?: number;
+  bottomPressure?: number;
   lobes: Lobe[];
+};
+
+type Gesture = {
+  p: number;
+  cycle: number;
+  reach: number;
+  anticipation: number;
+  overshoot: number;
+  settle: number;
+  action: number;
+};
+
+type Gaze = {
+  x: number;
+  y: number;
+  rotate: number;
+  scaleX: number;
+  scaleY: number;
 };
 
 type Scene = {
@@ -113,7 +121,7 @@ type Scene = {
   bodySvg: SVGSVGElement;
   artifactSvg: SVGSVGElement;
   bodyPath: SVGPathElement;
-  bodyHighlight: SVGPathElement;
+  highlightPath: SVGPathElement;
   shadow: SVGEllipseElement;
   artifacts: SVGGElement;
   ownerRing: SVGCircleElement;
@@ -123,7 +131,8 @@ type Scene = {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const TAU = Math.PI * 2;
-const POINTS = 56;
+const POINT_COUNT = 64;
+const EYE_COORD_SCALE = 0.709; // 156px host / 220 viewBox at a 200 unit stage.
 
 const clamp = (v: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, v));
@@ -131,21 +140,18 @@ const clamp = (v: number, min: number, max: number): number =>
 const lerp = (a: number, b: number, t: number): number =>
   a + (b - a) * t;
 
-const wave = (t: number, speed = 1, phase = 0): number =>
-  Math.sin(t * speed + phase);
-
-const sin01 = (t: number, speed = 1, phase = 0): number =>
-  0.5 + 0.5 * wave(t, speed, phase);
-
-const pingPong = (t: number): number => {
-  const p = ((t % 2) + 2) % 2;
-  return p <= 1 ? p : 2 - p;
-};
-
-const ease = (t: number): number => {
+const smooth = (t: number): number => {
   const p = clamp(t, 0, 1);
   return p * p * (3 - 2 * p);
 };
+
+const smoother = (t: number): number => {
+  const p = clamp(t, 0, 1);
+  return p * p * p * (p * (p * 6 - 15) + 10);
+};
+
+const wave = (t: number, speed = 1, phase = 0): number =>
+  Math.sin(t * speed + phase);
 
 const angleDistance = (a: number, b: number): number => {
   let d = Math.abs(a - b) % TAU;
@@ -201,7 +207,7 @@ const STATE_LABEL: Record<SpecialistState, string> = {
   completed: "Concluído",
 };
 
-export const ANIMATIONS: Record<
+export const ANIMATION_CANDIDATES: Record<
   Specialist,
   Record<SpecialistState, readonly string[]>
 > = {
@@ -270,8 +276,8 @@ const pickAnimation = (
 ): string | undefined => {
   const set = new Set(available);
 
-  for (const candidate of ANIMATIONS[specialist][state]) {
-    if (set.has(candidate)) return candidate;
+  for (const name of ANIMATION_CANDIDATES[specialist][state]) {
+    if (set.has(name)) return name;
   }
 
   for (const fallback of ["idle", "listening", "thinking", "working", "sleeping"]) {
@@ -279,6 +285,17 @@ const pickAnimation = (
   }
 
   return available[0];
+};
+
+const resolveTarget = (target: Element | string): HTMLElement => {
+  const node =
+    typeof target === "string" ? document.querySelector(target) : target;
+
+  if (!(node instanceof HTMLElement)) {
+    throw new Error(`Grok professional avatar target not found: ${String(target)}`);
+  }
+
+  return node;
 };
 
 const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
@@ -300,38 +317,27 @@ const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
   return imported as AvatarLabModule;
 };
 
-const resolveTarget = (target: Element | string): HTMLElement => {
-  const node =
-    typeof target === "string" ? document.querySelector(target) : target;
-
-  if (!(node instanceof HTMLElement)) {
-    throw new Error(`Professional Grok target not found: ${String(target)}`);
-  }
-
-  return node;
-};
-
 const ensureStyles = (): void => {
-  if (document.getElementById("professional-grok-v5-style")) return;
+  if (document.getElementById("grok-professional-v6-style")) return;
 
   const style = document.createElement("style");
-  style.id = "professional-grok-v5-style";
+  style.id = "grok-professional-v6-style";
   style.textContent = `
-.pgv5-root {
-  --pgv5-size: 240px;
-  --pgv5-accent: #55c7ff;
-  --pgv5-body: #050506;
+.gpv6-root {
+  --gpv6-size: 240px;
+  --gpv6-accent: #55c7ff;
+  --gpv6-body: #020203;
   position: relative;
-  width: var(--pgv5-size);
-  height: var(--pgv5-size);
+  width: var(--gpv6-size);
+  height: var(--gpv6-size);
   overflow: visible;
   isolation: isolate;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.pgv5-body-svg,
-.pgv5-artifact-svg {
+.gpv6-body-svg,
+.gpv6-art-svg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -340,10 +346,10 @@ const ensureStyles = (): void => {
   pointer-events: none;
 }
 
-.pgv5-body-svg { z-index: 2; }
-.pgv5-artifact-svg { z-index: 4; }
+.gpv6-body-svg { z-index: 2; }
+.gpv6-art-svg { z-index: 4; }
 
-.pgv5-avatar {
+.gpv6-avatar {
   position: absolute;
   inset: 11%;
   z-index: 3;
@@ -352,152 +358,134 @@ const ensureStyles = (): void => {
   pointer-events: none;
 }
 
-.pgv5-avatar > * {
+.gpv6-avatar > * {
   width: 100% !important;
   height: 100% !important;
 }
 
-.pgv5-owner-ring {
+.gpv6-owner-ring {
   fill: none;
-  stroke: var(--pgv5-accent);
-  stroke-width: 1.4;
-  stroke-dasharray: 9 8;
+  stroke: var(--gpv6-accent);
+  stroke-width: 1.35;
+  stroke-dasharray: 8 9;
   opacity: 0;
   transform-origin: 100px 100px;
 }
 
-.pgv5-root[data-state="owner"] .pgv5-owner-ring {
-  opacity: .55;
-  animation: pgv5-owner-spin 9s linear infinite;
+.gpv6-root[data-state="owner"] .gpv6-owner-ring {
+  opacity: .43;
+  animation: gpv6-owner-spin 10s linear infinite;
 }
 
-.pgv5-owner-dot {
-  fill: var(--pgv5-accent);
+.gpv6-owner-dot {
+  fill: var(--gpv6-accent);
   opacity: 0;
 }
 
-.pgv5-root[data-state="owner"] .pgv5-owner-dot {
-  opacity: .85;
-  animation: pgv5-owner-dot 2s ease-in-out infinite;
+.gpv6-root[data-state="owner"] .gpv6-owner-dot {
+  opacity: .8;
+  animation: gpv6-owner-dot 2.1s ease-in-out infinite;
 }
 
-.pgv5-complete {
-  color: var(--pgv5-accent);
+.gpv6-complete {
+  color: var(--gpv6-accent);
   opacity: 0;
-  transform-origin: 170px 170px;
+  transform-origin: 171px 171px;
 }
 
-.pgv5-root[data-state="completed"] .pgv5-complete {
+.gpv6-root[data-state="completed"] .gpv6-complete {
   opacity: .95;
-  animation: pgv5-complete 2.4s ease-in-out infinite;
+  animation: gpv6-complete 2.7s ease-in-out infinite;
 }
 
-@keyframes pgv5-owner-spin {
+@keyframes gpv6-owner-spin {
   to { transform: rotate(360deg); }
 }
 
-@keyframes pgv5-owner-dot {
-  0%,100% { transform: scale(.72); opacity: .35; }
-  50% { transform: scale(1.18); opacity: 1; }
+@keyframes gpv6-owner-dot {
+  0%,100% { opacity: .28; transform: scale(.72); }
+  50% { opacity: 1; transform: scale(1.14); }
 }
 
-@keyframes pgv5-complete {
-  0%,70%,100% { transform: scale(.94); opacity: .65; }
-  82% { transform: scale(1.12); opacity: 1; }
+@keyframes gpv6-complete {
+  0%,70%,100% { opacity: .62; transform: scale(.94); }
+  82% { opacity: 1; transform: scale(1.13); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pgv5-root * {
+  .gpv6-root * {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
   }
 }
 `;
+
   document.head.appendChild(style);
 };
 
-const appendLine = (
-  parent: SVGElement,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  color: string,
-  width = 2,
-  opacity = 1,
-): SVGLineElement => {
-  const line = makeSvg("line", {
-    x1,
-    y1,
-    x2,
-    y2,
-    stroke: color,
-    "stroke-width": width,
-    "stroke-linecap": "round",
-    opacity,
-  });
-  parent.appendChild(line);
-  return line;
+/**
+ * Grok-like action beat.
+ *
+ * The negative anticipation and >1 overshoot are what make the action feel
+ * intentional instead of a continuous procedural wobble.
+ */
+const gesture = (t: number, period: number, phase = 0): Gesture => {
+  const raw = t / period + phase;
+  const cycle = Math.floor(raw);
+  const p = raw - cycle;
+
+  let reach = 0;
+  let anticipation = 0;
+  let overshoot = 0;
+  let settle = 0;
+
+  if (p < 0.14) {
+    anticipation = smoother(p / 0.14);
+    reach = -0.18 * anticipation;
+  } else if (p < 0.38) {
+    const q = smoother((p - 0.14) / 0.24);
+    anticipation = 1 - q;
+    reach = lerp(-0.18, 1, q);
+  } else if (p < 0.50) {
+    const q = smooth((p - 0.38) / 0.12);
+    overshoot = q;
+    reach = lerp(1, 1.14, q);
+  } else if (p < 0.72) {
+    const q = smoother((p - 0.50) / 0.22);
+    overshoot = 1 - q;
+    settle = q;
+    reach = lerp(1.14, 0.76, q);
+  } else {
+    const q = smoother((p - 0.72) / 0.28);
+    settle = 1 - q;
+    reach = lerp(0.76, 0.14, q);
+  }
+
+  const action = clamp((reach + 0.18) / 1.32, 0, 1);
+
+  return { p, cycle, reach, anticipation, overshoot, settle, action };
 };
 
-const appendCircle = (
-  parent: SVGElement,
-  cx: number,
-  cy: number,
-  r: number,
-  color: string,
-  opacity = 1,
-): SVGCircleElement => {
-  const circle = makeSvg("circle", { cx, cy, r, fill: color, opacity });
-  parent.appendChild(circle);
-  return circle;
-};
-
-const appendPath = (
-  parent: SVGElement,
-  d: string,
-  color: string,
-  width = 2,
-  fill = "none",
-  opacity = 1,
-): SVGPathElement => {
-  const path = makeSvg("path", {
-    d,
-    stroke: color,
-    "stroke-width": width,
-    fill,
-    opacity,
-    "stroke-linecap": "round",
-    "stroke-linejoin": "round",
+const bodyGradient = (
+  id: string,
+  bodyColor: string,
+): SVGDefsElement => {
+  const defs = makeSvg("defs");
+  const gradient = makeSvg("radialGradient", {
+    id,
+    cx: "33%",
+    cy: "22%",
+    r: "84%",
   });
-  parent.appendChild(path);
-  return path;
-};
 
-const appendRect = (
-  parent: SVGElement,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-  color: string,
-  fill = "none",
-  opacity = 1,
-): SVGRectElement => {
-  const rect = makeSvg("rect", {
-    x,
-    y,
-    width,
-    height,
-    rx: radius,
-    stroke: color,
-    "stroke-width": 1.7,
-    fill,
-    opacity,
-  });
-  parent.appendChild(rect);
-  return rect;
+  gradient.append(
+    makeSvg("stop", { offset: "0%", "stop-color": "#292a2e" }),
+    makeSvg("stop", { offset: "38%", "stop-color": "#0a0a0b" }),
+    makeSvg("stop", { offset: "100%", "stop-color": bodyColor }),
+  );
+
+  defs.appendChild(gradient);
+  return defs;
 };
 
 const createScene = (
@@ -507,67 +495,55 @@ const createScene = (
   statusCues: boolean,
 ): Scene => {
   const root = document.createElement("div");
-  root.className = "pgv5-root";
+  root.className = "gpv6-root";
   root.style.setProperty(
-    "--pgv5-size",
+    "--gpv6-size",
     typeof size === "number" ? `${size}px` : size,
   );
-  root.style.setProperty("--pgv5-body", bodyColor);
-  root.style.setProperty("--pgv5-accent", accent);
+  root.style.setProperty("--gpv6-accent", accent);
+  root.style.setProperty("--gpv6-body", bodyColor);
 
   const bodySvg = makeSvg("svg", {
-    class: "pgv5-body-svg",
+    class: "gpv6-body-svg",
     viewBox: "0 0 200 200",
     "aria-hidden": "true",
   });
 
-  const defs = makeSvg("defs");
-  const gradId = `pgv5-grad-${Math.random().toString(36).slice(2)}`;
-  const gradient = makeSvg("radialGradient", {
-    id: gradId,
-    cx: "34%",
-    cy: "25%",
-    r: "82%",
-  });
-  gradient.append(
-    makeSvg("stop", { offset: "0%", "stop-color": "#25262a" }),
-    makeSvg("stop", { offset: "42%", "stop-color": "#09090a" }),
-    makeSvg("stop", { offset: "100%", "stop-color": bodyColor }),
-  );
-  defs.appendChild(gradient);
-  bodySvg.appendChild(defs);
+  const gradientId = `gpv6-body-${Math.random().toString(36).slice(2)}`;
+  bodySvg.appendChild(bodyGradient(gradientId, bodyColor));
 
   const shadow = makeSvg("ellipse", {
     cx: 100,
-    cy: 166,
-    rx: 52,
-    ry: 8,
+    cy: 170,
+    rx: 46,
+    ry: 7,
     fill: "#000",
-    opacity: .28,
+    opacity: .24,
   });
 
   const bodyPath = makeSvg("path", {
-    // Marcada para o teste poder afirmar que ELA é que deforma. Sem o gancho,
-    // a única forma de checar seria pela posição no SVG — que muda a cada
-    // rearranjo e daria teste verde por acidente.
-    "data-pgv5-silhouette": "true",
-    fill: `url(#${gradId})`,
+    // Gancho de teste. Sem ele, a única forma de achar a silhueta seria pela
+    // POSIÇÃO no SVG — que muda a cada rearranjo e daria verde por acidente no
+    // dia seguinte. É o terceiro pacote seguido que o remove; se sumir de novo,
+    // reponha antes de rodar os testes.
+    "data-grok-silhouette": "true",
+    fill: `url(#${gradientId})`,
     stroke: "#2c2d31",
     "stroke-width": 1.05,
   });
 
-  const bodyHighlight = makeSvg("path", {
+  const highlightPath = makeSvg("path", {
     fill: "none",
     stroke: "#fff",
-    "stroke-width": 1.1,
-    opacity: .10,
+    "stroke-width": 1,
     "stroke-linecap": "round",
+    opacity: .09,
   });
 
-  bodySvg.append(shadow, bodyPath, bodyHighlight);
+  bodySvg.append(shadow, bodyPath, highlightPath);
 
   const artifactSvg = makeSvg("svg", {
-    class: "pgv5-artifact-svg",
+    class: "gpv6-art-svg",
     viewBox: "0 0 200 200",
     "aria-hidden": "true",
   });
@@ -576,7 +552,7 @@ const createScene = (
   artifactSvg.appendChild(artifacts);
 
   const ownerRing = makeSvg("circle", {
-    class: "pgv5-owner-ring",
+    class: "gpv6-owner-ring",
     cx: 100,
     cy: 100,
     r: 88,
@@ -585,31 +561,31 @@ const createScene = (
 
   const ownerDots = [
     makeSvg("circle", {
-      class: "pgv5-owner-dot",
+      class: "gpv6-owner-dot",
       cx: 84,
       cy: 14,
-      r: 2.1,
+      r: 2,
     }),
     makeSvg("circle", {
-      class: "pgv5-owner-dot",
+      class: "gpv6-owner-dot",
       cx: 100,
       cy: 9,
-      r: 2.8,
+      r: 2.7,
       style: "animation-delay:180ms",
     }),
     makeSvg("circle", {
-      class: "pgv5-owner-dot",
+      class: "gpv6-owner-dot",
       cx: 116,
       cy: 14,
-      r: 2.1,
+      r: 2,
       style: "animation-delay:360ms",
     }),
   ];
   ownerDots.forEach((dot) => artifactSvg.appendChild(dot));
 
   const completeGroup = makeSvg("g", {
-    class: "pgv5-complete",
-    transform: "translate(170 170)",
+    class: "gpv6-complete",
+    transform: "translate(171 171)",
   });
   completeGroup.append(
     makeSvg("circle", {
@@ -618,8 +594,8 @@ const createScene = (
       r: 15,
       fill: "none",
       stroke: "currentColor",
-      "stroke-width": 1.4,
-      opacity: .32,
+      "stroke-width": 1.3,
+      opacity: .30,
     }),
     makeSvg("path", {
       d: "M-7 0 L-2 5 L9 -8",
@@ -645,7 +621,7 @@ const createScene = (
     bodySvg,
     artifactSvg,
     bodyPath,
-    bodyHighlight,
+    highlightPath,
     shadow,
     artifacts,
     ownerRing,
@@ -654,14 +630,10 @@ const createScene = (
   };
 };
 
-/**
- * Converts closed points into one continuously smooth cubic path.
- * The body therefore morphs as one creature instead of swapping shapes.
- */
 const closedSpline = (points: readonly Point[]): string => {
-  if (points.length < 3) return "";
-
   const n = points.length;
+  if (n < 3) return "";
+
   let d = `M${points[0]!.x.toFixed(2)} ${points[0]!.y.toFixed(2)}`;
 
   for (let i = 0; i < n; i++) {
@@ -670,349 +642,515 @@ const closedSpline = (points: readonly Point[]): string => {
     const p2 = points[(i + 1) % n]!;
     const p3 = points[(i + 2) % n]!;
 
-    const c1 = {
-      x: p1.x + (p2.x - p0.x) / 6,
-      y: p1.y + (p2.y - p0.y) / 6,
-    };
-    const c2 = {
-      x: p2.x - (p3.x - p1.x) / 6,
-      y: p2.y - (p3.y - p1.y) / 6,
-    };
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
 
     d +=
-      ` C${c1.x.toFixed(2)} ${c1.y.toFixed(2)}` +
-      ` ${c2.x.toFixed(2)} ${c2.y.toFixed(2)}` +
+      ` C${c1x.toFixed(2)} ${c1y.toFixed(2)}` +
+      ` ${c2x.toFixed(2)} ${c2y.toFixed(2)}` +
       ` ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
   }
 
   return `${d} Z`;
 };
 
-const baseShape = (
-  specialist: Specialist,
-  state: SpecialistState,
-  t: number,
-): ShapeTarget => {
-  if (state === "waiting") {
-    return {
-      cx: 100,
-      cy: 118 + wave(t, .75) * .8,
-      rx: 68,
-      ry: 37,
-      rotation: -4,
-      flattenTop: 5,
-      flattenBottom: 7,
-      lobes: [
-        { angle: Math.PI, width: .60, amount: 5 },
-        { angle: 0, width: .60, amount: 8 },
-      ],
-    };
-  }
-
-  if (state === "completed") {
-    const pop = Math.max(0, wave(t, 1.9));
-    return {
-      cx: 100,
-      cy: 99 - pop * 1.5,
-      rx: 59 + pop * 2.8,
-      ry: 58 + pop * 3.6,
-      rotation: wave(t, .9) * 1.2,
-      lobes: [],
-    };
-  }
-
-  const owner = state === "owner" ? 1 : 0;
-  const working = state === "working";
-  const breathe = wave(t, state === "active" ? 1.15 : .9);
-
-  const generic: ShapeTarget = {
-    cx: 100 + wave(t, .7) * .6,
-    cy: 100 + wave(t, .95, .6) * .7 - owner * 3,
-    rx: 58 + breathe * 1.2 + owner * 2.5,
-    ry: 58 - breathe * .8 + owner * 2.5,
-    rotation: wave(t, .65) * 1.1,
-    lobes: [],
-  };
-
-  switch (specialist) {
-    case "chat":
-      return {
-        ...generic,
-        rx: generic.rx + 4,
-        ry: generic.ry - 2,
-        rotation: -2 + generic.rotation,
-        lobes: working
-          ? [
-              {
-                angle: Math.PI,
-                width: .42,
-                amount: 10 + sin01(t, 2.3) * 15,
-              },
-              {
-                angle: 0,
-                width: .42,
-                amount: 10 + sin01(t, 2.3, Math.PI) * 15,
-              },
-            ]
-          : [
-              { angle: Math.PI, width: .52, amount: 4 },
-              { angle: 0, width: .52, amount: 4 },
-            ],
-      };
-
-    case "code": {
-      const typing = working ? Math.abs(wave(t, 9.5)) : 0;
-      return {
-        ...generic,
-        cy: generic.cy + 7,
-        rx: generic.rx - 7,
-        ry: generic.ry + 8,
-        rotation: 5 + generic.rotation,
-        flattenTop: 3,
-        lobes: [
-          {
-            angle: .98,
-            width: .25,
-            amount: working ? 17 + typing * 9 : 4,
-          },
-          {
-            angle: 2.16,
-            width: .25,
-            amount: working
-              ? 17 + Math.abs(wave(t, 9.5, Math.PI)) * 9
-              : 4,
-          },
-          {
-            angle: -.18,
-            width: .48,
-            amount: working ? 8 : 2,
-          },
-        ],
-      };
-    }
-
-    case "data": {
-      const progress = working ? pingPong(t * .72) : .45;
-      const targetX = lerp(128, 170, progress);
-      const targetY = lerp(107, 58, progress);
-      const angle = Math.atan2(targetY - 100, targetX - 100);
-
-      return {
-        ...generic,
-        cx: generic.cx - 3,
-        cy: generic.cy - 3,
-        rx: generic.rx - 9,
-        ry: generic.ry + 10,
-        rotation: -4 + generic.rotation,
-        lobes: [
-          {
-            angle,
-            width: .30,
-            amount: working ? 20 + sin01(t, 3) * 8 : 6,
-          },
-          { angle: Math.PI / 2, width: .40, amount: 5 },
-        ],
-      };
-    }
-
-    case "design": {
-      const handleX = 148 + wave(t, 1.45) * 14;
-      const handleY = 124 + wave(t, 1.15, 1.1) * 18;
-      const angle = Math.atan2(handleY - 98, handleX - 100);
-
-      return {
-        ...generic,
-        rx: generic.rx + 2,
-        ry: generic.ry + 1,
-        rotation: -8 + wave(t, 1.2) * 5,
-        lobes: [
-          {
-            angle,
-            width: .25,
-            amount: working ? 31 + sin01(t, 2.6) * 8 : 7,
-          },
-          {
-            angle: angle + Math.PI,
-            width: .52,
-            amount: working ? 8 : 3,
-          },
-        ],
-      };
-    }
-
-    case "agent": {
-      const lobes: Lobe[] = [];
-      const angles = [-2.45, -.70, .70, 2.45];
-
-      angles.forEach((angle, i) => {
-        lobes.push({
-          angle,
-          width: .28,
-          amount: working
-            ? 12 + sin01(t, 2.0, i * 1.4) * 17
-            : 4 + owner * 4,
-        });
-      });
-
-      return {
-        ...generic,
-        rx: generic.rx + 4,
-        ry: generic.ry - 4,
-        lobes,
-      };
-    }
-
-    case "flow": {
-      const direction = working ? pingPong(t * .86) * 2 - 1 : 0;
-      return {
-        ...generic,
-        cx: generic.cx + direction * 3.5,
-        rx: generic.rx + 18 + Math.abs(direction) * 8,
-        ry: generic.ry - 16,
-        rotation: direction * 2,
-        lobes: [
-          {
-            angle: direction >= 0 ? 0 : Math.PI,
-            width: .38,
-            amount: working ? 18 : 5,
-          },
-          {
-            angle: direction >= 0 ? Math.PI : 0,
-            width: .50,
-            amount: working ? 6 : 3,
-          },
-        ],
-      };
-    }
-
-    case "tuning": {
-      const a = working ? sin01(t, 2.5) : .5;
-      const b = working ? sin01(t, 2.9, 1.8) : .5;
-      return {
-        ...generic,
-        cy: generic.cy + 5,
-        rx: generic.rx - 2,
-        ry: generic.ry + 2,
-        lobes: [
-          {
-            angle: 1.05,
-            width: .24,
-            amount: working ? 12 + a * 14 : 4,
-          },
-          {
-            angle: 1.58,
-            width: .22,
-            amount: working ? 10 + (1 - a) * 13 : 3,
-          },
-          {
-            angle: 2.10,
-            width: .24,
-            amount: working ? 12 + b * 14 : 4,
-          },
-        ],
-      };
-    }
-
-    case "security": {
-      const brace = working
-        ? Math.sin(pingPong(t * 1.05) * Math.PI)
-        : 0;
-
-      return {
-        ...generic,
-        cy: generic.cy + 4,
-        rx: generic.rx + 8 + brace * 5,
-        ry: generic.ry - 4 + brace * 2,
-        flattenTop: 7,
-        flattenBottom: -8,
-        lobes: [
-          {
-            angle: Math.PI / 2,
-            width: .22,
-            amount: working ? 21 + brace * 5 : 12,
-          },
-          {
-            angle: .12,
-            width: .50,
-            amount: working ? 8 + brace * 5 : 5,
-          },
-          {
-            angle: Math.PI - .12,
-            width: .50,
-            amount: working ? 8 + brace * 5 : 5,
-          },
-        ],
-      };
-    }
-  }
-};
-
-const targetPoints = (
+const pointsFromShape = (
   shape: ShapeTarget,
   deformation: number,
 ): Point[] => {
-  const points: Point[] = [];
   const rotation = (shape.rotation * Math.PI) / 180;
   const cosR = Math.cos(rotation);
   const sinR = Math.sin(rotation);
+  const points: Point[] = [];
 
-  for (let i = 0; i < POINTS; i++) {
-    const angle = (i / POINTS) * TAU - Math.PI / 2;
+  for (let i = 0; i < POINT_COUNT; i++) {
+    const angle = (i / POINT_COUNT) * TAU - Math.PI / 2;
 
-    let radiusDelta = 0;
-    for (const lobe of shape.lobes) {
-      radiusDelta += gaussian(angle, lobe.angle, lobe.width) * lobe.amount;
+    let lobe = 0;
+    for (const item of shape.lobes) {
+      lobe += gaussian(angle, item.angle, item.width) * item.amount * deformation;
     }
 
-    // Top/bottom flattening shapes are applied as controlled vertical pressure.
-    let x = Math.cos(angle) * (shape.rx + radiusDelta * deformation);
-    let y = Math.sin(angle) * (shape.ry + radiusDelta * deformation);
+    let x = Math.cos(angle) * (shape.rx + lobe);
+    let y = Math.sin(angle) * (shape.ry + lobe);
 
     const top = Math.max(0, -Math.sin(angle));
     const bottom = Math.max(0, Math.sin(angle));
 
-    if (shape.flattenTop) {
-      y += top * shape.flattenTop * deformation;
-    }
-
-    if (shape.flattenBottom) {
-      y -= bottom * shape.flattenBottom * deformation;
-    }
+    if (shape.topPressure) y += top * shape.topPressure * deformation;
+    if (shape.bottomPressure) y -= bottom * shape.bottomPressure * deformation;
 
     const xr = x * cosR - y * sinR;
     const yr = x * sinR + y * cosR;
 
-    points.push({
-      x: shape.cx + xr,
-      y: shape.cy + yr,
-    });
+    points.push({ x: shape.cx + xr, y: shape.cy + yr });
   }
 
   return points;
 };
 
-const highlightPath = (points: readonly Point[]): string => {
-  // Use the upper-left arc of the actual morphed body.
-  const start = Math.floor(POINTS * .82);
-  const end = Math.floor(POINTS * .98);
-  const segment: Point[] = [];
-
-  for (let i = start; i <= end; i++) {
-    segment.push(points[i % POINTS]!);
+const activeBase = (
+  state: SpecialistState,
+  t: number,
+): ShapeTarget => {
+  if (state === "waiting") {
+    const breath = wave(t, .72);
+    return {
+      cx: 100,
+      cy: 124 + breath * .7,
+      rx: 70 + breath * .9,
+      ry: 31 - breath * .4,
+      rotation: -5,
+      topPressure: 7,
+      bottomPressure: 7,
+      lobes: [
+        { angle: Math.PI, width: .58, amount: 8 },
+        { angle: 0, width: .58, amount: 11 },
+      ],
+    };
   }
 
-  if (segment.length < 2) return "";
+  if (state === "completed") {
+    const g = gesture(t, 2.8);
+    const pop = g.p < .50 ? g.action : Math.max(0, 1 - (g.p - .5) * 2);
+    return {
+      cx: 100,
+      cy: 99 - pop * 4,
+      rx: 58 + pop * 5,
+      ry: 58 + pop * 6,
+      rotation: g.overshoot * 4 - g.anticipation * 2,
+      lobes: [
+        { angle: -.55, width: .40, amount: pop * 4 },
+        { angle: Math.PI + .35, width: .45, amount: pop * 3 },
+      ],
+    };
+  }
 
-  return (
-    `M${segment[0]!.x.toFixed(2)} ${segment[0]!.y.toFixed(2)} ` +
-    segment
-      .slice(1)
-      .map((p) => `L${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
-      .join(" ")
-  );
+  const owner = state === "owner" ? 1 : 0;
+  const breathe = wave(t, 1.0);
+
+  return {
+    cx: 100 + wave(t, .53) * .55,
+    cy: 100 - owner * 4 + wave(t, .77, .4) * .55,
+    rx: 58 + breathe * .8 + owner * 2,
+    ry: 58 - breathe * .55 + owner * 3,
+    rotation: wave(t, .45) * .8,
+    lobes: owner
+      ? [
+          { angle: -Math.PI / 2, width: .48, amount: 4.5 },
+          { angle: -.2, width: .62, amount: 2 },
+          { angle: Math.PI + .2, width: .62, amount: 2 },
+        ]
+      : [],
+  };
 };
 
-const drawArtifacts = (
+const professionalShapeAndGaze = (
+  specialist: Specialist,
+  state: SpecialistState,
+  t: number,
+): { shape: ShapeTarget; gaze: Gaze } => {
+  const base = activeBase(state, t);
+
+  if (state !== "working") {
+    const waiting = state === "waiting";
+
+    return {
+      shape: base,
+      gaze: {
+        x: 0,
+        y: waiting ? 9 : state === "owner" ? -2 : 0,
+        rotate: waiting ? -3 : 0,
+        scaleX: waiting ? 1.08 : 1,
+        scaleY: waiting ? .82 : 1,
+      },
+    };
+  }
+
+  switch (specialist) {
+    case "chat": {
+      const g = gesture(t, 2.05);
+      const side = g.cycle % 2 === 0 ? -1 : 1;
+
+      return {
+        shape: {
+          ...base,
+          cx: 100 + side * g.reach * 7,
+          cy: 101 + g.anticipation * 2 - g.overshoot * 2,
+          rx: 62 + g.action * 4,
+          ry: 55 - g.action * 3,
+          rotation: side * (2 + g.reach * 7),
+          lobes: [
+            {
+              angle: side > 0 ? 0 : Math.PI,
+              width: .42,
+              amount: 5 + g.action * 28,
+            },
+            {
+              angle: side > 0 ? Math.PI : 0,
+              width: .56,
+              amount: 3 + g.anticipation * 7,
+            },
+          ],
+        },
+        gaze: {
+          x: side * (4 + g.action * 4),
+          y: -1,
+          rotate: side * 3,
+          scaleX: 1.02,
+          scaleY: 1,
+        },
+      };
+    }
+
+    case "code": {
+      const g = gesture(t, 2.25);
+      const typing = Math.max(0, wave(t, 13));
+      const typingB = Math.max(0, wave(t, 13, Math.PI));
+
+      return {
+        shape: {
+          ...base,
+          cx: 103 + g.reach * 3,
+          cy: 107 + g.action * 6,
+          rx: 51 - g.action * 4,
+          ry: 67 + g.action * 6,
+          rotation: 5 + g.reach * 6,
+          topPressure: g.action * 3,
+          lobes: [
+            {
+              angle: .93,
+              width: .22,
+              amount: 4 + g.action * 29 + typing * 7,
+            },
+            {
+              angle: 2.21,
+              width: .22,
+              amount: 4 + g.action * 29 + typingB * 7,
+            },
+            {
+              angle: .10,
+              width: .42,
+              amount: g.action * 8,
+            },
+          ],
+        },
+        gaze: {
+          x: 2 + g.action * 3,
+          y: 5 + g.action * 5,
+          rotate: 3 + g.action * 3,
+          scaleX: .98,
+          scaleY: .90,
+        },
+      };
+    }
+
+    case "data": {
+      const g = gesture(t, 2.6);
+      const targetIndex = g.cycle % 4;
+      const targets = [
+        { x: 133, y: 124 },
+        { x: 150, y: 101 },
+        { x: 170, y: 71 },
+        { x: 181, y: 83 },
+      ];
+      const target = targets[targetIndex]!;
+      const angle = Math.atan2(target.y - 100, target.x - 100);
+
+      return {
+        shape: {
+          ...base,
+          cx: 97 + g.anticipation * -3 + g.action * 2,
+          cy: 97 - g.action * 5,
+          rx: 49 - g.action * 3,
+          ry: 68 + g.action * 9,
+          rotation: -4 + g.reach * 4,
+          lobes: [
+            {
+              angle,
+              width: .27,
+              amount: 5 + g.action * 34,
+            },
+            {
+              angle: angle + Math.PI,
+              width: .50,
+              amount: g.anticipation * 8,
+            },
+          ],
+        },
+        gaze: {
+          x: 3 + g.action * 5,
+          y: -2 - g.action * 4,
+          rotate: -2,
+          scaleX: .96,
+          scaleY: 1.04,
+        },
+      };
+    }
+
+    case "design": {
+      const g = gesture(t, 2.45);
+      const side = g.cycle % 2 === 0 ? 1 : -1;
+      const angle = side > 0 ? .55 : Math.PI - .55;
+
+      return {
+        shape: {
+          ...base,
+          cx: 100 + side * g.action * 4,
+          cy: 99 + g.anticipation * 3 - g.overshoot * 2,
+          rx: 59 + g.action * 2,
+          ry: 58 + g.overshoot * 2,
+          rotation: -6 + side * g.reach * 10,
+          lobes: [
+            {
+              angle,
+              width: .23,
+              amount: 6 + g.action * 39,
+            },
+            {
+              angle: angle + Math.PI,
+              width: .50,
+              amount: 3 + g.anticipation * 9,
+            },
+          ],
+        },
+        gaze: {
+          x: side * (2 + g.action * 6),
+          y: g.action * 2,
+          rotate: side * 5,
+          scaleX: 1.05,
+          scaleY: .96,
+        },
+      };
+    }
+
+    case "agent": {
+      const g = gesture(t, 2.8);
+      const amount = 4 + g.action * 23;
+
+      return {
+        shape: {
+          ...base,
+          cx: 100,
+          cy: 101 - g.overshoot * 3,
+          rx: 62 + g.anticipation * 4 - g.action * 3,
+          ry: 54 - g.anticipation * 2 + g.action * 3,
+          rotation: g.reach * 3,
+          lobes: [
+            { angle: -2.42, width: .27, amount },
+            { angle: -.72, width: .27, amount },
+            { angle: .72, width: .27, amount },
+            { angle: 2.42, width: .27, amount },
+          ],
+        },
+        gaze: {
+          x: 0,
+          y: -2,
+          rotate: 0,
+          scaleX: 1 + g.action * .06,
+          scaleY: .94,
+        },
+      };
+    }
+
+    case "flow": {
+      const g = gesture(t, 2.35);
+      const direction = g.cycle % 2 === 0 ? 1 : -1;
+
+      return {
+        shape: {
+          ...base,
+          cx: 100 + direction * g.reach * 8,
+          cy: 102 + g.anticipation * 2,
+          rx: 72 + g.action * 19,
+          ry: 42 - g.action * 5,
+          rotation: direction * g.reach * 4,
+          lobes: [
+            {
+              angle: direction > 0 ? 0 : Math.PI,
+              width: .36,
+              amount: 6 + g.action * 29,
+            },
+            {
+              angle: direction > 0 ? Math.PI : 0,
+              width: .53,
+              amount: 3 + g.anticipation * 10,
+            },
+          ],
+        },
+        gaze: {
+          x: direction * (4 + g.action * 5),
+          y: 1,
+          rotate: direction * 2,
+          scaleX: 1.08,
+          scaleY: .94,
+        },
+      };
+    }
+
+    case "tuning": {
+      const g = gesture(t, 2.2);
+      const knob = g.cycle % 3;
+      const angles = [2.14, 1.57, .99];
+
+      return {
+        shape: {
+          ...base,
+          cx: 100,
+          cy: 105 + g.action * 4,
+          rx: 56 - g.action * 2,
+          ry: 61 + g.action * 3,
+          rotation: (knob - 1) * g.reach * 4,
+          lobes: angles.map((angle, index) => ({
+            angle,
+            width: .21,
+            amount:
+              index === knob
+                ? 5 + g.action * 35
+                : 4 + g.settle * 5,
+          })),
+        },
+        gaze: {
+          x: (knob - 1) * (3 + g.action * 3),
+          y: 5,
+          rotate: (knob - 1) * 3,
+          scaleX: .98,
+          scaleY: .92,
+        },
+      };
+    }
+
+    case "security": {
+      const g = gesture(t, 2.7);
+      const brace = g.action;
+
+      return {
+        shape: {
+          ...base,
+          cx: 100,
+          cy: 104 + g.anticipation * 3 - g.overshoot * 2,
+          rx: 66 + brace * 11,
+          ry: 50 + brace * 4,
+          rotation: 0,
+          topPressure: 8 + brace * 3,
+          bottomPressure: -13 - brace * 7,
+          lobes: [
+            {
+              angle: Math.PI / 2,
+              width: .19,
+              amount: 16 + brace * 25,
+            },
+            {
+              angle: .12,
+              width: .46,
+              amount: 7 + brace * 7,
+            },
+            {
+              angle: Math.PI - .12,
+              width: .46,
+              amount: 7 + brace * 7,
+            },
+          ],
+        },
+        gaze: {
+          x: 0,
+          y: 1,
+          rotate: 0,
+          scaleX: 1.08,
+          scaleY: .88,
+        },
+      };
+    }
+  }
+};
+
+const appendLine = (
+  parent: SVGElement,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color: string,
+  width = 2,
+  opacity = 1,
+): SVGLineElement => {
+  const node = makeSvg("line", {
+    x1,
+    y1,
+    x2,
+    y2,
+    stroke: color,
+    "stroke-width": width,
+    "stroke-linecap": "round",
+    opacity,
+  });
+  parent.appendChild(node);
+  return node;
+};
+
+const appendCircle = (
+  parent: SVGElement,
+  cx: number,
+  cy: number,
+  r: number,
+  color: string,
+  opacity = 1,
+): SVGCircleElement => {
+  const node = makeSvg("circle", { cx, cy, r, fill: color, opacity });
+  parent.appendChild(node);
+  return node;
+};
+
+const appendPath = (
+  parent: SVGElement,
+  d: string,
+  color: string,
+  width = 2,
+  fill = "none",
+  opacity = 1,
+): SVGPathElement => {
+  const node = makeSvg("path", {
+    d,
+    stroke: color,
+    "stroke-width": width,
+    fill,
+    opacity,
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  });
+  parent.appendChild(node);
+  return node;
+};
+
+const appendRect = (
+  parent: SVGElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  color: string,
+  fill = "none",
+  opacity = 1,
+): SVGRectElement => {
+  const node = makeSvg("rect", {
+    x,
+    y,
+    width,
+    height,
+    rx: radius,
+    stroke: color,
+    "stroke-width": 1.55,
+    fill,
+    opacity,
+  });
+  parent.appendChild(node);
+  return node;
+};
+
+const drawWorkingArtifacts = (
   scene: Scene,
   specialist: Specialist,
   state: SpecialistState,
@@ -1028,203 +1166,173 @@ const drawArtifacts = (
 
     const z1 = makeSvg("text", {
       x: 151,
-      y: 59,
+      y: 62,
       fill: accent,
-      opacity: .55,
+      opacity: .48,
       "font-size": 12,
       "font-weight": 700,
     });
     z1.textContent = "Z";
-    scene.artifacts.appendChild(z1);
 
     const z2 = makeSvg("text", {
       x: 165,
-      y: 43,
+      y: 46,
       fill: accent,
-      opacity: .27,
+      opacity: .23,
       "font-size": 9,
       "font-weight": 700,
     });
     z2.textContent = "z";
-    scene.artifacts.appendChild(z2);
+
+    scene.artifacts.append(z1, z2);
     return;
   }
 
-  if (state === "completed" || !detailed) return;
-
-  const working = state === "working";
-  const alpha = working ? 1 : .45;
+  if (state !== "working" || !detailed) return;
 
   switch (specialist) {
     case "chat": {
-      const left = sin01(t, 2.3) > .5;
+      const g = gesture(t, 2.05);
+      const side = g.cycle % 2 === 0 ? -1 : 1;
 
-      appendRect(
-        scene.artifacts,
-        7,
-        58,
-        38,
-        25,
-        10,
-        accent,
-        left ? `${accent}12` : "none",
-        left ? .86 : .28,
-      );
-      appendRect(
-        scene.artifacts,
-        155,
-        76,
-        38,
-        25,
-        10,
-        accent,
-        !left ? `${accent}12` : "none",
-        !left ? .86 : .28,
-      );
+      const bubbles = side < 0
+        ? [
+            { x: 5, y: 60, active: true },
+            { x: 158, y: 81, active: false },
+          ]
+        : [
+            { x: 5, y: 60, active: false },
+            { x: 158, y: 81, active: true },
+          ];
 
-      const dots = left
-        ? [[19, 70], [27, 70], [35, 70]]
-        : [[167, 88], [175, 88], [183, 88]];
+      bubbles.forEach((bubble) => {
+        appendRect(
+          scene.artifacts,
+          bubble.x,
+          bubble.y,
+          37,
+          23,
+          9,
+          accent,
+          bubble.active ? `${accent}10` : "none",
+          bubble.active ? .72 : .18,
+        );
+      });
 
-      dots.forEach(([x, y], i) =>
+      const active = side < 0 ? { x: 16, y: 71 } : { x: 169, y: 92 };
+      [0, 1, 2].forEach((i) => {
         appendCircle(
           scene.artifacts,
-          x!,
-          y!,
-          1.3 + sin01(t, 6.2, i * .75) * 1.2,
+          active.x + i * 8,
+          active.y,
+          1.25 + g.action * .8,
           accent,
-          .8,
-        ),
-      );
+          .72,
+        );
+      });
       break;
     }
 
     case "code": {
-      // Terminal directly touches the typing lobes.
+      const g = gesture(t, 2.25);
       appendRect(
         scene.artifacts,
-        46,
-        148,
-        108,
-        38,
+        44,
+        151,
+        112,
+        35,
         7,
         accent,
-        "#070809",
-        .82 * alpha,
+        "#060708",
+        .73,
       );
-      appendLine(scene.artifacts, 55, 159, 78, 159, accent, 2, .78 * alpha);
-      appendLine(scene.artifacts, 55, 168, 96, 168, accent, 2, .38 * alpha);
-      appendLine(scene.artifacts, 55, 177, 74, 177, accent, 2, .55 * alpha);
+      appendLine(scene.artifacts, 54, 162, 80, 162, accent, 1.8, .68);
+      appendLine(scene.artifacts, 54, 171, 96, 171, accent, 1.8, .31);
+      appendLine(scene.artifacts, 54, 179, 74, 179, accent, 1.8, .44);
 
-      const cursor = 82 + pingPong(t * 2.25) * 53;
-      appendLine(scene.artifacts, cursor, 157, cursor, 170, accent, 2, .95);
+      const cursor = 82 + g.action * 49;
+      appendLine(scene.artifacts, cursor, 160, cursor, 171, accent, 1.7, .9);
       break;
     }
 
     case "data": {
+      const g = gesture(t, 2.6);
+      const targetIndex = g.cycle % 4;
       const points = [
-        { x: 118, y: 138 },
-        { x: 132, y: 123 },
-        { x: 145, y: 129 },
-        { x: 157, y: 96 },
-        { x: 171, y: 70 },
-        { x: 186, y: 81 },
+        { x: 124, y: 135 },
+        { x: 139, y: 122 },
+        { x: 151, y: 128 },
+        { x: 163, y: 99 },
+        { x: 174, y: 72 },
+        { x: 188, y: 82 },
       ];
 
       appendPath(
         scene.artifacts,
         `M${points.map((p) => `${p.x} ${p.y}`).join(" L")}`,
         accent,
-        2,
+        1.7,
         "none",
-        .48 * alpha,
+        .34,
       );
-
       points.forEach((p) =>
-        appendCircle(scene.artifacts, p.x, p.y, 2.4, accent, .65 * alpha),
+        appendCircle(scene.artifacts, p.x, p.y, 2.0, accent, .52),
       );
 
-      if (working) {
-        const p = pingPong(t * .72);
-        const scaled = p * (points.length - 1);
-        const i = Math.min(points.length - 2, Math.floor(scaled));
-        const local = scaled - i;
-        const a = points[i]!;
-        const b = points[i + 1]!;
-        const x = lerp(a.x, b.x, local);
-        const y = lerp(a.y, b.y, local);
-        appendCircle(scene.artifacts, x, y, 5.4, accent, .18);
-        appendCircle(scene.artifacts, x, y, 2.2, accent, .96);
-      }
+      const focused = points[Math.min(points.length - 1, targetIndex + 2)]!;
+      appendCircle(scene.artifacts, focused.x, focused.y, 5.2, accent, .12);
+      appendCircle(scene.artifacts, focused.x, focused.y, 2.3, accent, .9);
       break;
     }
 
     case "design": {
-      const c1 = {
-        x: 59 + wave(t, 1.45) * 9,
-        y: 66 + wave(t, 1.1) * 10,
-      };
-      const c2 = {
-        x: 148 + wave(t, 1.45) * 14,
-        y: 124 + wave(t, 1.15, 1.1) * 18,
-      };
+      const g = gesture(t, 2.45);
+      const side = g.cycle % 2 === 0 ? 1 : -1;
+      const c1 = side > 0 ? { x: 62, y: 66 } : { x: 49, y: 116 };
+      const c2 =
+        side > 0
+          ? { x: 151 + g.action * 12, y: 122 - g.action * 12 }
+          : { x: 42 - g.action * 10, y: 92 - g.action * 7 };
 
       appendPath(
         scene.artifacts,
-        `M25 153 C${c1.x} ${c1.y} ${c2.x} ${c2.y} 178 91`,
+        `M24 154 C${c1.x} ${c1.y} ${c2.x} ${c2.y} 178 91`,
         accent,
-        2,
+        1.85,
         "none",
-        .76 * alpha,
+        .62,
       );
-
-      appendLine(scene.artifacts, 25, 153, c1.x, c1.y, accent, 1, .22 * alpha);
-      appendLine(scene.artifacts, 178, 91, c2.x, c2.y, accent, 1, .22 * alpha);
-      appendCircle(scene.artifacts, c1.x, c1.y, 2.5, accent, .6 * alpha);
-      appendCircle(scene.artifacts, c2.x, c2.y, 4.2, accent, .88 * alpha);
+      appendCircle(scene.artifacts, c2.x, c2.y, 4.0, accent, .84);
       break;
     }
 
     case "agent": {
-      const angles = [-2.45, -.70, .70, 2.45];
+      const g = gesture(t, 2.8);
+      const angles = [-2.42, -.72, .72, 2.42];
 
       angles.forEach((angle, i) => {
-        const dispatch = working ? sin01(t, 2.0, i * 1.4) : .25;
-        const radius = 68 + dispatch * 30;
+        const stagger = clamp(g.action - i * .09, 0, 1);
+        const radius = 68 + stagger * 29;
         const x = 100 + Math.cos(angle) * radius;
         const y = 100 + Math.sin(angle) * radius * .76;
 
-        appendLine(
-          scene.artifacts,
-          100,
-          100,
-          x,
-          y,
-          accent,
-          1,
-          .10 + dispatch * .18,
-        );
+        appendLine(scene.artifacts, 100, 100, x, y, accent, 1, .10 + stagger * .12);
 
-        // Child agent is still "blob language": black body + two tiny white eyes.
-        appendCircle(
-          scene.artifacts,
-          x,
-          y,
-          4 + dispatch * 4,
-          bodyColor,
-          .58 + dispatch * .35,
-        );
-        appendCircle(scene.artifacts, x - 1.7, y - .5, .75, "#fff", .86);
-        appendCircle(scene.artifacts, x + 1.7, y - .5, .75, "#fff", .86);
+        const r = 3.6 + stagger * 4.8;
+        appendCircle(scene.artifacts, x, y, r, bodyColor, .60 + stagger * .33);
+        appendCircle(scene.artifacts, x - 1.6, y - .4, .68, "#fff", .85);
+        appendCircle(scene.artifacts, x + 1.6, y - .4, .68, "#fff", .85);
       });
       break;
     }
 
     case "flow": {
+      const g = gesture(t, 2.35);
+      const direction = g.cycle % 2 === 0 ? 1 : -1;
       const nodes = [
-        { x: 18, y: 132 },
-        { x: 57, y: 109 },
-        { x: 143, y: 137 },
+        { x: 17, y: 131 },
+        { x: 56, y: 108 },
+        { x: 144, y: 137 },
         { x: 184, y: 105 },
       ];
 
@@ -1232,96 +1340,105 @@ const drawArtifacts = (
         scene.artifacts,
         `M${nodes.map((n) => `${n.x} ${n.y}`).join(" L")}`,
         accent,
-        1.7,
+        1.45,
         "none",
-        .28 * alpha,
+        .20,
       );
 
-      nodes.forEach((n, i) => {
-        if (i === 1 || i === 2) {
-          scene.artifacts.appendChild(
-            makeSvg("path", {
-              d: `M${n.x} ${n.y - 6} L${n.x + 6} ${n.y} L${n.x} ${n.y + 6} L${n.x - 6} ${n.y} Z`,
-              fill: `${accent}10`,
-              stroke: accent,
-              "stroke-width": 1.6,
-              opacity: .65 * alpha,
-            }),
-          );
-        } else {
-          const c = appendCircle(
-            scene.artifacts,
-            n.x,
-            n.y,
-            5.4,
-            `${accent}12`,
-            .8 * alpha,
-          );
-          c.setAttribute("stroke", accent);
-          c.setAttribute("stroke-width", "1.5");
-        }
+      nodes.forEach((n, index) => {
+        const c = appendCircle(
+          scene.artifacts,
+          n.x,
+          n.y,
+          index === 0 || index === 3 ? 4.8 : 4.0,
+          `${accent}0d`,
+          .7,
+        );
+        c.setAttribute("stroke", accent);
+        c.setAttribute("stroke-width", "1.3");
       });
 
-      if (working) {
-        const p = (t * .48) % 1;
-        const scaled = p * (nodes.length - 1);
-        const i = Math.min(nodes.length - 2, Math.floor(scaled));
-        const local = ease(scaled - i);
-        const a = nodes[i]!;
-        const b = nodes[i + 1]!;
-        const x = lerp(a.x, b.x, local);
-        const y = lerp(a.y, b.y, local);
-        appendCircle(scene.artifacts, x, y, 7, accent, .10);
-        appendCircle(scene.artifacts, x, y, 3.6, accent, .92);
-      }
+      const from = direction > 0 ? nodes[0]! : nodes[3]!;
+      const to = direction > 0 ? nodes[3]! : nodes[0]!;
+      const q = clamp(g.action, 0, 1);
+      const x = lerp(from.x, to.x, q);
+      const y = lerp(from.y, to.y, q);
+      appendCircle(scene.artifacts, x, y, 6.0, accent, .09);
+      appendCircle(scene.artifacts, x, y, 3.2, accent, .88);
       break;
     }
 
     case "tuning": {
-      const rows = [145, 162, 179];
-      const phases = [0, 1.7, 3.4];
+      const g = gesture(t, 2.2);
+      const active = g.cycle % 3;
+      const rows = [146, 163, 180];
+      const positions = [70, 124, 92];
 
-      rows.forEach((y, i) => {
-        appendLine(scene.artifacts, 34, y, 166, y, accent, 1.2, .28 * alpha);
-        const x =
-          55 + sin01(t, working ? 2.5 + i * .35 : .5, phases[i]!) * 90;
-        appendCircle(scene.artifacts, x, y, 4.6, accent, .82 * alpha);
+      rows.forEach((y, index) => {
+        appendLine(scene.artifacts, 35, y, 165, y, accent, 1.1, .22);
+        const offset = index === active ? (g.reach - .2) * 27 : 0;
+        appendCircle(
+          scene.artifacts,
+          positions[index]! + offset,
+          y,
+          4.2,
+          accent,
+          index === active ? .85 : .42,
+        );
       });
       break;
     }
 
     case "security": {
-      // Scanner goes THROUGH the body so the body itself is the protected object.
-      const p = working ? pingPong(t * 1.05) : .35;
-      const y = lerp(76, 152, p);
-      const half = 32 + Math.sin(p * Math.PI) * 24;
+      const g = gesture(t, 2.7);
+      const y = lerp(78, 151, clamp(g.action, 0, 1));
+      const half = 33 + Math.sin(clamp(g.action, 0, 1) * Math.PI) * 21;
 
-      appendLine(scene.artifacts, 100 - half, y, 100 + half, y, accent, 2, .88);
-      appendCircle(scene.artifacts, 100 + half, y, 3.5, accent, .92);
+      appendLine(scene.artifacts, 100 - half, y, 100 + half, y, accent, 1.8, .82);
+      appendCircle(scene.artifacts, 100 + half, y, 3.1, accent, .9);
       break;
     }
   }
 };
 
-type Tickable = {
-  tick(now: number): void;
+const topHighlight = (points: readonly Point[]): string => {
+  const selected: Point[] = [];
+
+  for (const p of points) {
+    if (p.y < 74 && p.x > 49 && p.x < 143) selected.push(p);
+  }
+
+  if (selected.length < 2) return "";
+
+  selected.sort((a, b) => a.x - b.x);
+
+  return (
+    `M${selected[0]!.x.toFixed(2)} ${selected[0]!.y.toFixed(2)} ` +
+    selected
+      .slice(1)
+      .map((p) => `L${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+      .join(" ")
+  );
 };
+
+type Tickable = { tick(now: number): void };
 
 const ACTIVE = new Set<Tickable>();
 let sharedRaf = 0;
 
 const sharedLoop = (now: number): void => {
   for (const item of [...ACTIVE]) item.tick(now);
+
   if (ACTIVE.size) sharedRaf = requestAnimationFrame(sharedLoop);
   else sharedRaf = 0;
 };
 
-const registerTicker = (item: Tickable): void => {
+const register = (item: Tickable): void => {
   ACTIVE.add(item);
   if (!sharedRaf) sharedRaf = requestAnimationFrame(sharedLoop);
 };
 
-const unregisterTicker = (item: Tickable): void => {
+const unregister = (item: Tickable): void => {
   ACTIVE.delete(item);
   if (!ACTIVE.size && sharedRaf) {
     cancelAnimationFrame(sharedRaf);
@@ -1345,9 +1462,18 @@ class Controller implements ProfessionalGrokController, Tickable {
   private bodyColor: string;
   private deformation: number;
 
+  private eyesRoot: SVGGElement | null = null;
   private currentPoints: Point[] = [];
-  private lastNow = performance.now();
+  private currentGaze: Gaze = {
+    x: 0,
+    y: 0,
+    rotate: 0,
+    scaleX: 1,
+    scaleY: 1,
+  };
+
   private started = performance.now();
+  private lastNow = performance.now();
   private paused = false;
   private destroyed = false;
 
@@ -1380,19 +1506,24 @@ class Controller implements ProfessionalGrokController, Tickable {
       typeof matchMedia !== "undefined" &&
       matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    this.eyesRoot =
+      this.avatarHost.querySelector<SVGGElement>('[data-grok-eyes-root="true"]');
+
+    this.hideSourceBody();
     this.syncIdentity();
-    this.hideRoundSourceBody();
     this.playEmotion();
 
-    const initialShape = baseShape(
+    const initial = professionalShapeAndGaze(
       this.specialist,
       this.state,
       this.reduceMotion ? .8 : 0,
     );
-    this.currentPoints = targetPoints(initialShape, this.deformation);
+    this.currentPoints = pointsFromShape(initial.shape, this.deformation);
+    this.currentGaze = { ...initial.gaze };
     this.renderBody();
+    this.applyGaze();
 
-    registerTicker(this);
+    register(this);
   }
 
   getSpecialist(): Specialist {
@@ -1405,26 +1536,30 @@ class Controller implements ProfessionalGrokController, Tickable {
 
   setSpecialist(specialist: Specialist): void {
     if (specialist === this.specialist) return;
+
     this.specialist = specialist;
     this.accent = SPECIALIST_ACCENT[specialist];
+    this.started = performance.now();
     this.syncIdentity();
     this.playEmotion();
   }
 
   setState(state: SpecialistState): void {
     if (state === this.state) return;
+
     this.state = state;
+    this.started = performance.now();
     this.syncIdentity();
     this.playEmotion();
   }
 
   setAccent(color: string): void {
     this.accent = color;
-    this.scene.root.style.setProperty("--pgv5-accent", color);
+    this.scene.root.style.setProperty("--gpv6-accent", color);
   }
 
   setDeformation(strength: number): void {
-    this.deformation = clamp(strength, 0, 1.65);
+    this.deformation = clamp(strength, 0, 1.7);
   }
 
   pause(): void {
@@ -1435,19 +1570,14 @@ class Controller implements ProfessionalGrokController, Tickable {
   resume(): void {
     this.paused = false;
     this.lastNow = performance.now();
-    this.avatar.play(
-      pickAnimation(
-        this.module.availableAnimations,
-        this.specialist,
-        this.state,
-      ),
-    );
+    this.playEmotion();
   }
 
   destroy(): void {
     if (this.destroyed) return;
+
     this.destroyed = true;
-    unregisterTicker(this);
+    unregister(this);
     this.avatar.destroy?.();
     this.scene.root.remove();
   }
@@ -1458,30 +1588,40 @@ class Controller implements ProfessionalGrokController, Tickable {
     const dt = clamp((now - this.lastNow) / 1000, 0, .08);
     this.lastNow = now;
 
-    const elapsed = this.reduceMotion ? .8 : (now - this.started) / 1000;
-    const shape = baseShape(this.specialist, this.state, elapsed);
-    const target = targetPoints(shape, this.deformation);
+    const t = this.reduceMotion ? .82 : (now - this.started) / 1000;
+    const target = professionalShapeAndGaze(this.specialist, this.state, t);
+    const targetPoints = pointsFromShape(target.shape, this.deformation);
 
-    const response = this.reduceMotion ? 1 : 1 - Math.exp(-dt * 10.5);
+    const bodyResponse = this.reduceMotion ? 1 : 1 - Math.exp(-dt * 13.5);
+    const eyeResponse = this.reduceMotion ? 1 : 1 - Math.exp(-dt * 17);
 
-    if (this.currentPoints.length !== target.length) {
-      this.currentPoints = target.map((p) => ({ ...p }));
+    if (this.currentPoints.length !== targetPoints.length) {
+      this.currentPoints = targetPoints.map((p) => ({ ...p }));
     } else {
-      for (let i = 0; i < target.length; i++) {
+      for (let i = 0; i < targetPoints.length; i++) {
         const current = this.currentPoints[i]!;
-        const next = target[i]!;
-        current.x = lerp(current.x, next.x, response);
-        current.y = lerp(current.y, next.y, response);
+        const next = targetPoints[i]!;
+        current.x = lerp(current.x, next.x, bodyResponse);
+        current.y = lerp(current.y, next.y, bodyResponse);
       }
     }
 
-    this.renderBody();
+    this.currentGaze = {
+      x: lerp(this.currentGaze.x, target.gaze.x, eyeResponse),
+      y: lerp(this.currentGaze.y, target.gaze.y, eyeResponse),
+      rotate: lerp(this.currentGaze.rotate, target.gaze.rotate, eyeResponse),
+      scaleX: lerp(this.currentGaze.scaleX, target.gaze.scaleX, eyeResponse),
+      scaleY: lerp(this.currentGaze.scaleY, target.gaze.scaleY, eyeResponse),
+    };
 
-    drawArtifacts(
+    this.renderBody();
+    this.applyGaze();
+
+    drawWorkingArtifacts(
       this.scene,
       this.specialist,
       this.state,
-      elapsed,
+      t,
       this.accent,
       this.bodyColor,
       this.detailed,
@@ -1491,15 +1631,15 @@ class Controller implements ProfessionalGrokController, Tickable {
   private syncIdentity(): void {
     this.scene.root.dataset.specialist = this.specialist;
     this.scene.root.dataset.state = this.state;
-    this.scene.root.style.setProperty("--pgv5-accent", this.accent);
-    this.scene.root.style.setProperty("--pgv5-body", this.bodyColor);
+    this.scene.root.style.setProperty("--gpv6-accent", this.accent);
+    this.scene.root.style.setProperty("--gpv6-body", this.bodyColor);
     this.scene.root.setAttribute(
       "aria-label",
       `${SPECIALIST_LABEL[this.specialist]} — ${STATE_LABEL[this.state]}`,
     );
   }
 
-  private hideRoundSourceBody(): void {
+  private hideSourceBody(): void {
     const hide = (selector: string): void => {
       this.avatarHost.querySelectorAll<SVGElement>(selector).forEach((node) => {
         node.style.opacity = "0";
@@ -1524,12 +1664,8 @@ class Controller implements ProfessionalGrokController, Tickable {
   }
 
   private renderBody(): void {
-    const d = closedSpline(this.currentPoints);
-    this.scene.bodyPath.setAttribute("d", d);
-    this.scene.bodyHighlight.setAttribute(
-      "d",
-      highlightPath(this.currentPoints),
-    );
+    this.scene.bodyPath.setAttribute("d", closedSpline(this.currentPoints));
+    this.scene.highlightPath.setAttribute("d", topHighlight(this.currentPoints));
 
     let minX = Infinity;
     let maxX = -Infinity;
@@ -1541,16 +1677,26 @@ class Controller implements ProfessionalGrokController, Tickable {
       maxY = Math.max(maxY, p.y);
     }
 
-    const width = Math.max(25, maxX - minX);
-    this.scene.shadow.setAttribute("cx", "100");
-    this.scene.shadow.setAttribute("cy", String(Math.min(184, maxY + 10)));
-    this.scene.shadow.setAttribute(
-      "rx",
-      String(clamp(width * .38, 28, 70)),
-    );
+    const width = maxX - minX;
+    this.scene.shadow.setAttribute("cy", String(Math.min(190, maxY + 9)));
+    this.scene.shadow.setAttribute("rx", String(clamp(width * .35, 25, 70)));
     this.scene.shadow.setAttribute(
       "ry",
-      String(this.state === "waiting" ? 6.5 : 7.5),
+      String(this.state === "waiting" ? 5.8 : 7.1),
+    );
+  }
+
+  private applyGaze(): void {
+    if (!this.eyesRoot) return;
+
+    const x = this.currentGaze.x / EYE_COORD_SCALE;
+    const y = this.currentGaze.y / EYE_COORD_SCALE;
+
+    this.eyesRoot.setAttribute(
+      "transform",
+      `translate(${x.toFixed(2)} ${y.toFixed(2)}) ` +
+        `rotate(${this.currentGaze.rotate.toFixed(2)} 0 0) ` +
+        `scale(${this.currentGaze.scaleX.toFixed(3)} ${this.currentGaze.scaleY.toFixed(3)})`,
     );
   }
 }
@@ -1575,21 +1721,18 @@ export async function mountProfessionalGrokAvatar(
   const accent = options.accent ?? SPECIALIST_ACCENT[specialist];
   const bodyColor = options.bodyColor ?? "#020203";
   const size = options.size ?? 240;
-  const deformation = clamp(options.deformation ?? 1, 0, 1.65);
+  const deformation = clamp(options.deformation ?? 1, 0, 1.7);
   const statusCues = options.statusCues ?? true;
 
   const numericSize =
     typeof size === "number" ? size : Number.parseFloat(String(size)) || 220;
 
-  // Full professional props are only useful at a size where the eye can read them.
-  // Smaller avatars still get the same body morph + emotional state.
-  const detailed = numericSize >= 160;
+  const detailed = numericSize >= 150;
 
   const scene = createScene(size, bodyColor, accent, statusCues);
 
   const avatarHost = document.createElement("div");
-  avatarHost.className = "pgv5-avatar";
-
+  avatarHost.className = "gpv6-avatar";
   scene.root.insertBefore(avatarHost, scene.artifactSvg);
   element.appendChild(scene.root);
 
@@ -1660,9 +1803,9 @@ export function professionalVisualStateFromRuntime(input: {
  * O catálogo de animações por especialista e estado.
  *
  * Exportado porque é CONTRATO, não detalhe: o teste percorre os 8 x 5 e falha se
- * alguma combinação ficar sem animação. Um estado sem entrada não quebra nada em
- * execução — o `pickAnimation` cai no fallback — e é exatamente por isso que
- * precisa de guarda: o buraco só apareceria como um bot parado na tela.
+ * alguma combinação ficar sem animação. Um buraco aqui não quebra nada em
+ * execução — `pickAnimation` cai no fallback — e por isso mesmo precisa de
+ * guarda: ele só apareceria como um bot parado na tela.
  */
-export const PROFESSIONAL_GROK_BEHAVIOR_MAP = ANIMATIONS;
-export const GROK_SPECIALIST_BEHAVIOR_MAP = ANIMATIONS;
+export const PROFESSIONAL_GROK_BEHAVIOR_MAP = ANIMATION_CANDIDATES;
+export const GROK_SPECIALIST_BEHAVIOR_MAP = ANIMATION_CANDIDATES;
