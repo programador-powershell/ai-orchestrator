@@ -1,28 +1,44 @@
+import { GrokSlimeCore } from "./GrokSlimeCore";
+
 /**
  * grok_professional_avatar_v3.ts
  *
- * V7 — GROK METABALL RIG
+ * TRUE professional-activity animation layer for a Grok-style procedural avatar.
  *
- * Keeps the filename/API expected by the project, but replaces the previous
- * "single deformed silhouette + professional overlay" renderer.
+ * The previous wrapper only changed Avatar Lab expressions; the body stayed a
+ * perfect sphere because the exported avatar definition keeps body geometry
+ * outside the expression/animation steps.
  *
- * Core visual rule:
- *   THE PROFESSION IS PERFORMED BY THE CREATURE'S OWN BLACK MASS.
- *
- * The body is built from SVG metaballs (central mass + chains of organic nodes)
- * fused with a goo filter. Limbs are therefore not line-art arms sitting on
- * top of a ball: they visually grow out of the same black material.
- *
- * Avatar Lab / grok-avatar.js is used for the white eyes and emotional playback.
+ * This version adds:
+ *   1. continuous body deformation (squash/stretch/skew/lean)
+ *   2. optional organic SVG displacement while working
+ *   3. black "blob limbs" that visually grow from the character
+ *   4. profession-specific choreography
+ *   5. 8 specialists x 5 states
  *
  * Specialists:
  *   chat, code, data, design, agent, flow, tuning, security
  *
  * States:
  *   active, owner, working, waiting, completed
+ *
+ * It is designed to wrap avatar.js exported by Bible Strong Avatar Lab.
+ *
+ * Example:
+ *
+ *   const bot = await mountGrokSpecialistAvatar("#bot", {
+ *     moduleUrl: "/avatars/grok/avatar.js",
+ *     specialist: "code",
+ *     state: "working",
+ *     size: 240,
+ *   });
+ *
+ *   bot.setState("waiting");
+ *   bot.setSpecialist("security");
+ *   bot.setState("working");
  */
 
-export type Specialist =
+export type GrokSpecialist =
   | "chat"
   | "code"
   | "data"
@@ -32,7 +48,7 @@ export type Specialist =
   | "tuning"
   | "security";
 
-export type SpecialistState =
+export type GrokSpecialistState =
   | "active"
   | "owner"
   | "working"
@@ -59,128 +75,117 @@ export interface AvatarLabModule {
   ): AvatarLabInstance;
 }
 
-export interface MountProfessionalGrokOptions {
+export interface MountGrokSpecialistOptions {
   moduleUrl: string;
-  specialist: Specialist;
-  state?: SpecialistState;
+  specialist: GrokSpecialist;
+  state?: GrokSpecialistState;
   size?: number | string;
+
+  /**
+   * Blob color. The Grok-style preset is black.
+   */
   bodyColor?: string;
+
+  /**
+   * Accent is only used for task artifacts / status.
+   */
   accent?: string;
+
+  /**
+   * Strength of body deformation.
+   * 0 = none, 1 = intended effect, 1.5 = exaggerated.
+   */
   deformation?: number;
-  organicWarp?: boolean;
+
+  /**
+   * REMOVIDA na v8. O feTurbulence saiu junto com o corpo antigo — a deformação
+   * agora é do GrokSlimeCore, que a faz na geometria e não por filtro. Deixar a
+   * opção aceita e ignorada faria quem a ligasse acreditar ter ligado algo.
+   */
+
+  /**
+   * Show tiny Owner/completed status cues.
+   */
   statusCues?: boolean;
 }
 
-export interface ProfessionalGrokController {
+export interface GrokSpecialistAvatarController {
   readonly element: HTMLElement;
-  getSpecialist(): Specialist;
-  getState(): SpecialistState;
-  setSpecialist(specialist: Specialist): void;
-  setState(state: SpecialistState): void;
+
+  getSpecialist(): GrokSpecialist;
+  getState(): GrokSpecialistState;
+
+  setSpecialist(specialist: GrokSpecialist): void;
+  setState(state: GrokSpecialistState): void;
+
   setAccent(color: string): void;
   setDeformation(strength: number): void;
+
   pause(): void;
   resume(): void;
+  /** Reinicia a animação de emoção do estado atual. */
+  replay(): void;
   destroy(): void;
 }
 
-type Point = { x: number; y: number };
-
-type BodyPose = {
-  cx: number;
-  cy: number;
-  rx: number;
-  ry: number;
-  rotation: number;
+type Point = {
+  x: number;
+  y: number;
 };
 
-type ChainPose = {
-  visible: boolean;
-  from: Point;
-  control: Point;
-  to: Point;
-  thickness: number;
-  tip: number;
-  detach?: number;
-};
-
-type RigPose = {
-  body: BodyPose;
-  chains: ChainPose[];
-  gaze: {
-    x: number;
-    y: number;
-    rotation: number;
-    scaleX: number;
-    scaleY: number;
-  };
-};
-
-type Scene = {
-  root: HTMLDivElement;
-  bodySvg: SVGSVGElement;
-  artSvg: SVGSVGElement;
-  gooGroup: SVGGElement;
-  bodyEllipse: SVGEllipseElement;
-  bodyGlow: SVGEllipseElement;
-  shadow: SVGEllipseElement;
-  chainNodes: SVGCircleElement[][];
+type StageNodes = {
+  svg: SVGSVGElement;
+  frontSvg: SVGSVGElement;
+  back: SVGGElement;
+  front: SVGGElement;
   artifacts: SVGGElement;
+  leftArm: SVGPathElement;
+  rightArm: SVGPathElement;
   ownerRing: SVGCircleElement;
-  ownerDots: SVGCircleElement[];
-  completed: SVGGElement;
-};
-
-type Spring = {
-  value: number;
-  velocity: number;
-};
-
-type SpringPoint = {
-  x: Spring;
-  y: Spring;
+  ownerDotA: SVGCircleElement;
+  ownerDotB: SVGCircleElement;
+  ownerDotC: SVGCircleElement;
+  completeBadge: SVGGElement;
+  filterId: string;
+  turbulence: SVGFETurbulenceElement;
+  displacement: SVGFEDisplacementMapElement;
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const MAX_CHAINS = 4;
-const NODES_PER_CHAIN = 7;
-const EYE_COORD_SCALE = 0.709;
+const TAU = Math.PI * 2;
 
-const clamp = (v: number, min: number, max: number): number =>
-  Math.max(min, Math.min(max, v));
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
 
-const lerp = (a: number, b: number, t: number): number =>
-  a + (b - a) * t;
+const lerp = (a: number, b: number, amount: number): number =>
+  a + (b - a) * amount;
 
-const smooth = (t: number): number => {
-  const p = clamp(t, 0, 1);
-  return p * p * (3 - 2 * p);
+const sin01 = (time: number, speed = 1, phase = 0): number =>
+  0.5 + 0.5 * Math.sin(time * speed + phase);
+
+const wave = (time: number, speed = 1, phase = 0): number =>
+  Math.sin(time * speed + phase);
+
+const pingPong = (time: number): number => {
+  const value = ((time % 2) + 2) % 2;
+  return value <= 1 ? value : 2 - value;
 };
 
-const smoother = (t: number): number => {
-  const p = clamp(t, 0, 1);
-  return p * p * p * (p * (p * 6 - 15) + 10);
-};
-
-const wave = (t: number, speed = 1, phase = 0): number =>
-  Math.sin(t * speed + phase);
-
-const bezier = (a: Point, c: Point, b: Point, t: number): Point => {
-  const u = 1 - t;
-  return {
-    x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
-    y: u * u * a.y + 2 * u * t * c.y + t * t * b.y,
-  };
+const ease = (value: number): number => {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
 };
 
 const makeSvg = <K extends keyof SVGElementTagNameMap>(
   tag: K,
-  attrs: Record<string, string | number> = {},
+  attributes: Record<string, string | number> = {},
 ): SVGElementTagNameMap[K] => {
   const node = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attrs)) {
+
+  for (const [key, value] of Object.entries(attributes)) {
     node.setAttribute(key, String(value));
   }
+
   return node;
 };
 
@@ -188,7 +193,12 @@ const clear = (node: Element): void => {
   while (node.firstChild) node.removeChild(node.firstChild);
 };
 
-const SPECIALIST_ACCENT: Record<Specialist, string> = {
+const randomId = (): string =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID().replaceAll("-", "")
+    : `${Date.now()}${Math.random().toString(16).slice(2)}`;
+
+const SPECIALIST_ACCENT: Record<GrokSpecialist, string> = {
   chat: "#55c7ff",
   code: "#65df8d",
   data: "#72a7ff",
@@ -199,18 +209,18 @@ const SPECIALIST_ACCENT: Record<Specialist, string> = {
   security: "#5de0c5",
 };
 
-const SPECIALIST_LABEL: Record<Specialist, string> = {
+const SPECIALIST_LABEL: Record<GrokSpecialist, string> = {
   chat: "Chat",
-  code: "Código",
-  data: "Dados",
+  code: "Code",
+  data: "Data",
   design: "Design",
-  agent: "Equipe",
+  agent: "Agent",
   flow: "Fluxo",
   tuning: "Tuning",
-  security: "Segurança",
+  security: "Security",
 };
 
-const STATE_LABEL: Record<SpecialistState, string> = {
+const STATE_LABEL: Record<GrokSpecialistState, string> = {
   active: "Ativo",
   owner: "Owner",
   working: "Trabalhando",
@@ -218,9 +228,13 @@ const STATE_LABEL: Record<SpecialistState, string> = {
   completed: "Concluído",
 };
 
-export const ANIMATION_CANDIDATES: Record<
-  Specialist,
-  Record<SpecialistState, readonly string[]>
+/**
+ * Emotional states from the Avatar Lab vocabulary.
+ * The body choreography below is independent from this eye/head expression.
+ */
+export const GROK_SPECIALIST_BEHAVIOR_MAP: Record<
+  GrokSpecialist,
+  Record<GrokSpecialistState, readonly string[]>
 > = {
   chat: {
     active: ["listening", "idle"],
@@ -282,31 +296,20 @@ export const ANIMATION_CANDIDATES: Record<
 
 const pickAnimation = (
   available: readonly string[],
-  specialist: Specialist,
-  state: SpecialistState,
+  specialist: GrokSpecialist,
+  state: GrokSpecialistState,
 ): string | undefined => {
-  const set = new Set(available);
+  const known = new Set(available);
 
-  for (const candidate of ANIMATION_CANDIDATES[specialist][state]) {
-    if (set.has(candidate)) return candidate;
+  for (const candidate of GROK_SPECIALIST_BEHAVIOR_MAP[specialist][state]) {
+    if (known.has(candidate)) return candidate;
   }
 
   for (const fallback of ["idle", "listening", "thinking", "working", "sleeping"]) {
-    if (set.has(fallback)) return fallback;
+    if (known.has(fallback)) return fallback;
   }
 
   return available[0];
-};
-
-const resolveTarget = (target: Element | string): HTMLElement => {
-  const node =
-    typeof target === "string" ? document.querySelector(target) : target;
-
-  if (!(node instanceof HTMLElement)) {
-    throw new Error(`Professional Grok target not found: ${String(target)}`);
-  }
-
-  return node;
 };
 
 const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
@@ -316,7 +319,9 @@ const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
   )) as Partial<AvatarLabModule>;
 
   if (typeof imported.createAvatar !== "function") {
-    throw new Error(`Avatar module "${moduleUrl}" does not export createAvatar().`);
+    throw new Error(
+      `Avatar module "${moduleUrl}" does not export createAvatar().`,
+    );
   }
 
   if (!Array.isArray(imported.availableAnimations)) {
@@ -328,27 +333,38 @@ const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
   return imported as AvatarLabModule;
 };
 
+const resolveTarget = (target: Element | string): HTMLElement => {
+  const element =
+    typeof target === "string" ? document.querySelector(target) : target;
+
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`alvo do avatar do especialista não encontrado: ${String(target)}`);
+  }
+
+  return element;
+};
+
 const ensureStyles = (): void => {
-  if (document.getElementById("grok-metaball-v7-style")) return;
+  if (document.getElementById("gsa-style")) return;
 
   const style = document.createElement("style");
-  style.id = "grok-metaball-v7-style";
+  style.id = "gsa-style";
   style.textContent = `
-.gmv7-root {
-  --gmv7-size: 240px;
-  --gmv7-accent: #55c7ff;
-  --gmv7-body: #030304;
+.gsa-root {
+  --gsa-size: 240px;
+  --gsa-accent: #55c7ff;
+  --gsa-body: #000;
   position: relative;
-  width: var(--gmv7-size);
-  height: var(--gmv7-size);
+  width: var(--gsa-size);
+  height: var(--gsa-size);
   overflow: visible;
   isolation: isolate;
   user-select: none;
   -webkit-user-select: none;
 }
 
-.gmv7-body,
-.gmv7-art {
+.gsa-stage,
+.gsa-art-layer {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -357,272 +373,216 @@ const ensureStyles = (): void => {
   pointer-events: none;
 }
 
-.gmv7-body { z-index: 2; }
-.gmv7-art { z-index: 4; }
-
-.gmv7-avatar {
-  position: absolute;
-  inset: 11%;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
+.gsa-stage {
+  z-index: 1;
 }
 
-.gmv7-avatar > * {
+.gsa-avatar {
+  position: absolute;
+  inset: 11%;
+  z-index: 2;
+  transform-origin: 50% 55%;
+  will-change: transform, filter;
+}
+
+.gsa-avatar > * {
   width: 100% !important;
   height: 100% !important;
 }
 
-.gmv7-owner-ring {
+.gsa-art-layer {
+  z-index: 3;
+}
+
+.gsa-blob-limb {
   fill: none;
-  stroke: var(--gmv7-accent);
-  stroke-width: 1.25;
-  stroke-dasharray: 7 10;
+  stroke: var(--gsa-body);
+  stroke-width: 15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.gsa-root[data-state="working"] .gsa-blob-limb,
+.gsa-root[data-state="owner"] .gsa-blob-limb {
+  opacity: 1;
+}
+
+.gsa-owner-ring {
+  fill: none;
+  stroke: var(--gsa-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 10 8;
   opacity: 0;
   transform-origin: 100px 100px;
 }
 
-.gmv7-root[data-state="owner"] .gmv7-owner-ring {
-  opacity: .35;
-  animation: gmv7-owner-spin 11s linear infinite;
-}
-
-.gmv7-owner-dot {
-  fill: var(--gmv7-accent);
-  opacity: 0;
-}
-
-.gmv7-root[data-state="owner"] .gmv7-owner-dot {
+.gsa-root[data-state="owner"] .gsa-owner-ring {
   opacity: .72;
-  animation: gmv7-owner-dot 2.2s ease-in-out infinite;
+  animation: gsa-owner-ring 8s linear infinite;
 }
 
-.gmv7-complete {
-  color: var(--gmv7-accent);
+.gsa-owner-dot {
+  fill: var(--gsa-accent);
   opacity: 0;
-  transform-origin: 171px 171px;
 }
 
-.gmv7-root[data-state="completed"] .gmv7-complete {
-  opacity: .90;
-  animation: gmv7-complete 2.8s ease-in-out infinite;
+.gsa-root[data-state="owner"] .gsa-owner-dot {
+  opacity: .9;
+  animation: gsa-owner-dot 1.9s ease-in-out infinite;
 }
 
-@keyframes gmv7-owner-spin {
+.gsa-complete {
+  color: var(--gsa-accent);
+  opacity: 0;
+  transform-origin: 169px 169px;
+}
+
+.gsa-root[data-state="completed"] .gsa-complete {
+  opacity: 1;
+  animation: gsa-complete 2.5s ease-in-out infinite;
+}
+
+@keyframes gsa-owner-ring {
+  from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
-@keyframes gmv7-owner-dot {
-  0%,100% { opacity: .24; transform: scale(.72); }
-  50% { opacity: .95; transform: scale(1.14); }
+@keyframes gsa-owner-dot {
+  0%,100% { transform: scale(.72); opacity: .45; }
+  50% { transform: scale(1.15); opacity: 1; }
 }
 
-@keyframes gmv7-complete {
-  0%,70%,100% { opacity: .58; transform: scale(.94); }
-  82% { opacity: 1; transform: scale(1.12); }
+@keyframes gsa-complete {
+  0%,70%,100% { transform: scale(.94); opacity: .72; }
+  82% { transform: scale(1.12); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gmv7-root * {
+  .gsa-root * {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
   }
 }
 `;
+
   document.head.appendChild(style);
 };
 
-const createScene = (
-  size: number | string,
-  bodyColor: string,
-  accent: string,
-  statusCues: boolean,
-): Scene => {
-  const root = document.createElement("div");
-  root.className = "gmv7-root";
-  root.style.setProperty(
-    "--gmv7-size",
-    typeof size === "number" ? `${size}px` : size,
-  );
-  root.style.setProperty("--gmv7-accent", accent);
-  root.style.setProperty("--gmv7-body", bodyColor);
+const createStage = (): StageNodes => {
+  const filterId = `gsa-warp-${randomId()}`;
 
-  const bodySvg = makeSvg("svg", {
-    class: "gmv7-body",
+  const svg = makeSvg("svg", {
+    class: "gsa-stage",
     viewBox: "0 0 200 200",
     "aria-hidden": "true",
   });
 
   const defs = makeSvg("defs");
-  const gooId = `gmv7-goo-${Math.random().toString(36).slice(2)}`;
-  const glowId = `gmv7-glow-${Math.random().toString(36).slice(2)}`;
 
-  const goo = makeSvg("filter", {
-    id: gooId,
-    x: "-45%",
-    y: "-45%",
-    width: "190%",
-    height: "190%",
-    "color-interpolation-filters": "sRGB",
+  const filter = makeSvg("filter", {
+    id: filterId,
+    x: "-30%",
+    y: "-30%",
+    width: "160%",
+    height: "160%",
   });
 
-  goo.append(
-    makeSvg("feGaussianBlur", {
-      in: "SourceGraphic",
-      stdDeviation: "5.2",
-      result: "blur",
-    }),
-    makeSvg("feColorMatrix", {
-      in: "blur",
-      mode: "matrix",
-      values:
-        "1 0 0 0 0 " +
-        "0 1 0 0 0 " +
-        "0 0 1 0 0 " +
-        "0 0 0 23 -10",
-      result: "goo",
-    }),
-    makeSvg("feComposite", {
-      in: "SourceGraphic",
-      in2: "goo",
-      operator: "atop",
-    }),
-  );
-
-  const gradient = makeSvg("radialGradient", {
-    id: glowId,
-    cx: "34%",
-    cy: "23%",
-    r: "88%",
-  });
-  gradient.append(
-    makeSvg("stop", { offset: "0%", "stop-color": "#2a2b2f" }),
-    makeSvg("stop", { offset: "42%", "stop-color": "#0a0a0b" }),
-    makeSvg("stop", { offset: "100%", "stop-color": bodyColor }),
-  );
-
-  defs.append(goo, gradient);
-  bodySvg.appendChild(defs);
-
-  const shadow = makeSvg("ellipse", {
-    cx: 100,
-    cy: 171,
-    rx: 47,
-    ry: 7,
-    fill: "#000",
-    opacity: .22,
-  });
-  bodySvg.appendChild(shadow);
-
-  const gooGroup = makeSvg("g", {
-    // Gancho de teste, reposto a cada pacote. Sem ele, achar a massa no DOM
-    // depende da POSIÇÃO dentro do SVG — que muda a cada rearranjo e dá teste
-    // verde por acidente. Por favor não remova.
-    "data-grok-goo": "true",
-    filter: `url(#${gooId})`,
-    fill: bodyColor,
+  const turbulence = makeSvg("feTurbulence", {
+    type: "fractalNoise",
+    baseFrequency: "0.012 0.017",
+    numOctaves: 2,
+    seed: 7,
+    result: "noise",
   });
 
-  const bodyEllipse = makeSvg("ellipse", {
-    cx: 100,
-    cy: 100,
-    rx: 58,
-    ry: 58,
-    fill: bodyColor,
+  const displacement = makeSvg("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "noise",
+    scale: 0,
+    xChannelSelector: "R",
+    yChannelSelector: "G",
   });
 
-  gooGroup.appendChild(bodyEllipse);
+  filter.appendChild(turbulence);
+  filter.appendChild(displacement);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
 
-  const chainNodes: SVGCircleElement[][] = [];
-
-  for (let chain = 0; chain < MAX_CHAINS; chain++) {
-    const nodes: SVGCircleElement[] = [];
-
-    for (let index = 0; index < NODES_PER_CHAIN; index++) {
-      const node = makeSvg("circle", {
-        cx: 100,
-        cy: 100,
-        r: 0.01,
-        fill: bodyColor,
-      });
-      gooGroup.appendChild(node);
-      nodes.push(node);
-    }
-
-    chainNodes.push(nodes);
-  }
-
-  bodySvg.appendChild(gooGroup);
-
-  const bodyGlow = makeSvg("ellipse", {
-    cx: 100,
-    cy: 100,
-    rx: 55,
-    ry: 55,
-    fill: `url(#${glowId})`,
-    opacity: .72,
-    "pointer-events": "none",
-  });
-  bodySvg.appendChild(bodyGlow);
-
-  const artSvg = makeSvg("svg", {
-    class: "gmv7-art",
-    viewBox: "0 0 200 200",
-    "aria-hidden": "true",
-  });
-
+  const back = makeSvg("g");
+  const front = makeSvg("g");
   const artifacts = makeSvg("g");
-  artSvg.appendChild(artifacts);
+
+  const leftArm = makeSvg("path", {
+    class: "gsa-blob-limb",
+    d: "M82 112 C70 120 63 129 58 139",
+  });
+
+  const rightArm = makeSvg("path", {
+    class: "gsa-blob-limb",
+    d: "M118 112 C130 120 137 129 142 139",
+  });
+
+  back.appendChild(leftArm);
+  back.appendChild(rightArm);
 
   const ownerRing = makeSvg("circle", {
-    class: "gmv7-owner-ring",
+    class: "gsa-owner-ring",
     cx: 100,
     cy: 100,
     r: 88,
   });
-  artSvg.appendChild(ownerRing);
 
-  const ownerDots = [
-    makeSvg("circle", {
-      class: "gmv7-owner-dot",
-      cx: 84,
-      cy: 14,
-      r: 2,
-    }),
-    makeSvg("circle", {
-      class: "gmv7-owner-dot",
-      cx: 100,
-      cy: 9,
-      r: 2.7,
-      style: "animation-delay:180ms",
-    }),
-    makeSvg("circle", {
-      class: "gmv7-owner-dot",
-      cx: 116,
-      cy: 14,
-      r: 2,
-      style: "animation-delay:360ms",
-    }),
-  ];
-  ownerDots.forEach((dot) => artSvg.appendChild(dot));
+  front.appendChild(ownerRing);
 
-  const completed = makeSvg("g", {
-    class: "gmv7-complete",
-    transform: "translate(171 171)",
+  const ownerDotA = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 83,
+    cy: 12,
+    r: 2.2,
   });
-  completed.append(
+
+  const ownerDotB = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 100,
+    cy: 8,
+    r: 3,
+    style: "animation-delay:180ms",
+  });
+
+  const ownerDotC = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 117,
+    cy: 12,
+    r: 2.2,
+    style: "animation-delay:360ms",
+  });
+
+  front.appendChild(ownerDotA);
+  front.appendChild(ownerDotB);
+  front.appendChild(ownerDotC);
+
+  const completeBadge = makeSvg("g", {
+    class: "gsa-complete",
+    transform: "translate(169 169)",
+  });
+
+  completeBadge.appendChild(
     makeSvg("circle", {
       cx: 0,
       cy: 0,
-      r: 15,
+      r: 16,
       fill: "none",
       stroke: "currentColor",
-      "stroke-width": 1.3,
-      opacity: .28,
+      "stroke-width": 1.5,
+      opacity: 0.38,
     }),
+  );
+
+  completeBadge.appendChild(
     makeSvg("path", {
-      d: "M-7 0 L-2 5 L9 -8",
+      d: "M-8 0 L-2 6 L10 -8",
       fill: "none",
       stroke: "currentColor",
       "stroke-width": 3,
@@ -630,556 +590,143 @@ const createScene = (
       "stroke-linejoin": "round",
     }),
   );
-  artSvg.appendChild(completed);
 
-  if (!statusCues) {
-    ownerRing.style.display = "none";
-    ownerDots.forEach((dot) => (dot.style.display = "none"));
-    completed.style.display = "none";
-  }
+  front.appendChild(completeBadge);
 
-  root.append(bodySvg, artSvg);
+  // DUAS camadas, e não uma.
+  //
+  // O CSS deste arquivo já descrevia `.gsa-art-layer` em z-index 3, mas nada a
+  // criava: artefatos e status voltaram para dentro do stage único, ou seja,
+  // ATRÁS do corpo. Com o slime preto por cima, o terminal, o gráfico, a bézier
+  // e o scanner simplesmente somem — que é o defeito que a ordem
+  // braços -> corpo -> cena existe para impedir.
+  svg.appendChild(back);
+
+  const frontSvg = makeSvg("svg", {
+    class: "gsa-art-layer",
+    viewBox: "0 0 200 200",
+    "aria-hidden": "true",
+  });
+  frontSvg.appendChild(artifacts);
+  frontSvg.appendChild(front);
 
   return {
-    root,
-    bodySvg,
-    artSvg,
-    gooGroup,
-    bodyEllipse,
-    bodyGlow,
-    shadow,
-    chainNodes,
+    svg,
+    frontSvg,
+    back,
+    front,
     artifacts,
+    leftArm,
+    rightArm,
     ownerRing,
-    ownerDots,
-    completed,
+    ownerDotA,
+    ownerDotB,
+    ownerDotC,
+    completeBadge,
+    filterId,
+    turbulence,
+    displacement,
   };
 };
 
-type Gesture = {
-  p: number;
-  cycle: number;
-  action: number;
-  anticipation: number;
-  overshoot: number;
-  settle: number;
+/**
+ * Non-round baseline for every professional.
+ *
+ * Even when merely ACTIVE, specialists do not all sit in the same perfect circle.
+ */
+/**
+ * O bloco de pose corporal antigo foi removido.
+ *
+ * A animação profissional (renderProfessionActivity) continua abaixo sem
+ * alteração; o corpo agora é exclusivamente responsabilidade de GrokSlimeCore.
+ */
+
+/**
+ * Ponto a `progress` (0..1) ao longo de uma polilinha.
+ * Mantido da versão Claude porque a animação profissional usa esse helper
+ * em Dados e Fluxo.
+ */
+const pointAlong = (
+  points: readonly Point[],
+  progress: number,
+  easing: (value: number) => number = (value) => value,
+): Point | null => {
+  if (points.length < 2) return null;
+
+  const scaled = clamp(progress, 0, 1) * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const a = points[index];
+  const b = points[index + 1];
+
+  if (!a || !b) return null;
+
+  const local = easing(scaled - index);
+  return {
+    x: lerp(a.x, b.x, local),
+    y: lerp(a.y, b.y, local),
+  };
 };
 
-const gesture = (t: number, period: number, phase = 0): Gesture => {
-  const raw = t / period + phase;
-  const cycle = Math.floor(raw);
-  const p = raw - cycle;
+const armPath = (
+  shoulder: Point,
+  control: Point,
+  hand: Point,
+): string =>
+  `M${shoulder.x.toFixed(2)} ${shoulder.y.toFixed(2)} ` +
+  `Q${control.x.toFixed(2)} ${control.y.toFixed(2)} ` +
+  `${hand.x.toFixed(2)} ${hand.y.toFixed(2)}`;
 
-  let action = 0;
-  let anticipation = 0;
-  let overshoot = 0;
-  let settle = 0;
+const hideArms = (stage: StageNodes): void => {
+  stage.leftArm.style.opacity = "0";
+  stage.rightArm.style.opacity = "0";
+};
 
-  if (p < .15) {
-    anticipation = smoother(p / .15);
-    action = -.15 * anticipation;
-  } else if (p < .39) {
-    const q = smoother((p - .15) / .24);
-    anticipation = 1 - q;
-    action = lerp(-.15, 1, q);
-  } else if (p < .51) {
-    const q = smooth((p - .39) / .12);
-    overshoot = q;
-    action = lerp(1, 1.12, q);
-  } else if (p < .73) {
-    const q = smoother((p - .51) / .22);
-    overshoot = 1 - q;
-    settle = q;
-    action = lerp(1.12, .72, q);
+const showArms = (
+  stage: StageNodes,
+  left: { shoulder: Point; control: Point; hand: Point } | null,
+  right: { shoulder: Point; control: Point; hand: Point } | null,
+): void => {
+  if (left) {
+    stage.leftArm.setAttribute(
+      "d",
+      armPath(left.shoulder, left.control, left.hand),
+    );
+    stage.leftArm.style.opacity = "1";
   } else {
-    const q = smoother((p - .73) / .27);
-    settle = 1 - q;
-    action = lerp(.72, .10, q);
+    stage.leftArm.style.opacity = "0";
   }
 
-  return { p, cycle, action, anticipation, overshoot, settle };
-};
-
-const hiddenChain = (): ChainPose => ({
-  visible: false,
-  from: { x: 100, y: 100 },
-  control: { x: 100, y: 100 },
-  to: { x: 100, y: 100 },
-  thickness: 10,
-  tip: 8,
-});
-
-const rigFor = (
-  specialist: Specialist,
-  state: SpecialistState,
-  t: number,
-): RigPose => {
-  const chains = Array.from({ length: MAX_CHAINS }, hiddenChain);
-
-  if (state === "waiting") {
-    return {
-      body: {
-        cx: 100,
-        cy: 124 + wave(t, .75) * .5,
-        rx: 68,
-        ry: 31,
-        rotation: -4,
-      },
-      chains,
-      gaze: {
-        x: 0,
-        y: 10,
-        rotation: -3,
-        scaleX: 1.05,
-        scaleY: .76,
-      },
-    };
-  }
-
-  if (state === "completed") {
-    const g = gesture(t, 2.9);
-    const pop = clamp(g.action, 0, 1);
-
-    return {
-      body: {
-        cx: 100,
-        cy: 100 - pop * 4,
-        rx: 58 + pop * 5,
-        ry: 58 + pop * 6,
-        rotation: g.overshoot * 3,
-      },
-      chains,
-      gaze: {
-        x: 0,
-        y: -1,
-        rotation: 0,
-        scaleX: 1 + pop * .08,
-        scaleY: 1 + pop * .05,
-      },
-    };
-  }
-
-  const owner = state === "owner";
-  const breathe = wave(t, 1.0);
-
-  const base: BodyPose = {
-    cx: 100 + wave(t, .55) * .5,
-    cy: 100 - (owner ? 4 : 0) + wave(t, .77, .4) * .5,
-    rx: 58 + breathe * .7 + (owner ? 2 : 0),
-    ry: 58 - breathe * .45 + (owner ? 3 : 0),
-    rotation: wave(t, .46) * .7,
-  };
-
-  if (state !== "working") {
-    return {
-      body: base,
-      chains,
-      gaze: {
-        x: 0,
-        y: owner ? -2 : 0,
-        rotation: 0,
-        scaleX: 1,
-        scaleY: 1,
-      },
-    };
-  }
-
-  switch (specialist) {
-    case "chat": {
-      const g = gesture(t, 2.15);
-      const side = g.cycle % 2 === 0 ? -1 : 1;
-      const reach = clamp(g.action, 0, 1);
-
-      chains[0] = {
-        visible: true,
-        from: { x: 100 + side * 45, y: 101 },
-        control: {
-          x: 100 + side * (58 + reach * 7),
-          y: 94 - g.anticipation * 4,
-        },
-        to: {
-          x: side < 0 ? 20 : 180,
-          y: side < 0 ? 75 : 90,
-        },
-        thickness: 12 + reach * 2,
-        tip: 9 + reach * 3,
-      };
-
-      return {
-        body: {
-          cx: 100 + side * reach * 7,
-          cy: 101 - g.overshoot * 2,
-          rx: 61 + reach * 2,
-          ry: 54 - reach * 2,
-          rotation: side * (2 + reach * 5),
-        },
-        chains,
-        gaze: {
-          x: side * (5 + reach * 4),
-          y: -1,
-          rotation: side * 3,
-          scaleX: 1.03,
-          scaleY: 1,
-        },
-      };
-    }
-
-    case "code": {
-      const g = gesture(t, 2.35);
-      const reach = clamp(g.action, 0, 1);
-      const tapA = Math.max(0, wave(t, 13)) * reach;
-      const tapB = Math.max(0, wave(t, 13, Math.PI)) * reach;
-
-      chains[0] = {
-        visible: true,
-        from: { x: 77, y: 124 },
-        control: { x: 66, y: 138 },
-        to: { x: 70, y: 159 + tapA * 8 },
-        thickness: 11,
-        tip: 7.5,
-      };
-
-      chains[1] = {
-        visible: true,
-        from: { x: 123, y: 124 },
-        control: { x: 134, y: 138 },
-        to: { x: 128, y: 159 + tapB * 8 },
-        thickness: 11,
-        tip: 7.5,
-      };
-
-      return {
-        body: {
-          cx: 103 + reach * 2,
-          cy: 108 + reach * 5,
-          rx: 49 - reach * 3,
-          ry: 66 + reach * 5,
-          rotation: 5 + reach * 4,
-        },
-        chains,
-        gaze: {
-          x: 2,
-          y: 6 + reach * 5,
-          rotation: 3,
-          scaleX: .97,
-          scaleY: .90,
-        },
-      };
-    }
-
-    case "data": {
-      const g = gesture(t, 2.7);
-      const reach = clamp(g.action, 0, 1);
-
-      const targets = [
-        { x: 136, y: 127 },
-        { x: 150, y: 106 },
-        { x: 169, y: 76 },
-        { x: 184, y: 87 },
-      ];
-      const target = targets[g.cycle % targets.length]!;
-
-      chains[0] = {
-        visible: true,
-        from: { x: 125, y: 78 },
-        control: {
-          x: 143,
-          y: 87 - reach * 11,
-        },
-        to: {
-          x: lerp(132, target.x, reach),
-          y: lerp(94, target.y, reach),
-        },
-        thickness: 10.5,
-        tip: 8.5,
-      };
-
-      return {
-        body: {
-          cx: 97,
-          cy: 96 - reach * 4,
-          rx: 48 - reach * 2,
-          ry: 68 + reach * 8,
-          rotation: -4 + reach * 3,
-        },
-        chains,
-        gaze: {
-          x: 4 + reach * 4,
-          y: -3 - reach * 3,
-          rotation: -2,
-          scaleX: .97,
-          scaleY: 1.04,
-        },
-      };
-    }
-
-    case "design": {
-      const g = gesture(t, 2.55);
-      const reach = clamp(g.action, 0, 1);
-      const side = g.cycle % 2 === 0 ? 1 : -1;
-
-      chains[0] = {
-        visible: true,
-        from: { x: 100 + side * 42, y: 110 },
-        control: {
-          x: 100 + side * (54 + reach * 18),
-          y: 101 - reach * 11,
-        },
-        to: {
-          x: side > 0 ? 169 : 31,
-          y: 87 + wave(t, 1.7) * 12,
-        },
-        thickness: 11.5,
-        tip: 8.5,
-      };
-
-      return {
-        body: {
-          cx: 100 + side * reach * 3,
-          cy: 99,
-          rx: 59,
-          ry: 57,
-          rotation: -5 + side * reach * 8,
-        },
-        chains,
-        gaze: {
-          x: side * (3 + reach * 5),
-          y: 0,
-          rotation: side * 4,
-          scaleX: 1.03,
-          scaleY: .96,
-        },
-      };
-    }
-
-    case "agent": {
-      const g = gesture(t, 2.95);
-      const reach = clamp(g.action, 0, 1);
-      const endpoints = [
-        { x: 36, y: 52 },
-        { x: 164, y: 52 },
-        { x: 36, y: 151 },
-        { x: 164, y: 151 },
-      ];
-      const starts = [
-        { x: 72, y: 76 },
-        { x: 128, y: 76 },
-        { x: 72, y: 124 },
-        { x: 128, y: 124 },
-      ];
-
-      for (let i = 0; i < MAX_CHAINS; i++) {
-        const stagger = clamp(reach - i * .06, 0, 1);
-        const start = starts[i]!;
-        const end = endpoints[i]!;
-
-        chains[i] = {
-          visible: true,
-          from: start,
-          control: {
-            x: lerp(start.x, end.x, .52),
-            y: lerp(start.y, end.y, .44),
-          },
-          to: {
-            x: lerp(start.x, end.x, stagger),
-            y: lerp(start.y, end.y, stagger),
-          },
-          thickness: 9.5,
-          tip: 6 + stagger * 4.5,
-          detach: stagger > .86 ? (stagger - .86) / .14 : 0,
-        };
-      }
-
-      return {
-        body: {
-          cx: 100,
-          cy: 101 - g.overshoot * 2,
-          rx: 61 - reach * 3,
-          ry: 54 + reach * 3,
-          rotation: g.overshoot * 2,
-        },
-        chains,
-        gaze: {
-          x: 0,
-          y: -2,
-          rotation: 0,
-          scaleX: 1.04,
-          scaleY: .94,
-        },
-      };
-    }
-
-    case "flow": {
-      const g = gesture(t, 2.45);
-      const reach = clamp(g.action, 0, 1);
-      const direction = g.cycle % 2 === 0 ? 1 : -1;
-
-      chains[0] = {
-        visible: true,
-        from: {
-          x: 100 + direction * 48,
-          y: 103,
-        },
-        control: {
-          x: 100 + direction * 69,
-          y: 89,
-        },
-        to: {
-          x: 100 + direction * lerp(56, 86, reach),
-          y: 111 - reach * 10,
-        },
-        thickness: 13,
-        tip: 10,
-      };
-
-      chains[1] = {
-        visible: true,
-        from: {
-          x: 100 - direction * 45,
-          y: 107,
-        },
-        control: {
-          x: 100 - direction * 58,
-          y: 121,
-        },
-        to: {
-          x: 100 - direction * (50 + g.anticipation * 12),
-          y: 120,
-        },
-        thickness: 10,
-        tip: 7,
-      };
-
-      return {
-        body: {
-          cx: 100 + direction * reach * 7,
-          cy: 103,
-          rx: 70 + reach * 12,
-          ry: 41 - reach * 3,
-          rotation: direction * reach * 3,
-        },
-        chains,
-        gaze: {
-          x: direction * (4 + reach * 5),
-          y: 1,
-          rotation: direction * 2,
-          scaleX: 1.08,
-          scaleY: .94,
-        },
-      };
-    }
-
-    case "tuning": {
-      const g = gesture(t, 2.3);
-      const reach = clamp(g.action, 0, 1);
-      const active = g.cycle % 3;
-      const knobX = [57, 101, 146];
-      const knobY = [148, 164, 180];
-      const starts = [
-        { x: 73, y: 125 },
-        { x: 100, y: 130 },
-        { x: 127, y: 125 },
-      ];
-
-      for (let i = 0; i < 3; i++) {
-        const isActive = i === active;
-        const amount = isActive ? reach : .12;
-
-        chains[i] = {
-          visible: isActive || amount > .10,
-          from: starts[i]!,
-          control: {
-            x: lerp(starts[i]!.x, knobX[i]!, .52),
-            y: 139,
-          },
-          to: {
-            x: lerp(starts[i]!.x, knobX[i]!, amount),
-            y: lerp(starts[i]!.y, knobY[i]!, amount),
-          },
-          thickness: isActive ? 10.5 : 8,
-          tip: isActive ? 7.5 : 5.5,
-        };
-      }
-
-      return {
-        body: {
-          cx: 100,
-          cy: 105 + reach * 3,
-          rx: 55,
-          ry: 61,
-          rotation: (active - 1) * reach * 3,
-        },
-        chains,
-        gaze: {
-          x: (active - 1) * (3 + reach * 3),
-          y: 5,
-          rotation: (active - 1) * 2,
-          scaleX: .98,
-          scaleY: .92,
-        },
-      };
-    }
-
-    case "security": {
-      const g = gesture(t, 2.8);
-      const reach = clamp(g.action, 0, 1);
-
-      // Two short shoulder lobes + one long lower tip merge into a shield.
-      chains[0] = {
-        visible: true,
-        from: { x: 61, y: 88 },
-        control: { x: 49, y: 91 },
-        to: { x: 42 - reach * 6, y: 99 },
-        thickness: 14,
-        tip: 11,
-      };
-
-      chains[1] = {
-        visible: true,
-        from: { x: 139, y: 88 },
-        control: { x: 151, y: 91 },
-        to: { x: 158 + reach * 6, y: 99 },
-        thickness: 14,
-        tip: 11,
-      };
-
-      chains[2] = {
-        visible: true,
-        from: { x: 100, y: 143 },
-        control: { x: 100, y: 158 },
-        to: { x: 100, y: 165 + reach * 17 },
-        thickness: 13,
-        tip: 8,
-      };
-
-      return {
-        body: {
-          cx: 100,
-          cy: 104,
-          rx: 65 + reach * 7,
-          ry: 49 + reach * 2,
-          rotation: 0,
-        },
-        chains,
-        gaze: {
-          x: 0,
-          y: 1,
-          rotation: 0,
-          scaleX: 1.08,
-          scaleY: .88,
-        },
-      };
-    }
+  if (right) {
+    stage.rightArm.setAttribute(
+      "d",
+      armPath(right.shoulder, right.control, right.hand),
+    );
+    stage.rightArm.style.opacity = "1";
+  } else {
+    stage.rightArm.style.opacity = "0";
   }
 };
 
-const appendLine = (
-  parent: SVGElement,
+const circle = (
+  group: SVGElement,
+  cx: number,
+  cy: number,
+  r: number,
+  fill: string,
+  opacity = 1,
+): SVGCircleElement => {
+  const node = makeSvg("circle", { cx, cy, r, fill, opacity });
+  group.appendChild(node);
+  return node;
+};
+
+const line = (
+  group: SVGElement,
   x1: number,
   y1: number,
   x2: number,
   y2: number,
-  color: string,
+  stroke: string,
   width = 2,
   opacity = 1,
 ): SVGLineElement => {
@@ -1188,458 +735,738 @@ const appendLine = (
     y1,
     x2,
     y2,
-    stroke: color,
+    stroke,
     "stroke-width": width,
     "stroke-linecap": "round",
     opacity,
   });
-  parent.appendChild(node);
+  group.appendChild(node);
   return node;
 };
 
-const appendCircle = (
-  parent: SVGElement,
-  cx: number,
-  cy: number,
-  r: number,
-  color: string,
+const path = (
+  group: SVGElement,
+  d: string,
+  stroke: string,
+  width = 2,
+  fill = "none",
   opacity = 1,
-): SVGCircleElement => {
-  const node = makeSvg("circle", { cx, cy, r, fill: color, opacity });
-  parent.appendChild(node);
+): SVGPathElement => {
+  const node = makeSvg("path", {
+    d,
+    stroke,
+    "stroke-width": width,
+    fill,
+    opacity,
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  });
+  group.appendChild(node);
   return node;
 };
 
-const appendRect = (
-  parent: SVGElement,
+const rect = (
+  group: SVGElement,
   x: number,
   y: number,
-  w: number,
-  h: number,
+  width: number,
+  height: number,
   radius: number,
-  color: string,
-  fill: string,
+  stroke: string,
+  fill = "none",
   opacity = 1,
 ): SVGRectElement => {
   const node = makeSvg("rect", {
     x,
     y,
-    width: w,
-    height: h,
+    width,
+    height,
     rx: radius,
-    stroke: color,
-    "stroke-width": 1.4,
+    stroke,
     fill,
     opacity,
+    "stroke-width": 1.8,
   });
-  parent.appendChild(node);
-  return node;
-};
-
-const appendPath = (
-  parent: SVGElement,
-  d: string,
-  color: string,
-  width = 2,
-  opacity = 1,
-): SVGPathElement => {
-  const node = makeSvg("path", {
-    d,
-    fill: "none",
-    stroke: color,
-    "stroke-width": width,
-    "stroke-linecap": "round",
-    "stroke-linejoin": "round",
-    opacity,
-  });
-  parent.appendChild(node);
+  group.appendChild(node);
   return node;
 };
 
 /**
- * Props are intentionally sparse. They must not become the identity of the card.
- * The black creature is the actor; props only give context to its gesture.
+ * Profession-specific scene.
+ *
+ * These are not static badges: the blob's arms physically reach into the scene
+ * and manipulate the professional artifact.
  */
-const drawArtifacts = (
-  scene: Scene,
-  specialist: Specialist,
-  state: SpecialistState,
-  t: number,
+const renderProfessionActivity = (
+  stage: StageNodes,
+  specialist: GrokSpecialist,
+  state: GrokSpecialistState,
+  time: number,
   accent: string,
   bodyColor: string,
-  detailed: boolean,
 ): void => {
-  clear(scene.artifacts);
+  clear(stage.artifacts);
 
   if (state === "waiting") {
-    if (!detailed) return;
+    hideArms(stage);
 
-    const z = makeSvg("text", {
-      x: 151,
-      y: 61,
+    const z1 = makeSvg("text", {
+      x: 150,
+      y: 58,
       fill: accent,
-      opacity: .44,
+      opacity: 0.55,
       "font-size": 12,
       "font-weight": 700,
     });
-    z.textContent = "Z";
-    scene.artifacts.appendChild(z);
+    z1.textContent = "Z";
+
+    const z2 = makeSvg("text", {
+      x: 165,
+      y: 42,
+      fill: accent,
+      opacity: 0.28,
+      "font-size": 9,
+      "font-weight": 700,
+    });
+    z2.textContent = "z";
+
+    stage.artifacts.appendChild(z1);
+    stage.artifacts.appendChild(z2);
     return;
   }
 
-  if (state !== "working" || !detailed) return;
+  if (state === "completed") {
+    hideArms(stage);
+    return;
+  }
+
+  const working = state === "working";
+  const owner = state === "owner";
+  const energy = working ? 1 : owner ? 0.55 : 0.25;
 
   switch (specialist) {
     case "chat": {
-      const g = gesture(t, 2.15);
-      const side = g.cycle % 2 === 0 ? -1 : 1;
-      const x = side < 0 ? 5 : 160;
-      const y = side < 0 ? 63 : 78;
+      /**
+       * CHAT:
+       * Two bubbles alternate; the blob leans into the active side.
+       */
+      const leftActive = sin01(time, working ? 2.4 : 0.8) > 0.5;
 
-      appendRect(
-        scene.artifacts,
-        x,
-        y,
-        35,
-        22,
-        9,
+      rect(
+        stage.artifacts,
+        15,
+        52,
+        44,
+        29,
+        11,
         accent,
-        `${accent}0b`,
-        .56,
+        leftActive ? `${accent}16` : "none",
+        leftActive ? 0.9 : 0.34,
       );
 
-      [0, 1, 2].forEach((i) =>
-        appendCircle(
-          scene.artifacts,
-          x + 11 + i * 7,
-          y + 11,
-          1.3 + clamp(g.action, 0, 1) * .5,
-          accent,
-          .72,
-        ),
+      rect(
+        stage.artifacts,
+        141,
+        72,
+        44,
+        29,
+        11,
+        accent,
+        !leftActive ? `${accent}16` : "none",
+        !leftActive ? 0.9 : 0.34,
       );
+
+      const dots: ReadonlyArray<readonly [number, number]> = leftActive
+        ? [
+            [28, 66],
+            [37, 66],
+            [46, 66],
+          ]
+        : [
+            [154, 86],
+            [163, 86],
+            [172, 86],
+          ];
+
+      dots.forEach(([x, y], index) => {
+        const pulse = 1 + sin01(time, 6, index * 0.8) * 1.5;
+        circle(stage.artifacts, x, y, pulse, accent, 0.7);
+      });
+
+      if (working) {
+        const hand = leftActive
+          ? { x: 57, y: 76 }
+          : { x: 143, y: 92 };
+
+        showArms(
+          stage,
+          leftActive
+            ? {
+                shoulder: { x: 78, y: 112 },
+                control: { x: 65, y: 102 },
+                hand,
+              }
+            : null,
+          !leftActive
+            ? {
+                shoulder: { x: 122, y: 112 },
+                control: { x: 135, y: 108 },
+                hand,
+              }
+            : null,
+        );
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "code": {
-      // Low-profile keyboard/terminal directly underneath the two black fingertips.
-      appendRect(
-        scene.artifacts,
-        47,
-        153,
-        106,
-        30,
-        7,
-        accent,
-        "#070809",
-        .66,
-      );
-      appendLine(scene.artifacts, 57, 163, 80, 163, accent, 1.6, .62);
-      appendLine(scene.artifacts, 57, 171, 95, 171, accent, 1.4, .28);
+      /**
+       * CODE:
+       * The blob bends forward over a terminal and taps keys with both limbs.
+       */
+      rect(stage.artifacts, 42, 125, 116, 45, 8, accent, "#07090b", 0.82);
+      line(stage.artifacts, 51, 137, 78, 137, accent, 2, 0.78);
+      line(stage.artifacts, 51, 147, 91, 147, accent, 2, 0.42);
+      line(stage.artifacts, 51, 157, 72, 157, accent, 2, 0.55);
+
+      const cursorX = 83 + pingPong(time * 2.2) * 43;
+      line(stage.artifacts, cursorX, 136, cursorX, 148, accent, 2, 0.9);
+
+      if (working) {
+        const tapL = 138 + Math.max(0, wave(time, 10)) * 6;
+        const tapR = 138 + Math.max(0, wave(time, 10, Math.PI)) * 6;
+
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 112 },
+            control: { x: 70, y: 126 },
+            hand: { x: 73, y: tapL },
+          },
+          {
+            shoulder: { x: 120, y: 112 },
+            control: { x: 130, y: 126 },
+            hand: { x: 125, y: tapR },
+          },
+        );
+
+        circle(stage.artifacts, 73, tapL + 3, 2.2, bodyColor, 0.95);
+        circle(stage.artifacts, 125, tapR + 3, 2.2, bodyColor, 0.95);
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "data": {
-      const g = gesture(t, 2.7);
-      const points = [
-        { x: 135, y: 128 },
-        { x: 151, y: 106 },
-        { x: 170, y: 76 },
-        { x: 184, y: 87 },
-      ];
+      /**
+       * DATA:
+       * One limb follows the current graph point while the body itself stretches.
+       */
+      const baseY = 160;
 
-      appendPath(
-        scene.artifacts,
-        `M${points.map((p) => `${p.x} ${p.y}`).join(" L")}`,
-        accent,
-        1.5,
-        .24,
-      );
+      const alturas = [0.32, 0.64, 0.47, 0.82];
 
-      points.forEach((p, index) => {
-        const active = index === g.cycle % points.length;
-        appendCircle(
-          scene.artifacts,
-          p.x,
-          p.y,
-          active ? 3.1 : 1.8,
+      [27, 44, 61, 78].forEach((x, index) => {
+        const h =
+          15 +
+          (alturas[index] ?? 0) * 45 +
+          wave(time, working ? 2.3 : 0.7, index) * 4 * energy;
+
+        rect(
+          stage.artifacts,
+          x,
+          baseY - h,
+          10,
+          h,
+          3,
           accent,
-          active ? .88 : .38,
+          `${accent}16`,
+          0.48 + index * 0.1,
         );
       });
+
+      const points = [
+        { x: 28, y: 119 },
+        { x: 48, y: 105 },
+        { x: 70, y: 114 },
+        { x: 94, y: 87 },
+        { x: 121, y: 99 },
+        { x: 150, y: 70 },
+        { x: 172, y: 80 },
+      ];
+
+      path(
+        stage.artifacts,
+        `M${points.map((p) => `${p.x} ${p.y}`).join(" L")}`,
+        accent,
+        2,
+        "none",
+        0.48,
+      );
+
+      points.forEach((p) => circle(stage.artifacts, p.x, p.y, 2.5, accent, 0.7));
+
+      const current = working ? pointAlong(points, pingPong(time * 0.7)) : null;
+
+      if (current) {
+        circle(stage.artifacts, current.x, current.y, 5, accent, 0.28);
+        circle(stage.artifacts, current.x, current.y, 2.2, accent, 0.95);
+
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 121, y: 106 },
+            control: {
+              x: lerp(133, current.x, 0.55),
+              y: lerp(111, current.y, 0.55),
+            },
+            hand: current,
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "design": {
-      const g = gesture(t, 2.55);
-      const side = g.cycle % 2 === 0 ? 1 : -1;
-      const reach = clamp(g.action, 0, 1);
-      const tipX = side > 0 ? 169 : 31;
-      const tipY = 87 + wave(t, 1.7) * 12;
+      /**
+       * DESIGN:
+       * The right limb literally drags a Bézier control point.
+       */
+      const p0 = { x: 25, y: 148 };
+      const p3 = { x: 173, y: 111 };
+      const controlA = {
+        x: 58 + wave(time, working ? 1.8 : 0.5) * 8 * energy,
+        y: 65 + wave(time, working ? 1.4 : 0.4) * 11 * energy,
+      };
+      const controlB = {
+        x: 132 + wave(time, working ? 1.6 : 0.4, 1) * 9 * energy,
+        y: 168 + wave(time, working ? 1.2 : 0.35, 2) * 8 * energy,
+      };
 
-      // Only the paint trail; no giant Bézier UI overlay.
-      const startX = side > 0 ? 112 : 88;
-      const startY = 128;
-      const cX = lerp(startX, tipX, .55);
-      const cY = 88 - reach * 8;
-
-      appendPath(
-        scene.artifacts,
-        `M${startX} ${startY} Q${cX} ${cY} ${tipX} ${tipY}`,
+      path(
+        stage.artifacts,
+        `M${p0.x} ${p0.y} C${controlA.x} ${controlA.y} ${controlB.x} ${controlB.y} ${p3.x} ${p3.y}`,
         accent,
-        2,
-        .58,
+        2.2,
+        "none",
+        0.8,
       );
-      appendCircle(scene.artifacts, tipX, tipY, 2.8, accent, .88);
+
+      line(
+        stage.artifacts,
+        p0.x,
+        p0.y,
+        controlA.x,
+        controlA.y,
+        accent,
+        1,
+        0.25,
+      );
+      line(
+        stage.artifacts,
+        p3.x,
+        p3.y,
+        controlB.x,
+        controlB.y,
+        accent,
+        1,
+        0.25,
+      );
+
+      [p0, p3, controlA, controlB].forEach((p, index) =>
+        circle(stage.artifacts, p.x, p.y, index < 2 ? 3 : 2.5, accent, 0.76),
+      );
+
+      if (working) {
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 120, y: 106 },
+            control: { x: 130, y: 92 },
+            hand: controlB,
+          },
+        );
+
+        circle(
+          stage.artifacts,
+          controlB.x,
+          controlB.y,
+          6,
+          "none",
+          0,
+        ).setAttribute("stroke", accent);
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "agent": {
-      const g = gesture(t, 2.95);
-      const endpoints = [
-        { x: 36, y: 52 },
-        { x: 164, y: 52 },
-        { x: 36, y: 151 },
-        { x: 164, y: 151 },
-      ];
+      /**
+       * AGENT:
+       * Child blobs bud out from the main bot, orbit, then return.
+       */
+      const center = { x: 100, y: 100 };
+      const count = 4;
 
-      endpoints.forEach((end, index) => {
-        const stagger = clamp(clamp(g.action, 0, 1) - index * .06, 0, 1);
-        if (stagger < .72) return;
+      for (let i = 0; i < count; i++) {
+        const phase = i / count;
+        const dispatch = sin01(time, 1.4, phase * TAU);
+        const radius = 32 + dispatch * 42;
+        const angle = time * 0.55 + phase * TAU;
 
-        const alpha = clamp((stagger - .72) / .28, 0, 1);
-        const r = 4.5 + alpha * 3.5;
+        const x = center.x + Math.cos(angle) * radius;
+        const y = center.y + Math.sin(angle) * radius * 0.72;
 
-        appendCircle(scene.artifacts, end.x, end.y, r, bodyColor, .75);
-        appendCircle(scene.artifacts, end.x - 1.6, end.y - .5, .65, "#fff", .84);
-        appendCircle(scene.artifacts, end.x + 1.6, end.y - .5, .65, "#fff", .84);
-      });
+        line(
+          stage.artifacts,
+          center.x,
+          center.y,
+          x,
+          y,
+          accent,
+          1,
+          0.12 + dispatch * 0.24,
+        );
+
+        circle(
+          stage.artifacts,
+          x,
+          y,
+          3.5 + dispatch * 3.8,
+          bodyColor,
+          0.55 + dispatch * 0.4,
+        );
+
+        circle(
+          stage.artifacts,
+          x,
+          y,
+          1.6,
+          accent,
+          0.35 + dispatch * 0.6,
+        );
+      }
+
+      if (working) {
+        const p = pingPong(time * 1.5);
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 109 },
+            control: { x: 66, y: 100 },
+            hand: { x: 48 - p * 12, y: 78 + p * 9 },
+          },
+          {
+            shoulder: { x: 120, y: 109 },
+            control: { x: 134, y: 100 },
+            hand: { x: 152 + p * 12, y: 78 + p * 9 },
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "flow": {
-      const g = gesture(t, 2.45);
-      const direction = g.cycle % 2 === 0 ? 1 : -1;
-      const x = 100 + direction * lerp(58, 88, clamp(g.action, 0, 1));
-      const y = 111 - clamp(g.action, 0, 1) * 10;
-
+      /**
+       * FLOW:
+       * Trigger -> condition -> action.
+       * The blob passes a packet from node to node with alternating limbs.
+       */
       const nodes = [
-        { x: 22, y: 126 },
-        { x: 59, y: 109 },
-        { x: 141, y: 136 },
-        { x: 178, y: 105 },
+        { x: 24, y: 132 },
+        { x: 66, y: 108 },
+        { x: 111, y: 138 },
+        { x: 162, y: 104 },
       ];
 
-      nodes.forEach((n) => {
-        const c = appendCircle(scene.artifacts, n.x, n.y, 3.8, `${accent}10`, .65);
-        c.setAttribute("stroke", accent);
-        c.setAttribute("stroke-width", "1.2");
+      path(
+        stage.artifacts,
+        `M${nodes.map((n) => `${n.x} ${n.y}`).join(" L")}`,
+        accent,
+        2,
+        "none",
+        0.32,
+      );
+
+      nodes.forEach((node, index) => {
+        if (index === 1) {
+          stage.artifacts.appendChild(
+            makeSvg("path", {
+              d: `M${node.x} ${node.y - 7} L${node.x + 7} ${node.y} L${node.x} ${node.y + 7} L${node.x - 7} ${node.y} Z`,
+              fill: `${accent}14`,
+              stroke: accent,
+              "stroke-width": 1.8,
+              opacity: 0.76,
+            }),
+          );
+        } else {
+          circle(stage.artifacts, node.x, node.y, 6, `${accent}18`, 1).setAttribute(
+            "stroke",
+            accent,
+          );
+        }
       });
 
-      appendCircle(scene.artifacts, x, y, 3.0, accent, .90);
+      const packet = working ? pointAlong(nodes, (time * 0.48) % 1, ease) : null;
+
+      if (packet) {
+        circle(stage.artifacts, packet.x, packet.y, 4.5, accent, 0.92);
+        circle(stage.artifacts, packet.x, packet.y, 8, accent, 0.12);
+
+        const useLeft = packet.x < 100;
+
+        showArms(
+          stage,
+          useLeft
+            ? {
+                shoulder: { x: 80, y: 111 },
+                control: { x: 69, y: 121 },
+                hand: packet,
+              }
+            : null,
+          !useLeft
+            ? {
+                shoulder: { x: 120, y: 111 },
+                control: { x: 132, y: 119 },
+                hand: packet,
+              }
+            : null,
+        );
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "tuning": {
-      const g = gesture(t, 2.3);
-      const active = g.cycle % 3;
-      const ys = [148, 164, 180];
-      const xs = [57, 101, 146];
+      /**
+       * TUNING:
+       * Both limbs move real slider knobs up/down the rails.
+       */
+      const rows = [126, 145, 164];
+      const phases = [0, 1.7, 3.4];
 
-      ys.forEach((y, index) => {
-        appendLine(scene.artifacts, 40, y, 160, y, accent, 1, .18);
-        appendCircle(
-          scene.artifacts,
-          xs[index]!,
-          y,
-          index === active ? 4.1 : 3.0,
-          accent,
-          index === active ? .78 : .34,
-        );
+      rows.forEach((y, index) => {
+        line(stage.artifacts, 38, y, 162, y, accent, 1.4, 0.3);
+
+        const x =
+          62 +
+          sin01(time, working ? 2.6 + index * 0.4 : 0.5, phases[index]) * 76;
+
+        circle(stage.artifacts, x, y, 5, accent, 0.82);
       });
+
+      if (working) {
+        const xA = 62 + sin01(time, 2.6, 0) * 76;
+        const xB = 62 + sin01(time, 3.0, 1.7) * 76;
+
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 111 },
+            control: { x: 70, y: 128 },
+            hand: { x: xA, y: 126 },
+          },
+          {
+            shoulder: { x: 120, y: 111 },
+            control: { x: 130, y: 138 },
+            hand: { x: xB, y: 145 },
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
       break;
     }
 
     case "security": {
-      const g = gesture(t, 2.8);
-      const q = clamp(g.action, 0, 1);
-      const y = lerp(78, 153, q);
-      const half = 31 + Math.sin(q * Math.PI) * 22;
+      /**
+       * SECURITY:
+       * The blob braces into a wider stance while one limb sweeps a scanner
+       * over a shield-like target.
+       */
+      path(
+        stage.artifacts,
+        "M100 119 L145 135 V153 Q143 176 100 190 Q57 176 55 153 V135 Z",
+        accent,
+        1.8,
+        `${accent}0d`,
+        0.45,
+      );
 
-      appendLine(scene.artifacts, 100 - half, y, 100 + half, y, accent, 1.7, .78);
-      appendCircle(scene.artifacts, 100 + half, y, 2.8, accent, .88);
+      if (working) {
+        const scan = pingPong(time * 1.15);
+        const y = lerp(136, 177, scan);
+        const width = 28 + Math.sin(scan * Math.PI) * 15;
+
+        line(
+          stage.artifacts,
+          100 - width,
+          y,
+          100 + width,
+          y,
+          accent,
+          2,
+          0.92,
+        );
+
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 120, y: 111 },
+            control: { x: 137, y: 122 },
+            hand: { x: 100 + width, y },
+          },
+        );
+
+        circle(stage.artifacts, 100 + width, y, 4, accent, 0.88);
+      } else {
+        hideArms(stage);
+      }
       break;
     }
   }
 };
 
-const createSpring = (value: number): Spring => ({
-  value,
-  velocity: 0,
-});
+/**
+ * Abaixo deste tamanho a cena profissional não é desenhada — ver o campo
+ * `scene`. 96px é onde um terminal de 116 unidades no viewBox ainda tem traço
+ * legível; a lista de tarefas usa 26px e a ficha de presença, 124px.
+ */
+const SCENE_MIN_PX = 96;
 
-const springStep = (
-  spring: Spring,
-  target: number,
-  dt: number,
-  stiffness = 245,
-  damping = 24,
-): void => {
-  const force = (target - spring.value) * stiffness;
-  spring.velocity += force * dt;
-  spring.velocity *= Math.exp(-damping * dt);
-  spring.value += spring.velocity * dt;
-};
+/** ~24 quadros por segundo para a cena. O corpo continua a 60. */
+const SCENE_FRAME_MS = 42;
 
-type Tickable = { tick(now: number): void };
-const ACTIVE = new Set<Tickable>();
-let RAF = 0;
-
-const rafLoop = (now: number): void => {
-  for (const item of [...ACTIVE]) item.tick(now);
-  if (ACTIVE.size) RAF = requestAnimationFrame(rafLoop);
-  else RAF = 0;
-};
-
-const register = (item: Tickable): void => {
-  ACTIVE.add(item);
-  if (!RAF) RAF = requestAnimationFrame(rafLoop);
-};
-
-const unregister = (item: Tickable): void => {
-  ACTIVE.delete(item);
-  if (!ACTIVE.size && RAF) {
-    cancelAnimationFrame(RAF);
-    RAF = 0;
-  }
-};
-
-class Controller implements ProfessionalGrokController, Tickable {
+class GrokAvatarController implements GrokSpecialistAvatarController {
   readonly element: HTMLElement;
 
   private readonly module: AvatarLabModule;
   private readonly avatar: AvatarLabInstance;
+  private readonly root: HTMLDivElement;
   private readonly avatarHost: HTMLDivElement;
-  private readonly scene: Scene;
-  private readonly detailed: boolean;
+  private readonly stage: StageNodes;
   private readonly reduceMotion: boolean;
+  private readonly slime: GrokSlimeCore;
+  /**
+   * A cena profissional é desenhada num viewBox de 200x200 — um terminal, um
+   * gráfico, três sliders. Aos 26px da lista de tarefas ela é ilegível, e
+   * reconstruí-la a cada quadro custaria ~15 nós SVG por avatar, 60 vezes por
+   * segundo, para produzir borrão. O CORPO deformado continua animando em todo
+   * tamanho: é ele que se lê pequeno.
+   */
+  private readonly scene: boolean;
+  private lastScene = 0;
 
-  private specialist: Specialist;
-  private state: SpecialistState;
+  private specialist: GrokSpecialist;
+  private state: GrokSpecialistState;
   private accent: string;
   private bodyColor: string;
   private deformation: number;
 
-  private eyesRoot: SVGGElement | null = null;
-
-  private body = {
-    cx: createSpring(100),
-    cy: createSpring(100),
-    rx: createSpring(58),
-    ry: createSpring(58),
-    rotation: createSpring(0),
-  };
-
-  private gaze = {
-    x: createSpring(0),
-    y: createSpring(0),
-    rotation: createSpring(0),
-    scaleX: createSpring(1),
-    scaleY: createSpring(1),
-  };
-
-  private chainPoints: SpringPoint[][] = Array.from(
-    { length: MAX_CHAINS },
-    () =>
-      Array.from({ length: NODES_PER_CHAIN }, () => ({
-        x: createSpring(100),
-        y: createSpring(100),
-      })),
-  );
-
-  private chainRadii: Spring[][] = Array.from(
-    { length: MAX_CHAINS },
-    () =>
-      Array.from({ length: NODES_PER_CHAIN }, () => createSpring(.01)),
-  );
-
-  private started = performance.now();
-  private lastNow = performance.now();
-  private paused = false;
+  private raf = 0;
   private destroyed = false;
+  private paused = false;
+
+  private startTime = performance.now();
+  private lastFrame = performance.now();
+
 
   constructor(params: {
     element: HTMLElement;
     module: AvatarLabModule;
     avatar: AvatarLabInstance;
+    root: HTMLDivElement;
     avatarHost: HTMLDivElement;
-    scene: Scene;
-    specialist: Specialist;
-    state: SpecialistState;
+    stage: StageNodes;
+    specialist: GrokSpecialist;
+    state: GrokSpecialistState;
     accent: string;
     bodyColor: string;
     deformation: number;
-    detailed: boolean;
+    scene: boolean;
   }) {
     this.element = params.element;
     this.module = params.module;
     this.avatar = params.avatar;
+    this.root = params.root;
     this.avatarHost = params.avatarHost;
-    this.scene = params.scene;
+    this.stage = params.stage;
     this.specialist = params.specialist;
     this.state = params.state;
     this.accent = params.accent;
     this.bodyColor = params.bodyColor;
     this.deformation = params.deformation;
-    this.detailed = params.detailed;
+    this.scene = params.scene;
+
+    // O motor GrokSlimeCore substitui SOMENTE o corpo. A cena profissional
+    // abaixo permanece a implementação original.
+    this.avatarHost.style.transform = "none";
+    this.avatarHost.style.filter = "none";
+    this.slime = new GrokSlimeCore({
+      svg: this.stage.svg,
+      before: this.stage.back,
+      avatarHost: this.avatarHost,
+      bodyColor: this.bodyColor,
+    });
 
     this.reduceMotion =
       typeof matchMedia !== "undefined" &&
       matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    this.eyesRoot =
-      this.avatarHost.querySelector<SVGGElement>('[data-grok-eyes-root="true"]');
-
-    this.hideOriginalBody();
-    this.syncIdentity();
+    this.applyIdentity();
     this.playEmotion();
-    register(this);
+    this.loop = this.loop.bind(this);
+    this.raf = requestAnimationFrame(this.loop);
   }
 
-  getSpecialist(): Specialist {
+  getSpecialist(): GrokSpecialist {
     return this.specialist;
   }
 
-  getState(): SpecialistState {
+  getState(): GrokSpecialistState {
     return this.state;
   }
 
-  setSpecialist(specialist: Specialist): void {
+  setSpecialist(specialist: GrokSpecialist): void {
     if (specialist === this.specialist) return;
 
     this.specialist = specialist;
     this.accent = SPECIALIST_ACCENT[specialist];
-    this.started = performance.now();
-    this.syncIdentity();
+    this.applyIdentity();
     this.playEmotion();
   }
 
-  setState(state: SpecialistState): void {
+  setState(state: GrokSpecialistState): void {
     if (state === this.state) return;
 
     this.state = state;
-    this.started = performance.now();
-    this.syncIdentity();
+    this.applyIdentity();
     this.playEmotion();
   }
 
   setAccent(color: string): void {
     this.accent = color;
-    this.scene.root.style.setProperty("--gmv7-accent", color);
+    this.root.style.setProperty("--gsa-accent", color);
   }
 
   setDeformation(strength: number): void {
-    this.deformation = clamp(strength, .45, 1.65);
+    this.deformation = clamp(strength, 0, 2);
+  }
+
+  replay(): void {
+    this.playEmotion();
   }
 
   pause(): void {
@@ -1649,68 +1476,27 @@ class Controller implements ProfessionalGrokController, Tickable {
 
   resume(): void {
     this.paused = false;
-    this.lastNow = performance.now();
+    this.lastFrame = performance.now();
     this.playEmotion();
   }
 
   destroy(): void {
-    if (this.destroyed) return;
     this.destroyed = true;
-    unregister(this);
+    cancelAnimationFrame(this.raf);
+    this.slime.destroy();
     this.avatar.destroy?.();
-    this.scene.root.remove();
+    this.root.remove();
   }
 
-  tick(now: number): void {
-    if (this.destroyed || this.paused) return;
-
-    const dt = clamp((now - this.lastNow) / 1000, 0, .05);
-    this.lastNow = now;
-
-    const t = this.reduceMotion ? .82 : (now - this.started) / 1000;
-    const target = rigFor(this.specialist, this.state, t);
-
-    this.stepBody(target.body, dt);
-    this.stepGaze(target.gaze, dt);
-    this.stepChains(target.chains, dt);
-
-    this.renderBody();
-    this.renderChains();
-    this.renderGaze();
-
-    drawArtifacts(
-      this.scene,
-      this.specialist,
-      this.state,
-      t,
-      this.accent,
-      this.bodyColor,
-      this.detailed,
-    );
-  }
-
-  private syncIdentity(): void {
-    this.scene.root.dataset.specialist = this.specialist;
-    this.scene.root.dataset.state = this.state;
-    this.scene.root.style.setProperty("--gmv7-accent", this.accent);
-    this.scene.root.style.setProperty("--gmv7-body", this.bodyColor);
-    this.scene.root.setAttribute(
+  private applyIdentity(): void {
+    this.root.dataset.specialist = this.specialist;
+    this.root.dataset.state = this.state;
+    this.root.style.setProperty("--gsa-accent", this.accent);
+    this.root.style.setProperty("--gsa-body", this.bodyColor);
+    this.root.setAttribute(
       "aria-label",
       `${SPECIALIST_LABEL[this.specialist]} — ${STATE_LABEL[this.state]}`,
     );
-  }
-
-  private hideOriginalBody(): void {
-    const hide = (selector: string): void => {
-      this.avatarHost.querySelectorAll<SVGElement>(selector).forEach((node) => {
-        node.style.opacity = "0";
-        node.style.pointerEvents = "none";
-      });
-    };
-
-    hide('[data-grok-body-shape="true"]');
-    hide('[data-grok-body-highlight="true"]');
-    hide('[data-grok-shadow="true"]');
   }
 
   private playEmotion(): void {
@@ -1724,139 +1510,55 @@ class Controller implements ProfessionalGrokController, Tickable {
     else this.avatar.stop();
   }
 
-  private stepBody(target: BodyPose, dt: number): void {
-    const k = this.state === "working" ? 270 : 210;
-    const d = this.state === "working" ? 22 : 25;
+  private loop(now: number): void {
+    if (this.destroyed) return;
 
-    springStep(this.body.cx, target.cx, dt, k, d);
-    springStep(this.body.cy, target.cy, dt, k, d);
-    springStep(this.body.rx, target.rx, dt, k, d);
-    springStep(this.body.ry, target.ry, dt, k, d);
-    springStep(this.body.rotation, target.rotation, dt, k, d);
-  }
+    if (!this.paused) {
+      const dt = clamp((now - this.lastFrame) / 1000, 0, 0.08);
+      this.lastFrame = now;
 
-  private stepGaze(target: RigPose["gaze"], dt: number): void {
-    springStep(this.gaze.x, target.x, dt, 320, 27);
-    springStep(this.gaze.y, target.y, dt, 320, 27);
-    springStep(this.gaze.rotation, target.rotation, dt, 320, 27);
-    springStep(this.gaze.scaleX, target.scaleX, dt, 320, 27);
-    springStep(this.gaze.scaleY, target.scaleY, dt, 320, 27);
-  }
+      const elapsed = this.reduceMotion
+        ? 0.7
+        : (now - this.startTime) / 1000;
 
-  private stepChains(chains: ChainPose[], dt: number): void {
-    for (let chainIndex = 0; chainIndex < MAX_CHAINS; chainIndex++) {
-      const chain = chains[chainIndex] ?? hiddenChain();
+      // A atividade visual da especialidade continua igual; apenas o corpo é
+      // entregue ao solver de slime Grok-like, com volume preservado e pressão
+      // localizada.
+      this.slime.update({
+        specialist: this.specialist,
+        state: this.state,
+        time: elapsed,
+        dt,
+        strength: this.deformation,
+      });
 
-      for (let nodeIndex = 0; nodeIndex < NODES_PER_CHAIN; nodeIndex++) {
-        const p = nodeIndex / (NODES_PER_CHAIN - 1);
-        const point = chain.visible
-          ? bezier(chain.from, chain.control, chain.to, p)
-          : { x: this.body.cx.value, y: this.body.cy.value };
-
-        const radius =
-          chain.visible
-            ? lerp(chain.thickness, chain.tip, p) *
-              (1 - (chain.detach ?? 0) * Math.max(0, .65 - p))
-            : .01;
-
-        const springPoint = this.chainPoints[chainIndex]![nodeIndex]!;
-        const springRadius = this.chainRadii[chainIndex]![nodeIndex]!;
-
-        springStep(springPoint.x, point.x, dt, 300, 24);
-        springStep(springPoint.y, point.y, dt, 300, 24);
-        springStep(springRadius, radius, dt, 300, 25);
-      }
-    }
-  }
-
-  private renderBody(): void {
-    const { cx, cy, rx, ry, rotation } = this.body;
-
-    this.scene.bodyEllipse.setAttribute("cx", cx.value.toFixed(2));
-    this.scene.bodyEllipse.setAttribute("cy", cy.value.toFixed(2));
-    this.scene.bodyEllipse.setAttribute(
-      "rx",
-      (rx.value * this.deformation).toFixed(2),
-    );
-    this.scene.bodyEllipse.setAttribute(
-      "ry",
-      (ry.value * this.deformation).toFixed(2),
-    );
-    this.scene.bodyEllipse.setAttribute(
-      "transform",
-      `rotate(${rotation.value.toFixed(2)} ${cx.value.toFixed(2)} ${cy.value.toFixed(2)})`,
-    );
-
-    // Highlight is smaller and follows the main body only, keeping the body readable as one mass.
-    this.scene.bodyGlow.setAttribute("cx", cx.value.toFixed(2));
-    this.scene.bodyGlow.setAttribute("cy", cy.value.toFixed(2));
-    this.scene.bodyGlow.setAttribute(
-      "rx",
-      (Math.max(8, rx.value * this.deformation - 3)).toFixed(2),
-    );
-    this.scene.bodyGlow.setAttribute(
-      "ry",
-      (Math.max(8, ry.value * this.deformation - 3)).toFixed(2),
-    );
-    this.scene.bodyGlow.setAttribute(
-      "transform",
-      `rotate(${rotation.value.toFixed(2)} ${cx.value.toFixed(2)} ${cy.value.toFixed(2)})`,
-    );
-
-    this.scene.shadow.setAttribute("cx", cx.value.toFixed(2));
-    this.scene.shadow.setAttribute(
-      "cy",
-      Math.min(190, cy.value + ry.value * .92 + 14).toFixed(2),
-    );
-    this.scene.shadow.setAttribute(
-      "rx",
-      clamp(rx.value * .78, 26, 70).toFixed(2),
-    );
-    this.scene.shadow.setAttribute(
-      "ry",
-      (this.state === "waiting" ? 5.3 : 6.8).toFixed(2),
-    );
-  }
-
-  private renderChains(): void {
-    for (let chainIndex = 0; chainIndex < MAX_CHAINS; chainIndex++) {
-      for (let nodeIndex = 0; nodeIndex < NODES_PER_CHAIN; nodeIndex++) {
-        const point = this.chainPoints[chainIndex]![nodeIndex]!;
-        const radius = this.chainRadii[chainIndex]![nodeIndex]!;
-        const node = this.scene.chainNodes[chainIndex]![nodeIndex]!;
-
-        node.setAttribute("cx", point.x.value.toFixed(2));
-        node.setAttribute("cy", point.y.value.toFixed(2));
-        node.setAttribute(
-          "r",
-          Math.max(.01, radius.value * this.deformation).toFixed(2),
+      // A cena é lenta por natureza (um cursor que varre, um pacote que anda),
+      // então 24 quadros por segundo bastam. Reconstruí-la a 60 não muda o que
+      // se vê e triplica o descarte de nós.
+      if (this.scene && now - this.lastScene >= SCENE_FRAME_MS) {
+        this.lastScene = now;
+        renderProfessionActivity(
+          this.stage,
+          this.specialist,
+          this.state,
+          elapsed,
+          this.accent,
+          this.bodyColor,
         );
       }
     }
-  }
 
-  private renderGaze(): void {
-    if (!this.eyesRoot) return;
-
-    const x = this.gaze.x.value / EYE_COORD_SCALE;
-    const y = this.gaze.y.value / EYE_COORD_SCALE;
-
-    this.eyesRoot.setAttribute(
-      "transform",
-      `translate(${x.toFixed(2)} ${y.toFixed(2)}) ` +
-        `rotate(${this.gaze.rotation.value.toFixed(2)} 0 0) ` +
-        `scale(${this.gaze.scaleX.value.toFixed(3)} ${this.gaze.scaleY.value.toFixed(3)})`,
-    );
+    this.raf = requestAnimationFrame(this.loop);
   }
 }
 
-export async function mountProfessionalGrokAvatar(
+export async function mountGrokSpecialistAvatar(
   target: Element | string,
-  options: MountProfessionalGrokOptions,
-): Promise<ProfessionalGrokController> {
+  options: MountGrokSpecialistOptions,
+): Promise<GrokSpecialistAvatarController> {
   if (typeof window === "undefined" || typeof document === "undefined") {
     throw new Error(
-      "mountProfessionalGrokAvatar() must run in the browser/client runtime.",
+      "mountGrokSpecialistAvatar() must run in a browser/client runtime.",
     );
   }
 
@@ -1868,55 +1570,86 @@ export async function mountProfessionalGrokAvatar(
   const specialist = options.specialist;
   const state = options.state ?? "active";
   const accent = options.accent ?? SPECIALIST_ACCENT[specialist];
-  const bodyColor = options.bodyColor ?? "#020203";
+  const bodyColor = options.bodyColor ?? "#000000";
   const size = options.size ?? 240;
-  const deformation = clamp(options.deformation ?? 1, .45, 1.65);
+  const deformation = clamp(options.deformation ?? 1, 0, 2);
+  // Tamanho em string ("100%") não dá para medir aqui sem layout: assume-se que
+  // quem pediu porcentagem quer o avatar grande, e a cena entra.
+  const scene = typeof size === "number" ? size >= SCENE_MIN_PX : true;
   const statusCues = options.statusCues ?? true;
 
-  const numericSize =
-    typeof size === "number" ? size : Number.parseFloat(String(size)) || 220;
+  const root = document.createElement("div");
+  root.className = "gsa-root";
+  root.style.setProperty(
+    "--gsa-size",
+    typeof size === "number" ? `${size}px` : size,
+  );
+  root.style.setProperty("--gsa-accent", accent);
+  root.style.setProperty("--gsa-body", bodyColor);
 
-  const detailed = numericSize >= 150;
+  const stage = createStage();
 
-  const scene = createScene(size, bodyColor, accent, statusCues);
+  if (!statusCues) {
+    stage.ownerRing.style.display = "none";
+    stage.ownerDotA.style.display = "none";
+    stage.ownerDotB.style.display = "none";
+    stage.ownerDotC.style.display = "none";
+    stage.completeBadge.style.display = "none";
+  }
 
   const avatarHost = document.createElement("div");
-  avatarHost.className = "gmv7-avatar";
-  scene.root.insertBefore(avatarHost, scene.artSvg);
-  element.appendChild(scene.root);
+  avatarHost.className = "gsa-avatar";
 
-  const animation = pickAnimation(
+  /**
+   * Order matters:
+   * stage has back limbs,
+   * avatar is the procedural body,
+   * stage front artifacts are in the same SVG but remain visually peripheral.
+   */
+  // A ordem do DOM É a ordem de pintura: massa/braços atrás, olhos no meio,
+  // cena profissional na frente.
+  root.appendChild(stage.svg);
+  root.appendChild(avatarHost);
+  root.appendChild(stage.frontSvg);
+
+  element.appendChild(root);
+
+  const initialAnimation = pickAnimation(
     module.availableAnimations,
     specialist,
     state,
   );
 
   const avatar = module.createAvatar(avatarHost, {
-    animation,
+    animation: initialAnimation,
     size: "100%",
     autoplay: false,
   });
 
-  return new Controller({
+  return new GrokAvatarController({
     element,
     module,
     avatar,
+    root,
     avatarHost,
-    scene,
+    stage,
     specialist,
     state,
     accent,
     bodyColor,
     deformation,
-    detailed,
+    scene,
   });
 }
 
-export function professionalVisualStateFromRuntime(input: {
+/**
+ * Backend/runtime -> emotional state mapper.
+ */
+export function grokVisualStateFromRuntime(input: {
   isOwner?: boolean;
   completed?: boolean;
   status?: string | null;
-}): SpecialistState {
+}): GrokSpecialistState {
   if (input.completed) return "completed";
   if (input.isOwner) return "owner";
 
@@ -1949,12 +1682,29 @@ export function professionalVisualStateFromRuntime(input: {
 }
 
 /**
- * O catálogo de animações por especialista e estado.
+ * Quick integration demo:
  *
- * Exportado porque é CONTRATO: o teste percorre os 8 x 5 e falha se alguma
- * combinação ficar sem animação. Um buraco aqui não quebra nada em execução —
- * `pickAnimation` cai no fallback — e por isso mesmo precisa de guarda: ele só
- * apareceria como um bot parado na tela.
+ * const bot = await mountGrokSpecialistAvatar("#bot", {
+ *   moduleUrl: "/avatar/avatar.js",
+ *   specialist: "design",
+ *   state: "working",
+ *   size: 260,
+ *   deformation: 1,
+ * });
+ *
+ * setTimeout(() => bot.setState("waiting"), 5000);
+ * setTimeout(() => bot.setState("working"), 9000);
+ * setTimeout(() => bot.setState("completed"), 14000);
  */
-export const PROFESSIONAL_GROK_BEHAVIOR_MAP = ANIMATION_CANDIDATES;
-export const GROK_SPECIALIST_BEHAVIOR_MAP = ANIMATION_CANDIDATES;
+
+
+/**
+ * Aliases para compatibilidade com as versões mais novas do projeto.
+ * O motor interno é o mesmo; não existe uma segunda implementação.
+ */
+export type Specialist = GrokSpecialist;
+export type SpecialistState = GrokSpecialistState;
+export type ProfessionalGrokController = GrokSpecialistAvatarController;
+export type MountProfessionalGrokOptions = MountGrokSpecialistOptions;
+export const mountProfessionalGrokAvatar = mountGrokSpecialistAvatar;
+export const professionalVisualStateFromRuntime = grokVisualStateFromRuntime;

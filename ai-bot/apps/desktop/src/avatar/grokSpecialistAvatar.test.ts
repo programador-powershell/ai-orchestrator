@@ -1,5 +1,5 @@
 /**
- * Contrato do motor profissional v3: estado do runtime
+ * O contrato do wrapper v2 (arquivo do usuário, verbatim): estado do runtime
  * vira estado visual, especialista escolhe animação DO MÓDULO carregado por
  * URL, e o controller monta/desmonta sem vazar. O módulo de teste entra por
  * `data:` URL — o mesmo mecanismo do export real do Lab, sem arquivo em disco.
@@ -8,12 +8,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  PROFESSIONAL_GROK_BEHAVIOR_MAP,
-  professionalVisualStateFromRuntime,
-  mountProfessionalGrokAvatar,
-  type Specialist as GrokSpecialist,
-  type SpecialistState as GrokSpecialistState
-} from "./grok_professional_avatar_v3";
+  GROK_SPECIALIST_BEHAVIOR_MAP,
+  grokVisualStateFromRuntime,
+  mountGrokSpecialistAvatar,
+  type GrokSpecialist,
+  type GrokSpecialistState
+} from "./grokSpecialistAvatar";
 import { GROK_STATE_LABELS, grokSpecialistOf } from "./GrokAvatar";
 
 const ESPECIALISTAS: GrokSpecialist[] = ["chat", "code", "data", "design", "agent", "flow", "tuning", "security"];
@@ -40,23 +40,23 @@ const MODULO_FAKE =
      }`
   );
 
-describe("professionalVisualStateFromRuntime", () => {
+describe("grokVisualStateFromRuntime", () => {
   it("concluído vence tudo, dono vem depois", () => {
-    expect(professionalVisualStateFromRuntime({ completed: true, isOwner: true, status: "RUNNING" })).toBe("completed");
-    expect(professionalVisualStateFromRuntime({ isOwner: true, status: "RUNNING" })).toBe("owner");
+    expect(grokVisualStateFromRuntime({ completed: true, isOwner: true, status: "RUNNING" })).toBe("completed");
+    expect(grokVisualStateFromRuntime({ isOwner: true, status: "RUNNING" })).toBe("owner");
   });
 
   it("traduz os status de execução e de fila", () => {
-    expect(professionalVisualStateFromRuntime({ status: "RUNNING" })).toBe("working");
-    expect(professionalVisualStateFromRuntime({ status: "verifying" })).toBe("working");
-    expect(professionalVisualStateFromRuntime({ status: "WAITING_APPROVAL" })).toBe("waiting");
-    expect(professionalVisualStateFromRuntime({ status: "QUEUED" })).toBe("waiting");
-    expect(professionalVisualStateFromRuntime({ status: "COMPLETED" })).toBe("completed");
+    expect(grokVisualStateFromRuntime({ status: "RUNNING" })).toBe("working");
+    expect(grokVisualStateFromRuntime({ status: "verifying" })).toBe("working");
+    expect(grokVisualStateFromRuntime({ status: "WAITING_APPROVAL" })).toBe("waiting");
+    expect(grokVisualStateFromRuntime({ status: "QUEUED" })).toBe("waiting");
+    expect(grokVisualStateFromRuntime({ status: "COMPLETED" })).toBe("completed");
   });
 
   it("status desconhecido ou vazio é presença ativa", () => {
-    expect(professionalVisualStateFromRuntime({})).toBe("active");
-    expect(professionalVisualStateFromRuntime({ status: "qualquer-coisa" })).toBe("active");
+    expect(grokVisualStateFromRuntime({})).toBe("active");
+    expect(grokVisualStateFromRuntime({ status: "qualquer-coisa" })).toBe("active");
   });
 });
 
@@ -64,7 +64,7 @@ describe("catálogo do wrapper", () => {
   it("cobre os oito especialistas nos cinco estados", () => {
     for (const specialist of ESPECIALISTAS) {
       for (const state of ESTADOS) {
-        expect(PROFESSIONAL_GROK_BEHAVIOR_MAP[specialist][state].length, `${specialist}/${state}`).toBeGreaterThan(0);
+        expect(GROK_SPECIALIST_BEHAVIOR_MAP[specialist][state].length, `${specialist}/${state}`).toBeGreaterThan(0);
       }
       expect(GROK_STATE_LABELS.owner.length).toBeGreaterThan(0);
     }
@@ -81,23 +81,22 @@ describe("catálogo do wrapper", () => {
   });
 });
 
-describe("mountProfessionalGrokAvatar", () => {
+describe("mountGrokSpecialistAvatar", () => {
   it("monta, toca a animação do estado e desmonta sem deixar nada", async () => {
     globalThis.__gsaPlays = [];
     const host = document.createElement("div");
     document.body.append(host);
 
-    const controller = await mountProfessionalGrokAvatar(host, {
+    const controller = await mountGrokSpecialistAvatar(host, {
       moduleUrl: MODULO_FAKE,
       specialist: "code",
       state: "working"
     });
 
-    const root = host.querySelector<HTMLElement>(".gmv7-root");
+    const root = host.querySelector<HTMLElement>(".gsa-root");
     expect(root).toBeTruthy();
     expect(root?.dataset.state).toBe("working");
-    // O v7 passou a rotular em português, que é a língua da interface.
-    expect(root?.getAttribute("aria-label")).toContain("Código");
+    expect(root?.getAttribute("aria-label")).toContain("Code");
     expect(globalThis.__gsaPlays.at(-1)).toBe("working");
 
     controller.setState("waiting");
@@ -111,7 +110,7 @@ describe("mountProfessionalGrokAvatar", () => {
     expect(root?.dataset.specialist).toBe("data");
 
     controller.destroy();
-    expect(host.querySelector(".gmv7-root")).toBeNull();
+    expect(host.querySelector(".gsa-root")).toBeNull();
     host.remove();
   });
 });
@@ -141,16 +140,12 @@ describe("stand-in público", () => {
 });
 
 /**
- * A camada v7: o corpo é MASSA, não desenho.
+ * A camada v8: a especialidade é a cena ORIGINAL; o corpo é o slime.
  *
- * Corpo = elipse preta; membros = cadeias de círculos pretos; todos passando
- * pelo mesmo filtro goo, que os funde. A leitura que a v6 ainda dava — "uma
- * forma preta com o desenho da profissão por cima" — some porque os membros
- * nascem da própria massa.
- *
- * O módulo falso expõe `data-grok-body-shape`, como o stand-in real: é ele que
- * o motor precisa esconder. Sem isso o teste do "esconde o redondo" passaria
- * sem ter nada para esconder.
+ * A regra do pacote é essa divisão — "Especialidade = cena/gesto original;
+ * Slime = GrokSlimeCore" —, e é ela que estes testes guardam. O módulo falso
+ * expõe `data-grok-body-shape` porque é a esfera que o slime tem de esconder:
+ * sem ela, o teste passaria sem ter nada para esconder.
  */
 const MODULO_COM_CORPO =
   "data:text/javascript," +
@@ -175,61 +170,38 @@ const quadros = async (quantos: number): Promise<void> => {
 };
 
 const montar = (host: HTMLElement, state: GrokSpecialistState, size: number) =>
-  mountProfessionalGrokAvatar(host, { moduleUrl: MODULO_COM_CORPO, specialist: "code", state, size });
+  mountGrokSpecialistAvatar(host, { moduleUrl: MODULO_COM_CORPO, specialist: "code", state, size });
 
-describe("animação v7 — metaball", () => {
-  it("os membros são massa fundida, não traço por cima", async () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    const controller = await montar(host, "working", 190);
-    await quadros(6);
-
-    const goo = host.querySelector<SVGGElement>("[data-grok-goo=true]");
-    expect(goo).toBeTruthy();
-
-    // O filtro é o que funde corpo e membros numa massa só. Sem ele o desenho
-    // vira bolinhas soltas, que é exatamente a leitura que a v7 veio corrigir.
-    expect(goo?.getAttribute("filter") ?? "").toContain("url(#");
-
-    // Corpo + cadeias de círculos, todos DENTRO do mesmo grupo filtrado.
-    expect(goo?.querySelectorAll("ellipse").length ?? 0).toBeGreaterThanOrEqual(1);
-    expect(goo?.querySelectorAll("circle").length ?? 0).toBeGreaterThan(3);
-
-    controller.destroy();
-    host.remove();
-  });
-
-  it("a massa se move com atraso e elasticidade", async () => {
+describe("animação v8 — slime + cena original", () => {
+  it("o corpo do slime deforma quadro a quadro", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const controller = await montar(host, "working", 190);
 
-    const goo = host.querySelector<SVGGElement>("[data-grok-goo=true]");
-    const amostra = () =>
-      [...(goo?.querySelectorAll("circle") ?? [])]
-        .map((c) => `${c.getAttribute("cx")},${c.getAttribute("cy")},${c.getAttribute("r")}`)
-        .join("|");
+    const slime = host.querySelector<SVGGElement>("[data-grok-slime-core='true']");
+    expect(slime).toBeTruthy();
 
-    await quadros(5);
-    const antes = amostra();
+    const corpo = slime?.querySelector("path");
+    await quadros(4);
+    const primeiro = corpo?.getAttribute("d") ?? "";
     await quadros(8);
-    const depois = amostra();
+    const segundo = corpo?.getAttribute("d") ?? "";
 
-    // Física de mola: as cadeias perseguem o alvo, então mudam entre quadros.
-    expect(antes.length).toBeGreaterThan(0);
-    expect(depois).not.toBe(antes);
+    // Path fechado de 40 pontos com mola por ponto: longo e sempre em movimento.
+    expect(primeiro.length).toBeGreaterThan(200);
+    expect(segundo).not.toBe(primeiro);
 
     controller.destroy();
     host.remove();
   });
 
-  it("esconde o corpo redondo que veio do módulo", async () => {
+  it("esconde a esfera original do módulo", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const controller = await montar(host, "working", 190);
     await quadros(3);
 
-    const redondo = host.querySelector<SVGElement>("[data-grok-body-shape=true]");
+    const redondo = host.querySelector<SVGElement>("[data-grok-body-shape='true']");
     expect(redondo).toBeTruthy();
     expect(redondo?.style.opacity).toBe("0");
 
@@ -237,17 +209,36 @@ describe("animação v7 — metaball", () => {
     host.remove();
   });
 
-  it("empilha massa, rosto e cena nessa ordem", async () => {
+  it("põe a cena profissional NA FRENTE do corpo", async () => {
+    // O v8 trouxe o CSS de `.gsa-art-layer` mas não criava a camada: terminal,
+    // gráfico e scanner voltavam para dentro do stage único, atrás do slime
+    // preto — ou seja, invisíveis. A ordem do DOM é a ordem de pintura.
     const host = document.createElement("div");
     document.body.append(host);
     const controller = await montar(host, "working", 190);
+    await quadros(4);
 
-    const root = host.querySelector(".gmv7-root");
+    const root = host.querySelector(".gsa-root");
     const ordem = [...(root?.children ?? [])].map((filho) => filho.getAttribute("class"));
+    expect(ordem).toEqual(["gsa-stage", "gsa-avatar", "gsa-art-layer"]);
 
-    // A ordem do DOM É a ordem de pintura. Os olhos ficam ACIMA do metaball, e
-    // a cena acima de tudo — senão o terminal some atrás da massa.
-    expect(ordem).toEqual(["gmv7-body", "gmv7-avatar", "gmv7-art"]);
+    // E o terminal do especialista de Código está mesmo na camada da frente.
+    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line").length).toBeGreaterThan(0);
+
+    controller.destroy();
+    host.remove();
+  });
+
+  it("num avatar de lista mantém o slime e omite a cena", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const controller = await montar(host, "working", 26);
+    await quadros(4);
+
+    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line").length).toBe(0);
+
+    const corpo = host.querySelector<SVGGElement>("[data-grok-slime-core='true']")?.querySelector("path");
+    expect((corpo?.getAttribute("d") ?? "").length).toBeGreaterThan(200);
 
     controller.destroy();
     host.remove();

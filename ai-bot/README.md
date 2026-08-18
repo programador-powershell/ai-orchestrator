@@ -103,46 +103,46 @@
 
 ## :new: Releases Notes
 
-### :up: V.1.3
+### :up: V.2
 ### :warning: Latest Changes
 
-- **O bot de especialista da barra lateral é o "Grok bot": a esfera preta de
-  olhos brancos, animada pelas EXPRESSÕES do Avatar Lab.** A arquitetura é a da
-  especificação fornecida em 2026-08-17 (`avatar/grokSpecialistAvatar.ts`,
-  mantida verbatim): o retrato vem de um MÓDULO carregado por URL com a
-  interface do export JavaScript do Bible Strong Avatar Lab (`createAvatar` +
-  `availableAnimations`), e o wrapper escolhe a ANIMAÇÃO NOMEADA certa para
-  cada especialista em cada estado — o Código trabalha em `working` e celebra
-  em `celebrate`, a Segurança vigia em `suspicious` e varre em `searching`, o
-  Chat atende em `listening`, todo mundo dorme em `sleeping` na espera e se
-  orgulha em `proud` quando é o dono da conversa.
-- **Os cinco estados viram cues visuais ao redor da esfera, nunca no rosto:**
-  ativo respira com um anel sutil; **owner** gira um anel tracejado com três
-  pontos de coroa; **trabalhando** acelera um anel pontilhado com partículas;
-  **em espera** apaga o campo e solta "Zz"; **concluído** pulsa e sela o
-  check. O glifo do ofício (balão, `< >`, gráfico, bézier, rede, pipeline,
-  faders, escudo) fica no canto, na cor do especialista.
-- **O módulo do avatar é SUBSTITUÍVEL sem tocar código.** Hoje
-  `public/avatars/grok-avatar.js` é um stand-in próprio (esfera + 13 animações
-  nomeadas, nenhuma linha do Lab); quando o pacote exportado do estúdio for
-  aprovado (o Lab é AGPL — análise TI/SI pendente, ver
-  `docs/creditos-inspiracao.md`), basta trocar esse arquivo pelo export. A URL
-  do módulo é absoluta de propósito: o dev server do Vite recusa import de
-  `/public` por caminho relativo.
-- **O trilho ganhou o CARTÃO DE PRESENÇA e as tarefas ganharam o bot do
-  trabalhador.** No topo do corpo do trilho, o bot da vez (124px) faz a
-  animação do estado — dono da conversa em repouso (roteamento sticky),
-  trabalhando durante o turno, concluído por alguns segundos quando a resposta
-  chega, master quando a conversa não tem dono. Cada tarefa da equipe mostra o
-  bot do especialista no estado que `taskState` deriva; a falha não existe no
-  vocabulário do wrapper (cinco estados, por decisão da especificação) — o bot
-  dorme e quem diz "falhou" é o ícone e o rótulo da linha. O retrato
-  personalizável do laboratório continua intocado no topo da barra.
+- **O corpo do bot deixou de ser uma esfera escalada: ele DEFORMA.** O núcleo
+  (`avatar/GrokSlimeCore.ts`) é um caminho fechado de 40 pontos, cada um com
+  sua própria mola — o contorno respira, estica na direção do gesto e volta,
+  sem nenhuma etapa de escala. Os olhos brancos continuam sendo os do módulo do
+  Avatar Lab; o que mudou é a massa preta em volta deles.
+- **Cada especialista trabalha numa CENA do próprio ofício**, desenhada por
+  cima do corpo: terminal para o Código, gráfico para os Dados, curva de Bézier
+  para o Design, grafo de workflow para o Fluxo, faders para o Ajuste, scanner
+  para a Segurança, painel de status para o Agente. A cena só aparece em
+  tamanho de retrato; no bot pequeno da lista fica só o corpo em movimento.
+- **A ordem das camadas é a da especificação e está travada por teste**:
+  `backSvg` (braços e blobs atrás do corpo) → `AVATAR` (silhueta preta +
+  olhos) → `frontSvg` (cena do ofício e status). A ordem do DOM é a ordem de
+  pintura, e é ela que decide o que fica visível.
 - **Cobertura:** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
-  runtime→estado (`grokVisualStateFromRuntime`), o catálogo de comportamento
-  (8 especialistas × 5 estados), o controller (monta, troca animação por
-  estado, desmonta sem vazar) com um módulo fake injetado por `data:` URL — o
-  mesmo mecanismo do export real — e a interface do stand-in público.
+  runtime→estado, o catálogo de comportamento (8 especialistas × 5 estados) e o
+  controller com um módulo fake injetado por `data:` URL; a camada nova
+  acrescenta três guardas — o caminho do slime muda de um quadro para o outro,
+  a esfera redonda do módulo é escondida (`opacity: 0`) e a ordem das três
+  camadas é exatamente a de cima.
+
+### :pushpin: Fixes
+
+- **A cena do ofício estava sendo pintada ATRÁS do corpo preto — ou seja,
+  invisível.** O CSS já descrevia `.gsa-art-layer` em `z-index: 3`, mas nada
+  criava essa camada: terminal, gráfico, scanner e status voltavam para dentro
+  do SVG único do palco, abaixo do slime. A camada da frente passou a ser
+  criada de fato, e um teste guarda a ordem para a regressão não voltar calada.
+
+### :construction_worker: Refactors
+
+- **`avatar/grokSpecialistAvatar.ts` virou um re-export** de
+  `grok_professional_avatar_v3.ts`: quem importava pelo nome antigo continua
+  compilando, e existe um só motor de animação.
+- **A opção `organicWarp` saiu do contrato público.** Ela era aceita e
+  ignorada desde a troca do corpo — opção declarada que ninguém lê é a mesma
+  classe de bug que já custou tempo aqui.
 
 ## :wrench: Instalação
 
