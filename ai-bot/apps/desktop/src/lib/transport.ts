@@ -21,7 +21,7 @@
  *    acorda contra um transporte que já não existe.
  */
 
-import { PROTOCOL_VERSION, type Envelope, type EnvelopeKind, type Hello, type Ready } from "@aibot/contracts";
+import { PROTOCOL_VERSION, type Envelope, type EnvelopeKind, type Hello, type Ready } from "@ai-bot/contracts";
 
 export type Status = "connecting" | "ready" | "offline";
 

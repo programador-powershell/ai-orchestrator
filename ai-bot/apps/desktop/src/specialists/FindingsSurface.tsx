@@ -16,7 +16,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowRight, ShieldCheck, Wand2 } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { SurfaceStatus } from "../shell/StatusBar";
 

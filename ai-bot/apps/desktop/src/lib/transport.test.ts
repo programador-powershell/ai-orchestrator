@@ -18,7 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import type { Envelope, Hello } from "@aibot/contracts";
+import type { Envelope, Hello } from "@ai-bot/contracts";
 import { createTransport, failureMessage, gatewayReason } from "./transport";
 
 const URL_GATEWAY = "ws://127.0.0.1:8799/v1/stream";

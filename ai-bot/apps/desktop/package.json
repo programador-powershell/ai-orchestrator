@@ -1,17 +1,18 @@
 {
-  "name": "@aibot/desktop",
+  "name": "@ai-bot/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check": "tsc --noEmit --pretty false",
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
-    "@aibot/contracts": "workspace:*",
+    "@ai-bot/contracts": "workspace:*",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "lucide-react": "^0.545.0",

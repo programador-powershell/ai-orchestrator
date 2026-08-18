@@ -32,7 +32,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { RailKind, Task } from "@aibot/contracts";
+import type { RailKind, Task } from "@ai-bot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";

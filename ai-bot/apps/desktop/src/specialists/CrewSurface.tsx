@@ -29,7 +29,7 @@ import type {
   TaskDispatch,
   TaskProgress,
   WorkerDone
-} from "@aibot/contracts";
+} from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { outcomeOf, type WorkerOutcome } from "../lib/crew";
 import { SPECIALIST_ICON, specialistById } from "../lib/specialists";

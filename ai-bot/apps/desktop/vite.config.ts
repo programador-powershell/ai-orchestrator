@@ -65,7 +65,7 @@ export default defineConfig({
       // Aponta para o FONTE do pacote, não para um dist: o contrato muda junto
       // com o gateway e ter que buildar packages/contracts a cada ajuste é
       // exatamente o atrito que faz o contrato ficar desatualizado.
-      "@aibot/contracts": contractsEntry
+      "@ai-bot/contracts": contractsEntry
     }
   },
 

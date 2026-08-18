@@ -159,8 +159,27 @@
   borda), não o movimento: o corpo continua deslocando e inclinando, porque
   isso é pose de cabeça, não deformação.
 
+- **Os scripts chamavam `pnpm` puro, que não existe nesta máquina.** O repositório
+  que hospeda este projeto padroniza `corepack pnpm` em todo lugar — inclusive
+  dentro do `tauri.conf.json` —, e o ai-bot tinha nascido fora desse padrão: cinco
+  scripts da raiz e os dois ganchos do Tauri chamavam `pnpm` solto, que falha com
+  "não é reconhecido como nome de cmdlet" para quem não tem pnpm global.
+
 ### :construction_worker: Refactors
 
+- **A configuração do ai-bot passou a seguir a do repositório que o hospeda.**
+  O escopo dos pacotes virou `@ai-bot/*` (era `@aibot/*`, enquanto o projeto ao
+  redor já usava `@ai-bot/desktop` e `@ai-bot/contracts`); os scripts da raiz
+  passaram a ter o mesmo vocabulário — `build`, `check` e `test` recursivos com
+  `--if-present`, e `dev:desktop` para a janela do Tauri. O `check` só faz efeito
+  porque os dois pacotes ganharam o script com esse nome: antes o do desktop não
+  existia e o de contratos se chamava `typecheck`, então uma varredura recursiva
+  passaria batido em silêncio.
+- **`allowBuilds:` saiu do `pnpm-workspace.yaml`.** Não é chave do pnpm 10 — o
+  arquivo declarava aprovar o build do esbuild e o instalador seguia avisando que
+  o ignorava, ou seja, mais uma configuração declarada que ninguém lê. Sem ela o
+  `install --frozen-lockfile` e o `build` continuam passando, que é o que o
+  projeto ao redor já fazia (ele nunca teve essa chave).
 - **`avatar/grokSpecialistAvatar.ts` virou um re-export** de
   `grok_professional_avatar_v3.ts`: quem importava pelo nome antigo continua
   compilando, e existe um só motor de animação.
@@ -188,12 +207,18 @@ go build -o dist/aibotd ./services/gateway/cmd/aibotd
 
 Inicia o app desktop em modo desenvolvimento.
 ```
-corepack pnpm --filter @aibot/desktop tauri dev
+corepack pnpm dev:desktop
 ```
 
 Gera o build de produção.
 ```
-corepack pnpm --filter @aibot/desktop tauri build
+corepack pnpm build:desktop
+```
+
+Sobe só a interface, sem a janela do Tauri — é assim que se abre a bancada de
+avatares em `http://localhost:1421/bench.html`.
+```
+corepack pnpm dev
 ```
 
 ### Usar com Grok
@@ -234,12 +259,19 @@ materializa somente a chave e o override local.
 | AI-BOT.exe            | Aplicativo desktop (Tauri); sobe o gateway como sidecar                          |
 | aibotd                | Gateway Go: `aibotd` sobe o servidor; `serve`, `token`, `specialists`, `version` |
 | aibotd -tags needle   | Mesmo gateway com o roteador local ligado (exige a biblioteca nativa)            |
-| pnpm tauri dev        | Interface em desenvolvimento, com recarga                                        |
-| gerar-manifesto.mjs   | Mede, assina (Ed25519) e confere o manifesto de atualização — `pnpm manifesto:gerar` e `pnpm manifesto:verificar` |
+| corepack pnpm dev:desktop | Aplicativo em desenvolvimento (janela do Tauri), com recarga                  |
+| corepack pnpm dev     | Só a interface, em `http://localhost:1421` — e a bancada em `/bench.html`        |
+| gerar-manifesto.mjs   | Mede, assina (Ed25519) e confere o manifesto de atualização — `corepack pnpm manifesto:gerar` e `corepack pnpm manifesto:verificar` |
 | gerar-chaves.mjs      | Gera o par Ed25519: a pública para embutir no build, a privada para o cofre da TI |
 | go test ./...         | Bateria do gateway (roteador, DAG, store, rede, permissão, protocolo, barramento)|
-| pnpm test             | Bateria da interface (redução de envelope do store)                              |
-| pnpm manifesto:test   | Bateria do gerador de manifesto (assina, confere, corpo canônico estável)         |
+| corepack pnpm check   | `tsc --noEmit` em todo o workspace (interface e contratos)                       |
+| corepack pnpm test    | Bateria da interface e a do gerador de manifesto, nesta ordem                     |
+
+> **Sempre `corepack pnpm`, nunca `pnpm` puro.** O pnpm não é instalado
+> globalmente aqui: quem o entrega é o `corepack`, que já vem com o Node e lê a
+> versão exata do campo `packageManager`. É a mesma regra do repositório que
+> hospeda este projeto, inclusive dentro do `tauri.conf.json` — `pnpm` solto
+> falha com "não é reconhecido como nome de cmdlet".
 
 ## :computer: Acesso
 

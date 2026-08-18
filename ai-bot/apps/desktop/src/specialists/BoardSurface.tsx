@@ -23,7 +23,7 @@ import {
   LoaderCircle,
   TriangleAlert
 } from "lucide-react";
-import type { Escalate, Task, TaskProgress, WorkerDone } from "@aibot/contracts";
+import type { Escalate, Task, TaskProgress, WorkerDone } from "@ai-bot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { SPECIALIST_ICON } from "../lib/specialists";
 import { useApp } from "../lib/store";

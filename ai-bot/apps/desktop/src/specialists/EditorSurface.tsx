@@ -13,7 +13,7 @@
 
 import { useCallback, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { FileCode2, GitCompare, Save, Terminal, Wand2 } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { lastFencedBlock } from "../lib/markdown";
 import { TopbarActions } from "../shell/TopbarActions";

@@ -15,7 +15,7 @@
  */
 
 import { Cloud, Container, Monitor, Server, Terminal, type LucideIcon } from "lucide-react";
-import type { Environment, EnvironmentInfo } from "@aibot/contracts";
+import type { Environment, EnvironmentInfo } from "@ai-bot/contracts";
 
 /** Onde o comando cai quando ninguém escolheu nada. */
 export const DEFAULT_ENVIRONMENT: Environment = "local";

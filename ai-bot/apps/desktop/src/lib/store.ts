@@ -56,7 +56,7 @@ import {
   type ToolResult,
   type UpdateTrack,
   type WorkerDone
-} from "@aibot/contracts";
+} from "@ai-bot/contracts";
 import { DEFAULT_ENVIRONMENT, FALLBACK_ENVIRONMENTS } from "./environments";
 import { preferenceStorage } from "./persistStorage";
 import { FALLBACK_SPECIALISTS, specialistById } from "./specialists";

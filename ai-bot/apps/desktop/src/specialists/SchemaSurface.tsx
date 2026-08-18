@@ -13,7 +13,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, Copy, Database, Download, LayoutGrid, TableProperties } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 

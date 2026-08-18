@@ -22,7 +22,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, MoveRight } from "lucide-react";
-import type { Delegate } from "@aibot/contracts";
+import type { Delegate } from "@ai-bot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { hueStyle, specialistById } from "../lib/specialists";
 import { useApp } from "../lib/store";

@@ -27,7 +27,7 @@ import type {
   TaskDispatch,
   Thinking,
   WorkerDone
-} from "@aibot/contracts";
+} from "@ai-bot/contracts";
 import { outcomeOf } from "./crew";
 import { applyEnvelope, initialAppData, type AppData } from "./store";
 

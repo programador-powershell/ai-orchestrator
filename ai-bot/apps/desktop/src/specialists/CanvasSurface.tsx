@@ -12,7 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Braces, Check, Copy, Download, Globe, Link2, Palette, ShieldCheck, Type, X } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface } from "./ConversationSurface";

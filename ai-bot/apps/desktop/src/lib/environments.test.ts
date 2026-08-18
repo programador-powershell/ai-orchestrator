@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { EnvironmentInfo } from "@aibot/contracts";
+import type { EnvironmentInfo } from "@ai-bot/contracts";
 import { environmentInfo, environmentTitle, FALLBACK_ENVIRONMENTS } from "./environments";
 
 const DOCKER_OFF: EnvironmentInfo = {

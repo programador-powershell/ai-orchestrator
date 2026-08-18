@@ -13,7 +13,7 @@
  * não fecha, e sem `data-tauri-drag-region` ele não sai do lugar da tela.
  */
 import { ArrowUpCircle, Bot, Minus, Moon, Settings, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
-import type { UpdateTrack } from "@aibot/contracts";
+import type { UpdateTrack } from "@ai-bot/contracts";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { TopbarSlot } from "./TopbarActions";
