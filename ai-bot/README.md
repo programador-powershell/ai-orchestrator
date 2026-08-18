@@ -106,6 +106,22 @@
 ### :up: V.2
 ### :warning: Latest Changes
 
+- **As Configurações ganharam o MENU do orquestrador**, item por item e na mesma
+  ordem: Conexão, Motores & Fusion, Provedores (BYOK), Memória, Extensões,
+  Plugins & trilha, Conectores (MCP), Runtime local, Ship (build & deploy),
+  Servidor VPS, Administração e Aparência. Quem usa os dois apps não deveria ter
+  de reaprender onde mora cada assunto.
+  - **Cinco falam com o gateway**: Conexão (endereço descoberto pelo Rust,
+    estado, ambiente e contagem do catálogo), Motores & Fusion (os modelos do
+    catálogo, com adicionar e remover), Provedores (BYOK) (cadastrar, testar e
+    remover provedor, com a chave indo do campo direto ao cofre), Runtime local
+    (os cinco ambientes com a disponibilidade que o gateway mediu — o
+    indisponível não é escolhível) e Aparência (tema e a equipe de
+    especialistas).
+  - **Sete abrem dizendo o que falta**, com uma frase concreta cada: qual pacote
+    já existe no gateway e qual rota não existe. Nenhuma delas mostra campo
+    editável — controle bonito que não faz nada é pior que a seção vazia, e o
+    teste falha se aparecer um `input` ali dentro.
 - **O corpo do bot deixou de ser uma esfera escalada: ele DEFORMA.** O núcleo
   (`avatar/GrokSlimeCore.ts`) é um caminho fechado de 48 pontos, cada um com
   sua própria mola — o contorno respira, estica na direção do gesto e volta,
@@ -127,7 +143,7 @@
   `backSvg` (braços e blobs atrás do corpo) → `AVATAR` (silhueta preta +
   olhos) → `frontSvg` (cena do ofício e status). A ordem do DOM é a ordem de
   pintura, e é ela que decide o que fica visível.
-- **Cobertura (14 casos):** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
+- **Cobertura (18 casos):** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
   runtime→estado, o catálogo de comportamento (8 especialistas × 5 estados) e o
   controller com um módulo fake injetado por `data:` URL. A camada do corpo
   acrescenta seis guardas: o caminho do slime muda de um quadro para o outro, a

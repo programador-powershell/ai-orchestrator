@@ -1476,9 +1476,96 @@ select {
  * seção CRESCE com o catálogo — sem o max-height o modal passaria da janela e
  * o botão de fechar sumiria da tela.
  */
+/*
+ * O cartão de configurações é o único que tem DUAS colunas.
+ *
+ * A moldura continua a do cartão de aprovação (mesma interrupção: a tela para e
+ * mostra uma coisa só), mas o miolo vira menu + painel, como no orquestrador. O
+ * `gap: 0` desfaz o espaçamento do cartão: aqui as bordas das colunas é que
+ * separam, e o respiro do conteúdo é o padding do painel.
+ */
 .settings-card {
-  width: min(640px, 100%);
-  max-height: min(720px, 86vh);
+  width: min(860px, 100%);
+  height: min(720px, 86vh);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-head {
+  flex: none;
+  padding: 12px 12px 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-head-spacer {
+  flex: 1;
+}
+
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.settings-nav {
+  width: 200px;
+  flex: none;
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+
+.settings-nav button {
+  min-height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: 560;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
+}
+
+.settings-nav button svg {
+  flex: none;
+}
+
+.settings-nav button:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.settings-nav button.active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* A primeira seção do painel não precisa da régua que separa das anteriores. */
+.settings-content > .settings-section:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .settings-section {

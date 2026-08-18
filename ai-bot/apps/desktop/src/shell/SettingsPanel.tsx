@@ -1,11 +1,17 @@
 /**
  * As configurações.
  *
- * A parte de cima continua LEITURA: endereço, conexão, modelo e tema são
- * decididos em outro lugar, e repetir controles aqui criaria dois botões para a
- * mesma coisa. A seção "Modelos e provedores" é a exceção deliberada — ela é a
- * ÚNICA dona do assunto: antes dela o catalog.json só se editava na mão, com o
- * gateway parado.
+ * O menu lateral é o MESMO do orquestrador — doze seções, mesma ordem, mesmos
+ * rótulos — porque quem usa os dois apps não deveria reaprender onde mora cada
+ * assunto. Cinco delas falam com o gateway do AI-BOT; as outras sete abrem
+ * dizendo o que falta do lado dele, em vez de mostrar um controle que não faz
+ * nada (ver `NAV` e `PENDENTE`).
+ *
+ * Endereço do gateway e modelo da conversa continuam LEITURA: quem sobe o
+ * gateway é o próprio aplicativo, e o modelo se troca na barra superior, que é
+ * onde ele é usado. Repetir esses controles aqui criaria duas verdades. O tema
+ * é a exceção: ele é preferência de aparência, e "Aparência" é o lugar dele —
+ * o botão da barra superior continua sendo o atalho.
  *
  * A regra de segredo da seção, que não pode ser afrouxada: a chave de API vai
  * do campo direto para o POST e do POST direto para o cofre do gateway. Ela
@@ -17,9 +23,32 @@
  * porque é a mesma interrupção: a tela para e mostra uma coisa só.
  */
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Moon, PlugZap, Plus, Settings, Sun, Trash2, X } from "lucide-react";
+import {
+  Blocks,
+  Bot,
+  Brain,
+  Cable,
+  Cpu,
+  HardDrive,
+  KeyRound,
+  Monitor,
+  Moon,
+  Palette,
+  PlugZap,
+  Plus,
+  Puzzle,
+  Rocket,
+  Server,
+  Settings,
+  ShieldCheck,
+  Sun,
+  Trash2,
+  X,
+  type LucideIcon
+} from "lucide-react";
 import { activeTransport, useApp } from "../lib/store";
 import { SPECIALIST_ICON } from "../lib/specialists";
+import { ENVIRONMENT_ICON } from "../lib/environments";
 
 const STATUS_LABEL: Record<"connecting" | "ready" | "offline", string> = {
   connecting: "conectando…",
@@ -447,7 +476,25 @@ export function ModelForm({
 
 /* ------------------------------ a seção viva ------------------------------ */
 
-export function CatalogSection({ client }: { client: CatalogClient | null }) {
+/**
+ * Metade do catálogo que esta montagem desenha.
+ *
+ * O assunto é um só do lado do gateway (um GET, um arquivo), mas na tela ele
+ * mora em dois lugares diferentes, como no orquestrador: a CHAVE de cada
+ * provedor fica em "Provedores (BYOK)" e a lista de MODELOS em "Motores &
+ * Fusion". Só uma das duas está montada por vez — o menu troca o painel —, então
+ * cada uma carregar o próprio retrato custa um GET por troca de seção, e não
+ * dois em paralelo.
+ */
+export type CatalogScope = "providers" | "models";
+
+export function CatalogSection({
+  client,
+  scope
+}: {
+  client: CatalogClient | null;
+  scope: CatalogScope;
+}) {
   const [snapshot, setSnapshot] = useState<CatalogSnapshot | null>(null);
   const [failure, setFailure] = useState("");
   const [tests, setTests] = useState<Record<string, { ok: boolean; detail: string }>>({});
@@ -540,10 +587,50 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
   const providers = snapshot?.providers ?? [];
   const models = snapshot?.models ?? [];
 
+  if (scope === "models") {
+    return (
+      <div className="settings-section">
+        {failure !== "" && (
+          <p className="settings-feedback" data-ok="false">
+            {failure}
+          </p>
+        )}
+
+        <ul className="settings-list">
+          {models.length === 0 && <li className="approval-note">nenhum modelo cadastrado.</li>}
+          {models.map((model) => (
+            <li key={model.id} className="settings-item">
+              <div className="settings-item-main">
+                <span>
+                  {model.label}
+                  {model.default === true && <span className="settings-chip"> padrão</span>}
+                </span>
+                <span className="settings-item-sub">
+                  {model.id} · {model.providerId}
+                  {model.context > 0 ? ` · ${model.context.toLocaleString("pt-BR")} tokens` : ""}
+                </span>
+              </div>
+              {model.canDelete && (
+                <button
+                  type="button"
+                  className="button-secondary"
+                  aria-label={`remover modelo ${model.id}`}
+                  onClick={() => void removeModel(model.id)}
+                >
+                  <Trash2 size={13} aria-hidden />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <ModelForm providers={providers} onSubmit={addModel} />
+      </div>
+    );
+  }
+
   return (
     <div className="settings-section">
-      <p className="approval-summary">Modelos e provedores</p>
-
       {failure !== "" && (
         <p className="settings-feedback" data-ok="false">
           {failure}
@@ -601,36 +688,6 @@ export function CatalogSection({ client }: { client: CatalogClient | null }) {
       </ul>
 
       <ProviderForm onSubmit={addProvider} />
-
-      <ul className="settings-list">
-        {models.length === 0 && <li className="approval-note">nenhum modelo cadastrado.</li>}
-        {models.map((model) => (
-          <li key={model.id} className="settings-item">
-            <div className="settings-item-main">
-              <span>
-                {model.label}
-                {model.default === true && <span className="settings-chip"> padrão</span>}
-              </span>
-              <span className="settings-item-sub">
-                {model.id} · {model.providerId}
-                {model.context > 0 ? ` · ${model.context.toLocaleString("pt-BR")} tokens` : ""}
-              </span>
-            </div>
-            {model.canDelete && (
-              <button
-                type="button"
-                className="button-secondary"
-                aria-label={`remover modelo ${model.id}`}
-                onClick={() => void removeModel(model.id)}
-              >
-                <Trash2 size={13} aria-hidden />
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-
-      <ModelForm providers={providers} onSubmit={addModel} />
     </div>
   );
 }
@@ -646,23 +703,129 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function SettingsPanel() {
+/* ------------------------------- as seções -------------------------------- */
+
+/**
+ * O MENU é o mesmo do orquestrador, item por item e na mesma ordem.
+ *
+ * Ele não é decoração: é o mapa do que este produto configura, e a pessoa que
+ * usa os dois apps não deveria ter de reaprender onde mora cada assunto. Por
+ * isso os ids e os rótulos são copiados de `components/Settings.tsx` do
+ * orquestrador — inclusive os parênteses de "Provedores (BYOK)" e
+ * "Ship (build & deploy)".
+ *
+ * Cinco seções falam com o gateway do AI-BOT hoje. As outras SETE abrem
+ * dizendo, em uma frase, o que falta do lado do gateway para elas existirem —
+ * ver `PENDENTE`. Preferir a seção vazia e honesta ao controle bonito que não
+ * faz nada é a mesma regra do quadro de features do README: prometer o que não
+ * entrega é o defeito que este produto não pode ter.
+ */
+type SectionId =
+  | "conexao"
+  | "motores"
+  | "provedores"
+  | "memoria"
+  | "extensoes"
+  | "plugins"
+  | "conectores"
+  | "runtime"
+  | "ship"
+  | "vps"
+  | "administracao"
+  | "aparencia";
+
+const NAV: ReadonlyArray<{ id: SectionId; label: string; icon: LucideIcon }> = [
+  { id: "conexao", label: "Conexão", icon: PlugZap },
+  { id: "motores", label: "Motores & Fusion", icon: Cpu },
+  { id: "provedores", label: "Provedores (BYOK)", icon: KeyRound },
+  { id: "memoria", label: "Memória", icon: Brain },
+  { id: "extensoes", label: "Extensões", icon: Puzzle },
+  { id: "plugins", label: "Plugins & trilha", icon: Blocks },
+  { id: "conectores", label: "Conectores (MCP)", icon: Cable },
+  { id: "runtime", label: "Runtime local", icon: HardDrive },
+  { id: "ship", label: "Ship (build & deploy)", icon: Rocket },
+  { id: "vps", label: "Servidor VPS", icon: Server },
+  { id: "administracao", label: "Administração", icon: ShieldCheck },
+  { id: "aparencia", label: "Aparência", icon: Palette }
+];
+
+/**
+ * O que falta, por seção, para ela deixar de ser uma frase.
+ *
+ * Texto concreto de propósito: nomeia o pacote que já existe no gateway e a
+ * rota que não existe. "Em breve" não ajuda ninguém a decidir nada; isto aqui é
+ * a lista de trabalho.
+ */
+const PENDENTE: Partial<Record<SectionId, string>> = {
+  memoria:
+    "O gateway guarda a CONVERSA em SQLite (o store durável das sessões), que é outra coisa: memória é o fato que sobrevive à conversa e volta como contexto na próxima. Falta um CRUD de memórias no gateway e o recall injetando as melhores no prompt.",
+  extensoes:
+    "Inspecionar e importar pacote de extensão (Agent Skills, formato do Codex, formato do Claude) é leitura de pasta do disco, então o caminho é um comando do shell Rust — que hoje não expõe nenhum. Sem ele a tela não teria o que ler.",
+  plugins:
+    "O microkernel de plugins existe no gateway, com manifesto, perfis, efeitos reversíveis e rollback na falha de montagem. O que não existe é rota para LISTAR, salvar e remover plugin pela tela: hoje eles entram por arquivo, na subida do processo.",
+  conectores:
+    "O cliente MCP existe e fala JSON-RPC, mas os servidores vêm da configuração do gateway. Falta rota para cadastrar, testar (tools/list) e remover — e o token de cada conector teria de ir para o mesmo cofre das chaves de provedor, nunca para o estado da tela.",
+  ship:
+    "O empacotamento existe no gateway. O que não tem rota é a CONFIGURAÇÃO dele: raiz padrão do projeto, versão corrente e a política de aprovação do laço agêntico continuam decididas fora da tela.",
+  vps: "O arquivo de catálogo já preserva uma seção `vps`, mas ela nunca sai no GET do catálogo — fica guardada como extra. Falta expor, e com ela o modelo do servidor: host, porta, usuário, autenticação por agente ou por arquivo de chave, e a passphrase indo direto ao cofre.",
+  administracao:
+    "A política decide tetos de delegação, quais ferramentas cada papel executa e quais modelos ele enxerga — só que ela é lida de arquivo quando o gateway sobe. Falta a rota de administração para grupo, prompt master, preço por modelo e relatoria de uso."
+};
+
+function Pendente({ id }: { id: SectionId }) {
+  return (
+    <div className="settings-section">
+      <p className="settings-feedback" data-ok="false">
+        Esta seção ainda não tem o que configurar no gateway do AI-BOT.
+      </p>
+      <p className="approval-note">{PENDENTE[id]}</p>
+      <p className="approval-note">
+        O item fica no menu porque o assunto é do produto — some dele seria fingir que a
+        configuração não existe.
+      </p>
+    </div>
+  );
+}
+
+function ConexaoSection() {
   const gatewayUrl = useApp((state) => state.gatewayUrl);
   const status = useApp((state) => state.status);
+  const environment = useApp((state) => state.environment);
   const models = useApp((state) => state.models);
-  const activeModel = useApp((state) => state.activeModel);
-  const theme = useApp((state) => state.theme);
   const specialists = useApp((state) => state.specialists);
-  const setSettingsOpen = useApp((state) => state.setSettingsOpen);
 
   // O endereço só é conhecido depois que o Rust responde de onde subiu o
   // gateway. Dizer isso é melhor que mostrar o padrão como se fosse o real.
   const url = gatewayUrl === "" ? "ainda descobrindo…" : gatewayUrl;
 
+  return (
+    <div className="settings-section">
+      <div className="settings-list">
+        <Row label="Gateway" value={url} />
+        <Row label="Conexão" value={STATUS_LABEL[status]} />
+        <Row label="Ambiente" value={environment} />
+        <Row label="Catálogo" value={`${models.length} modelos · ${specialists.length} especialistas`} />
+      </div>
+      <p className="approval-note">
+        O endereço não se digita aqui: quem sobe o gateway é o próprio aplicativo, e o Rust
+        informa em que porta ele atendeu. Editar este campo criaria duas verdades.
+      </p>
+      <p className="approval-note">
+        O token do gateway e as chaves dos provedores ficam no cofre e não são exibidos aqui —
+        nem por engano, nem em log.
+      </p>
+    </div>
+  );
+}
+
+function MotoresSection({ client }: { client: CatalogClient | null }) {
+  const models = useApp((state) => state.models);
+  const activeModel = useApp((state) => state.activeModel);
+
   // O rótulo do modelo é do catálogo; um id fora da lista aparece como veio, e
   // marcado — inventar um nome bonito esconderia justamente a divergência.
   const known = models.find((model) => model.id === activeModel);
-  const model =
+  const label =
     activeModel === ""
       ? "nenhum escolhido"
       : known
@@ -670,60 +833,199 @@ export function SettingsPanel() {
         : `${activeModel} (fora da lista do gateway)`;
 
   return (
-    <div className="approval-backdrop">
+    <>
+      <div className="settings-section">
+        <div className="settings-list">
+          <Row label="Modelo da conversa" value={label} />
+        </div>
+        <p className="approval-note">
+          O modelo da conversa é trocado na barra superior, que é onde ele é usado; aqui se
+          decide o que ENTRA na lista dela.
+        </p>
+      </div>
+      <CatalogSection client={client} scope="models" />
+      <p className="approval-note">
+        Preset de fusion — vários modelos respondendo e um fundindo as respostas — não existe
+        neste produto. O que existe é a equipe de especialistas, que divide a tarefa em vez de
+        repetir a mesma pergunta em três modelos.
+      </p>
+    </>
+  );
+}
+
+function RuntimeSection() {
+  const environments = useApp((state) => state.environments);
+  const environment = useApp((state) => state.environment);
+  const setEnvironment = useApp((state) => state.setEnvironment);
+
+  return (
+    <div className="settings-section">
+      <ul className="settings-list">
+        {environments.map((item) => {
+          const Glyph = ENVIRONMENT_ICON[item.id] ?? Monitor;
+          const ativo = item.id === environment;
+          return (
+            <li key={item.id} className="settings-item">
+              <div className="settings-item-main">
+                <span>
+                  <Glyph size={13} strokeWidth={1.75} aria-hidden /> {item.label}
+                  {ativo && <span className="settings-chip"> em uso</span>}
+                </span>
+                <span className="settings-item-sub">{item.hint}</span>
+                {item.available === false && item.detail !== undefined && (
+                  <span className="settings-feedback" data-ok="false">
+                    {item.detail}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={ativo || item.available === false}
+                aria-label={`usar o ambiente ${item.label}`}
+                onClick={() => setEnvironment(item.id)}
+              >
+                Usar
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="approval-note">
+        Quem mede o que existe nesta máquina é o gateway — ele procura o Docker, a distro do
+        WSL e a VPS cadastrada. Um ambiente indisponível não é escolhível: oferecer seria
+        prometer uma execução que falha depois, e o comando cairia na estação da pessoa em vez
+        do contêiner.
+      </p>
+      <p className="approval-note">
+        Baixar motor de inferência e modelo `.gguf` pela tela ainda não existe aqui; o modelo
+        local entra pelo catálogo, como provedor de kind `local`.
+      </p>
+    </div>
+  );
+}
+
+function AparenciaSection() {
+  const theme = useApp((state) => state.theme);
+  const setTheme = useApp((state) => state.setTheme);
+  const specialists = useApp((state) => state.specialists);
+
+  return (
+    <div className="settings-section">
+      <div className="settings-form-row">
+        <button
+          type="button"
+          className="button-secondary"
+          aria-pressed={theme === "light"}
+          onClick={() => setTheme("light")}
+        >
+          <Sun size={13} aria-hidden />
+          Claro
+        </button>
+        <button
+          type="button"
+          className="button-secondary"
+          aria-pressed={theme === "dark"}
+          onClick={() => setTheme("dark")}
+        >
+          <Moon size={13} aria-hidden />
+          Escuro
+        </button>
+      </div>
+
+      <p className="approval-summary">Especialistas</p>
+
+      <ul className="settings-list">
+        {specialists.map((specialist) => {
+          const Glyph = SPECIALIST_ICON[specialist.id] ?? Bot;
+          return (
+            <li key={specialist.id} className="settings-bot">
+              <Glyph size={14} strokeWidth={1.75} aria-hidden />
+              <span>{specialist.name}</span>
+              <span className="settings-bot-tag">{specialist.tagline}</span>
+            </li>
+          );
+        })}
+      </ul>
+
+      <p className="approval-note">
+        A cor de acento do app não se escolhe: ela é do especialista que está atendendo, e
+        muda quando a conversa muda de dono. Esconder especialista também não — a barra
+        lateral mostra a equipe inteira, e quem decide quem entra é a política.
+      </p>
+    </div>
+  );
+}
+
+export function SettingsPanel() {
+  const setSettingsOpen = useApp((state) => state.setSettingsOpen);
+  const [section, setSection] = useState<SectionId>("conexao");
+
+  // O transporte é resolvido UMA vez por render do painel: as seções que falam
+  // com o gateway recebem o mesmo cliente, e a que não fala ignora.
+  const client = activeTransport();
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setSettingsOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [setSettingsOpen]);
+
+  return (
+    <div className="approval-backdrop" onMouseDown={() => setSettingsOpen(false)}>
       <section
         className="approval-card settings-card"
+        onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
       >
-        <header className="approval-head">
+        <header className="approval-head settings-head">
           <Settings size={16} aria-hidden />
           <h2 id="settings-title" className="approval-tool">
             configurações
           </h2>
+          <span className="settings-head-spacer" />
+          <button
+            type="button"
+            className="button-secondary"
+            aria-label="fechar configurações"
+            onClick={() => setSettingsOpen(false)}
+          >
+            <X size={14} aria-hidden />
+          </button>
         </header>
 
-        <div className="settings-list">
-          <Row label="Gateway" value={url} />
-          <Row label="Conexão" value={STATUS_LABEL[status]} />
-          <Row label="Modelo" value={model} />
-          <Row label="Tema" value={theme === "dark" ? "escuro" : "claro"} />
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label="Seções de configuração">
+            {NAV.map((item) => {
+              const Glyph = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={section === item.id ? "active" : ""}
+                  aria-current={section === item.id}
+                  onClick={() => setSection(item.id)}
+                >
+                  <Glyph size={14} strokeWidth={1.75} aria-hidden />
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="settings-content">
+            {section === "conexao" && <ConexaoSection />}
+            {section === "motores" && <MotoresSection client={client} />}
+            {section === "provedores" && <CatalogSection client={client} scope="providers" />}
+            {section === "runtime" && <RuntimeSection />}
+            {section === "aparencia" && <AparenciaSection />}
+            {PENDENTE[section] !== undefined && <Pendente id={section} />}
+          </div>
         </div>
-
-        <CatalogSection client={activeTransport()} />
-
-        <p className="approval-summary">Especialistas</p>
-
-        <ul className="settings-list">
-          {specialists.map((specialist) => {
-            const Glyph = SPECIALIST_ICON[specialist.id] ?? Bot;
-            return (
-              <li key={specialist.id} className="settings-bot">
-                <Glyph size={14} strokeWidth={1.75} aria-hidden />
-                <span>{specialist.name}</span>
-                <span className="settings-bot-tag">{specialist.tagline}</span>
-              </li>
-            );
-          })}
-        </ul>
-
-        <p className="approval-note">
-          {theme === "dark" ? <Moon size={13} aria-hidden /> : <Sun size={13} aria-hidden />}
-          O tema e o modelo são trocados na barra superior; aqui eles só são mostrados.
-        </p>
-
-        <p className="approval-note">
-          O token do gateway e as chaves dos provedores ficam no cofre e não são exibidos aqui —
-          nem por engano, nem em log.
-        </p>
-
-        <footer className="approval-actions">
-          <button type="button" className="button-secondary" onClick={() => setSettingsOpen(false)}>
-            <X size={14} aria-hidden />
-            Fechar
-          </button>
-        </footer>
       </section>
     </div>
   );

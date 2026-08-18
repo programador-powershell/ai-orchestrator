@@ -19,10 +19,12 @@ import {
   PROVIDER_KINDS,
   ProviderConfigForm,
   ProviderForm,
+  SettingsPanel,
   keyLabel,
   type CatalogProvider,
   type NewProvider
 } from "./SettingsPanel";
+import { useApp } from "../lib/store";
 
 declare global {
   // A bandeira que o React 19 procura para aceitar `act()` fora de uma suíte
@@ -183,5 +185,125 @@ describe("integração xAI", () => {
 
     expect(submitted).toEqual([{ apiKey: "xai-segredo", enabled: true }]);
     expect(password.value).toBe("");
+  });
+});
+
+/**
+ * O MENU das configurações.
+ *
+ * Ele existe para ser igual ao do orquestrador — item por item, na mesma ordem.
+ * Um item que suma daqui é um assunto que o produto passou a esconder, e é
+ * exatamente isso que este teste impede que aconteça em silêncio.
+ *
+ * O painel fala com o store e com o transporte; nos dois casos o teste usa o
+ * que já existe (o store real, sem gateway, devolve transporte nulo — e as
+ * seções que dependem dele dizem isso na tela, que também é comportamento).
+ */
+describe("menu das configurações", () => {
+  const ROTULOS = [
+    "Conexão",
+    "Motores & Fusion",
+    "Provedores (BYOK)",
+    "Memória",
+    "Extensões",
+    "Plugins & trilha",
+    "Conectores (MCP)",
+    "Runtime local",
+    "Ship (build & deploy)",
+    "Servidor VPS",
+    "Administração",
+    "Aparência"
+  ];
+
+  const nav = () =>
+    [...container.querySelectorAll<HTMLButtonElement>(".settings-nav button")];
+
+  it("tem as doze seções do orquestrador, na ordem", async () => {
+    await act(async () => {
+      root.render(<SettingsPanel />);
+    });
+
+    expect(nav().map((botao) => botao.textContent?.trim())).toEqual(ROTULOS);
+  });
+
+  it("abre em Conexão e troca de painel ao clicar", async () => {
+    await act(async () => {
+      root.render(<SettingsPanel />);
+    });
+
+    const marcado = () => nav().find((botao) => botao.getAttribute("aria-current") === "true");
+    expect(marcado()?.textContent).toContain("Conexão");
+    expect(container.textContent).toContain("Gateway");
+
+    const aparencia = nav().find((botao) => botao.textContent?.includes("Aparência"));
+    await act(async () => {
+      aparencia?.click();
+    });
+
+    expect(marcado()?.textContent).toContain("Aparência");
+    expect(container.textContent).toContain("Especialistas");
+    expect(container.textContent).not.toContain("Gateway");
+  });
+
+  it("as sete seções sem rota dizem o que falta, e não fingem controle", async () => {
+    await act(async () => {
+      root.render(<SettingsPanel />);
+    });
+
+    const semRota = [
+      "Memória",
+      "Extensões",
+      "Plugins & trilha",
+      "Conectores (MCP)",
+      "Ship (build & deploy)",
+      "Servidor VPS",
+      "Administração"
+    ];
+
+    for (const rotulo of semRota) {
+      const botao = nav().find((item) => item.textContent?.includes(rotulo));
+      await act(async () => {
+        botao?.click();
+      });
+
+      const painel = container.querySelector(".settings-content");
+      expect(painel?.textContent).toContain("ainda não tem o que configurar");
+
+      // Uma frase concreta sobre o que falta — não "em breve".
+      const nota = painel?.querySelectorAll(".approval-note")[0]?.textContent ?? "";
+      expect(nota.length).toBeGreaterThan(80);
+
+      // E nada de campo editável fingindo que a seção funciona.
+      expect(painel?.querySelectorAll("input, select").length).toBe(0);
+    }
+  });
+
+  it("Aparência troca o tema de verdade", async () => {
+    await act(async () => {
+      root.render(<SettingsPanel />);
+    });
+
+    const aparencia = nav().find((botao) => botao.textContent?.includes("Aparência"));
+    await act(async () => {
+      aparencia?.click();
+    });
+
+    const escuro = [...container.querySelectorAll<HTMLButtonElement>("button")].find((botao) =>
+      botao.textContent?.includes("Escuro")
+    );
+    await act(async () => {
+      escuro?.click();
+    });
+
+    expect(useApp.getState().theme).toBe("dark");
+    expect(escuro?.getAttribute("aria-pressed")).toBe("true");
+
+    const claro = [...container.querySelectorAll<HTMLButtonElement>("button")].find((botao) =>
+      botao.textContent?.includes("Claro")
+    );
+    await act(async () => {
+      claro?.click();
+    });
+    expect(useApp.getState().theme).toBe("light");
   });
 });
