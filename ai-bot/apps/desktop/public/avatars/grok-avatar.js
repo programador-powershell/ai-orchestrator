@@ -113,11 +113,9 @@ export function createAvatar(target, options = {}) {
     "data-grok-body-highlight": "true"
   });
   professionalBody.append(esfera, brilho);
-  const eyesRoot = el("g", { "data-grok-eyes-root": "true" });
   const olhoE = el("ellipse", { cx: -16, cy: -4, rx: 6, ry: 15, fill: "#fff", "data-grok-eye-left": "true" });
   const olhoD = el("ellipse", { cx: 16, cy: -4, rx: 6, ry: 15, fill: "#fff", "data-grok-eye-right": "true" });
-  eyesRoot.append(olhoE, olhoD);
-  body.append(professionalBody, eyesRoot);
+  body.append(professionalBody, olhoE, olhoD);
   svg.append(defs, sombra, body);
   host.appendChild(svg);
 

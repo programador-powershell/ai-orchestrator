@@ -33,7 +33,7 @@ function Bancada() {
     <div style={{ minHeight: "100vh", padding: 24, background: "#101012", color: "#e8e8e8", fontFamily: "system-ui", overflow: "auto" }}>
       <h2 style={{ fontSize: 17, margin: "0 0 4px" }}>Atividade profissional — Trabalhando</h2>
       <p style={{ margin: "0 0 16px", opacity: 0.58, fontSize: 12 }}>
-        O corpo NÃO é uma esfera com ícone: a própria massa preta se deforma e vira o gesto profissional — pseudópodes digitam, perseguem dados, arrastam Bézier, brotam subagentes, fluem pelos nodes, ajustam knobs e viram escudo.
+        A profissão deve ser entendida pela silhueta + gesto: digitar, analisar gráfico, manipular Bézier, despachar agentes, passar pacote no fluxo, ajustar sliders ou escanear segurança.
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 220px)", gap: 12, marginBottom: 34 }}>
         {ESPECIALISTAS.map((specialist) => (

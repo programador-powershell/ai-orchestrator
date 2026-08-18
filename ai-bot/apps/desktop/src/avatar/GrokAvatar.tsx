@@ -1,5 +1,5 @@
 /**
- * GrokAvatar — a ponte React do wrapper `grok_professional_avatar_v3.ts` (motor Grok-like choreography v6).
+ * GrokAvatar — a ponte React do wrapper `grok_professional_avatar_v3.ts` (motor profissional v3).
  *
  * O wrapper monta o avatar de um MÓDULO carregado por URL — a interface do
  * export JavaScript do Bible Strong Avatar Lab (`createAvatar` +
@@ -106,8 +106,8 @@ export function GrokAvatar({
       specialist: propsRef.current.specialist,
       state: propsRef.current.state,
       size: tamanho,
-      deformation: tamanhoNumerico >= 150 ? 1.16 : 0.90,
-      organicWarp: false,
+      deformation: tamanhoNumerico >= 96 ? 1.28 : 0.92,
+      organicWarp: true,
       statusCues: true
     });
     montagem.then(
