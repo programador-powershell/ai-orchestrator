@@ -29,14 +29,15 @@
                  ┌───────────────▼────────────────┐
                  │  PUTER — UMA INSTÂNCIA         │
                  │                                │
-                 │  conta: Paim  ← dona de tudo   │
-                 │   ├ bot-code     → workspace   │
-                 │   ├ bot-data     → workspace   │
-                 │   ├ bot-design   → workspace   │
-                 │   └ bot-security → workspace   │
+                 │  conta: Paim   (1 por PESSOA)  │
+                 │   ├ /Bots/code/                │
+                 │   ├ /Bots/design/              │
+                 │   ├ /Bots/security/            │
+                 │   ├ /Goals/<id>/               │
+                 │   └ /Shared/                   │
                  │                                │
-                 │  goal/<id>/ ← concedido a quem │
-                 │              participa do Goal │
+                 │  conta: Maria  (outra pessoa)  │
+                 │   └ …                          │
                  └───────────────┬────────────────┘
                                  │
                  ┌───────────────▼────────────────┐
@@ -202,23 +203,52 @@ E **auditoria**: todo acesso de bot a espaço compartilhado precisa ser
 atribuível — qual bot, qual Goal, qual tarefa. Sem isso, "o Security leu o quê?"
 não tem resposta.
 
-### O que essa escolha traz junto
+### Quem separa um bot do outro — e a consequência de uma conta por pessoa
 
-- **Credencial por bot** vai para o cofre do gateway, com a mesma regra das
-  chaves de provedor: o valor entra e só sai dentro de um callback.
+É **uma conta de Puter por PESSOA**; os bots são entidades lógicas dentro dela.
+Isso simplifica o provisionamento (ver abaixo) e tem um preço que precisa estar
+escrito:
+
+> Os bots de uma pessoa são, para o Puter, **o mesmo usuário**. O controle de
+> permissão dele **não** separa `bot-code` de `bot-security`. Quem separa é o
+> gateway.
+
+Isso é ao mesmo tempo melhor e pior do que apoiar-se no Puter:
+
+- **Melhor**: o isolamento deixa de depender do controle de acesso de um software
+  em alfa. Passa a depender de código nosso, testável aqui.
+- **Pior**: acaba a segunda linha de defesa. Uma falha na checagem de caminho do
+  gateway é vazamento completo, sem ninguém atrás para barrar.
+
+Por isso a checagem precisa ser **um ponto só**, e não uma regra repetida em cada
+ferramenta. O código já tem esse padrão: `resolveInside`, no `Toolbox`, resolve
+todo caminho dentro da raiz da sessão e **recusa caminho absoluto, `~` e `..`**.
+O plano de arquivos por bot é a mesma ideia com outra raiz:
+
+```
+/Bots/<especialista>/     ← raiz do bot; tudo dele resolve aqui dentro
+/Goals/<id>/              ← montado só se há concessão para este Goal
+/Shared/                  ← montado só com autorização explícita
+```
+
+Nada fora dessas raízes é alcançável, porque a resolução não produz caminho fora
+delas — não porque alguém lembrou de conferir.
+
+- **A credencial do Puter da pessoa** vai para o cofre do gateway, com a mesma
+  regra das chaves de provedor: o valor entra e só sai dentro de um callback.
 - **A credencial de administração do Puter é a joia da coroa** — é ela que cria
-  conta e concede acesso. Nunca na interface, nunca no bundle.
-- Continua sendo **um único backend**: isolamento forte sem custo de RAM por bot.
+  as contas das pessoas. Nunca na interface, nunca no bundle.
 
-**A verificar antes de confiar:** o isolamento passa a ser garantido pelo
-controle de permissão do Puter, e o auto-hospedado está em alfa. Antes de
-produção, três testes explícitos, e os três têm de FALHAR o acesso:
+**Os testes que têm de FALHAR o acesso** (e agora quem precisa recusar é o
+gateway, não o Puter):
 
-1. `bot-code` lendo o workspace de `bot-security`;
-2. `bot-code` lendo `goal/<outro>/` de um Goal em que ele não entrou;
-3. qualquer bot lendo a raiz da conta da pessoa.
+1. `bot-code` lendo `/Bots/security/`;
+2. `bot-code` lendo `/Goals/<outro>/` de um Goal em que ele não entrou;
+3. qualquer bot lendo a raiz da conta, ou saindo da própria raiz por `..`;
+4. um bot da pessoa A alcançando qualquer coisa da pessoa B.
 
-Isolamento que ninguém testou é isolamento que ninguém tem.
+Isolamento que ninguém testou é isolamento que ninguém tem — e aqui, sem a rede
+de segurança do Puter, o teste é a única prova.
 
 ## Snapshot em duas camadas
 
@@ -304,10 +334,93 @@ devolve só o resultado.
    orquestrador: workers **reportam**, não gravam. A trava vira **lease com
    prazo**.
 
+## Provisionamento
+
+Três escopos, e cada um nasce num momento diferente:
+
+| Escopo | O que é | Quando nasce |
+| --- | --- | --- |
+| **GLOBAL** | `SpecialistDefinition` — o catálogo versionado | com o produto |
+| **POR PESSOA** | `PuterAccount` + estrutura base | no primeiro login |
+| **POR PESSOA + ESPECIALISTA** | `BotInstance` | no primeiro uso daquele especialista |
+
+### No primeiro login
+
+```
+primeiro login → aibotd verifica PuterAccount → não existe?
+              → provisiona → cria a estrutura base
+                             /Bots/  /Goals/  /Shared/
+```
+
+O provisionador é **idempotente**, e roda em toda inicialização sem duplicar
+nada:
+
+```go
+EnsureUserWorkspace(userID)   // conta + /Bots/ /Goals/ /Shared/
+EnsureSpecialists()           // catálogo global carregado
+EnsurePermissions()           // as concessões que a pessoa já tinha
+```
+
+Idempotente aqui tem um requisito que costuma passar batido: **precisa aguentar
+concorrência**. Duas janelas da mesma pessoa abrindo ao mesmo tempo chamam
+`EnsureUserWorkspace` em paralelo — a semântica tem de ser criar-se-não-existe de
+verdade (uma trava por pessoa, ou tolerar o erro de "já existe" como sucesso),
+não ler-depois-criar.
+
+### Especialista novo não cria nada em massa
+
+Uma atualização acrescenta uma linha ao catálogo:
+
+```
+specialist_catalog:
+  code v3   design v2   data v1   security v4
++ agent v1
+```
+
+e pronto — as pessoas antigas já o enxergam. **Nada de percorrer todas as contas
+criando diretório.** A materialização é preguiçosa:
+
+```
+pessoa usa "Agent" pela primeira vez → existe no catálogo?
+   → EnsureBot(userID, "agent") → cria metadata + workspace → executa
+```
+
+O ganho não é só de tempo de atualização: quem nunca usa o Agente nunca tem
+diretório de Agente. Estrutura que existe sem uso é lixo para migrar depois.
+
+### Versão do catálogo na instância
+
+`BotInstance` precisa guardar **com qual versão do catálogo foi materializado**.
+Sem isso não há como saber o que está velho: o catálogo diz `code v3`, a pasta da
+pessoa foi criada no `v1`, e nada no sistema sabe da diferença.
+
+Com o campo, `EnsureBot` vira também o ponto de atualização: materializado em v1,
+catálogo em v3 → aplica o que mudou entre as duas versões.
+
+### `schema_version` do workspace
+
+```
+UserWorkspace schema_version = 7        atual = 9
+      → aplica 7→8, depois 8→9
+```
+
+Migrations pequenas e idempotentes, aplicadas **quando a pessoa toca no
+workspace** — não numa varredura de todas as contas na subida. As mesmas regras
+do provisionador valem: cada passo tem de poder rodar duas vezes sem estragar, e
+tem de ser seguro sob concorrência.
+
+Vale registrar a assimetria: migration **avança**. Uma pessoa que abriu o app com
+uma versão nova do gateway e depois volta para uma antiga tem workspace no futuro
+— o gateway antigo precisa recusar com frase clara em vez de tentar entender.
+
 ## Modelo de dados
 
 ```
-Bot        id, dono (conta da pessoa), especialidade, conta_puter, workspace
+SpecialistDefinition  id, versão, prompt, ferramentas, avatar     (GLOBAL)
+PuterAccount          user_id, conta, schema_version, criado_em   (POR PESSOA)
+BotInstance           user_id, especialista, versão_materializada,
+                      workspace, criado_em            (POR PESSOA+ESPECIALISTA)
+
 Goal       id, dono, título, objetivo, criado_em, arquivado
 Grant      bot_id, recurso, permissão, origem (goal|explícito), expira_em
 Session    id, goal_id, título, especialista, modelo, last_seq
@@ -336,9 +449,9 @@ sem revogar o que a pessoa autorizou à mão.
 
 1. **Cota e tamanho** por workspace no Puter auto-hospedado.
 2. **GPU** está no eixo efêmero, mas nenhum executor de hoje a expõe.
-3. **Quem provisiona as contas** dos bots — um comando de administração do
-   gateway, na primeira subida? E o que acontece quando uma atualização traz um
-   especialista novo?
+3. **Retenção do workspace órfão** — especialista removido do catálogo deixa
+   `/Bots/<id>/` da pessoa para trás. Apagar, arquivar ou deixar? Se ele guarda
+   dado de cliente, a resposta é de política, não de engenharia.
 
 ## Riscos e portões
 
@@ -371,7 +484,7 @@ sem revogar o que a pessoa autorizou à mão.
 | 6 | **Scheduler** por capacidade, localidade e carga; container por tarefa | fase 5 |
 | 7 | **Snapshot em duas camadas** e o inventário por PC | fase 6 |
 | 8 | **Lease no lugar do PID** e espelho pelo `MarkSynced` | fase 6 |
-| 9 | **Entidade Bot** + contas no Puter, faixas de permissão, trilha de acesso e preview publicado | fases 6–8 + **aval TI/SI** |
+| 9 | **Provisionador idempotente** (conta por pessoa, catálogo global, `EnsureBot` preguiçoso, `schema_version`), faixas de permissão, trilha de acesso e preview publicado | fases 6–8 + **aval TI/SI** |
 
 Só a fase 9 depende do Puter. Se o aval não vier, o cluster funciona com o
 workspace num volume do PC — e a fase 9 vira a troca de uma implementação de
