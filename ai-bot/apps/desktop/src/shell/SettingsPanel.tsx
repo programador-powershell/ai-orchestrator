@@ -153,7 +153,17 @@ function parseCatalog(raw: unknown): CatalogSnapshot {
 }
 
 function reasonOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+  if (cause instanceof Error) {
+    // "Failed to fetch" é o que o navegador diz quando a conexão nem sai —
+    // gateway fora do ar, porta errada, CORS. É verdade e não serve para nada:
+    // não diz o que aconteceu nem o que fazer. As recusas do gateway (que vêm
+    // com frase acionável no corpo) passam inteiras, como sempre.
+    if (cause.name === "TypeError" || cause.message === "Failed to fetch") {
+      return "não foi possível falar com o gateway — ele não respondeu no endereço configurado.";
+    }
+    return cause.message;
+  }
+  return "falha ao falar com o gateway";
 }
 
 /** O rótulo de chave da linha do provedor — o único eco que o segredo tem. */
@@ -177,8 +187,25 @@ const noAplicativo = (): boolean =>
  * navegador isso nunca acontecia: a pessoa ficava esperando uma conexão que o
  * desenho impede.
  */
-function SemGateway() {
+function SemGateway({ status }: { status: "connecting" | "ready" | "offline" }) {
   const navegador = !noAplicativo();
+
+  if (status === "connecting" && !navegador) {
+    return (
+      <div className="settings-section">
+        <div className="settings-cardx">
+          <div className="settings-cardx-title">
+            <PlugZap size={13} aria-hidden />
+            Conectando ao gateway…
+          </div>
+          <p className="settings-help">
+            A lista de provedores aparece assim que a conexão fecha. Se demorar, o motivo sai no
+            log do aplicativo.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="settings-section">
@@ -615,6 +642,7 @@ export function CatalogSection({
   client: CatalogClient | null;
   scope: CatalogScope;
 }) {
+  const status = useApp((state) => state.status);
   const [snapshot, setSnapshot] = useState<CatalogSnapshot | null>(null);
   const [failure, setFailure] = useState("");
   const [tests, setTests] = useState<Record<string, { ok: boolean; detail: string }>>({});
@@ -633,8 +661,17 @@ export function CatalogSection({
     void reload();
   }, [reload]);
 
-  if (client === null) {
-    return <SemGateway />;
+  // A porta é a CONEXÃO, não a existência do objeto.
+  //
+  // `activeTransport()` devolve um transporte assim que a montagem tenta
+  // conectar — e ela tenta sempre, porque `gatewayInfo()` não falha: fora do
+  // aplicativo ela cai num token vazio de propósito. Com isso, "transporte
+  // existe" era verdade mesmo offline, e esta seção oferecia o formulário
+  // inteiro, com campo de senha, para uma conexão que não existia: a pessoa
+  // digitava a chave e recebia "Failed to fetch". Campo de segredo sem destino
+  // é o que esta guarda existe para impedir.
+  if (client === null || status !== "ready") {
+    return <SemGateway status={status} />;
   }
   // O TypeScript não carrega o estreitamento do guard para dentro das funções
   // abaixo (parâmetro não é `const`); o apelido carrega.

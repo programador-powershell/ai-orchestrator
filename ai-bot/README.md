@@ -155,6 +155,15 @@
 
 ### :pushpin: Fixes
 
+- **A tela pedia a chave de API sem ter para onde mandá-la.** Sem gateway, a
+  seção de Provedores mostrava o formulário inteiro — com campo de senha — e o
+  envio morria em `Failed to fetch`. A guarda testava se o TRANSPORTE existia, e
+  ele existe sempre: `gatewayInfo()` não falha, ela cai num token vazio de
+  propósito quando roda fora do aplicativo. Agora a porta é a **conexão**
+  (`status === "ready"`), e sem ela a seção mostra o que fazer em vez de um campo
+  de segredo sem destino. `Failed to fetch` também deixou de vazar para a tela:
+  vira "não foi possível falar com o gateway — ele não respondeu no endereço
+  configurado".
 - **O aplicativo desktop não achava o gateway no Windows.** O script de build
   gravava `dist/aibotd` — caminho de ARQUIVO, então o Go usa o nome literal —
   enquanto o Rust procura `aibotd.exe`. Quem seguisse o README à risca abria a

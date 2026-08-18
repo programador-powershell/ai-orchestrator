@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
+  CatalogSection,
   PROVIDER_KINDS,
   ProviderConfigForm,
   ProviderForm,
@@ -342,5 +343,66 @@ describe("configurações sem gateway", () => {
     // E nada de formulário de chave: sem transporte, um campo de senha ali seria
     // um segredo digitado para lugar nenhum.
     expect(painel?.querySelectorAll('input[type="password"]').length).toBe(0);
+  });
+});
+
+/**
+ * A porta é a CONEXÃO, não a existência do transporte.
+ *
+ * Este é o defeito que chegou por print: sem gateway, a seção oferecia o
+ * formulário inteiro — com campo de senha — e a pessoa digitava a chave para
+ * receber "Failed to fetch". A causa era a guarda testar `client === null`,
+ * enquanto o store cria o transporte mesmo offline (`gatewayInfo` não falha:
+ * fora do aplicativo ela devolve token vazio de propósito).
+ *
+ * O teste injeta um cliente FALSO — ou seja, transporte existe — e mexe só no
+ * status. É essa combinação que o código antigo errava; um teste com cliente
+ * nulo passaria sem exercitar nada.
+ */
+describe("catálogo x estado da conexão", () => {
+  const cliente = {
+    get: async () => ({ providers: [], models: [] }),
+    post: async () => ({}),
+    patch: async () => ({}),
+    del: async () => ({})
+  };
+
+  const painel = () => container.querySelector(".settings-section");
+
+  it("com transporte mas SEM conexão, não oferece campo de chave", async () => {
+    useApp.setState({ status: "offline" });
+
+    await act(async () => {
+      root.render(<CatalogSection client={cliente} scope="providers" />);
+    });
+
+    expect(container.querySelectorAll('input[type="password"]').length).toBe(0);
+    expect(painel()?.textContent).toContain("Sem conexão com o gateway");
+  });
+
+  it("conectando, avisa em vez de mostrar formulário", async () => {
+    useApp.setState({ status: "connecting" });
+
+    await act(async () => {
+      root.render(<CatalogSection client={cliente} scope="models" />);
+    });
+
+    expect(container.querySelectorAll("input").length).toBe(0);
+  });
+
+  it("conectado, o formulário aparece", async () => {
+    useApp.setState({ status: "ready" });
+
+    await act(async () => {
+      root.render(<CatalogSection client={cliente} scope="providers" />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+
+    expect(container.querySelector('input[aria-label="id do provedor"]')).toBeTruthy();
+    expect(container.querySelectorAll('input[type="password"]').length).toBe(1);
+
+    useApp.setState({ status: "connecting" });
   });
 });
