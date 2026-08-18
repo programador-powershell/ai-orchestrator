@@ -157,6 +157,68 @@ function reasonOf(cause: unknown): string {
 }
 
 /** O rótulo de chave da linha do provedor — o único eco que o segredo tem. */
+/**
+ * Estamos dentro do aplicativo, ou numa aba de navegador?
+ *
+ * A pergunta não é cosmética: quem conhece o token do gateway é o processo Rust,
+ * que o leu do disco. Numa aba comum esse comando não existe, e o token não pode
+ * ser embutido no pacote JavaScript — qualquer página do mesmo contexto o leria.
+ * Ou seja: no navegador a tela NÃO VAI conectar, nem daqui a pouco, e dizer
+ * "aguardando o gateway" ali seria mentira educada.
+ */
+const noAplicativo = (): boolean =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/**
+ * O que a seção mostra quando não há gateway para conversar.
+ *
+ * Mensagem ACIONÁVEL, com o comando que resolve. A versão anterior dizia só
+ * "sem conexão com o gateway — os provedores aparecem quando ele conectar", e no
+ * navegador isso nunca acontecia: a pessoa ficava esperando uma conexão que o
+ * desenho impede.
+ */
+function SemGateway() {
+  const navegador = !noAplicativo();
+
+  return (
+    <div className="settings-section">
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <PlugZap size={13} aria-hidden />
+          Sem conexão com o gateway
+          <span className="settings-chip-pill">
+            {navegador ? "aba de navegador" : "gateway fora do ar"}
+          </span>
+        </div>
+        {navegador ? (
+          <>
+            <p className="settings-help">
+              Numa aba de navegador esta tela não tem como se autenticar: quem conhece o token
+              do gateway é o processo do aplicativo, que o lê do disco. Embutir o token no
+              JavaScript servido o entregaria a qualquer página aberta no mesmo contexto.
+            </p>
+            <p className="settings-help">
+              Para configurar provedores, modelos e ambientes, abra o aplicativo:
+            </p>
+            <pre className="settings-comando">corepack pnpm dev:desktop</pre>
+            <p className="settings-help">
+              Esse comando compila o gateway em <code>dist/</code> e sobe a janela com ele no
+              caminho de busca. O <code>corepack pnpm dev</code> serve só a interface — é o
+              modo de mexer em tela, e a bancada de avatares em <code>/bench.html</code>.
+            </p>
+          </>
+        ) : (
+          <p className="settings-help">
+            O aplicativo está no ar, mas o gateway não respondeu. Ele sobe junto com a janela;
+            se isto persistir, o motivo aparece no log do aplicativo — porta 8799 ocupada por
+            outro <code>aibotd</code> é a causa mais comum.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function keyLabel(provider: CatalogProvider): string {
   if (!provider.needsKey) return "não usa chave";
   return provider.hasKey ? "chave: cadastrada" : "chave: ausente";
@@ -572,11 +634,7 @@ export function CatalogSection({
   }, [reload]);
 
   if (client === null) {
-    return (
-      <p className="approval-note">
-        sem conexão com o gateway — os provedores aparecem quando ele conectar.
-      </p>
-    );
+    return <SemGateway />;
   }
   // O TypeScript não carrega o estreitamento do guard para dentro das funções
   // abaixo (parâmetro não é `const`); o apelido carrega.

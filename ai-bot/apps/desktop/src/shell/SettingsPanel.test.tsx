@@ -308,3 +308,39 @@ describe("menu das configurações", () => {
     expect(useApp.getState().theme).toBe("light");
   });
 });
+
+/**
+ * Sem gateway, a tela precisa dizer O QUE FAZER.
+ *
+ * Este é o defeito que a rodada anterior deixou passar: numa aba de navegador o
+ * token do gateway não existe e nunca vai existir (quem o lê do disco é o
+ * processo do aplicativo), então a mensagem "os provedores aparecem quando ele
+ * conectar" mandava a pessoa esperar uma conexão que o desenho impede.
+ */
+describe("configurações sem gateway", () => {
+  it("na aba de navegador manda abrir o aplicativo, com o comando", async () => {
+    await act(async () => {
+      root.render(<SettingsPanel />);
+    });
+
+    const provedores = [...container.querySelectorAll<HTMLButtonElement>(".settings-nav button")].find(
+      (botao) => botao.textContent?.includes("Provedores")
+    );
+    await act(async () => {
+      provedores?.click();
+    });
+
+    const painel = container.querySelector(".settings-content");
+    expect(painel?.textContent).toContain("Sem conexão com o gateway");
+    expect(painel?.textContent).toContain("aba de navegador");
+
+    // O comando exato, em bloco copiável — não uma vaga menção ao "aplicativo".
+    expect(painel?.querySelector(".settings-comando")?.textContent).toBe(
+      "corepack pnpm dev:desktop"
+    );
+
+    // E nada de formulário de chave: sem transporte, um campo de senha ali seria
+    // um segredo digitado para lugar nenhum.
+    expect(painel?.querySelectorAll('input[type="password"]').length).toBe(0);
+  });
+});

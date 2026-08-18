@@ -1653,6 +1653,20 @@ select {
   text-align: center;
 }
 
+/* O comando que a pessoa vai copiar — monoespaçado e selecionável. */
+.settings-comando {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  user-select: text;
+  overflow-x: auto;
+}
+
 .settings-field {
   display: grid;
   gap: 5px;

@@ -155,6 +155,21 @@
 
 ### :pushpin: Fixes
 
+- **O aplicativo desktop não achava o gateway no Windows.** O script de build
+  gravava `dist/aibotd` — caminho de ARQUIVO, então o Go usa o nome literal —
+  enquanto o Rust procura `aibotd.exe`. Quem seguisse o README à risca abria a
+  janela e via "não encontrei o gateway". Agora o alvo é a PASTA (`-o dist/`), e
+  quem escolhe o nome certo para o sistema é o Go.
+- **`dev:desktop` deixou de exigir cópia de binário na mão.** Em produção o
+  empacotamento põe o `aibotd` ao lado do executável; em desenvolvimento esse
+  "ao lado" não existe, e o segundo lugar procurado é o PATH. O script novo
+  compila o gateway e acrescenta `dist/` ao PATH do processo que sobe o Tauri.
+- **A tela de Configurações mandava esperar uma conexão que nunca vinha.** Numa
+  aba de navegador o token do gateway não existe — quem o lê do disco é o
+  processo do aplicativo, e embuti-lo no pacote JavaScript o entregaria a
+  qualquer página do mesmo contexto. A seção dizia "os provedores aparecem
+  quando ele conectar"; agora ela distingue os dois casos e mostra o comando que
+  resolve.
 - **A cena do ofício estava sendo pintada ATRÁS do corpo preto — ou seja,
   invisível.** O CSS já descrevia `.gsa-art-layer` em `z-index: 3`, mas nada
   criava essa camada: terminal, gráfico, scanner e status voltavam para dentro
@@ -216,12 +231,15 @@ Instala as dependências da interface.
 corepack pnpm install
 ```
 
-Compila o gateway (sem o roteador local; é o build padrão).
+Compila o gateway (sem o roteador local; é o build padrão). A **barra no fim** é
+obrigatória: com um caminho de arquivo o Go grava exatamente aquele nome, e no
+Windows sai um `aibotd` sem `.exe` que o aplicativo não encontra.
 ```
-go build -o dist/aibotd ./services/gateway/cmd/aibotd
+corepack pnpm gateway:build
 ```
 
-Inicia o app desktop em modo desenvolvimento.
+Inicia o app desktop em modo desenvolvimento — compila o gateway e sobe a janela
+com ele no caminho de busca.
 ```
 corepack pnpm dev:desktop
 ```
@@ -231,8 +249,11 @@ Gera o build de produção.
 corepack pnpm build:desktop
 ```
 
-Sobe só a interface, sem a janela do Tauri — é assim que se abre a bancada de
-avatares em `http://localhost:1421/bench.html`.
+Sobe **só a interface**, sem a janela. Serve para mexer em tela e para a bancada
+de avatares em `http://localhost:1421/bench.html` — mas **não conecta no
+gateway**: quem conhece o token é o processo do aplicativo, e embutir o segredo
+no JavaScript servido o entregaria a qualquer página do mesmo contexto. As
+Configurações dizem isso e mostram o comando de cima.
 ```
 corepack pnpm dev
 ```
@@ -276,7 +297,7 @@ materializa somente a chave e o override local.
 | aibotd                | Gateway Go: `aibotd` sobe o servidor; `serve`, `token`, `specialists`, `version` |
 | aibotd -tags needle   | Mesmo gateway com o roteador local ligado (exige a biblioteca nativa)            |
 | corepack pnpm dev:desktop | Aplicativo em desenvolvimento (janela do Tauri), com recarga                  |
-| corepack pnpm dev     | Só a interface, em `http://localhost:1421` — e a bancada em `/bench.html`        |
+| corepack pnpm dev     | Só a interface (sem gateway), em `http://localhost:1421` — e a bancada em `/bench.html` |
 | gerar-manifesto.mjs   | Mede, assina (Ed25519) e confere o manifesto de atualização — `corepack pnpm manifesto:gerar` e `corepack pnpm manifesto:verificar` |
 | gerar-chaves.mjs      | Gera o par Ed25519: a pública para embutir no build, a privada para o cofre da TI |
 | go test ./...         | Bateria do gateway (roteador, DAG, store, rede, permissão, protocolo, barramento)|
