@@ -93,7 +93,7 @@ describe("mountProfessionalGrokAvatar", () => {
       state: "working"
     });
 
-    const root = host.querySelector<HTMLElement>(".gsa-root");
+    const root = host.querySelector<HTMLElement>(".pgv5-root");
     expect(root).toBeTruthy();
     expect(root?.dataset.state).toBe("working");
     expect(root?.getAttribute("aria-label")).toContain("Code");
@@ -110,7 +110,7 @@ describe("mountProfessionalGrokAvatar", () => {
     expect(root?.dataset.specialist).toBe("data");
 
     controller.destroy();
-    expect(host.querySelector(".gsa-root")).toBeNull();
+    expect(host.querySelector(".pgv5-root")).toBeNull();
     host.remove();
   });
 });
@@ -140,22 +140,20 @@ describe("stand-in público", () => {
 });
 
 /**
- * A camada v4: a SILHUETA deforma, as camadas ficam na ordem certa e a cena só
- * entra em quem tem tamanho para mostrá-la.
+ * A camada v5: o motor DESENHA a própria silhueta e esconde o corpo redondo que
+ * vem do módulo.
  *
- * O módulo falso daqui expõe `data-grok-body-shape`, como o stand-in real —
- * sem isso o motor cai no ramo de compatibilidade (que ainda usa scale no
- * hospedeiro) e o teste passaria sem exercitar a silhueta, que é justamente o
- * que mudou.
+ * O módulo falso daqui expõe `data-grok-body-shape`, como o stand-in real — é
+ * ele que o motor precisa esconder. Sem isso, o teste do "esconde o redondo"
+ * passaria sem ter nada para esconder.
  */
-const MODULO_COM_SILHUETA =
+const MODULO_COM_CORPO =
   "data:text/javascript," +
   encodeURIComponent(
     `export const availableAnimations = ["idle","listening","thinking","working","searching","sleeping","drowsy","happy","celebrate","proud","curious","suspicious"];
      export function createAvatar(target) {
        const NS = "http://www.w3.org/2000/svg";
        const svg = document.createElementNS(NS, "svg");
-       svg.setAttribute("viewBox", "-100 -100 200 200");
        const corpo = document.createElementNS(NS, "path");
        corpo.setAttribute("d", "M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
        corpo.setAttribute("data-grok-body-shape", "true");
@@ -171,85 +169,76 @@ const quadros = async (quantos: number): Promise<void> => {
   }
 };
 
-describe("animação v4", () => {
-  it("deforma a SILHUETA, não a caixa do rosto", async () => {
+const montar = (host: HTMLElement, state: GrokSpecialistState, size: number) =>
+  mountProfessionalGrokAvatar(host, { moduleUrl: MODULO_COM_CORPO, specialist: "code", state, size });
+
+describe("animação v5 — morph", () => {
+  it("a silhueta do motor deforma quadro a quadro", async () => {
     const host = document.createElement("div");
     document.body.append(host);
+    const controller = await montar(host, "working", 190);
 
-    const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_COM_SILHUETA,
-      specialist: "code",
-      state: "working",
-      size: 150
-    });
-
-    const corpo = host.querySelector<SVGPathElement>("[data-grok-body-shape=true]");
-    expect(corpo).toBeTruthy();
+    const silhueta = host.querySelector<SVGPathElement>("[data-pgv5-silhouette=true]");
+    expect(silhueta).toBeTruthy();
 
     await quadros(4);
-    const primeiro = corpo?.getAttribute("d") ?? "";
+    const primeiro = silhueta?.getAttribute("d") ?? "";
     await quadros(6);
-    const segundo = corpo?.getAttribute("d") ?? "";
+    const segundo = silhueta?.getAttribute("d") ?? "";
 
-    // O corpo deixou de ser um círculo escalado: o próprio `d` muda por quadro.
-    expect(primeiro).not.toBe("M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
+    // Spline fechado de 56 pontos, interpolado por quadro: o `d` é longo e muda.
+    expect(primeiro.length).toBeGreaterThan(200);
     expect(segundo).not.toBe(primeiro);
 
-    // E o rosto só INCLINA — se voltasse a escalar, os olhos viravam elipses.
-    const rosto = host.querySelector<HTMLElement>(".gsa-avatar");
-    expect(rosto?.style.transform ?? "").not.toContain("scale(");
+    controller.destroy();
+    host.remove();
+  });
+
+  it("esconde o corpo redondo que veio do módulo", async () => {
+    // São DUAS silhuetas no mesmo lugar: a redonda do export do Lab e a orgânica
+    // que o motor gera. Deixar as duas visíveis desenharia um círculo por baixo
+    // da forma que deveria substituí-lo.
+    const host = document.createElement("div");
+    document.body.append(host);
+    const controller = await montar(host, "working", 190);
+    await quadros(3);
+
+    const redondo = host.querySelector<SVGElement>("[data-grok-body-shape=true]");
+    expect(redondo).toBeTruthy();
+    expect(redondo?.style.opacity).toBe("0");
 
     controller.destroy();
     host.remove();
   });
 
-  it("empilha as camadas na ordem: braços atrás, corpo no meio, cena na frente", async () => {
+  it("empilha silhueta, rosto e cena nessa ordem", async () => {
     const host = document.createElement("div");
     document.body.append(host);
+    const controller = await montar(host, "working", 190);
 
-    const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_COM_SILHUETA,
-      specialist: "code",
-      state: "working",
-      size: 150
-    });
-
-    const root = host.querySelector(".gsa-root");
+    const root = host.querySelector(".pgv5-root");
     const ordem = [...(root?.children ?? [])].map((filho) => filho.getAttribute("class"));
 
-    // A ordem do DOM É a ordem de pintura. Com a cena atrás do corpo, o terminal
-    // ficava escondido pela bolinha preta — que era o defeito do v3.
-    expect(ordem).toEqual(["gsa-stage", "gsa-avatar", "gsa-art-layer"]);
-
-    await quadros(4);
-    // Braços na traseira; terminal, gráfico e sliders na frontal.
-    expect(host.querySelectorAll(".gsa-stage .gsa-blob-limb").length).toBe(2);
-    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line").length).toBeGreaterThan(0);
+    // A ordem do DOM É a ordem de pintura: cena atrás do corpo esconderia o
+    // terminal, que era o defeito das versões anteriores.
+    expect(ordem).toEqual(["pgv5-body-svg", "pgv5-avatar", "pgv5-artifact-svg"]);
 
     controller.destroy();
     host.remove();
   });
 
-  it("NÃO desenha a cena num avatar de lista, onde ela seria borrão", async () => {
-    // A lista de tarefas usa 26 px. Um terminal de 116 unidades num viewBox de
-    // 200 vira três pixels — e reconstruí-lo a cada quadro, por avatar, custaria
-    // dezenas de nós SVG por segundo para não mostrar nada.
+  it("num avatar de lista mantém o morph e omite os detalhes", async () => {
+    // A lista de tarefas usa 26 px. O morph continua — é ele que se lê nesse
+    // tamanho —, mas terminal e gráfico virariam três pixels de borrão.
     const host = document.createElement("div");
     document.body.append(host);
-
-    const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_COM_SILHUETA,
-      specialist: "code",
-      state: "working",
-      size: 26
-    });
-
+    const controller = await montar(host, "working", 26);
     await quadros(4);
-    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line, .gsa-art-layer text").length).toBe(0);
 
-    // Mesmo pequeno a SILHUETA continua viva: é ela que se lê nesse tamanho.
-    const corpo = host.querySelector<SVGPathElement>("[data-grok-body-shape=true]");
-    expect(corpo?.getAttribute("d")).not.toBe("M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
+    expect(host.querySelectorAll(".pgv5-artifact-svg rect, .pgv5-artifact-svg line").length).toBe(0);
+
+    const silhueta = host.querySelector<SVGPathElement>("[data-pgv5-silhouette=true]");
+    expect((silhueta?.getAttribute("d") ?? "").length).toBeGreaterThan(200);
 
     controller.destroy();
     host.remove();
