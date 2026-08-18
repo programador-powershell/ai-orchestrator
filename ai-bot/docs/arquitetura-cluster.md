@@ -196,7 +196,7 @@ manter em pé, e elas divergiriam. A concessão de recurso entra pelo mesmo port
 | Bot entra no Goal | ganha `goal/<id>/`; nada além |
 | Bot sai do Goal | perde `goal/<id>/` |
 | Goal arquivado | todas as concessões daquele Goal morrem |
-| Bot removido (atualização tirou o especialista) | workspace órfão — decidir retenção, não deixar apodrecer |
+| Bot removido (atualização tirou o especialista) | workspace vai para `/Arquivo/<id>/`, somente leitura; outro bot só chega nele com autorização explícita |
 | Pessoa perde acesso ao recurso | o bot perde no próximo uso, porque o direito é derivado |
 
 E **auditoria**: todo acesso de bot a espaço compartilhado precisa ser
@@ -397,6 +397,36 @@ pessoa foi criada no `v1`, e nada no sistema sabe da diferença.
 Com o campo, `EnsureBot` vira também o ponto de atualização: materializado em v1,
 catálogo em v3 → aplica o que mudou entre as duas versões.
 
+### Especialista que sai: arquiva, não apaga
+
+Especialista removido do catálogo **não leva o workspace junto**. O dado
+continua útil: outro especialista pode precisar dele.
+
+```
+/Bots/agent/          →   /Arquivo/agent/     (somente leitura)
+```
+
+Três regras que caem daí:
+
+- **O arquivo é uma FONTE, não um destino.** Somente leitura: workspace de
+  especialista que não existe mais não deveria continuar mudando, e um
+  arquivo que muda não é arquivo.
+- **Outro especialista chega nele pela terceira faixa.** Não há exceção nova:
+  `/Arquivo/<id>/` é recurso, e recurso exige **autorização explícita**, pelo
+  mesmo portão de aprovação. O bot de Dados lendo o que o Agente deixou é uma
+  decisão da pessoa, registrada na trilha de acesso — não um efeito colateral de
+  o Agente ter sido removido.
+- **Especialista que volta, reidrata.** Se uma atualização traz `agent` de novo,
+  `EnsureBot` acha o arquivo pelo id e **restaura** em vez de criar pasta vazia.
+  Sem isso, uma remoção temporária apagaria o histórico da pessoa sem ninguém ter
+  pedido.
+
+Arquivar **não** significa guardar para sempre: significa que a saída do
+especialista, sozinha, não apaga nada. Apagar de verdade continua possível por
+ação humana explícita, e o arquivo entra na política de retenção da empresa como
+qualquer outro dado — se houver dado de cliente ali, quem decide o prazo é a
+TI/SI, não este documento.
+
 ### `schema_version` do workspace
 
 ```
@@ -409,6 +439,11 @@ workspace** — não numa varredura de todas as contas na subida. As mesmas regr
 do provisionador valem: cada passo tem de poder rodar duas vezes sem estragar, e
 tem de ser seguro sob concorrência.
 
+Uma armadilha que vem junto do arquivo: workspace arquivado fica parado no schema
+de quando foi arquivado, porque ninguém o toca. **A reidratação tem de rodar a
+cadeia inteira** — arquivado no 4, atual no 9, restaura aplicando 4→5→…→9. Sem
+isso, o especialista que volta volta quebrado.
+
 Vale registrar a assimetria: migration **avança**. Uma pessoa que abriu o app com
 uma versão nova do gateway e depois volta para uma antiga tem workspace no futuro
 — o gateway antigo precisa recusar com frase clara em vez de tentar entender.
@@ -418,8 +453,9 @@ uma versão nova do gateway e depois volta para uma antiga tem workspace no futu
 ```
 SpecialistDefinition  id, versão, prompt, ferramentas, avatar     (GLOBAL)
 PuterAccount          user_id, conta, schema_version, criado_em   (POR PESSOA)
-BotInstance           user_id, especialista, versão_materializada,
-                      workspace, criado_em            (POR PESSOA+ESPECIALISTA)
+BotInstance           user_id, especialista, versão_materializada, workspace,
+                      estado (ativo|arquivado), criado_em
+                                                      (POR PESSOA+ESPECIALISTA)
 
 Goal       id, dono, título, objetivo, criado_em, arquivado
 Grant      bot_id, recurso, permissão, origem (goal|explícito), expira_em
@@ -449,9 +485,9 @@ sem revogar o que a pessoa autorizou à mão.
 
 1. **Cota e tamanho** por workspace no Puter auto-hospedado.
 2. **GPU** está no eixo efêmero, mas nenhum executor de hoje a expõe.
-3. **Retenção do workspace órfão** — especialista removido do catálogo deixa
-   `/Bots/<id>/` da pessoa para trás. Apagar, arquivar ou deixar? Se ele guarda
-   dado de cliente, a resposta é de política, não de engenharia.
+3. **Prazo de retenção do arquivo.** A saída do especialista não apaga nada
+   (arquiva), mas o arquivo acumula. Se houver dado de cliente ali, o prazo é
+   decisão de TI/SI.
 
 ## Riscos e portões
 
