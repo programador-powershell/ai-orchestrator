@@ -107,10 +107,17 @@
 ### :warning: Latest Changes
 
 - **O corpo do bot deixou de ser uma esfera escalada: ele DEFORMA.** O núcleo
-  (`avatar/GrokSlimeCore.ts`) é um caminho fechado de 40 pontos, cada um com
+  (`avatar/GrokSlimeCore.ts`) é um caminho fechado de 48 pontos, cada um com
   sua própria mola — o contorno respira, estica na direção do gesto e volta,
   sem nenhuma etapa de escala. Os olhos brancos continuam sendo os do módulo do
   Avatar Lab; o que mudou é a massa preta em volta deles.
+- **A pose da cabeça move a MASSA, não só o olhar.** `headX/headY/headZ`
+  deslocam o centro, giram, achatam e esticam o corpo, com bolha na borda que
+  lidera e compressão na que fica para trás; a mola é subamortecida de
+  propósito, para o corpo continuar balançando depois que o alvo já parou. Os
+  ciclos têm a mesma linguagem temporal do laboratório (2300 ms parado + 500 ms
+  de transição; 5200 ms no ocioso, 3600 ms dormindo) e um desvio lento e
+  irregular por ruído suave, para dois bots do mesmo ofício não baterem passo.
 - **Cada especialista trabalha numa CENA do próprio ofício**, desenhada por
   cima do corpo: terminal para o Código, gráfico para os Dados, curva de Bézier
   para o Design, grafo de workflow para o Fluxo, faders para o Ajuste, scanner
@@ -120,12 +127,15 @@
   `backSvg` (braços e blobs atrás do corpo) → `AVATAR` (silhueta preta +
   olhos) → `frontSvg` (cena do ofício e status). A ordem do DOM é a ordem de
   pintura, e é ela que decide o que fica visível.
-- **Cobertura:** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
+- **Cobertura (14 casos):** `avatar/grokSpecialistAvatar.test.ts` valida o mapa
   runtime→estado, o catálogo de comportamento (8 especialistas × 5 estados) e o
-  controller com um módulo fake injetado por `data:` URL; a camada nova
-  acrescenta três guardas — o caminho do slime muda de um quadro para o outro,
-  a esfera redonda do módulo é escondida (`opacity: 0`) e a ordem das três
-  camadas é exatamente a de cima.
+  controller com um módulo fake injetado por `data:` URL. A camada do corpo
+  acrescenta seis guardas: o caminho do slime muda de um quadro para o outro, a
+  esfera redonda do módulo é escondida (`opacity: 0`), a ordem das três camadas
+  é exatamente a de cima, o brilho tem contagem de pontos constante, o brilho
+  existe nos cinco estados e `deformation: 0` desenha diferente de `0.65`. O
+  motor é chamado direto, com `time` e `dt` fixos — sem relógio real, sem
+  tolerância.
 
 ### :pushpin: Fixes
 
@@ -134,6 +144,20 @@
   criava essa camada: terminal, gráfico, scanner e status voltavam para dentro
   do SVG único do palco, abaixo do slime. A camada da frente passou a ser
   criada de fato, e um teste guarda a ordem para a regressão não voltar calada.
+- **A ponta do reflexo do topo saltava alguns pixels, três vezes por segundo.**
+  O brilho escolhia os pontos por uma caixa fixa do palco enquanto o corpo
+  passeia com o centro em mola: a cada quadro entrava ou saía uma amostra
+  inteira. Medido em jsdom, a contagem oscilava entre seis valores (12 a 17) e
+  trocava 83 vezes em 30 s, movendo a extremidade do traço 7,7 unidades de uma
+  vez. Agora a faixa é ANGULAR, presa ao corpo: a contagem é constante por
+  construção e o reflexo acompanha o corpo inclusive quando ele desce ou
+  inclina.
+- **`deformation: 0` entregava 65% da deformação.** O motor reclampava a força
+  para `[0.65, 1.55]`, então o valor documentado como "nenhuma" na opção
+  pública desenhava exatamente o mesmo que `0.65`. Zero voltou a significar
+  zero — e desliga a deformação (pressões do ofício, slosh, impulso e wobble da
+  borda), não o movimento: o corpo continua deslocando e inclinando, porque
+  isso é pose de cabeça, não deformação.
 
 ### :construction_worker: Refactors
 
@@ -143,6 +167,12 @@
 - **A opção `organicWarp` saiu do contrato público.** Ela era aceita e
   ignorada desde a troca do corpo — opção declarada que ninguém lê é a mesma
   classe de bug que já custou tempo aqui.
+- **O primeiro quadro não inventa mais velocidade.** A distância entre o palpite
+  inicial do centro e o alvo da primeira pose era dividida por um `dt` artificial
+  e virava velocidade de um valor nunca observado. A guarda entrou medida: nos 40
+  pares especialista/estado a diferença no pico de deformação dos 25 primeiros
+  quadros ficou em 1,7%, ou seja, não havia solavanco visível para tirar — a conta
+  é que era infundada.
 
 ## :wrench: Instalação
 

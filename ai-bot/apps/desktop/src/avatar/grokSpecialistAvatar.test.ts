@@ -15,6 +15,7 @@ import {
   type GrokSpecialistState
 } from "./grokSpecialistAvatar";
 import { GROK_STATE_LABELS, grokSpecialistOf } from "./GrokAvatar";
+import { GrokSlimeCore } from "./GrokSlimeCore";
 
 const ESPECIALISTAS: GrokSpecialist[] = ["chat", "code", "data", "design", "agent", "flow", "tuning", "security"];
 const ESTADOS: GrokSpecialistState[] = ["active", "owner", "working", "waiting", "completed"];
@@ -178,7 +179,7 @@ describe("animação v8 — slime + cena original", () => {
     document.body.append(host);
     const controller = await montar(host, "working", 190);
 
-    const slime = host.querySelector<SVGGElement>("[data-grok-slime-core='true']");
+    const slime = host.querySelector<SVGGElement>("[data-grok-slime-core]");
     expect(slime).toBeTruthy();
 
     const corpo = slime?.querySelector("path");
@@ -237,10 +238,101 @@ describe("animação v8 — slime + cena original", () => {
 
     expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line").length).toBe(0);
 
-    const corpo = host.querySelector<SVGGElement>("[data-grok-slime-core='true']")?.querySelector("path");
+    const corpo = host.querySelector<SVGGElement>("[data-grok-slime-core]")?.querySelector("path");
     expect((corpo?.getAttribute("d") ?? "").length).toBeGreaterThan(200);
 
     controller.destroy();
     host.remove();
+  });
+});
+
+/**
+ * O motor do corpo, exercitado direto — sem o wrapper e sem o rAF.
+ *
+ * `GrokSlimeCore` é função pura de (specialist, state, time, dt, strength), e é
+ * isso que torna estes testes exatos: nada de tolerância de tempo real, nada de
+ * quadro que às vezes chega. Estes três casos guardam correções que já foram
+ * feitas neste arquivo — por favor não os remova ao trocar o motor de novo.
+ */
+const palcoNu = (): { svg: SVGSVGElement; core: GrokSlimeCore } => {
+  const svg = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "svg",
+  ) as SVGSVGElement;
+  document.body.appendChild(svg);
+  const core = new GrokSlimeCore({
+    svg,
+    avatarHost: document.createElement("div"),
+  });
+  return { svg, core };
+};
+
+/** O `d` do corpo e o do brilho, na ordem em que o motor os cria. */
+const desenhos = (svg: SVGSVGElement): { corpo: string; brilho: string } => {
+  const paths = svg.querySelectorAll("path");
+  return {
+    corpo: paths[0]?.getAttribute("d") ?? "",
+    brilho: paths[1]?.getAttribute("d") ?? "",
+  };
+};
+
+const simula = (
+  quadros: number,
+  strength?: number,
+  specialist: GrokSpecialist = "data",
+  state: GrokSpecialistState = "working",
+): Array<{ corpo: string; brilho: string }> => {
+  const { svg, core } = palcoNu();
+  const saida: Array<{ corpo: string; brilho: string }> = [];
+  for (let i = 0; i < quadros; i += 1) {
+    core.update({
+      specialist,
+      state,
+      time: i / 60,
+      dt: i === 0 ? 0 : 1 / 60,
+      strength,
+    });
+    saida.push(desenhos(svg));
+  }
+  core.destroy();
+  svg.remove();
+  return saida;
+};
+
+describe("motor do corpo (v9)", () => {
+  it("o brilho tem sempre o mesmo número de pontos", () => {
+    // A seleção era por caixa fixa do palco (y < 76, 42 < x < 148) enquanto o
+    // corpo passeia: a cada quadro entrava ou saía uma amostra inteira, e a
+    // ponta do reflexo pulava ~7,7 unidades (uns 5px na ficha de 124px) umas
+    // três vezes por segundo. Contagem constante é a prova de que a faixa é
+    // angular, presa ao corpo, e não um recorte da tela.
+    const contagens = new Set(
+      simula(400).map((quadro) => (quadro.brilho.match(/L/g) ?? []).length),
+    );
+
+    expect([...contagens]).toEqual([16]);
+  });
+
+  it("o brilho acompanha o corpo em todos os estados", () => {
+    // A caixa fixa também apagava o brilho quando o corpo descia: em 'waiting'
+    // o motor empurra o centro 8 unidades para baixo e achata 16%.
+    for (const state of ["active", "owner", "working", "waiting", "completed"] as const) {
+      const ultimo = simula(120, undefined, "design", state).at(-1);
+      expect(ultimo?.brilho.length).toBeGreaterThan(40);
+    }
+  });
+
+  it("deformation: 0 é diferente de deformation: 0.65", () => {
+    // O motor reclampava a força para [0.65, 1.55], então quem pedisse zero —
+    // documentado como "nenhuma" na opção pública do wrapper — recebia 65% da
+    // deformação, e o valor 0.65 produzia EXATAMENTE o mesmo desenho. Se estes
+    // dois voltarem a coincidir, a opção voltou a ser aceita e ignorada.
+    const zero = simula(90, 0).at(-1)?.corpo ?? "";
+    const piso = simula(90, 0.65).at(-1)?.corpo ?? "";
+    const cheio = simula(90, 1).at(-1)?.corpo ?? "";
+
+    expect(zero).not.toBe(piso);
+    expect(piso).not.toBe(cheio);
+    expect(zero.length).toBeGreaterThan(200);
   });
 });

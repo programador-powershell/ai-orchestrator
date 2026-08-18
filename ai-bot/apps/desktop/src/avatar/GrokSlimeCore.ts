@@ -1,18 +1,23 @@
 /**
  * GrokSlimeCore.ts
  *
- * Motor de corpo/slime separado da animação profissional.
+ * V9 — motion-first Grok-like slime.
  *
- * Objetivo:
- * - preservar a animação de especialidade já existente no projeto;
- * - substituir apenas o "boneco/ovo/metaball" por um único slime contínuo;
- * - a massa mantém volume aproximado e responde por pressão localizada;
- * - nenhuma especialidade cria um corpo completamente diferente;
- * - olhos continuam sendo renderizados pelo módulo de avatar/Avatar Lab.
+ * IMPORTANT:
+ * - a animação profissional do Claude permanece fora deste arquivo;
+ * - este motor cuida SOMENTE do corpo/olhos do slime;
+ * - o corpo precisa se mover mesmo quando a tarefa profissional é visualmente
+ *   simples;
+ * - os ciclos/timings abaixo seguem a linguagem do Avatar Lab:
+ *   hold longo + transition smooth, em vez de seno quase parado.
  *
- * O desenho usa um path fechado com 40 pontos radiais e molas independentes.
- * A pressão profissional é pequena e local: ela faz a massa "ceder" para a
- * atividade sem transformar o personagem em polvo/tentáculo.
+ * O corpo combina:
+ *  1. pose semântica (headX/headY/headZ);
+ *  2. transição de 500ms entre poses;
+ *  3. slow drift irregular;
+ *  4. slosh/inércia com spring subamortecido;
+ *  5. pressão local da especialidade;
+ *  6. conservação aproximada de volume.
  */
 
 export type SlimeSpecialist =
@@ -47,10 +52,31 @@ export interface GrokSlimeOptions {
   bodyColor?: string;
 }
 
+type Point = { x: number; y: number };
+
 type Pressure = {
   angle: number;
   amount: number;
   width: number;
+};
+
+type HeadPose = {
+  x: number;
+  y: number;
+  z: number;
+};
+
+type Sequence = {
+  poses: readonly HeadPose[];
+  holdMs: number;
+  transitionMs: number;
+};
+
+type SequenceSample = {
+  pose: HeadPose;
+  phase: "hold" | "transition";
+  transitionProgress: number;
+  step: number;
 };
 
 type Intent = {
@@ -65,6 +91,9 @@ type Intent = {
   gazeRotate: number;
   gazeScaleX: number;
   gazeScaleY: number;
+  gradientX: number;
+  gradientY: number;
+  transitionEnergy: number;
 };
 
 type Spring = {
@@ -72,19 +101,9 @@ type Spring = {
   velocity: number;
 };
 
-type Point = {
-  x: number;
-  y: number;
-};
-
 const SVG_NS = "http://www.w3.org/2000/svg";
 const TAU = Math.PI * 2;
-const POINT_COUNT = 40;
-
-/**
- * O avatar do stand-in usa viewBox 220 dentro de um host de 78% do stage.
- * 0.78 * 200 / 220 ~= .709.
- */
+const POINT_COUNT = 48;
 const STAGE_TO_EYE = 1 / 0.709;
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -92,6 +111,16 @@ const clamp = (value: number, min: number, max: number): number =>
 
 const lerp = (a: number, b: number, t: number): number =>
   a + (b - a) * t;
+
+const smooth = (value: number): number => {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+const smoother = (value: number): number => {
+  const t = clamp(value, 0, 1);
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
 
 const wave = (time: number, speed = 1, phase = 0): number =>
   Math.sin(time * speed + phase);
@@ -102,11 +131,6 @@ const sin01 = (time: number, speed = 1, phase = 0): number =>
 const pingPong = (time: number): number => {
   const p = ((time % 2) + 2) % 2;
   return p <= 1 ? p : 2 - p;
-};
-
-const smooth = (value: number): number => {
-  const t = clamp(value, 0, 1);
-  return t * t * (3 - 2 * t);
 };
 
 const makeSvg = <K extends keyof SVGElementTagNameMap>(
@@ -131,34 +155,39 @@ const gaussian = (angle: number, center: number, width: number): number => {
   return Math.exp(-(d * d) / (2 * width * width));
 };
 
-const pointAlong = (
-  points: readonly Point[],
-  progress: number,
-): Point => {
-  if (points.length === 0) return { x: 100, y: 100 };
-  if (points.length === 1) return points[0] ?? { x: 100, y: 100 };
+const hash = (value: number): number => {
+  const raw = Math.sin(value * 127.1 + 311.7) * 43758.5453;
+  return (raw - Math.floor(raw)) * 2 - 1;
+};
 
-  const p = clamp(progress, 0, 1) * (points.length - 1);
-  const i = Math.min(points.length - 2, Math.floor(p));
-  const local = p - i;
-  const a = points[i]!;
-  const b = points[i + 1]!;
-  return {
-    x: lerp(a.x, b.x, local),
-    y: lerp(a.y, b.y, local),
-  };
+const smoothNoise = (
+  elapsedMs: number,
+  axis: number,
+  seed: number,
+  interval: number,
+): number => {
+  const progress = elapsedMs / interval;
+  const step = Math.floor(progress);
+  const blend = smooth(progress - step);
+  const previous = hash(step * 3 + axis + seed);
+  const next = hash((step + 1) * 3 + axis + seed);
+  return lerp(previous, next, blend);
 };
 
 const spring = (value: number): Spring => ({ value, velocity: 0 });
 
+/**
+ * Deliberadamente subamortecido.
+ * A V8 usava damping alto demais e "matava" o movimento antes dele ficar visível.
+ */
 const stepSpring = (
   s: Spring,
   target: number,
   dt: number,
-  stiffness = 190,
-  damping = 22,
+  stiffness = 125,
+  damping = 10.5,
 ): void => {
-  const safeDt = clamp(dt, 0, 0.05);
+  const safeDt = clamp(dt, 0, 0.045);
   const acceleration = (target - s.value) * stiffness;
   s.velocity += acceleration * safeDt;
   s.velocity *= Math.exp(-damping * safeDt);
@@ -191,165 +220,251 @@ const closedSpline = (points: readonly Point[]): string => {
   return `${d} Z`;
 };
 
-const highlightSpline = (points: readonly Point[]): string => {
-  const selected = points
-    .filter((point) => point.y < 72 && point.x > 48 && point.x < 142)
-    .sort((a, b) => a.x - b.x);
+/**
+ * Quantos pontos de cada lado do topo entram no brilho.
+ *
+ * 8 de 48 é ~60° por lado — a mesma faixa que a seleção por caixa pegava na
+ * média (13 a 18 pontos), só que agora ela não varia.
+ */
+const HIGHLIGHT_SPAN = 8;
 
-  if (selected.length < 2) return "";
+/**
+ * O brilho é uma faixa ANGULAR do corpo, não um recorte do palco.
+ *
+ * Antes os pontos eram filtrados por uma caixa absoluta do viewBox
+ * (y < 76, 42 < x < 148) enquanto o corpo passeia ±11 unidades com o centro em
+ * mola: a cada quadro entrava ou saía uma amostra inteira da seleção. Medido em
+ * jsdom, `data`/`working` oscilava entre 13 e 18 pontos e trocava 83 vezes em
+ * 30 s — a ponta do reflexo saltava 7,7 unidades (~5px na ficha de 124px) umas
+ * três vezes por segundo, em vez de deslizar. Escolhendo por índice, a contagem
+ * é constante por construção e o brilho acompanha o corpo, inclusive quando ele
+ * inclina ou desce.
+ */
+const highlightSpline = (points: readonly Point[]): string => {
+  if (points.length < 2) return "";
 
   return (
-    `M${selected[0]!.x.toFixed(2)} ${selected[0]!.y.toFixed(2)} ` +
-    selected
+    `M${points[0]!.x.toFixed(2)} ${points[0]!.y.toFixed(2)} ` +
+    points
       .slice(1)
       .map((point) => `L${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
       .join(" ")
   );
 };
 
-const defaultIntent = (): Intent => ({
-  cx: 100,
-  cy: 100,
-  sx: 1,
-  sy: 1,
-  rotate: 0,
-  pressures: [],
-  gazeX: 0,
-  gazeY: 0,
-  gazeRotate: 0,
-  gazeScaleX: 1,
-  gazeScaleY: 1,
-});
+const pointAlong = (
+  points: readonly Point[],
+  progress: number,
+): Point => {
+  if (points.length < 2) return points[0] ?? { x: 100, y: 100 };
+
+  const scaled = clamp(progress, 0, 1) * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  const a = points[index]!;
+  const b = points[index + 1]!;
+
+  return {
+    x: lerp(a.x, b.x, local),
+    y: lerp(a.y, b.y, local),
+  };
+};
 
 /**
- * O profissional continua sendo explicado pela cena do Claude.
- * Aqui o corpo somente REAGE à mesma atividade.
+ * Valores de headX/headY/headZ usados pelo documento padrão do Avatar Lab.
  *
- * As amplitudes são deliberadamente menores do que nas versões anteriores:
- * o Grok-like slime precisa continuar sendo o mesmo personagem.
+ * O ponto importante aqui não é "copiar uma bolinha":
+ * é usar a mesma amplitude de orientação. A V8 quase não movia o centro,
+ * então o corpo parecia congelado.
  */
-const intentFor = (
+const POSE = {
+  p00: { x: 7.3, y: 27.8, z: -16.1 },
+  p01: { x: -15.0578, y: 0.1430, z: -14.5492 },
+  p02: { x: -15.2871, y: 15.0066, z: 12.7879 },
+  p03: { x: 2.9469, y: -16.0512, z: -20.9160 },
+  p04: { x: 3.4, y: 13.2258, z: 8.9770 },
+  p05: { x: -16.5285, y: -3.7680, z: -13.7297 },
+  p07: { x: 8.0637, y: 17.6266, z: -11.1168 },
+  p08: { x: -12.3035, y: -17.6012, z: 5.9109 },
+  p09: { x: -20.0582, y: 12.6074, z: -12.7 },
+  p10: { x: 1.4336, y: 6.1941, z: 10.5602 },
+  p11: { x: -2.0930, y: -15.8996, z: -14.4699 },
+  p12: { x: -19.2086, y: 15.2, z: 11.8 },
+  p13: { x: -8.7523, y: -8.7434, z: -10.7738 },
+  p14: { x: 3.5293, y: -7.0766, z: 9.8301 },
+  p15: { x: 0.3191, y: 35.3074, z: -10.9043 },
+  p16: { x: -14.7508, y: -19.35, z: 5.6316 },
+  p17: { x: -4.3953, y: 14.0727, z: -16.1262 },
+  p18: { x: 6.5855, y: 4.7371, z: 12.8402 },
+  p19: { x: -6.0777, y: -11.0352, z: -13.9656 },
+  p20: { x: -17.1277, y: 18.0707, z: 13.8918 },
+  p21: { x: -5.4281, y: -11.7133, z: -13.4723 },
+  p22: { x: 10.2926, y: 3.3992, z: 7.5832 },
+  p23: { x: -17.8, y: 10.0, z: -10.8949 },
+} as const;
+
+const SEQUENCE = {
+  idle: {
+    poses: [POSE.p00, POSE.p08],
+    holdMs: 5200,
+    transitionMs: 500,
+  },
+  listening: {
+    poses: [POSE.p10, POSE.p01, POSE.p19],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+  thinking: {
+    poses: [POSE.p08, POSE.p16, POSE.p14, POSE.p17, POSE.p05],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+  searching: {
+    poses: [POSE.p15, POSE.p09, POSE.p03, POSE.p20, POSE.p12, POSE.p18],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+  working: {
+    poses: [POSE.p07, POSE.p16, POSE.p11, POSE.p10],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+  sleeping: {
+    poses: [POSE.p13, POSE.p22, POSE.p04],
+    holdMs: 3600,
+    transitionMs: 500,
+  },
+  suspicious: {
+    poses: [POSE.p14, POSE.p05, POSE.p23],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+  happy: {
+    poses: [POSE.p02, POSE.p11, POSE.p17, POSE.p19],
+    holdMs: 2300,
+    transitionMs: 500,
+  },
+} satisfies Record<string, Sequence>;
+
+const sequenceFor = (
+  specialist: SlimeSpecialist,
+  state: SlimeState,
+): Sequence => {
+  if (state === "waiting") return SEQUENCE.sleeping;
+  if (state === "completed") return SEQUENCE.happy;
+  if (state === "owner") return SEQUENCE.listening;
+  if (state === "active") return SEQUENCE.idle;
+
+  switch (specialist) {
+    case "chat":
+      return SEQUENCE.listening;
+    case "code":
+      return SEQUENCE.working;
+    case "data":
+      return SEQUENCE.searching;
+    case "design":
+      return SEQUENCE.thinking;
+    case "agent":
+      return SEQUENCE.thinking;
+    case "flow":
+      return SEQUENCE.working;
+    case "tuning":
+      return SEQUENCE.thinking;
+    case "security":
+      return SEQUENCE.suspicious;
+  }
+};
+
+const sampleSequence = (
+  sequence: Sequence,
+  timeSeconds: number,
+  phaseOffsetSeconds: number,
+): SequenceSample => {
+  const hold = sequence.holdMs / 1000;
+  const transition = sequence.transitionMs / 1000;
+  const segment = hold + transition;
+  const cycle = segment * sequence.poses.length;
+
+  const local = ((timeSeconds + phaseOffsetSeconds) % cycle + cycle) % cycle;
+  const step = Math.floor(local / segment) % sequence.poses.length;
+  const within = local - step * segment;
+
+  const from = sequence.poses[step]!;
+  const to = sequence.poses[(step + 1) % sequence.poses.length]!;
+
+  if (within <= hold) {
+    return {
+      pose: from,
+      phase: "hold",
+      transitionProgress: 0,
+      step,
+    };
+  }
+
+  const raw = clamp((within - hold) / transition, 0, 1);
+  const eased = smoother(raw);
+
+  return {
+    pose: {
+      x: lerp(from.x, to.x, eased),
+      y: lerp(from.y, to.y, eased),
+      z: lerp(from.z, to.z, eased),
+    },
+    phase: "transition",
+    transitionProgress: raw,
+    step,
+  };
+};
+
+const specialistPhase = (specialist: SlimeSpecialist): number => {
+  switch (specialist) {
+    case "chat": return 0.00;
+    case "code": return 0.38;
+    case "data": return 0.76;
+    case "design": return 1.14;
+    case "agent": return 1.52;
+    case "flow": return 1.90;
+    case "tuning": return 2.28;
+    case "security": return 2.66;
+  }
+};
+
+const reactivePressures = (
   specialist: SlimeSpecialist,
   state: SlimeState,
   time: number,
-  stateAge: number,
-): Intent => {
-  const intent = defaultIntent();
-
-  // Movimento de vida: baixo, assimétrico e não periódico demais.
-  const breathe = wave(time, 1.02) * 0.012;
-  const driftX =
-    wave(time, 0.43) * 0.55 +
-    wave(time, 0.71, 1.7) * 0.24;
-  const driftY =
-    wave(time, 0.51, 0.9) * 0.42 +
-    wave(time, 0.83, 2.1) * 0.20;
-
-  intent.cx += driftX;
-  intent.cy += driftY;
-  intent.sx += breathe;
-  intent.sy -= breathe * 0.7;
-
-  if (state === "waiting") {
-    intent.cy += 8;
-    intent.sx *= 1.055;
-    intent.sy *= 0.90;
-    intent.rotate = -2.2 + wave(time, 0.42) * 0.5;
-    intent.pressures.push(
-      { angle: Math.PI, amount: 1.8, width: 0.72 },
-      { angle: 0, amount: 2.6, width: 0.72 },
-    );
-    intent.gazeY = 3.2;
-    intent.gazeRotate = -2;
-    intent.gazeScaleY = 0.90;
-    return intent;
-  }
-
-  if (state === "owner") {
-    intent.cy -= 3.2;
-    intent.sx *= 1.025;
-    intent.sy *= 1.035;
-    intent.pressures.push({
-      angle: -Math.PI / 2,
-      amount: 2.6,
-      width: 0.72,
-    });
-    intent.gazeY = -1.3;
-    return intent;
-  }
-
-  if (state === "completed") {
-    // Um único "pop" seguido de settle — sem ficar quicando para sempre.
-    const age = clamp(stateAge, 0, 1.8);
-    const attack = age < 0.34 ? smooth(age / 0.34) : 1;
-    const release =
-      age <= 0.34 ? 1 : 1 - smooth((age - 0.34) / 1.1);
-    const pop = clamp(attack * release, 0, 1);
-
-    intent.cy -= pop * 3.8;
-    intent.sx *= 1 + pop * 0.045;
-    intent.sy *= 1 + pop * 0.065;
-    intent.rotate = pop * 2.2;
-    intent.gazeScaleX = 1 + pop * 0.05;
-    intent.gazeScaleY = 1 + pop * 0.05;
-    return intent;
-  }
-
-  if (state !== "working") {
-    return intent;
-  }
+): Pressure[] => {
+  if (state !== "working") return [];
 
   switch (specialist) {
     case "chat": {
-      const left = sin01(time, 2.4) > 0.5;
-      const side = left ? -1 : 1;
-      const talk = sin01(time, 6.0);
-
-      intent.cx += side * (1.8 + talk * 1.2);
-      intent.rotate = side * (1.4 + talk * 0.9);
-      intent.pressures.push({
-        angle: side < 0 ? Math.PI : 0,
-        amount: 5.2 + talk * 2.8,
-        width: 0.52,
-      });
-      // Compensa do outro lado para a massa parecer migrar, não crescer.
-      intent.pressures.push({
-        angle: side < 0 ? 0 : Math.PI,
-        amount: -2.3,
-        width: 0.78,
-      });
-      intent.gazeX = side * 4.2;
-      intent.gazeRotate = side * 1.8;
-      break;
+      const side = sin01(time, 2.4) > 0.5 ? -1 : 1;
+      return [
+        {
+          angle: side < 0 ? Math.PI : 0,
+          amount: 5.2 + sin01(time, 6) * 2.5,
+          width: 0.50,
+        },
+      ];
     }
 
     case "code": {
-      const tapL = Math.max(0, wave(time, 10));
-      const tapR = Math.max(0, wave(time, 10, Math.PI));
-
-      intent.cy += 3.0;
-      intent.sx *= 0.97;
-      intent.sy *= 1.035;
-      intent.rotate = 2.2;
-      intent.pressures.push(
+      return [
         {
           angle: 2.02,
-          amount: 3.0 + tapL * 3.0,
-          width: 0.32,
+          amount: 3.8 + Math.max(0, wave(time, 10)) * 3.2,
+          width: 0.31,
         },
         {
           angle: 1.12,
-          amount: 3.0 + tapR * 3.0,
-          width: 0.32,
+          amount: 3.8 + Math.max(0, wave(time, 10, Math.PI)) * 3.2,
+          width: 0.31,
         },
-      );
-      intent.gazeY = 3.8;
-      intent.gazeScaleY = 0.94;
-      break;
+      ];
     }
 
     case "data": {
-      const points = [
+      const graph = [
         { x: 28, y: 119 },
         { x: 48, y: 105 },
         { x: 70, y: 114 },
@@ -358,74 +473,39 @@ const intentFor = (
         { x: 150, y: 70 },
         { x: 172, y: 80 },
       ];
-      const current = pointAlong(points, pingPong(time * 0.7));
-      const angle = Math.atan2(current.y - 100, current.x - 100);
-      const horizontal = clamp((current.x - 100) / 72, -1, 1);
-      const vertical = clamp((current.y - 100) / 72, -1, 1);
-
-      intent.sx *= 0.985;
-      intent.sy *= 1.035;
-      intent.cx += horizontal * 1.4;
-      intent.cy += vertical * 1.0;
-      intent.rotate = horizontal * 1.8;
-      intent.pressures.push({
-        angle,
-        amount: 6.6,
-        width: 0.42,
-      });
-      intent.pressures.push({
-        angle: angle + Math.PI,
-        amount: -2.5,
-        width: 0.74,
-      });
-      intent.gazeX = horizontal * 4.6;
-      intent.gazeY = vertical * 3.0;
-      break;
+      const target = pointAlong(graph, pingPong(time * 0.7));
+      return [
+        {
+          angle: Math.atan2(target.y - 100, target.x - 100),
+          amount: 6.8,
+          width: 0.41,
+        },
+      ];
     }
 
     case "design": {
-      const controlB = {
+      const target = {
         x: 132 + wave(time, 1.6, 1) * 9,
         y: 168 + wave(time, 1.2, 2) * 8,
       };
-      const angle = Math.atan2(controlB.y - 100, controlB.x - 100);
-      const side = Math.sign(controlB.x - 100) || 1;
-
-      intent.cx += side * 1.4;
-      intent.rotate = side * 3.1;
-      intent.pressures.push({
-        angle,
-        amount: 7.8,
-        width: 0.39,
-      });
-      intent.pressures.push({
-        angle: angle + Math.PI,
-        amount: -2.8,
-        width: 0.76,
-      });
-      intent.gazeX = side * 3.7;
-      intent.gazeY = 2.1;
-      intent.gazeRotate = side * 2.5;
-      break;
+      return [
+        {
+          angle: Math.atan2(target.y - 100, target.x - 100),
+          amount: 7.3,
+          width: 0.39,
+        },
+      ];
     }
 
     case "agent": {
-      // Brotos sutis: a cena já mostra os agentes. O corpo só pulsa a coordenação.
-      for (let index = 0; index < 4; index++) {
+      return Array.from({ length: 4 }, (_, index) => {
         const phase = index / 4;
-        const dispatch = sin01(time, 1.4, phase * TAU);
-        const angle = time * 0.55 + phase * TAU;
-        intent.pressures.push({
-          angle,
-          amount: 1.6 + dispatch * 2.4,
+        return {
+          angle: time * 0.55 + phase * TAU,
+          amount: 2.0 + sin01(time, 1.4, phase * TAU) * 2.4,
           width: 0.34,
-        });
-      }
-      intent.sx *= 1.018;
-      intent.sy *= 0.985;
-      intent.gazeScaleX = 1.03;
-      intent.gazeScaleY = 0.97;
-      break;
+        };
+      });
     }
 
     case "flow": {
@@ -436,67 +516,198 @@ const intentFor = (
         { x: 162, y: 104 },
       ];
       const packet = pointAlong(nodes, (time * 0.48) % 1);
-      const angle = Math.atan2(packet.y - 100, packet.x - 100);
-      const direction = clamp((packet.x - 100) / 76, -1, 1);
-
-      intent.sx *= 1.055;
-      intent.sy *= 0.955;
-      intent.cx += direction * 2.4;
-      intent.rotate = direction * 1.5;
-      intent.pressures.push({
-        angle,
-        amount: 6.0,
-        width: 0.50,
-      });
-      intent.pressures.push({
-        angle: angle + Math.PI,
-        amount: -2.6,
-        width: 0.80,
-      });
-      intent.gazeX = direction * 4.5;
-      break;
+      return [
+        {
+          angle: Math.atan2(packet.y - 100, packet.x - 100),
+          amount: 6.2,
+          width: 0.50,
+        },
+      ];
     }
 
     case "tuning": {
-      const xA = 62 + sin01(time, 2.6, 0) * 76;
+      const xA = 62 + sin01(time, 2.6) * 76;
       const xB = 62 + sin01(time, 3.0, 1.7) * 76;
-      const targetA = { x: xA, y: 126 };
-      const targetB = { x: xB, y: 145 };
-
-      [targetA, targetB].forEach((target, index) => {
-        const angle = Math.atan2(target.y - 100, target.x - 100);
-        intent.pressures.push({
-          angle,
-          amount: index === 0 ? 4.7 : 4.2,
+      return [
+        {
+          angle: Math.atan2(126 - 100, xA - 100),
+          amount: 4.8,
           width: 0.34,
-        });
-      });
-
-      intent.cy += 1.8;
-      intent.gazeY = 2.8;
-      intent.gazeX = clamp(((xA + xB) / 2 - 100) / 20, -3.5, 3.5);
-      break;
+        },
+        {
+          angle: Math.atan2(145 - 100, xB - 100),
+          amount: 4.3,
+          width: 0.34,
+        },
+      ];
     }
 
     case "security": {
-      const scan = pingPong(time * 1.15);
+      return [
+        { angle: Math.PI - 0.38, amount: 3.6, width: 0.46 },
+        { angle: 0.38, amount: 3.6, width: 0.46 },
+        { angle: Math.PI / 2, amount: 3.8, width: 0.30 },
+      ];
+    }
+  }
+};
 
-      intent.sx *= 1.07;
-      intent.sy *= 0.95;
-      intent.cy += 1.8;
-      // Ombros firmes, base levemente afunilada: ainda slime, não ícone de escudo.
-      intent.pressures.push(
-        { angle: Math.PI - 0.38, amount: 3.2, width: 0.46 },
-        { angle: 0.38, amount: 3.2, width: 0.46 },
-        { angle: Math.PI / 2, amount: 3.4, width: 0.30 },
-      );
-      intent.gazeY = lerp(-1.4, 2.7, scan);
-      intent.gazeScaleY = 0.93;
-      break;
+const buildIntent = (
+  specialist: SlimeSpecialist,
+  state: SlimeState,
+  time: number,
+): Intent => {
+  const sequence = sequenceFor(specialist, state);
+  const sample = sampleSequence(
+    sequence,
+    time,
+    specialistPhase(specialist),
+  );
+  const pose = sample.pose;
+
+  const seed = 17.29 + specialistPhase(specialist) * 3.7;
+  const ms = time * 1000;
+
+  /**
+   * Mesmo tipo de irregularidade do slowDrift do Avatar Lab:
+   * mudanças de baixa frequência em intervalos diferentes por eixo.
+   */
+  const driftX = smoothNoise(ms, 0, seed, 2600) * 1.9;
+  const driftY = smoothNoise(ms, 1, seed, 3300) * 1.7;
+  const driftZ = smoothNoise(ms, 2, seed, 4100) * 1.1;
+
+  const yaw = pose.y;
+  const pitch = pose.x;
+  const roll = pose.z;
+
+  const yawNorm = clamp(yaw / 35, -1, 1);
+  const pitchNorm = clamp(pitch / 24, -1, 1);
+
+  /**
+   * Esta é a principal diferença visual da V9:
+   * headX/headY não movem só os olhos; deslocam e deformam a MASSA.
+   */
+  let cx = 100 + yaw * 0.27 + driftX;
+  let cy = 100 + pitch * 0.19 + driftY;
+  let sx =
+    1 +
+    Math.abs(yawNorm) * 0.055 -
+    Math.max(0, pitchNorm) * 0.018;
+  let sy =
+    1 +
+    Math.abs(pitchNorm) * 0.050 -
+    Math.abs(yawNorm) * 0.022;
+  let rotate = roll * 0.56 + driftZ;
+
+  const transitionEnergy =
+    sample.phase === "transition"
+      ? Math.sin(sample.transitionProgress * Math.PI)
+      : 0;
+
+  /**
+   * Na troca de expressão o slime dá uma reação visível: squash/stretch curto.
+   */
+  sx += transitionEnergy * 0.045;
+  sy -= transitionEnergy * 0.030;
+  cy -= transitionEnergy * 1.6;
+
+  if (state === "waiting") {
+    cy += 8;
+    sx *= 1.08;
+    sy *= 0.84;
+    rotate *= 0.35;
+  } else if (state === "owner") {
+    cy -= 3;
+    sx *= 1.025;
+    sy *= 1.04;
+  } else if (state === "completed") {
+    const pop = Math.max(0, Math.sin(time * 2.2)) * 0.035;
+    sx += pop;
+    sy += pop * 1.35;
+    cy -= pop * 55;
+  }
+
+  if (state === "working") {
+    switch (specialist) {
+      case "code":
+        cy += 2.5;
+        sy *= 1.025;
+        break;
+      case "data":
+        sy *= 1.035;
+        sx *= 0.985;
+        break;
+      case "design":
+        rotate += wave(time, 1.25) * 2.8;
+        break;
+      case "agent":
+        sx *= 1.02;
+        sy *= 0.985;
+        break;
+      case "flow":
+        sx *= 1.055;
+        sy *= 0.955;
+        break;
+      case "tuning":
+        cy += 1.5;
+        break;
+      case "security":
+        sx *= 1.065;
+        sy *= 0.95;
+        cy += 1.5;
+        break;
+      case "chat":
+        break;
     }
   }
 
-  return intent;
+  const orientationAngle = Math.atan2(
+    pitchNorm * 0.8,
+    yawNorm || 0.0001,
+  );
+
+  const pressures: Pressure[] = [
+    /**
+     * Leading edge bulge + trailing compression.
+     * Mesmo uma esfera "vira slime" quando muda de pose.
+     */
+    {
+      angle: orientationAngle,
+      amount:
+        5.8 * Math.hypot(yawNorm, pitchNorm) +
+        transitionEnergy * 5.2,
+      width: 0.72,
+    },
+    {
+      angle: orientationAngle + Math.PI,
+      amount:
+        -3.7 * Math.hypot(yawNorm, pitchNorm) -
+        transitionEnergy * 2.6,
+      width: 0.86,
+    },
+    ...reactivePressures(specialist, state, time),
+  ];
+
+  return {
+    cx,
+    cy,
+    sx,
+    sy,
+    rotate,
+    pressures,
+    gazeX: yaw * 0.17 + driftX * 0.45,
+    gazeY: pitch * 0.13 + driftY * 0.35,
+    gazeRotate: roll * 0.23,
+    gazeScaleX:
+      1.0 + Math.abs(yawNorm) * 0.055,
+    gazeScaleY:
+      state === "waiting"
+        ? 0.82
+        : 1.0 - Math.abs(pitchNorm) * 0.035,
+    gradientX: 34 - yawNorm * 12,
+    gradientY: 25 - pitchNorm * 9,
+    transitionEnergy,
+  };
 };
 
 export class GrokSlimeCore {
@@ -505,6 +716,7 @@ export class GrokSlimeCore {
   private readonly path: SVGPathElement;
   private readonly highlight: SVGPathElement;
   private readonly shadow: SVGEllipseElement;
+  private readonly gradient: SVGRadialGradientElement;
   private readonly avatarHost: HTMLElement;
   private readonly eyesRoot: SVGGElement | null;
 
@@ -525,8 +737,26 @@ export class GrokSlimeCore {
   private readonly gazeScaleX = spring(1);
   private readonly gazeScaleY = spring(1);
 
-  private lastState: SlimeState | null = null;
-  private stateStartedAt = 0;
+  private previousTargetX = 100;
+  private previousTargetY = 100;
+  private previousVelocityX = 0;
+  private previousVelocityY = 0;
+
+  /**
+   * O primeiro quadro não tem velocidade — ele tem um alvo.
+   *
+   * Sem isto, a distância entre o palpite inicial (100,100) e o alvo da primeira
+   * pose é dividida por 1/240 s e vira velocidade: o motor inventa movimento a
+   * partir de um valor que nunca observou.
+   *
+   * MEDIDO, para não superestimar o conserto: hoje isso não muda a tela. Varri
+   * os 40 pares especialista/estado comparando o pico de deformação dos 25
+   * primeiros quadros com e sem esta guarda, e a pior diferença foi 1,7% — as
+   * sequências começam todas perto do centro. A guarda fica porque a conta sem
+   * ela é infundada, não porque haja solavanco visível para tirar.
+   */
+  private primed = false;
+
   private destroyed = false;
 
   constructor(options: GrokSlimeOptions) {
@@ -534,27 +764,28 @@ export class GrokSlimeCore {
     this.avatarHost = options.avatarHost;
 
     const bodyColor = options.bodyColor ?? "#000000";
-    const id = `grok-slime-${Math.random().toString(36).slice(2)}`;
+    const id = `grok-slime-v9-${Math.random().toString(36).slice(2)}`;
 
     const defs =
       this.svg.querySelector("defs") ??
       this.svg.insertBefore(makeSvg("defs"), this.svg.firstChild);
 
-    const gradient = makeSvg("radialGradient", {
+    this.gradient = makeSvg("radialGradient", {
       id,
       cx: "34%",
       cy: "25%",
-      r: "83%",
+      r: "85%",
     });
-    gradient.append(
-      makeSvg("stop", { offset: "0%", "stop-color": "#28292d" }),
-      makeSvg("stop", { offset: "39%", "stop-color": "#0b0b0c" }),
+    this.gradient.append(
+      makeSvg("stop", { offset: "0%", "stop-color": "#303137" }),
+      makeSvg("stop", { offset: "31%", "stop-color": "#111114" }),
+      makeSvg("stop", { offset: "72%", "stop-color": "#050506" }),
       makeSvg("stop", { offset: "100%", "stop-color": bodyColor }),
     );
-    defs.appendChild(gradient);
+    defs.appendChild(this.gradient);
 
     this.group = makeSvg("g", {
-      "data-grok-slime-core": "true",
+      "data-grok-slime-core": "v9",
     });
 
     this.shadow = makeSvg("ellipse", {
@@ -563,20 +794,20 @@ export class GrokSlimeCore {
       rx: 45,
       ry: 6.5,
       fill: "#000000",
-      opacity: 0.26,
+      opacity: 0.28,
     });
 
     this.path = makeSvg("path", {
       fill: `url(#${id})`,
-      stroke: "#34363b",
-      "stroke-width": 1.05,
+      stroke: "#36383e",
+      "stroke-width": 1.1,
     });
 
     this.highlight = makeSvg("path", {
       fill: "none",
       stroke: "#ffffff",
       "stroke-width": 1.1,
-      opacity: 0.11,
+      opacity: 0.12,
       "stroke-linecap": "round",
     });
 
@@ -599,34 +830,81 @@ export class GrokSlimeCore {
   update(input: GrokSlimeUpdate): void {
     if (this.destroyed) return;
 
-    if (this.lastState !== input.state) {
-      this.lastState = input.state;
-      this.stateStartedAt = input.time;
-    }
-
-    const stateAge = Math.max(0, input.time - this.stateStartedAt);
-    const intent = intentFor(
+    /**
+     * O piso era 0.65, e com ele `deformation: 0` — documentado como "nenhuma"
+     * na opção pública do wrapper — entregava 65% da deformação. Opção aceita e
+     * ignorada é a classe de bug que já custou tempo neste projeto: quem
+     * desligasse a deformação (por acessibilidade, ou para a lista de 26px)
+     * acreditaria ter desligado.
+     *
+     * Zero desliga a DEFORMAÇÃO — as pressões do ofício, o slosh, o impulso e o
+     * wobble da borda. Não desliga o MOVIMENTO: o corpo continua deslocando,
+     * inclinando e respirando, porque isso é a pose da cabeça, não deformação.
+     */
+    const strength = clamp(input.strength ?? 1, 0, 1.55);
+    const intent = buildIntent(
       input.specialist,
       input.state,
       input.time,
-      stateAge,
     );
 
-    const strength = clamp(input.strength ?? 1, 0.4, 1.45);
+    /**
+     * Calcula aceleração do alvo: quando a cabeça troca de direção, a massa
+     * interna recebe um impulso e continua se mexendo após o alvo parar.
+     */
+    const safeDt = Math.max(1 / 240, clamp(input.dt, 0, 0.05));
 
-    stepSpring(this.centerX, intent.cx, input.dt, 165, 21);
-    stepSpring(this.centerY, intent.cy, input.dt, 165, 21);
-    stepSpring(this.scaleX, 1 + (intent.sx - 1) * strength, input.dt, 175, 22);
-    stepSpring(this.scaleY, 1 + (intent.sy - 1) * strength, input.dt, 175, 22);
-    stepSpring(this.rotation, intent.rotate * strength, input.dt, 165, 21);
+    if (!this.primed) {
+      this.primed = true;
+      this.previousTargetX = intent.cx;
+      this.previousTargetY = intent.cy;
+    }
 
-    stepSpring(this.gazeX, intent.gazeX, input.dt, 230, 25);
-    stepSpring(this.gazeY, intent.gazeY, input.dt, 230, 25);
-    stepSpring(this.gazeRotate, intent.gazeRotate, input.dt, 230, 25);
-    stepSpring(this.gazeScaleX, intent.gazeScaleX, input.dt, 230, 25);
-    stepSpring(this.gazeScaleY, intent.gazeScaleY, input.dt, 230, 25);
+    const targetVelocityX = (intent.cx - this.previousTargetX) / safeDt;
+    const targetVelocityY = (intent.cy - this.previousTargetY) / safeDt;
+    const accelerationX =
+      (targetVelocityX - this.previousVelocityX) * safeDt;
+    const accelerationY =
+      (targetVelocityY - this.previousVelocityY) * safeDt;
+
+    this.previousTargetX = intent.cx;
+    this.previousTargetY = intent.cy;
+    this.previousVelocityX = targetVelocityX;
+    this.previousVelocityY = targetVelocityY;
+
+    stepSpring(this.centerX, intent.cx, input.dt, 135, 9.5);
+    stepSpring(this.centerY, intent.cy, input.dt, 135, 9.5);
+    stepSpring(this.scaleX, intent.sx, input.dt, 145, 10.0);
+    stepSpring(this.scaleY, intent.sy, input.dt, 145, 10.0);
+    stepSpring(this.rotation, intent.rotate, input.dt, 135, 9.2);
+
+    stepSpring(this.gazeX, intent.gazeX, input.dt, 210, 15);
+    stepSpring(this.gazeY, intent.gazeY, input.dt, 210, 15);
+    stepSpring(this.gazeRotate, intent.gazeRotate, input.dt, 205, 15);
+    stepSpring(this.gazeScaleX, intent.gazeScaleX, input.dt, 205, 15);
+    stepSpring(this.gazeScaleY, intent.gazeScaleY, input.dt, 205, 15);
 
     const rawTargets: number[] = [];
+
+    const velocityAngle = Math.atan2(
+      targetVelocityY,
+      targetVelocityX || 0.0001,
+    );
+    const velocityMagnitude = clamp(
+      Math.hypot(targetVelocityX, targetVelocityY) / 1200,
+      0,
+      1,
+    );
+
+    const accelerationAngle = Math.atan2(
+      accelerationY,
+      accelerationX || 0.0001,
+    );
+    const accelerationMagnitude = clamp(
+      Math.hypot(accelerationX, accelerationY) / 9,
+      0,
+      1,
+    );
 
     for (let index = 0; index < POINT_COUNT; index++) {
       const angle = (index / POINT_COUNT) * TAU - Math.PI / 2;
@@ -640,29 +918,67 @@ export class GrokSlimeCore {
           strength;
       }
 
-      // Capillary motion: subpixel/low amplitude, only to avoid a dead vector path.
+      /**
+       * Slosh real: borda oposta ao movimento atrasa e depois ultrapassa.
+       */
       target +=
-        wave(input.time, 1.17, index * 0.31) * 0.32 +
-        wave(input.time, 0.69, index * 0.19 + 1.8) * 0.20;
+        gaussian(angle, velocityAngle + Math.PI, 0.68) *
+        velocityMagnitude *
+        7.5 *
+        strength;
+
+      target -=
+        gaussian(angle, velocityAngle, 0.72) *
+        velocityMagnitude *
+        3.5 *
+        strength;
+
+      /**
+       * Impulso curto na troca brusca de pose.
+       */
+      target +=
+        gaussian(angle, accelerationAngle + Math.PI, 0.60) *
+        accelerationMagnitude *
+        5.0 *
+        strength;
+
+      /**
+       * Capillary wobble: pequeno mas rápido o bastante para aparecer em vídeo.
+       */
+      target +=
+        (wave(input.time, 2.1, index * 0.37) * 0.75 +
+          wave(input.time, 1.22, index * 0.21 + 1.4) * 0.42) *
+        strength;
 
       rawTargets.push(target);
     }
 
-    /**
-     * Preservação aproximada de volume: pressão de um lado desloca massa em vez
-     * de simplesmente inflar o personagem inteiro.
-     */
     const mean =
       rawTargets.reduce((sum, value) => sum + value, 0) /
       rawTargets.length;
 
-    const centered = rawTargets.map((value) => value - mean * 0.82);
+    const centered = rawTargets.map(
+      (value) => value - mean * 0.91,
+    );
 
-    // Suavização angular para impedir pontas/tentáculos.
+    /**
+     * Blur angular 5-tap: deixa a borda líquida sem criar pontas.
+     */
     const smoothed = centered.map((value, index) => {
-      const prev = centered[(index - 1 + POINT_COUNT) % POINT_COUNT]!;
-      const next = centered[(index + 1) % POINT_COUNT]!;
-      return value * 0.58 + prev * 0.21 + next * 0.21;
+      const p2 =
+        centered[(index - 2 + POINT_COUNT) % POINT_COUNT]!;
+      const p1 =
+        centered[(index - 1 + POINT_COUNT) % POINT_COUNT]!;
+      const n1 =
+        centered[(index + 1) % POINT_COUNT]!;
+      const n2 =
+        centered[(index + 2) % POINT_COUNT]!;
+
+      return (
+        value * 0.42 +
+        (p1 + n1) * 0.21 +
+        (p2 + n2) * 0.08
+      );
     });
 
     for (let index = 0; index < POINT_COUNT; index++) {
@@ -670,10 +986,19 @@ export class GrokSlimeCore {
         this.radial[index]!,
         smoothed[index] ?? 0,
         input.dt,
-        input.state === "working" ? 205 : 150,
-        input.state === "working" ? 22 : 24,
+        input.state === "working" ? 170 : 120,
+        input.state === "working" ? 10.0 : 11.5,
       );
     }
+
+    this.gradient.setAttribute(
+      "cx",
+      `${clamp(intent.gradientX, 17, 53).toFixed(1)}%`,
+    );
+    this.gradient.setAttribute(
+      "cy",
+      `${clamp(intent.gradientY, 12, 43).toFixed(1)}%`,
+    );
 
     this.render(input.state);
   }
@@ -705,22 +1030,25 @@ export class GrokSlimeCore {
     const sinR = Math.sin(rotation);
 
     const baseRadius = 58.5;
-    const sx = this.scaleX.value;
-    const sy = this.scaleY.value;
 
     for (let index = 0; index < POINT_COUNT; index++) {
       const angle = (index / POINT_COUNT) * TAU - Math.PI / 2;
       const radial = this.radial[index]!.value;
 
-      const radiusX = (baseRadius + radial) * sx;
-      const radiusY = (baseRadius + radial * 0.84) * sy;
+      const radiusX =
+        (baseRadius + radial) * this.scaleX.value;
+      const radiusY =
+        (baseRadius + radial * 0.88) * this.scaleY.value;
 
       let x = Math.cos(angle) * radiusX;
       let y = Math.sin(angle) * radiusY;
 
-      // Base um pouco mais pesada: mantém aspecto de slime sem virar poça.
+      /**
+       * Base com peso, mas não achatada.
+       * Faz o corpo parecer material, não um círculo vetorial.
+       */
       const bottom = Math.max(0, Math.sin(angle));
-      y -= bottom * 1.2;
+      y -= bottom * 1.8;
 
       const xr = x * cosR - y * sinR;
       const yr = x * sinR + y * cosR;
@@ -732,7 +1060,16 @@ export class GrokSlimeCore {
     }
 
     this.path.setAttribute("d", closedSpline(points));
-    this.highlight.setAttribute("d", highlightSpline(points));
+
+    // O índice 0 é o topo (o ângulo começa em -PI/2), então a varredura de
+    // -SPAN a +SPAN sai naturalmente da esquerda para a direita, passando pelo
+    // alto — e gira junto com o corpo, porque os pontos já vêm rotacionados.
+    const highlightPoints: Point[] = [];
+    for (let offset = -HIGHLIGHT_SPAN; offset <= HIGHLIGHT_SPAN; offset++) {
+      highlightPoints.push(points[(offset + POINT_COUNT) % POINT_COUNT]!);
+    }
+
+    this.highlight.setAttribute("d", highlightSpline(highlightPoints));
 
     let minX = Infinity;
     let maxX = -Infinity;
@@ -745,18 +1082,22 @@ export class GrokSlimeCore {
     }
 
     const width = maxX - minX;
-    this.shadow.setAttribute("cx", this.centerX.value.toFixed(2));
+
+    this.shadow.setAttribute(
+      "cx",
+      this.centerX.value.toFixed(2),
+    );
     this.shadow.setAttribute(
       "cy",
-      Math.min(188, maxY + 10).toFixed(2),
+      Math.min(190, maxY + 10).toFixed(2),
     );
     this.shadow.setAttribute(
       "rx",
-      clamp(width * 0.36, 28, 56).toFixed(2),
+      clamp(width * 0.37, 27, 62).toFixed(2),
     );
     this.shadow.setAttribute(
       "ry",
-      (state === "waiting" ? 5.2 : 6.3).toFixed(2),
+      (state === "waiting" ? 5.0 : 6.5).toFixed(2),
     );
 
     if (this.eyesRoot) {

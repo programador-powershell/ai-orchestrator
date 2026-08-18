@@ -1,5 +1,5 @@
 /**
- * GrokAvatar — a ponte React do wrapper `grok_professional_avatar_v3.ts`: animação profissional do Claude + GrokSlimeCore.
+ * GrokAvatar — a ponte React do wrapper `grok_professional_avatar_v3.ts`: animação profissional do Claude + GrokSlimeCore V9 motion-first.
  *
  * O wrapper monta o avatar de um MÓDULO carregado por URL — a interface do
  * export JavaScript do Bible Strong Avatar Lab (`createAvatar` +
