@@ -81,12 +81,13 @@ Ciclo de uma tarefa:
 
 ```
 plano → aloca worker → materializa Puter→disco local → BASELINE
-      → bot trabalha → diff → validação → publica no Puter
-      → event log → libera worker
+      → bot trabalha → diff → validação → publica em staging/<task>/<época>
+      → o orquestrador confere a época → promove → event log → libera worker
 ```
 
-O **baseline** entra antes de o bot encostar em qualquer arquivo, e a
-**publicação** só acontece depois da validação — ver "Checkpoint e rollback".
+O **baseline** entra antes de o bot encostar em qualquer arquivo (ver "Checkpoint
+e rollback"), e o container **não escreve no workspace**: ele publica numa área
+de espera que o orquestrador promove — ver "Duas máquinas, uma tarefa".
 
 O daemon é leve: ele **não** decide nada. Anuncia-se, diz o que tem, recebe
 tarefa, cria e destrói container, devolve resultado.
@@ -120,6 +121,8 @@ falta acrescentar:
 | Heartbeat + lease | PC que parou de responder perde as tarefas; elas voltam à fila |
 | Capacidades | CPU, RAM, GPU, versão do Docker, sistema |
 | Inventário de snapshots | quais imagens aquele PC já tem em cache |
+| **Correlação durável** | hoje é `s.hostCalls`, um mapa em memória: o reinício do orquestrador transforma resultado que chega em `409` (HTTP) ou em silêncio (WebSocket) |
+| **Reentrega e reconciliação** | ao reconectar, o daemon diz o que ainda tem em execução e o que já concluiu; sem isso, resultado perdido vira tarefa refeita |
 
 ### Como o scheduler escolhe
 
@@ -144,6 +147,64 @@ Quatro entradas, nesta ordem:
 
 O par bot↔PC **não é fixo**: `bot-code` roda no PC-2 hoje e no PC-1 amanhã. O que
 o segue é o workspace, que é persistente; o PC é escolhido por tarefa.
+
+## Duas máquinas, uma tarefa: cerca, área de espera e promoção
+
+O desenho tinha um buraco, e ele só aparece quando a rede falha.
+
+**O problema.** "Workers reportam, não gravam" vale para o **event log**. A
+publicação de ARQUIVO ia do container direto para o Puter, fora do caminho do
+orquestrador — então nenhuma checagem dele barrava um PC que já não é o dono da
+tarefa:
+
+```
+PC-02 fica 40 s sem rede
+   → o lease vence, t2 vai para o PC-03
+   → PC-03 termina e publica
+   → PC-02 volta, termina e publica POR CIMA
+   → o log mostra o PC-03; os arquivos são os do PC-02
+```
+
+E a próxima tarefa da onda lê esses arquivos.
+
+**A raiz.** O requeue usa "o resultado não chegou" como prova de "nada foi
+aplicado". Dentro de um processo isso vale — e o código diz por que, em
+`crew.go:378`: reexecutar quem deu certo repetiria efeito colateral já aplicado,
+"um commit, um arquivo escrito, uma mensagem enviada". **Atravessando rede, a
+procuração deixa de valer**: resultado que não chegou pode ter sido aplicado
+inteiro.
+
+### As três regras
+
+1. **Cerca (fence).** A tarefa tem dono: `pc_id` + a época do lease. Reporte de
+   quem não é mais o dono é **recusado**, não aplicado. A matéria-prima já está
+   no modelo (`Task` guarda `pc_id` e `estado`); o que faltava era a regra.
+2. **Área de espera em vez de escrita direta.** O container não escreve no
+   workspace: ele publica em `staging/<task>/<época>/`. Duas publicações da mesma
+   tarefa não se misturam, porque estão em lugares diferentes.
+3. **Promoção pelo orquestrador.** Quem move da área de espera para o workspace
+   é o orquestrador — e só a época que ainda é dona. Assim a regra do escritor
+   único, que já valia para o log, passa a valer para os arquivos.
+
+O ciclo fica:
+
+```
+… → bot trabalha → diff → validação → publica em staging/<task>/<época>
+  → o orquestrador CONFERE a época → promove → event log → libera worker
+```
+
+### O que o daemon faz quando perde o orquestrador
+
+A pergunta precisa de resposta explícita, senão cada implementação escolhe uma:
+
+> **Publica na área de espera e para.** Não promove, não apaga, não decide.
+
+Publicar é barato e não estraga nada — a área de espera é dele, por época. Quem
+decide se aquilo vira verdade é o orquestrador, quando o daemon reconectar e a
+época ainda for a dona. Se não for, a área de espera é lixo, e lixo se recolhe.
+
+A alternativa — abortar antes de publicar — jogaria fora trabalho bom toda vez
+que a rede piscar no fim da tarefa.
 
 ## Checkpoint e rollback
 
@@ -389,6 +450,13 @@ devolve só o resultado.
    `s.running` são mapas; portão e aprovação não alcançam quem roda fora. Os
    tetos viajam por `context.Context` — equipe montada num worker ganharia
    orçamento novo e o teto de 24 sumiria calado.
+   E **`s.hostCalls` é o mesmo defeito na peça que este documento elege como
+   forma do protocolo do daemon**: a correlação pedido↔resultado é um mapa em
+   memória. Um `aibotd` que reinicia perde a correlação, e o resultado que chega
+   depois leva `409 sem_pendencia` pelo HTTP (`http.go:503`) ou é descartado
+   **sem status nenhum** pelo WebSocket (`stream.go:275-279`) — o daemon nem
+   fica sabendo que perdeu. Correlação durável e reentrega entram na lista do
+   daemon.
 5. **Estado compartilhado esbarra em duas peças deliberadas.** A trava guarda
    **PID** (só vale na mesma máquina); o `seq` é numerado **em memória**,
    pressupondo um escritor. O diagrama já resolve ao pôr o sequenciador no
@@ -566,9 +634,9 @@ sem revogar o que a pessoa autorizou à mão.
 | O que morre | O que acontece |
 | --- | --- |
 | Container | tarefa volta à fila; era descartável |
-| Daemon / PC | o lease vence, as tarefas dele voltam à fila, o PC sai do pool até voltar |
+| Daemon / PC | o lease vence, as tarefas voltam à fila e a época velha perde a cerca: o que o PC publicar depois fica na área de espera e não é promovido |
 | Snapshot | próxima tarefa reinstala |
-| Orquestrador | bots, goals, sessions, tasks e log estão no compartilhado; **decisões pendentes (portão, aprovação) hoje se perdem** — precisam virar registro |
+| Orquestrador | bots, goals, sessions, tasks e log estão no compartilhado; **decisões pendentes (portão, aprovação) e a correlação pedido↔resultado (`s.hostCalls`) hoje se perdem** — as três precisam virar registro, senão a tarefa que já publicou é refeita |
 | Puter | o bot perde o disco. É persistente: **precisa de cópia** |
 
 ## Perguntas em aberto
@@ -607,6 +675,7 @@ sem revogar o que a pessoa autorizou à mão.
 | 3 | **Plano de arquivos**: `fs.*` e `git.*` perguntam onde o comando roda | fase 2 |
 | 4 | **Máquina por tarefa** (`pc_id` em `protocol.Task`) | fase 3 |
 | 5 | **worker-daemon**: registro, heartbeat, lease, capacidades — em cima do `HostBridge` | fase 4 |
+| 5a | **Cerca, área de espera e promoção** — e a correlação durável do daemon | fase 5 |
 | 5b | **Checkpoint e rollback**: baseline por tarefa em sombra endereçada por conteúdo, diff contra ele, publicar só depois de validar | fase 5 |
 | 6 | **Scheduler** por capacidade, localidade e carga; container por tarefa | fase 5 |
 | 7 | **Snapshot em duas camadas** e o inventário por PC | fase 6 |
