@@ -1,240 +1,246 @@
 # Cluster de computadores para os bots
 
 > Estado: **desenho para revisão**. Nada aqui foi implementado. O que existe hoje
-> está descrito em "O que já está pronto"; o resto é proposta.
+> está em "O que já está pronto"; o resto é proposta.
 
-## O pedido
-
-Em vez de alugar VM, ter **N computadores** rodando ao mesmo tempo — um deles o
-**orquestrador** —, com **banco compartilhado**, e **cada bot trabalhando dentro
-de um computador**. A hierarquia de dados pedida:
+## A arquitetura
 
 ```
-Input
-├ Objetivo: Criar sistema CRM
-│  ├ Sessão 01  "Vamos definir arquitetura"
-│  ├ Sessão 02  "Agora implemente backend"
-│  └ Sessão 03  "Corrija autenticação"
-└ Objetivo: Criar um site
-   ├ Sessão 01
-   └ Sessão 02
+                    ┌─────────────────────────────┐
+                    │ ORQUESTRADOR / aibotd       │
+                    │                             │
+                    │ objetivo → plano            │
+                    │ ondas / dependências        │
+                    │ scheduler                   │
+                    │ aprovação                   │
+                    │ sequenciador do log         │
+                    └────────────┬────────────────┘
+                                 │
+                         fila / protocolo
+                                 │
+              ┌──────────────────┼──────────────────┐
+              ▼                  ▼                  ▼
+       ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+       │ WORKER PC-1 │    │ WORKER PC-2 │    │ WORKER PC-N │
+       │  Docker     │    │  Docker     │    │  Docker     │
+       │  Runtime    │    │  Runtime    │    │  Runtime    │
+       │  snapshot   │    │  snapshot   │    │  snapshot   │
+       │  temporário │    │  temporário │    │  temporário │
+       └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+              │                  │                  │
+              └──────────────────┼──────────────────┘
+                                 │
+                    monta workspace do Bot
+                                 │
+                 ┌───────────────▼────────────────┐
+                 │        PUTER COMPARTILHADO     │
+                 │ bot-code     → workspace A     │
+                 │ bot-design   → workspace B     │
+                 │ bot-security → workspace C     │
+                 │ arquivos / desktop / estado    │
+                 └───────────────┬────────────────┘
+                                 │
+                 ┌───────────────▼────────────────┐
+                 │ ESTADO COMPARTILHADO           │
+                 │ sessions / goals / tasks       │
+                 │ append-only event log          │
+                 │ snapshots metadata             │
+                 └────────────────────────────────┘
 ```
 
-## O que o Puter faz, e o que não faz
+### O eixo que organiza tudo
 
-Isto precisa ficar registrado porque decide a peça central do desenho.
+| PERSISTENTE | EFÊMERO |
+| --- | --- |
+| Bot | Worker |
+| Goal | Container |
+| Session | CPU / RAM / GPU |
+| Puter Workspace | Runtime snapshot |
+| Files | |
+| Event log | |
 
-| Superfície do Puter | O que é | Serve de computador do bot? |
+Esta é a decisão de arquitetura, e dela sai o resto: **o bot tem identidade e
+disco; a máquina que o hospeda é descartável.** `bot-code` volta sempre para o
+workspace A, tenha ele rodado no PC-1 ontem e no PC-7 hoje. Um worker que morre
+no meio da tarefa não perde nada que importe — perde CPU.
+
+Consequência prática, e é ela que dita o desenho de falha: **tudo que precisa
+sobreviver tem de estar no persistente ANTES de o worker ser liberado.** Um
+resultado que só existe no container é um resultado que não existe.
+
+## O ciclo de uma tarefa
+
+```
+ plano → aloca worker → materializa → trabalha → publica → libera
+```
+
+1. **Aloca.** O scheduler tira um worker do pool (ou sobe um), com teto de
+   concorrência (hoje `MaxChildren`, padrão 4 por onda).
+2. **Materializa.** O workspace do bot é **copiado para o disco local do
+   container**, e não montado por rede. Ver "por que não compilar direto no
+   Puter", abaixo.
+3. **Trabalha.** O bot roda modelo ↔ ferramentas ali dentro: `fs.*`, `git.*` e
+   `proc.run` no MESMO lugar — que é o defeito nº 1 de hoje, resolvido.
+4. **Publica.** O que mudou volta para o workspace do bot no Puter, e o
+   resultado estruturado (diff, ramo, arquivos, saída) vai para o event log pelo
+   orquestrador.
+5. **Libera.** O container morre. O snapshot de runtime pode ficar em cache.
+
+### Por que não compilar direto no Puter
+
+`puter.fs` é um sistema de arquivos **sobre HTTP**. Um `npm install` faz dezenas
+de milhares de operações de arquivo; um build Java, idem. Fazer isso por rede
+transforma um build de 40 s em minutos, e cada falha de rede vira falha de build.
+
+Por isso o desenho tem a seta **"monta workspace do Bot"**: materializa para o
+disco do container (rápido, POSIX de verdade), trabalha local, publica o
+resultado de volta. O Puter é o **estado durável do bot**, não o disco de
+trabalho.
+
+Regra de corte: só sobe de volta o que é resultado (código, artefato,
+relatório). `node_modules`, `target/`, `.venv` ficam no snapshot, não no
+workspace.
+
+### O que é o "runtime snapshot"
+
+Imagem de container com as dependências já instaladas, identificada pela
+**impressão digital do manifesto** (`package.json` + lock, `pom.xml`,
+`requirements.txt`…). Duas tarefas do mesmo objetivo, com o mesmo manifesto,
+pegam o mesmo snapshot e começam quentes.
+
+É efêmero por definição: se sumir, o pior que acontece é a próxima tarefa
+reinstalar. **Nunca pode ser fonte de verdade de nada** — por isso ele está na
+coluna direita do eixo, e por isso "snapshots metadata" (o índice: qual
+impressão digital, qual imagem, quando) fica no estado compartilhado, enquanto a
+imagem em si é descartável.
+
+## O que já está pronto
+
+| Peça | Onde | Papel no diagrama |
 | --- | --- | --- |
-| `puter.fs` | sistema de arquivos na nuvem | **sim**, como disco do bot |
-| `puter.kv` | chave-valor por app/usuário | como estado leve, sim |
-| `puter.hosting` | publica uma pasta numa URL | **sim**, para o preview do que o bot construiu |
-| `puter.ai` | proxy para modelos | não usamos: o AI-BOT tem catálogo e cofre próprios |
-| Workers | funções serverless, **só JavaScript** | não roda build de outra linguagem |
-| Phoenix (shell) | shell em JavaScript puro; a documentação diz que é work-in-progress | não substitui um shell de sistema |
-| v86 | emulador x86 em WebAssembly (projeto de terceiro), Ubuntu ≤18.04 / Alpine | demonstração, não build de projeto real |
+| `PlanTasks` | `internal/supervisor/dag.go` | **objetivo → plano / ondas**: Kahn com ordem estável, fatia a onda no teto de concorrência |
+| `runCrew` / `runWorker` | `internal/supervisor/crew.go` | ondas em série, tarefas em paralelo, portão entre ondas |
+| `sandbox.Runner` | `internal/sandbox/sandbox.go` | a interface do **worker**: `Run(ctx, workdir, command)`, `Available`, `ID` |
+| Docker/sbx | `internal/sandbox` | o container do worker, já com disponibilidade **medida** |
+| `Store.Append` | `internal/store/store.go` | o **sequenciador do log**: `seq` 1..N por sessão, `fsync` nos verbos duráveis |
+| `MarkSynced` / `SyncedSeq` | idem | o cursor para o **estado compartilhado** — escrito, documentado, **sem chamador** |
+| `SessionMeta.ProjectID` | idem | o **Goal** — declarado, herdado no fork, **lido por ninguém** |
+| Aprovação e portão | `internal/supervisor` | a caixa "aprovação" do orquestrador |
 
-**Conclusão:** o Puter é um **disco com área de trabalho**, não uma máquina.
-Ele não compila Java, não roda `pytest`, não executa `git`. O bot de Código e a
-Equipe precisam exatamente disso.
-
-Por isso o desenho separa dois papéis que o pedido juntava:
-
-- **Workspace** — onde os arquivos do bot vivem, onde a pessoa vê o que ele fez,
-  e onde o resultado é publicado. **Puter serve.**
-- **Executor** — onde `proc.run`, `git` e o build acontecem. **Puter não serve**;
-  quem serve é container, WSL ou servidor.
-
-## O que já está pronto (e é mais do que parece)
-
-| Peça | Onde | O que faz |
-| --- | --- | --- |
-| `sandbox.Runner` | `internal/sandbox/sandbox.go` | a abstração de máquina: `Run(ctx, workdir, command)`, `Available(ctx)`, `ID()` |
-| Cinco executores | mesmo pacote | Local, Docker/sbx, WSL, VPS, Nuvem — com disponibilidade **medida**, não presumida |
-| `Registry` | mesmo pacote | ambiente ativo por sessão, cache de 30 s na sondagem |
-| `PlanTasks` | `internal/supervisor/dag.go` | objetivo já em lista → ondas topológicas, com teto de concorrência |
-| `runCrew` / `runWorker` | `internal/supervisor/crew.go` | ondas em série, tarefas da onda em paralelo, portão entre ondas |
-| `worktree.Manager` | `internal/worktree` | isolamento por cópia de repositório |
-| `MarkSynced` / `SyncedSeq` | `internal/store/store.go` | **cursor de espelho para um servidor — escrito, documentado e sem nenhum chamador** |
-| `SessionMeta.ProjectID` | `internal/store/store.go` | **o "Objetivo" do diagrama — declarado, herdado no fork, e lido por ninguém** |
-
-Ou seja: a interface de "computador" existe, o plano de ondas existe, e os dois
-ganchos que faltavam ligar (agrupar sessões, espelhar o log) já estão escritos.
+O orquestrador do diagrama **já é** o `aibotd`: as cinco caixas dele existem,
+com nomes diferentes.
 
 ## O que quebra hoje, exatamente
 
-Estes quatro pontos são o trabalho real. Nenhum é opinião: todos saíram da
-leitura do código.
+Nenhum destes é opinião — todos saíram da leitura do código.
 
-### 1. O plano de ARQUIVOS não acompanha o de EXECUÇÃO
+### 1. Arquivo e execução moram em planos diferentes
 
-Só `proc.run` consulta o ambiente ativo. `fs.read`, `fs.write`, `fs.patch`,
-`fs.list`, `fs.search` e `git.*` usam `os.ReadFile`/`os.WriteFile` e
-`git -C <raiz local>` no disco do **gateway**.
+Só `proc.run` consulta o ambiente ativo. `fs.read/write/patch/list/search` e
+`git.*` usam `os.ReadFile`/`os.WriteFile` e `git -C <raiz local>` no disco do
+**gateway**. Um bot no worker **editaria aqui e compilaria lá**.
 
-Com um computador remoto, o bot **edita aqui e compila lá**. É literalmente o
-defeito que o cabeçalho de `tools_process.go` diz existir para não repetir.
-
-> `Toolbox.Root func(sessionID) string` precisa deixar de ser uma string de
-> caminho e virar um **plano de arquivos** com implementação local e remota.
+> `Toolbox.Root func(sessionID) string` precisa deixar de ser caminho e virar um
+> **plano de arquivos** com implementação local e remota.
 
 ### 2. O ambiente é por SESSÃO, não por bot
 
-`Registry.Active(ctx, sessionID)` — e todos os trabalhadores de uma equipe rodam
-com a **mesma** `sessionID`. Não existe como dizer "a tarefa t3 roda na máquina
-B". Falta um campo de máquina em `protocol.Task` e um ambiente ativo por
-trabalhador.
+`Registry.Active(ctx, sessionID)`, e todos os trabalhadores de uma equipe usam a
+**mesma** `sessionID`. Não há como dizer "a tarefa t3 roda no PC-2". Falta
+máquina em `protocol.Task` e ambiente por trabalhador.
 
-### 3. O controle vive na memória de UM processo
+### 3. Não existe entidade "Bot"
+
+Hoje há **especialista** (definição estática: prompt, ferramentas, avatar) e
+**trabalhador** (goroutine efêmera). O diagrama pede um terceiro: `bot-code` com
+identidade, workspace próprio e estado que atravessa sessões. É entidade nova no
+protocolo e no armazenamento.
+
+### 4. O controle vive na memória de UM processo
 
 `s.gates`, `s.waiting`, `s.asks`, `s.running` são mapas do supervisor. Portão,
-aprovação e cancelamento não alcançam um trabalhador que rode fora dele. Os
-**eventos** são duráveis; as **decisões pendentes** não.
+aprovação e cancelamento não alcançam um bot fora dele; os **eventos** são
+duráveis, as **decisões pendentes** não. E os tetos viajam por `context.Context`
+— uma equipe montada num worker cairia num orçamento novo, e o teto de 24
+trabalhadores por turno sumiria em silêncio.
 
-E os tetos viajam por `context.Context`: uma equipe montada por um trabalhador
-remoto cairia num `crewBudget` novo — o teto de 24 trabalhadores por turno
-sumiria em silêncio.
+### 5. O estado compartilhado esbarra em duas peças deliberadas
 
-### 4. O banco não é compartilhável como está
+- **A trava.** `.lock` guarda o **PID** e decide se é órfã com `os.FindProcess` /
+  `kill(pid,0)` — semântica que só vale na mesma máquina.
+- **A numeração.** `seq` é atribuído em memória (`LastSeq++`) sob mutex de
+  processo: dois escritores geram dois eventos com o mesmo número, e o `seq` é o
+  que sustenta o replay.
 
-Duas peças impedem, e as duas são deliberadas:
+O diagrama já resolve isso ao pôr **"sequenciador do log"** no orquestrador: um
+escritor só. Os workers **reportam**, não gravam. A trava por PID vira **lease
+com prazo** (dono + expiração renovada), que funciona entre máquinas.
 
-- **A trava.** `.lock` guarda o PID e decide se é órfã com `os.FindProcess` /
-  `kill(pid,0)` — semântica que só vale na **mesma máquina**. Numa pasta de rede,
-  dois gateways se dariam permissão mutuamente.
-- **A numeração.** `seq` é atribuído em memória (`handle.meta.LastSeq++`) sob
-  mutex de processo. Dois escritores geram dois eventos com o mesmo número, e o
-  `seq` é justamente o que sustenta o replay.
-
-## A arquitetura proposta
+## Modelo de dados
 
 ```
-                    ┌─────────────────────────────┐
-                    │  ORQUESTRADOR (1)           │
-                    │  gateway aibotd             │
-                    │  - decompõe objetivo        │
-                    │  - planeja ondas            │
-                    │  - portão e aprovação       │
-                    │  - ÚNICO escritor do log    │
-                    └──────────┬──────────────────┘
-                               │ protocolo de trabalho
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-      ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-      │ COMPUTADOR 1  │ │ COMPUTADOR 2  │ │ COMPUTADOR N  │
-      │ ┌───────────┐ │ │               │ │               │
-      │ │ executor  │ │ │   executor    │ │   executor    │  ← roda comando
-      │ │ container │ │ │   container   │ │   container   │
-      │ └───────────┘ │ │               │ │               │
-      │ ┌───────────┐ │ │               │ │               │
-      │ │ workspace │ │ │   workspace   │ │   workspace   │  ← arquivos + tela
-      │ │  (Puter)  │ │ │    (Puter)    │ │    (Puter)    │
-      │ └───────────┘ │ │               │ │               │
-      └───────────────┘ └───────────────┘ └───────────────┘
-              │                │                │
-              └────────────────┼────────────────┘
-                               ▼
-                    ┌─────────────────────────────┐
-                    │  BANCO COMPARTILHADO        │
-                    │  log append-only por sessão │
-                    └─────────────────────────────┘
+Bot            id, especialidade, workspace, criado_em
+Goal           id, título, objetivo, criado_em, arquivado
+Session        id, goal_id, título, especialista, modelo, cwd, last_seq
+Task           id, session_id, bot_id, worker_id, estado, depende_de, resultado
+Event          seq, session_id, kind, payload        (append-only, um escritor)
+Snapshot       impressão_digital, imagem, criado_em, último_uso
 ```
 
-### O que é um "computador"
+`Goal` é o `ProjectID` que já existe e ninguém lê. `Task` hoje só vive em
+memória, dentro do plano — persisti-la é o que permite retomar um objetivo depois
+de o gateway cair.
 
-Um par: **executor** + **workspace**.
+## Falha e retomada
 
-```go
-// Proposta: internal/cluster/computer.go
-type Computer interface {
-    ID() string
-    Runner() sandbox.Runner      // executa comando — já existe
-    Files() FilePlane            // lê/escreve arquivo ONDE o comando roda
-    Available(ctx) (bool, string)
-    Release(ctx) error           // devolve ao pool
-}
-```
+O eixo persistente/efêmero dá a resposta:
 
-`FilePlane` é a peça nova, e é ela que conserta o defeito 1:
-
-```go
-type FilePlane interface {
-    Read(ctx, path string) ([]byte, error)
-    Write(ctx, path string, data []byte) error
-    List(ctx, path string) ([]Entry, error)
-    Patch(ctx, path string, edits []Edit) error
-}
-```
-
-Com isso, o mesmo bot lê, escreve e compila **no mesmo lugar** — e o Puter entra
-como uma implementação de `FilePlane` (`puter.fs`), não como executor.
-
-### Ciclo de vida de um bot
-
-1. O orquestrador planeja as ondas (`PlanTasks`, que já existe).
-2. Para cada tarefa da onda, **aloca um computador** do pool.
-3. Prepara o workspace: cópia do repositório no `FilePlane` daquele computador.
-4. O bot roda: modelo ↔ ferramentas, com `proc.run` no executor **daquele**
-   computador e `fs.*` no `FilePlane` **daquele** computador.
-5. Ao terminar, o **artefato** volta — hoje volta só um texto; precisa voltar
-   diff, ramo e lista de arquivos.
-6. O computador é liberado para a próxima tarefa.
-
-### O banco compartilhado
-
-Proposta em duas camadas, para não perder o que o local-first garante:
-
-- **Um escritor por sessão.** O orquestrador continua sendo o único a numerar e
-  gravar. Os computadores não escrevem no log: eles **reportam** ao orquestrador,
-  que numera. Isso preserva `seq` sem inventar consenso distribuído.
-- **Espelho pelo cursor que já existe.** `MarkSynced`/`SyncedSeq` liga o log
-  local ao banco compartilhado: cada sessão empurra do `SyncedSeq` para frente, e
-  o banco é a cópia consultável por todos.
-
-A trava por PID vira trava por **lease com prazo** (dono + expiração renovada),
-que funciona entre máquinas — um dono que morreu perde a sessão quando o prazo
-vence, em vez de depender de PID.
-
-### Objetivo → Sessão (o diagrama)
-
-O campo já existe. O que falta:
-
-| Onde | O que fazer |
+| O que morre | O que acontece |
 | --- | --- |
-| `store.SessionMeta.ProjectID` | passar a ser escrito na criação |
-| `store` | `CreateProject`, `ListProjects`, `ListSessions(projectID)` |
-| `protocol` | `Project{ID, Title, Goal, CreatedAt}` no `ready` |
-| `POST /v1/projects` … | criar, renomear, arquivar, mover sessão |
-| Barra lateral | agrupar as conversas por objetivo, como no diagrama |
-| Fork | já herda o `ProjectID` — nada a fazer |
+| Worker no meio da tarefa | tarefa volta para a fila; nada a recuperar, o container era descartável |
+| Snapshot | próxima tarefa reinstala as dependências |
+| Orquestrador | as sessões, goals, tasks e o log estão no estado compartilhado; **as decisões pendentes (portão, aprovação) hoje se perdem** — precisam virar registro, não mapa |
+| Puter | o bot perde o disco. É persistente: **precisa de cópia** |
 
-Isto **não depende do Puter nem do cluster** e pode ser feito primeiro.
+## Perguntas em aberto
+
+1. **Isolamento entre bots no Puter.** Um Puter compartilhado com todos os bots
+   na mesma conta = todo bot lê o workspace de todo mundo. `bot-security` não
+   deveria enxergar o de `bot-code` sem o objetivo dizer que sim. Uma conta por
+   bot, ou um app com permissão por diretório? Isso muda a configuração.
+2. **Cota e tamanho.** Um workspace por bot × N bots, com histórico. Falta saber
+   os limites do Puter auto-hospedado.
+3. **Quem sobe os workers.** O pool nasce com N fixo, ou o scheduler cria por
+   demanda? Docker local, ou máquinas de verdade na rede?
+4. **GPU.** Está no eixo efêmero, mas nenhum executor de hoje a expõe.
 
 ## Riscos e portões
 
-1. **Licença.** Núcleo do Puter é **AGPL-3.0**; o SDK `puter.js` é Apache-2.0.
+1. **Licença.** Núcleo do Puter é **AGPL-3.0** (o SDK `puter.js` é Apache-2.0).
    Rodar AGPL como serviço de rede aciona a obrigação de oferecer o código
-   correspondente a quem usa. **Vai para TI/SI antes de instalar qualquer coisa**
-   — mesmo caminho do Avatar Lab.
+   correspondente a quem usa. **TI/SI antes de instalar** — mesmo caminho do
+   Avatar Lab.
 2. **Maturidade.** Os mantenedores dizem que o auto-hospedado está em **alfa e
-   não deve ir para produção**.
-3. **Vazamento.** No serviço hospedado (puter.com), arquivos e chamadas de IA
-   passam por terceiro. Código de cliente não pode sair da máquina sem aval.
-4. **Custo do isolamento.** Um container por bot × N bots simultâneos é RAM e
-   disco reais. O teto atual é 4 trabalhadores por onda (`MaxChildren`), 24 por
-   turno — o pool precisa nascer com teto igual ou menor.
+   não deve ir para produção**. Ele é o disco dos bots neste desenho, ou seja, a
+   peça persistente: a cópia de segurança não é opcional.
+3. **Vazamento.** No serviço hospedado, arquivos passam por terceiro. Código de
+   cliente não sai da máquina sem aval.
+4. **Custo.** Um container por bot × N simultâneos é RAM e disco reais. O pool
+   nasce com teto igual ao de hoje (4 por onda, 24 por turno) ou menor.
 
 ## Ordem sugerida
 
 | Fase | Entrega | Depende de |
 | --- | --- | --- |
-| 1 | **Objetivo → Sessão** completo, com a barra lateral agrupando | nada |
-| 2 | `FilePlane` — `fs.*` e `git.*` passam a perguntar onde o comando roda | fase 1 |
-| 3 | Ambiente **por tarefa** (campo em `protocol.Task`, ambiente por trabalhador) | fase 2 |
-| 4 | `Computer` + pool, com Docker/sbx como primeira implementação | fase 3 |
-| 5 | Banco compartilhado: lease no lugar do PID, espelho pelo `MarkSynced` | fase 4 |
-| 6 | Workspace Puter (`FilePlane` sobre `puter.fs`) e preview publicado | **aval da TI/SI** |
+| 1 | **Goal → Session**: gravar e ler o `ProjectID`, rotas, barra lateral agrupando | nada |
+| 2 | **Task persistente** e o plano indo para o estado compartilhado | fase 1 |
+| 3 | **Plano de arquivos**: `fs.*` e `git.*` passam a perguntar onde o comando roda | fase 2 |
+| 4 | **Ambiente por tarefa** (máquina em `protocol.Task`, ambiente por trabalhador) | fase 3 |
+| 5 | **Pool de workers** com Docker/sbx e o ciclo materializa→trabalha→publica | fase 4 |
+| 6 | **Lease no lugar do PID** e espelho pelo `MarkSynced` | fase 5 |
+| 7 | **Entidade Bot** + workspace no Puter, e o preview publicado | fases 5–6 + **aval TI/SI** |
+| 8 | **Runtime snapshot** por impressão digital de manifesto | fase 5 |
 
-A fase 6 é a única que depende do Puter. Todas as outras entregam valor sozinhas
-— e se o aval não vier, o cluster funciona igual, com o workspace no disco do
-computador em vez de no Puter.
+Só a fase 7 depende do Puter. Se o aval não vier, o cluster funciona igual com o
+workspace num volume do próprio worker — e a fase 7 vira a troca de uma
+implementação de plano de arquivos por outra.
