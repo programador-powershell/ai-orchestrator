@@ -28,12 +28,15 @@
                                  │ materializa / publica
                  ┌───────────────▼────────────────┐
                  │  PUTER — UMA INSTÂNCIA         │
-                 │  user: bot-owner               │
-                 │  user: bot-code   → workspace  │
-                 │  user: bot-data   → workspace  │
-                 │  user: bot-design → workspace  │
-                 │  user: bot-security → workspace│
-                 │  goal/<id>/  ← acesso concedido│
+                 │                                │
+                 │  conta: Paim  ← dona de tudo   │
+                 │   ├ bot-code     → workspace   │
+                 │   ├ bot-data     → workspace   │
+                 │   ├ bot-design   → workspace   │
+                 │   └ bot-security → workspace   │
+                 │                                │
+                 │  goal/<id>/ ← concedido a quem │
+                 │              participa do Goal │
                  └───────────────┬────────────────┘
                                  │
                  ┌───────────────▼────────────────┐
@@ -115,46 +118,107 @@ falta acrescentar:
 
 ### Como o scheduler escolhe
 
-Três entradas, nesta ordem:
-
-1. **Capacidade** — a tarefa pede GPU? cabe na RAM livre?
-2. **Localidade de snapshot** — um PC que já tem `python-3.12/8ac927` começa a
-   tarefa em segundos; outro precisa baixar e instalar. É por isso que o
-   inventário de snapshots por PC vale a pena estar no estado compartilhado.
-3. **Carga** — entre os elegíveis, o menos ocupado.
-
-## Puter: uma instância, uma conta por bot
-
 ```
-1 Puter Server
-├── user: bot-owner
-├── user: bot-code
-├── user: bot-data
-├── user: bot-design
-└── user: bot-security
+ Code   Design   Security        A mesma equipe, PCs diferentes,
+   │      │        │             porque o RUNTIME é da tarefa —
+   ▼      ▼        ▼             e amanhã pode cair em outros.
+ PC-2   PC-1     PC-3
+ Node  Browser  Python
 ```
 
-- Cada bot enxerga **só o próprio workspace**.
-- O **owner** lê os sub-bots — é quem compõe o resultado da equipe.
-- O **Goal** tem espaço próprio (`goal/<id>/`) com **acesso concedido
-  explicitamente** aos bots que participam dele.
+Quatro entradas, nesta ordem:
 
-Isso dá isolamento forte sem custo de RAM por bot: continua sendo **um único
-backend**.
+1. **Runtime** — a tarefa pede Node, Python, JVM, navegador? É requisito de
+   ADMISSÃO, não preferência: um PC sem navegador headless não atende o bot de
+   Design, e mandar para ele é falhar depois de materializar o workspace.
+2. **Capacidade** — GPU? cabe na RAM livre?
+3. **Localidade de snapshot** — um PC que já tem `python-3.12/8ac927` começa em
+   segundos; outro baixa e instala. É o que justifica o inventário por PC no
+   estado compartilhado.
+4. **Carga** — entre os elegíveis, o menos ocupado.
 
-Duas coisas que essa escolha traz junto:
+O par bot↔PC **não é fixo**: `bot-code` roda no PC-2 hoje e no PC-1 amanhã. O que
+o segue é o workspace, que é persistente; o PC é escolhido por tarefa.
 
-- **Credencial por bot.** São N contas, e cada uma tem segredo. Vão para o cofre
-  do gateway, com a mesma regra das chaves de provedor: o valor entra, e sai
-  apenas dentro de um callback.
+## Permissão: o bot é delegação da conta da pessoa
+
+```
+Conta Paim / Puter
+        │
+   Goal: CRM
+        │
+   ┌────┼─────┐
+   ▼    ▼     ▼
+ Code Design Security
+```
+
+A conta raiz é a **da pessoa**, não do sistema. Os bots existem debaixo dela, e
+daí vem a regra que governa tudo:
+
+> **Um bot nunca tem mais acesso que a pessoa dona dele.** A autoridade dele é
+> derivada; ele age em nome dela, com um subconjunto dos direitos dela.
+
+Isso tem uma consequência que precisa estar no código, não só no texto: o direito
+é **derivado, não copiado**. Quando a pessoa perde acesso a alguma coisa, o bot
+perde junto — então a concessão é reconferida no uso, e não carimbada uma vez na
+criação.
+
+### Três faixas, e negado por padrão
+
+```
+bot-code
+├ workspace próprio          sempre
+├ goal/<id>/ compartilhado   se participa do Goal
+└ recurso específico         só com autorização explícita
+                             (todo o resto: negado)
+```
+
+**O bot não recebe acesso automático ao Puter inteiro da pessoa.** Sem isso, o
+bot de Segurança leria os arquivos privados do bot de Código sem precisar — e
+"sem precisar" é o critério: acesso que a tarefa não exige é superfície de
+vazamento sem contrapartida.
+
+### A autorização explícita reusa o portão que já existe
+
+"Bot X quer acesso ao recurso Y" é a mesma pergunta que "Bot X quer rodar a
+ferramenta Z": uma decisão humana sobre um pedido com escopo. O AI-BOT já tem
+isso — o portão de aprovação, com "permitir sempre" preso ao **digest dos
+argumentos**, justamente para o primeiro sim não virar cheque em branco.
+
+Inventar um segundo mecanismo de consentimento criaria duas políticas para
+manter em pé, e elas divergiriam. A concessão de recurso entra pelo mesmo portão.
+
+### Ciclo de vida da concessão
+
+| Evento | O que acontece com o acesso |
+| --- | --- |
+| Bot entra no Goal | ganha `goal/<id>/`; nada além |
+| Bot sai do Goal | perde `goal/<id>/` |
+| Goal arquivado | todas as concessões daquele Goal morrem |
+| Bot removido (atualização tirou o especialista) | workspace órfão — decidir retenção, não deixar apodrecer |
+| Pessoa perde acesso ao recurso | o bot perde no próximo uso, porque o direito é derivado |
+
+E **auditoria**: todo acesso de bot a espaço compartilhado precisa ser
+atribuível — qual bot, qual Goal, qual tarefa. Sem isso, "o Security leu o quê?"
+não tem resposta.
+
+### O que essa escolha traz junto
+
+- **Credencial por bot** vai para o cofre do gateway, com a mesma regra das
+  chaves de provedor: o valor entra e só sai dentro de um callback.
 - **A credencial de administração do Puter é a joia da coroa** — é ela que cria
-  conta e concede acesso. Ela nunca pode estar na interface nem no bundle.
+  conta e concede acesso. Nunca na interface, nunca no bundle.
+- Continua sendo **um único backend**: isolamento forte sem custo de RAM por bot.
 
 **A verificar antes de confiar:** o isolamento passa a ser garantido pelo
-controle de permissão do Puter, e o auto-hospedado está em alfa. Antes de a fase
-entrar em produção, um teste explícito: `bot-code` tentando ler o workspace de
-`bot-security` **tem** de falhar. Isolamento que ninguém testou é isolamento que
-ninguém tem.
+controle de permissão do Puter, e o auto-hospedado está em alfa. Antes de
+produção, três testes explícitos, e os três têm de FALHAR o acesso:
+
+1. `bot-code` lendo o workspace de `bot-security`;
+2. `bot-code` lendo `goal/<outro>/` de um Goal em que ele não entrou;
+3. qualquer bot lendo a raiz da conta da pessoa.
+
+Isolamento que ninguém testou é isolamento que ninguém tem.
 
 ## Snapshot em duas camadas
 
@@ -243,15 +307,20 @@ devolve só o resultado.
 ## Modelo de dados
 
 ```
-Bot        id, especialidade, conta_puter, workspace, criado_em
-Goal       id, título, objetivo, criado_em, arquivado
-Grant      goal_id, bot_id, permissão            (o acesso concedido)
+Bot        id, dono (conta da pessoa), especialidade, conta_puter, workspace
+Goal       id, dono, título, objetivo, criado_em, arquivado
+Grant      bot_id, recurso, permissão, origem (goal|explícito), expira_em
 Session    id, goal_id, título, especialista, modelo, last_seq
-Task       id, session_id, bot_id, pc_id, estado, depende_de, resultado
-Worker     pc_id, nome, token_ref, capacidades, visto_em, estado
+Task       id, session_id, bot_id, runtime, pc_id, estado, depende_de, resultado
+Worker     pc_id, nome, token_ref, runtimes[], capacidades, visto_em, estado
 Snapshot   base, impressão_digital, imagem, último_uso, pcs[]
 Event      seq, session_id, kind, payload        (append-only, um escritor)
+Acesso     quando, bot_id, task_id, recurso, permitido   (trilha de auditoria)
 ```
+
+`Grant` guarda a **origem**: concessão que veio do Goal morre com o Goal;
+concessão explícita morre no prazo. Sem esse campo não dá para revogar em lote
+sem revogar o que a pessoa autorizou à mão.
 
 ## Falha e retomada
 
@@ -282,6 +351,11 @@ Event      seq, session_id, kind, payload        (append-only, um escritor)
 3. **Superfície de execução remota.** O daemon é, por desenho, execução de
    comando vinda da rede. Enrolamento explícito, token por máquina e contenção no
    container.
+4. **Escalada pela conta da pessoa.** Como a autoridade do bot é derivada da
+   conta dela, um bot enganado (por conteúdo que ele leu, por exemplo) é um
+   caminho até os arquivos dela. É o que a faixa "negado por padrão" contém: sem
+   concessão, o bot não alcança nada além do próprio workspace. A trilha de
+   auditoria existe para responder "o que ele leu, e sob qual autorização".
 4. **Custo.** Container por tarefa × N simultâneas é RAM e disco reais. O pool
    nasce com o teto de hoje (4 por onda, 24 por turno) ou menor.
 
@@ -297,7 +371,7 @@ Event      seq, session_id, kind, payload        (append-only, um escritor)
 | 6 | **Scheduler** por capacidade, localidade e carga; container por tarefa | fase 5 |
 | 7 | **Snapshot em duas camadas** e o inventário por PC | fase 6 |
 | 8 | **Lease no lugar do PID** e espelho pelo `MarkSynced` | fase 6 |
-| 9 | **Entidade Bot** + contas no Puter, grants por Goal e o preview publicado | fases 6–8 + **aval TI/SI** |
+| 9 | **Entidade Bot** + contas no Puter, faixas de permissão, trilha de acesso e preview publicado | fases 6–8 + **aval TI/SI** |
 
 Só a fase 9 depende do Puter. Se o aval não vier, o cluster funciona com o
 workspace num volume do PC — e a fase 9 vira a troca de uma implementação de
