@@ -80,9 +80,13 @@ PC-03 ─ worker-daemon       8 ociosos
 Ciclo de uma tarefa:
 
 ```
-scheduler → escolhe PC-02 → cria container → materializa workspace
-          → executa → publica → destrói container
+plano → aloca worker → materializa Puter→disco local → BASELINE
+      → bot trabalha → diff → validação → publica no Puter
+      → event log → libera worker
 ```
+
+O **baseline** entra antes de o bot encostar em qualquer arquivo, e a
+**publicação** só acontece depois da validação — ver "Checkpoint e rollback".
 
 O daemon é leve: ele **não** decide nada. Anuncia-se, diz o que tem, recebe
 tarefa, cria e destrói container, devolve resultado.
@@ -140,6 +144,63 @@ Quatro entradas, nesta ordem:
 
 O par bot↔PC **não é fixo**: `bot-code` roda no PC-2 hoje e no PC-1 amanhã. O que
 o segue é o workspace, que é persistente; o PC é escolhido por tarefa.
+
+## Checkpoint e rollback
+
+O event log guarda **o que aconteceu**. Ele não guarda **como os arquivos
+estavam** — e é justamente isso que falta quando um bot faz besteira: um
+`patch` que estragou o arquivo, um `rm` largo demais, um `git reset` no lugar
+errado. Replay reconstrói a conversa, não o diretório.
+
+```
+baseline
+   ├─ o bot trabalhou
+   └─ resultado ruim → rollback → volta ao baseline, NÃO publica
+```
+
+### Como, sem sujar o repositório da pessoa
+
+Um armazenamento **endereçado por conteúdo** paralelo, e não o Git de verdade do
+projeto. Em Git isso é um `GIT_DIR` separado apontando para a mesma árvore:
+
+```
+git --git-dir=<sombra>/.git --work-tree=<workspace> add -A
+git --git-dir=<sombra>/.git --work-tree=<workspace> commit -m "baseline t3"
+```
+
+Três coisas vêm de graça daí, e por isso não vale a pena inventar formato:
+
+- **Dedup**: arquivo que não mudou não é copiado de novo — é o mesmo objeto.
+- **Diff pronto**: o "gera diff" do ciclo é `git diff` contra o baseline.
+- **Nada vaza para o projeto**: o `.git` real não ganha commit que ninguém pediu,
+  e o `git status` que o próprio bot roda continua dizendo a verdade sobre o
+  trabalho dele.
+
+### Por tarefa, ou por operação?
+
+Um baseline por tarefa é o **piso**: barato, sempre, e resolve o caso comum.
+
+Mas uma tarefa roda até 6 rodadas de modelo↔ferramenta e pode escrever dezenas de
+vezes. Se ela azedar na quinta rodada, voltar ao baseline joga fora quatro
+rodadas boas. Por isso vale também o checkpoint **antes de cada operação
+destrutiva** (`fs.write`, `fs.patch`, remoção, `git reset`): como o
+armazenamento é endereçado por conteúdo, cada checkpoint custa um objeto de
+commit, não uma cópia da árvore. Barato o bastante para o ganho de poder desfazer
+UM passo em vez de o dia inteiro.
+
+### Onde o checkpoint mora
+
+| Alcance | Onde | Vive quanto |
+| --- | --- | --- |
+| Desfazer **dentro** da tarefa | sombra no disco do container | morre com o container |
+| Histórico do que o bot entregou | o **diff publicado**, no event log | permanente |
+
+O checkpoint serve ao ciclo da tarefa, então ele não precisa atravessar a rede
+nem ocupar o Puter — e assim a regra "o Puter recebe só estado durável" continua
+valendo. O que atravessa é o resultado: diff, ramo, arquivos.
+
+Isso também explica por que o container efêmero **basta** como fronteira: se o
+bot destruir algo fora do workspace, o container morre com o estrago dentro.
 
 ## Permissão: o bot é delegação da conta da pessoa
 
@@ -334,6 +395,33 @@ devolve só o resultado.
    orquestrador: workers **reportam**, não gravam. A trava vira **lease com
    prazo**.
 
+## O Bot é um perfil, não um processo
+
+O bot guarda especialidade, modelo, memória, skills, avatar e configuração — e
+**não fica executando**. Quem executa é o container, quando há tarefa. É o mesmo
+eixo persistente/efêmero, agora com nome de gente.
+
+| O que adotar | O que custa aqui |
+| --- | --- |
+| **Conversa canônica do bot** — uma conversa principal e contínua dentro do Goal, que `/new` não destrói | `Session` ganha um tipo (canônica × avulsa). A ramificação já existe: `ForkSession` copia o prefixo do log e mantém os `seq` |
+| **Skills / ferramentas / MCP por bot** | hoje o catálogo de ferramentas é do ESPECIALISTA (definição estática). Passar a ser por instância significa o portão avaliar por bot, não por especialista |
+| **Pool de credenciais do usuário** | já é a regra do cofre: o bot recebe **referência**, nunca valor, e o segredo só existe dentro de um callback. Vale igual para OAuth |
+| **Presença: trabalhando / esperando / concluído** | já existe — cinco estados no avatar e no trilho. Falta alimentá-los pelo estado da TAREFA, não pelo turno |
+| **Rotinas ligadas ao bot** | já há agendamento (`internal/schedule`). O delta é a rotina referenciar `bot_id` e só criar worker quando dispara |
+| **Grupos de bots com rodadas finitas** | já existe, com outro nome: a equipe tem teto de profundidade (3), de filhos (4), de total por turno (24), de tentativas por onda (3) e de rodadas por trabalhador (6) |
+| **@menção entre bots pelo orquestrador, nunca direto** | já é assim: o trabalhador que tenta delegar é recusado com instrução, e o event log é a autoridade |
+
+Duas consequências que precisam estar escritas:
+
+- **Conversa que não termina precisa de compactação.** Uma conversa canônica
+  cresce para sempre; o orçamento de contexto corta o que não cabe, mas cortar
+  não é lembrar. Sem um resumo progressivo, o bot esquece o começo da relação
+  exatamente onde a relação começou.
+- **Ferramenta por bot muda o portão.** Hoje a política decide por
+  especialista+ferramenta. Com skills por instância, "dar terminal ao bot de
+  Código" vira uma concessão — e cai na terceira faixa de permissão, pelo mesmo
+  portão de aprovação. Não é mecanismo novo.
+
 ## Provisionamento
 
 Três escopos, e cada um nasce num momento diferente:
@@ -454,13 +542,15 @@ uma versão nova do gateway e depois volta para uma antiga tem workspace no futu
 SpecialistDefinition  id, versão, prompt, ferramentas, avatar     (GLOBAL)
 PuterAccount          user_id, conta, schema_version, criado_em   (POR PESSOA)
 BotInstance           user_id, especialista, versão_materializada, workspace,
+                      modelo, skills[], avatar, conversa_canônica,
                       estado (ativo|arquivado), criado_em
                                                       (POR PESSOA+ESPECIALISTA)
 
 Goal       id, dono, título, objetivo, criado_em, arquivado
 Grant      bot_id, recurso, permissão, origem (goal|explícito), expira_em
-Session    id, goal_id, título, especialista, modelo, last_seq
-Task       id, session_id, bot_id, runtime, pc_id, estado, depende_de, resultado
+Session    id, goal_id, bot_id, tipo (canônica|avulsa), título, modelo, last_seq
+Task       id, session_id, bot_id, runtime, pc_id, estado, depende_de,
+           baseline (hash do checkpoint), diff, resultado
 Worker     pc_id, nome, token_ref, runtimes[], capacidades, visto_em, estado
 Snapshot   base, impressão_digital, imagem, último_uso, pcs[]
 Event      seq, session_id, kind, payload        (append-only, um escritor)
@@ -517,6 +607,7 @@ sem revogar o que a pessoa autorizou à mão.
 | 3 | **Plano de arquivos**: `fs.*` e `git.*` perguntam onde o comando roda | fase 2 |
 | 4 | **Máquina por tarefa** (`pc_id` em `protocol.Task`) | fase 3 |
 | 5 | **worker-daemon**: registro, heartbeat, lease, capacidades — em cima do `HostBridge` | fase 4 |
+| 5b | **Checkpoint e rollback**: baseline por tarefa em sombra endereçada por conteúdo, diff contra ele, publicar só depois de validar | fase 5 |
 | 6 | **Scheduler** por capacidade, localidade e carga; container por tarefa | fase 5 |
 | 7 | **Snapshot em duas camadas** e o inventário por PC | fase 6 |
 | 8 | **Lease no lugar do PID** e espelho pelo `MarkSynced` | fase 6 |
