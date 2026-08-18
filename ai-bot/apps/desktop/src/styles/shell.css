@@ -1568,6 +1568,245 @@ select {
   border-top: 0;
 }
 
+/*
+ * O vocabulário interno das configurações.
+ *
+ * Estes nomes são os do orquestrador (`styles/settings.css` e `glass.css` de
+ * lá), com os mesmos valores relidos nos tokens daqui: cabeçalho de seção com
+ * título e explicação, cartão por assunto, campo com rótulo em caixa alta
+ * acima, chip de estado e a linha de ações alinhada à direita, com um botão
+ * primário. É o que faz as duas telas serem a MESMA tela em dois produtos, e
+ * não duas telas parecidas.
+ */
+.settings-section > header {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-section > header h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 630;
+  letter-spacing: -0.4px;
+}
+
+.settings-section > header p {
+  margin: 0;
+  max-width: 580px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1.55;
+}
+
+.settings-cardx {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.settings-cardx-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 620;
+}
+
+.settings-cardx-title small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  font-weight: 400;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+}
+
+.settings-empty {
+  margin: 0;
+  padding: 10px 2px;
+  color: var(--faint);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+.settings-field {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.settings-field input,
+.settings-field select {
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: 450;
+  letter-spacing: 0;
+  text-transform: none;
+  outline: none;
+  transition:
+    border-color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.settings-chip-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.settings-chip-pill[data-tone="ok"] {
+  color: var(--ok);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.settings-chip-pill[data-tone="accent"] {
+  color: var(--accent-strong);
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+.settings-button {
+  min-height: 32px;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    transform var(--t-fast) var(--spring);
+}
+
+.settings-button:hover {
+  background: var(--hover);
+}
+
+.settings-button:active {
+  transform: scale(0.99);
+}
+
+.settings-button:disabled {
+  opacity: 0.55;
+  transform: none;
+  cursor: default;
+}
+
+.settings-button[data-kind="primary"] {
+  border-color: transparent;
+  background: var(--accent);
+  box-shadow: none;
+  color: var(--accent-ink);
+}
+
+.settings-button[data-kind="primary"]:hover {
+  background: var(--accent-strong);
+}
+
+.settings-button[data-kind="ghost"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.settings-button[data-kind="ghost"]:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* O cabeçalho do cartão, com o nome do produto embaixo do título. */
+.settings-head-id {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.settings-head-id > span {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.settings-head-id strong {
+  display: block;
+  font-size: var(--fs-body);
+  font-weight: 620;
+  letter-spacing: -0.2px;
+}
+
+.settings-head-id small {
+  display: block;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
 .settings-section {
   display: flex;
   flex-direction: column;

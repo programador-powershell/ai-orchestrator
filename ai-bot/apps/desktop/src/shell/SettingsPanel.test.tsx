@@ -267,10 +267,11 @@ describe("menu das configurações", () => {
       });
 
       const painel = container.querySelector(".settings-content");
-      expect(painel?.textContent).toContain("ainda não tem o que configurar");
+      expect(painel?.textContent).toContain("Ainda não configurável aqui");
+      expect(painel?.textContent).toContain("sem rota no gateway");
 
       // Uma frase concreta sobre o que falta — não "em breve".
-      const nota = painel?.querySelectorAll(".approval-note")[0]?.textContent ?? "";
+      const nota = painel?.querySelector(".settings-cardx .settings-help")?.textContent ?? "";
       expect(nota.length).toBeGreaterThan(80);
 
       // E nada de campo editável fingindo que a seção funciona.

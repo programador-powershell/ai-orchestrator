@@ -171,10 +171,13 @@ export function keyLabel(provider: CatalogProvider): string {
  */
 export function ProviderConfigForm({
   provider,
-  onSubmit
+  onSubmit,
+  children
 }: {
   provider: CatalogProvider;
   onSubmit: (change: { apiKey?: string; enabled: boolean }) => Promise<void>;
+  /** Ações do cartão (testar, remover) — vêm à esquerda do botão primário. */
+  children?: React.ReactNode;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(provider.enabled);
@@ -201,33 +204,43 @@ export function ProviderConfigForm({
   return (
     <form className="settings-provider-config" onSubmit={submit}>
       {provider.needsKey && (
-        <input
-          className="settings-input"
-          type="password"
-          aria-label={`chave de API de ${provider.id}`}
-          placeholder={provider.hasKey ? "nova chave (opcional)" : "chave de API"}
-          autoComplete="off"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-        />
+        <div className="settings-grid">
+          <label className="settings-field">
+            Chave da API
+            <input
+              type="password"
+              aria-label={`chave de API de ${provider.id}`}
+              placeholder={provider.hasKey ? "cole a nova chave (não é exibida depois)" : "cole a chave (não é exibida depois)"}
+              autoComplete="off"
+              spellCheck={false}
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+          </label>
+        </div>
       )}
-      <label className="settings-check">
-        <input
-          type="checkbox"
-          aria-label={`habilitar ${provider.id}`}
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        habilitado
-      </label>
-      <button type="submit" className="button-secondary" disabled={busy}>
-        Salvar
-      </button>
       {failure !== "" && (
         <span className="settings-feedback" data-ok="false">
           {failure}
         </span>
       )}
+      <div className="settings-actions">
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            aria-label={`habilitar ${provider.id}`}
+            checked={enabled}
+            onChange={(event) => setEnabled(event.target.checked)}
+          />
+          habilitado
+        </label>
+        <span className="settings-head-spacer" />
+        {children}
+        <button type="submit" className="settings-button" data-kind="primary" disabled={busy}>
+          <KeyRound size={13} aria-hidden />
+          Salvar chave
+        </button>
+      </div>
     </form>
   );
 }
@@ -281,65 +294,86 @@ export function ProviderForm({ onSubmit }: { onSubmit: (provider: NewProvider) =
   }
 
   return (
-    <form className="settings-form" onSubmit={submit}>
-      <div className="settings-form-row">
-        <input
-          className="settings-input"
-          aria-label="id do provedor"
-          placeholder="id (ex.: openrouter)"
-          value={id}
-          onChange={(event) => setId(event.target.value)}
-        />
-        <input
-          className="settings-input"
-          aria-label="nome do provedor"
-          placeholder="nome"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <select
-          className="model-select"
-          aria-label="tipo do provedor"
-          value={kind}
-          onChange={(event) => setKind(event.target.value)}
-        >
-          {PROVIDER_KINDS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+    <form className="settings-cardx" onSubmit={submit}>
+      <div className="settings-cardx-title">
+        <Plus size={13} aria-hidden />
+        Novo provedor
+        <small>qualquer endpoint que fale o protocolo do dialeto escolhido</small>
       </div>
-      <div className="settings-form-row">
-        <input
-          className="settings-input"
-          aria-label="baseUrl do provedor"
-          placeholder="https://api.exemplo.com/v1"
-          value={baseUrl}
-          onChange={(event) => setBaseUrl(event.target.value)}
-        />
-        <input
-          className="settings-input"
-          type="password"
-          aria-label="chave de API"
-          placeholder="chave de API (opcional)"
-          autoComplete="off"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-        />
-        <button type="submit" className="button-secondary" disabled={busy}>
-          <Plus size={13} aria-hidden />
-          Adicionar
-        </button>
+
+      <div className="settings-grid">
+        <label className="settings-field">
+          Id
+          <input
+            aria-label="id do provedor"
+            placeholder="ex.: openrouter"
+            value={id}
+            onChange={(event) => setId(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Nome
+          <input
+            aria-label="nome do provedor"
+            placeholder="nome exibido"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Dialeto
+          <select
+            aria-label="tipo do provedor"
+            value={kind}
+            onChange={(event) => setKind(event.target.value)}
+          >
+            {PROVIDER_KINDS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-field">
+          Base URL
+          <input
+            aria-label="baseUrl do provedor"
+            placeholder="https://api.exemplo.com/v1"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Chave da API (opcional)
+          <input
+            type="password"
+            aria-label="chave de API"
+            placeholder="cole a chave (não é exibida depois)"
+            autoComplete="off"
+            spellCheck={false}
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+          />
+        </label>
       </div>
-      <p className="approval-note">
-        a chave vai para o cofre do gateway e não volta — aqui o campo zera após enviar.
+
+      <p className="settings-help">
+        A chave vai para o cofre do gateway e não volta — o campo zera depois de enviar, com
+        sucesso ou com falha.
       </p>
+
       {failure !== "" && (
         <p className="settings-feedback" data-ok="false">
           {failure}
         </p>
       )}
+
+      <div className="settings-actions">
+        <button type="submit" className="settings-button" data-kind="primary" disabled={busy}>
+          <Plus size={13} aria-hidden />
+          Adicionar
+        </button>
+      </div>
     </form>
   );
 }
@@ -407,51 +441,74 @@ export function ModelForm({
   }
 
   return (
-    <form className="settings-form" onSubmit={submit}>
-      <div className="settings-form-row">
-        <input
-          className="settings-input"
-          aria-label="id do modelo"
-          placeholder="id (ex.: gpt-5-mini)"
-          value={id}
-          onChange={(event) => setId(event.target.value)}
-        />
-        <select
-          className="model-select"
-          aria-label="provedor do modelo"
-          value={chosenProvider}
-          onChange={(event) => setProviderId(event.target.value)}
-        >
-          {providers.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name}
-            </option>
-          ))}
-        </select>
-        <input
-          className="settings-input"
-          aria-label="rótulo do modelo"
-          placeholder="rótulo"
-          value={label}
-          onChange={(event) => setLabel(event.target.value)}
-        />
+    <form className="settings-cardx" onSubmit={submit}>
+      <div className="settings-cardx-title">
+        <Plus size={13} aria-hidden />
+        Novo modelo
+        <small>o que entra na lista do seletor da barra superior</small>
       </div>
-      <div className="settings-form-row">
-        <input
-          className="settings-input"
-          aria-label="janela de contexto"
-          placeholder="contexto (tokens)"
-          inputMode="numeric"
-          value={context}
-          onChange={(event) => setContext(event.target.value)}
-        />
-        <input
-          className="settings-input"
-          aria-label="habilidades do modelo"
-          placeholder="skills (chat, code, …)"
-          value={skills}
-          onChange={(event) => setSkills(event.target.value)}
-        />
+
+      <div className="settings-grid">
+        <label className="settings-field">
+          Provedor
+          <select
+            aria-label="provedor do modelo"
+            value={chosenProvider}
+            onChange={(event) => setProviderId(event.target.value)}
+          >
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="settings-field">
+          Id do modelo
+          <input
+            aria-label="id do modelo"
+            placeholder="ex.: claude-sonnet-5"
+            value={id}
+            onChange={(event) => setId(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Rótulo (opcional)
+          <input
+            aria-label="rótulo do modelo"
+            placeholder="nome exibido"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Contexto (tokens)
+          <input
+            aria-label="janela de contexto"
+            placeholder="ex.: 200000"
+            inputMode="numeric"
+            value={context}
+            onChange={(event) => setContext(event.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Habilidades
+          <input
+            aria-label="habilidades do modelo"
+            placeholder="chat, code, …"
+            value={skills}
+            onChange={(event) => setSkills(event.target.value)}
+          />
+        </label>
+      </div>
+
+      {failure !== "" && (
+        <p className="settings-feedback" data-ok="false">
+          {failure}
+        </p>
+      )}
+
+      <div className="settings-actions">
         <label className="settings-check">
           <input
             type="checkbox"
@@ -460,16 +517,17 @@ export function ModelForm({
           />
           padrão
         </label>
-        <button type="submit" className="button-secondary" disabled={busy || providers.length === 0}>
+        <span className="settings-head-spacer" />
+        <button
+          type="submit"
+          className="settings-button"
+          data-kind="primary"
+          disabled={busy || providers.length === 0}
+        >
           <Plus size={13} aria-hidden />
           Adicionar
         </button>
       </div>
-      {failure !== "" && (
-        <p className="settings-feedback" data-ok="false">
-          {failure}
-        </p>
-      )}
     </form>
   );
 }
@@ -596,33 +654,37 @@ export function CatalogSection({
           </p>
         )}
 
-        <ul className="settings-list">
-          {models.length === 0 && <li className="approval-note">nenhum modelo cadastrado.</li>}
-          {models.map((model) => (
-            <li key={model.id} className="settings-item">
-              <div className="settings-item-main">
-                <span>
-                  {model.label}
-                  {model.default === true && <span className="settings-chip"> padrão</span>}
+        {models.length === 0 && <p className="settings-empty">nenhum modelo cadastrado.</p>}
+
+        {models.map((model) => (
+          <div key={model.id} className="settings-cardx">
+            <div className="settings-cardx-title">
+              {model.label}
+              {model.default === true && (
+                <span className="settings-chip-pill" data-tone="accent">
+                  padrão
                 </span>
-                <span className="settings-item-sub">
-                  {model.id} · {model.providerId}
-                  {model.context > 0 ? ` · ${model.context.toLocaleString("pt-BR")} tokens` : ""}
-                </span>
-              </div>
+              )}
+              <span className="settings-head-spacer" />
+              <span className="settings-chip-pill">{model.id}</span>
+              <span className="settings-chip-pill">{model.providerId}</span>
+              {model.context > 0 && (
+                <small>{model.context.toLocaleString("pt-BR")} tokens</small>
+              )}
               {model.canDelete && (
                 <button
                   type="button"
-                  className="button-secondary"
+                  className="settings-button"
+                  data-kind="ghost"
                   aria-label={`remover modelo ${model.id}`}
                   onClick={() => void removeModel(model.id)}
                 >
                   <Trash2 size={13} aria-hidden />
                 </button>
               )}
-            </li>
-          ))}
-        </ul>
+            </div>
+          </div>
+        ))}
 
         <ModelForm providers={providers} onSubmit={addModel} />
       </div>
@@ -637,55 +699,61 @@ export function CatalogSection({
         </p>
       )}
 
-      <ul className="settings-list">
-        {providers.length === 0 && <li className="approval-note">nenhum provedor cadastrado.</li>}
-        {providers.map((provider) => {
-          const test = tests[provider.id];
-          return (
-            <li key={provider.id} className="settings-item settings-provider-item">
-              <div className="settings-item-main">
-                <span>
-                  {provider.name}
-                  <span className="settings-bot-tag"> · {provider.kind}</span>
-                  {!provider.enabled && <span className="settings-bot-tag"> · desligado</span>}
-                </span>
-                <span className="settings-item-sub">{provider.baseUrl}</span>
-                {test && (
-                  <span className="settings-feedback" data-ok={test.ok ? "true" : "false"}>
-                    {test.detail}
-                  </span>
-                )}
-              </div>
-              <span className="settings-chip" data-ok={!provider.needsKey || provider.hasKey ? "true" : "false"}>
+      {providers.length === 0 && <p className="settings-empty">nenhum provedor cadastrado.</p>}
+
+      {providers.map((provider) => {
+        const test = tests[provider.id];
+        const comChave = !provider.needsKey || provider.hasKey;
+        return (
+          <div key={provider.id} className="settings-cardx">
+            <div className="settings-cardx-title">
+              <KeyRound size={13} aria-hidden />
+              {provider.name}
+              <span className="settings-chip-pill" data-tone={comChave ? "ok" : ""}>
                 {keyLabel(provider)}
               </span>
+              {!provider.enabled && <span className="settings-chip-pill">desligado</span>}
+              <small>
+                {provider.baseUrl} · {provider.kind}
+              </small>
+            </div>
+
+            {test && (
+              <p className="settings-feedback" data-ok={test.ok ? "true" : "false"}>
+                {test.detail}
+              </p>
+            )}
+
+            <ProviderConfigForm
+              provider={provider}
+              onSubmit={(change) => updateProvider(provider.id, change)}
+            >
               <button
                 type="button"
-                className="button-secondary"
+                className="settings-button"
+                data-kind="ghost"
                 aria-label={`testar conexão de ${provider.id}`}
                 onClick={() => void testProvider(provider.id)}
               >
                 <PlugZap size={13} aria-hidden />
-                Testar
+                Testar conexão
               </button>
               {provider.canDelete && (
                 <button
                   type="button"
-                  className="button-secondary"
+                  className="settings-button"
+                  data-kind="ghost"
                   aria-label={`remover provedor ${provider.id}`}
                   onClick={() => void removeProvider(provider.id)}
                 >
                   <Trash2 size={13} aria-hidden />
+                  Remover
                 </button>
               )}
-              <ProviderConfigForm
-                provider={provider}
-                onSubmit={(change) => updateProvider(provider.id, change)}
-              />
-            </li>
-          );
-        })}
-      </ul>
+            </ProviderConfigForm>
+          </div>
+        );
+      })}
 
       <ProviderForm onSubmit={addProvider} />
     </div>
@@ -750,6 +818,73 @@ const NAV: ReadonlyArray<{ id: SectionId; label: string; icon: LucideIcon }> = [
 ];
 
 /**
+ * Título e explicação de cada seção — o cabeçalho que abre o painel.
+ *
+ * O texto é do assunto NESTE produto, não copiado: onde o orquestrador fala do
+ * keyring do Windows e do cofre corporativo, aqui quem guarda a chave é o
+ * gateway, e é isso que a frase precisa dizer. O que se copia do orquestrador é
+ * a FORMA — um título e uma explicação curta antes de qualquer controle.
+ */
+const SECAO_TEXTO: Record<SectionId, { titulo: string; detalhe: string }> = {
+  conexao: {
+    titulo: "Conexão",
+    detalhe:
+      "Endereço do gateway e estado da ligação. Quem sobe o gateway é o próprio aplicativo — o token de acesso fica no cofre, nunca em arquivo e nunca nesta tela."
+  },
+  motores: {
+    titulo: "Motores & Fusion",
+    detalhe:
+      "O que entra na lista de modelos do seletor. Quem escolhe o modelo é quem conversa; aqui se decide o que ele pode escolher."
+  },
+  provedores: {
+    titulo: "Provedores (BYOK)",
+    detalhe:
+      "Traga sua própria chave por provedor. Ela vai do campo direto ao cofre do gateway e não volta — o campo zera depois de enviar, e o que a tela recebe de volta é só \"cadastrada\" ou \"ausente\"."
+  },
+  memoria: {
+    titulo: "Memória",
+    detalhe: "Fatos que sobrevivem à conversa e voltam como contexto na próxima."
+  },
+  extensoes: {
+    titulo: "Extensões",
+    detalhe: "Pacotes de skills e agentes trazidos de fora, inspecionados antes de importar."
+  },
+  plugins: {
+    titulo: "Plugins & trilha",
+    detalhe:
+      "Provedores, modelos, conectores e overlays de especialista que entram por manifesto — e a trilha do que o agente fez."
+  },
+  conectores: {
+    titulo: "Conectores (MCP)",
+    detalhe:
+      "Servidores MCP externos, em JSON-RPC sobre HTTP. As ferramentas de cada servidor entram no catálogo do agente e passam pelo mesmo diálogo de aprovação."
+  },
+  runtime: {
+    titulo: "Runtime local",
+    detalhe:
+      "Onde o próximo comando roda. Quem mede o que existe nesta máquina é o gateway: ele procura o Docker, a distro do WSL e a VPS cadastrada."
+  },
+  ship: {
+    titulo: "Ship (build & deploy)",
+    detalhe: "Como o especialista de código carrega o projeto, roda o pipeline e marca a versão."
+  },
+  vps: {
+    titulo: "Servidor VPS",
+    detalhe:
+      "O servidor ao qual o AI-BOT se conecta para build e deploy. Sem senha e sem chave privada no formulário."
+  },
+  administracao: {
+    titulo: "Administração",
+    detalhe:
+      "A política do grupo: tetos de delegação, quais ferramentas cada papel executa, quais modelos ele enxerga e quanto custa."
+  },
+  aparencia: {
+    titulo: "Aparência",
+    detalhe: "Tema da interface e a equipe de especialistas que atende nesta instalação."
+  }
+};
+
+/**
  * O que falta, por seção, para ela deixar de ser uma frase.
  *
  * Texto concreto de propósito: nomeia o pacote que já existe no gateway e a
@@ -775,12 +910,16 @@ const PENDENTE: Partial<Record<SectionId, string>> = {
 function Pendente({ id }: { id: SectionId }) {
   return (
     <div className="settings-section">
-      <p className="settings-feedback" data-ok="false">
-        Esta seção ainda não tem o que configurar no gateway do AI-BOT.
-      </p>
-      <p className="approval-note">{PENDENTE[id]}</p>
-      <p className="approval-note">
-        O item fica no menu porque o assunto é do produto — some dele seria fingir que a
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <ShieldCheck size={13} aria-hidden />
+          Ainda não configurável aqui
+          <span className="settings-chip-pill">sem rota no gateway</span>
+        </div>
+        <p className="settings-help">{PENDENTE[id]}</p>
+      </div>
+      <p className="settings-help">
+        O item fica no menu porque o assunto é do produto — tirá-lo seria fingir que a
         configuração não existe.
       </p>
     </div>
@@ -800,17 +939,26 @@ function ConexaoSection() {
 
   return (
     <div className="settings-section">
-      <div className="settings-list">
-        <Row label="Gateway" value={url} />
-        <Row label="Conexão" value={STATUS_LABEL[status]} />
-        <Row label="Ambiente" value={environment} />
-        <Row label="Catálogo" value={`${models.length} modelos · ${specialists.length} especialistas`} />
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <PlugZap size={13} aria-hidden />
+          Gateway
+          <span className="settings-chip-pill" data-tone={status === "ready" ? "ok" : ""}>
+            {STATUS_LABEL[status]}
+          </span>
+          <small>{url}</small>
+        </div>
+        <div className="settings-list">
+          <Row label="Ambiente" value={environment} />
+          <Row label="Modelos no catálogo" value={String(models.length)} />
+          <Row label="Especialistas" value={String(specialists.length)} />
+        </div>
+        <p className="settings-help">
+          O endereço não se digita aqui: quem sobe o gateway é o próprio aplicativo, e o Rust
+          informa em que porta ele atendeu. Um campo editável criaria duas verdades.
+        </p>
       </div>
-      <p className="approval-note">
-        O endereço não se digita aqui: quem sobe o gateway é o próprio aplicativo, e o Rust
-        informa em que porta ele atendeu. Editar este campo criaria duas verdades.
-      </p>
-      <p className="approval-note">
+      <p className="settings-help">
         O token do gateway e as chaves dos provedores ficam no cofre e não são exibidos aqui —
         nem por engano, nem em log.
       </p>
@@ -835,20 +983,36 @@ function MotoresSection({ client }: { client: CatalogClient | null }) {
   return (
     <>
       <div className="settings-section">
-        <div className="settings-list">
-          <Row label="Modelo da conversa" value={label} />
+        <div className="settings-cardx">
+          <div className="settings-cardx-title">
+            <Cpu size={13} aria-hidden />
+            Modelo da conversa
+            <span className="settings-head-spacer" />
+            <span className="settings-chip-pill" data-tone="accent">
+              {label}
+            </span>
+          </div>
+          <p className="settings-help">
+            Ele é trocado na barra superior, que é onde ele é usado; aqui se decide o que ENTRA
+            na lista dela.
+          </p>
         </div>
-        <p className="approval-note">
-          O modelo da conversa é trocado na barra superior, que é onde ele é usado; aqui se
-          decide o que ENTRA na lista dela.
-        </p>
       </div>
       <CatalogSection client={client} scope="models" />
-      <p className="approval-note">
-        Preset de fusion — vários modelos respondendo e um fundindo as respostas — não existe
-        neste produto. O que existe é a equipe de especialistas, que divide a tarefa em vez de
-        repetir a mesma pergunta em três modelos.
-      </p>
+      <div className="settings-section">
+        <div className="settings-cardx">
+          <div className="settings-cardx-title">
+            <Blocks size={13} aria-hidden />
+            Presets de fusion
+            <span className="settings-chip-pill">não existe neste produto</span>
+          </div>
+          <p className="settings-help">
+            Fusion é vários modelos respondendo a mesma pergunta e um fundindo as respostas. O
+            que existe aqui é a equipe de especialistas, que DIVIDE a tarefa em vez de repetir a
+            pergunta em três modelos — e cobra uma vez por parte, não três vezes pelo todo.
+          </p>
+        </div>
+      </div>
     </>
   );
 }
@@ -860,46 +1024,47 @@ function RuntimeSection() {
 
   return (
     <div className="settings-section">
-      <ul className="settings-list">
-        {environments.map((item) => {
-          const Glyph = ENVIRONMENT_ICON[item.id] ?? Monitor;
-          const ativo = item.id === environment;
-          return (
-            <li key={item.id} className="settings-item">
-              <div className="settings-item-main">
-                <span>
-                  <Glyph size={13} strokeWidth={1.75} aria-hidden /> {item.label}
-                  {ativo && <span className="settings-chip"> em uso</span>}
+      {environments.map((item) => {
+        const Glyph = ENVIRONMENT_ICON[item.id] ?? Monitor;
+        const ativo = item.id === environment;
+        return (
+          <div key={item.id} className="settings-cardx">
+            <div className="settings-cardx-title">
+              <Glyph size={13} strokeWidth={1.75} aria-hidden />
+              {item.label}
+              {ativo && (
+                <span className="settings-chip-pill" data-tone="accent">
+                  em uso
                 </span>
-                <span className="settings-item-sub">{item.hint}</span>
-                {item.available === false && item.detail !== undefined && (
-                  <span className="settings-feedback" data-ok="false">
-                    {item.detail}
-                  </span>
-                )}
-              </div>
+              )}
+              {item.available === false && (
+                <span className="settings-chip-pill">indisponível</span>
+              )}
+              <span className="settings-head-spacer" />
+              <small>{item.hint}</small>
+            </div>
+            {item.available === false && item.detail !== undefined && (
+              <p className="settings-help">{item.detail}</p>
+            )}
+            <div className="settings-actions">
               <button
                 type="button"
-                className="button-secondary"
+                className="settings-button"
                 disabled={ativo || item.available === false}
                 aria-label={`usar o ambiente ${item.label}`}
                 onClick={() => setEnvironment(item.id)}
               >
                 Usar
               </button>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="approval-note">
-        Quem mede o que existe nesta máquina é o gateway — ele procura o Docker, a distro do
-        WSL e a VPS cadastrada. Um ambiente indisponível não é escolhível: oferecer seria
-        prometer uma execução que falha depois, e o comando cairia na estação da pessoa em vez
-        do contêiner.
-      </p>
-      <p className="approval-note">
-        Baixar motor de inferência e modelo `.gguf` pela tela ainda não existe aqui; o modelo
-        local entra pelo catálogo, como provedor de kind `local`.
+            </div>
+          </div>
+        );
+      })}
+      <p className="settings-help">
+        Um ambiente indisponível não é escolhível: oferecer seria prometer uma execução que
+        falha depois, e o comando cairia na estação da pessoa em vez do contêiner. Baixar motor
+        de inferência e modelo `.gguf` pela tela ainda não existe aqui — o modelo local entra
+        pelo catálogo, como provedor de dialeto `local`.
       </p>
     </div>
   );
@@ -912,47 +1077,61 @@ function AparenciaSection() {
 
   return (
     <div className="settings-section">
-      <div className="settings-form-row">
-        <button
-          type="button"
-          className="button-secondary"
-          aria-pressed={theme === "light"}
-          onClick={() => setTheme("light")}
-        >
-          <Sun size={13} aria-hidden />
-          Claro
-        </button>
-        <button
-          type="button"
-          className="button-secondary"
-          aria-pressed={theme === "dark"}
-          onClick={() => setTheme("dark")}
-        >
-          <Moon size={13} aria-hidden />
-          Escuro
-        </button>
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <Palette size={13} aria-hidden />
+          Tema
+          <span className="settings-head-spacer" />
+          <small>o botão da barra superior é o atalho</small>
+        </div>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="settings-button"
+            data-kind={theme === "light" ? "primary" : undefined}
+            aria-pressed={theme === "light"}
+            onClick={() => setTheme("light")}
+          >
+            <Sun size={13} aria-hidden />
+            Claro
+          </button>
+          <button
+            type="button"
+            className="settings-button"
+            data-kind={theme === "dark" ? "primary" : undefined}
+            aria-pressed={theme === "dark"}
+            onClick={() => setTheme("dark")}
+          >
+            <Moon size={13} aria-hidden />
+            Escuro
+          </button>
+        </div>
       </div>
 
-      <p className="approval-summary">Especialistas</p>
-
-      <ul className="settings-list">
-        {specialists.map((specialist) => {
-          const Glyph = SPECIALIST_ICON[specialist.id] ?? Bot;
-          return (
-            <li key={specialist.id} className="settings-bot">
-              <Glyph size={14} strokeWidth={1.75} aria-hidden />
-              <span>{specialist.name}</span>
-              <span className="settings-bot-tag">{specialist.tagline}</span>
-            </li>
-          );
-        })}
-      </ul>
-
-      <p className="approval-note">
-        A cor de acento do app não se escolhe: ela é do especialista que está atendendo, e
-        muda quando a conversa muda de dono. Esconder especialista também não — a barra
-        lateral mostra a equipe inteira, e quem decide quem entra é a política.
-      </p>
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <Bot size={13} aria-hidden />
+          Especialistas
+          <span className="settings-chip-pill">{specialists.length}</span>
+        </div>
+        <ul className="settings-list">
+          {specialists.map((specialist) => {
+            const Glyph = SPECIALIST_ICON[specialist.id] ?? Bot;
+            return (
+              <li key={specialist.id} className="settings-bot">
+                <Glyph size={14} strokeWidth={1.75} aria-hidden />
+                <span>{specialist.name}</span>
+                <span className="settings-bot-tag">{specialist.tagline}</span>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="settings-help">
+          A cor de acento do app não se escolhe: ela é do especialista que está atendendo, e
+          muda quando a conversa muda de dono. Esconder especialista também não — a barra
+          lateral mostra a equipe inteira, e quem decide quem entra é a política.
+        </p>
+      </div>
     </div>
   );
 }
@@ -983,14 +1162,20 @@ export function SettingsPanel() {
         aria-labelledby="settings-title"
       >
         <header className="approval-head settings-head">
-          <Settings size={16} aria-hidden />
-          <h2 id="settings-title" className="approval-tool">
-            configurações
-          </h2>
+          <div className="settings-head-id">
+            <span>
+              <Settings size={15} aria-hidden />
+            </span>
+            <div>
+              <strong id="settings-title">Configurações</strong>
+              <small>AI-BOT</small>
+            </div>
+          </div>
           <span className="settings-head-spacer" />
           <button
             type="button"
-            className="button-secondary"
+            className="settings-button"
+            data-kind="ghost"
             aria-label="fechar configurações"
             onClick={() => setSettingsOpen(false)}
           >
@@ -1018,6 +1203,13 @@ export function SettingsPanel() {
           </nav>
 
           <div className="settings-content">
+            <div className="settings-section">
+              <header>
+                <h3>{SECAO_TEXTO[section].titulo}</h3>
+                <p>{SECAO_TEXTO[section].detalhe}</p>
+              </header>
+            </div>
+
             {section === "conexao" && <ConexaoSection />}
             {section === "motores" && <MotoresSection client={client} />}
             {section === "provedores" && <CatalogSection client={client} scope="providers" />}
