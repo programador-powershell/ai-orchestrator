@@ -138,3 +138,87 @@ describe("stand-in público", () => {
     host.remove();
   });
 });
+
+/**
+ * A camada v3: o corpo DEFORMA e a cena profissional é desenhada — mas só em
+ * quem tem tamanho para mostrá-la.
+ */
+const quadros = async (quantos: number): Promise<void> => {
+  for (let i = 0; i < quantos; i += 1) {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+  }
+};
+
+describe("animação v3", () => {
+  it("deforma o corpo em vez de deixar a esfera perfeita", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    const controller = await mountGrokSpecialistAvatar(host, {
+      moduleUrl: MODULO_FAKE,
+      specialist: "code",
+      state: "working",
+      size: 124
+    });
+
+    await quadros(3);
+
+    const corpo = host.querySelector<HTMLElement>(".gsa-avatar");
+    const transform = corpo?.style.transform ?? "";
+    // O v2 não mexia no corpo: a esfera ficava perfeita e parada. Aqui tem de
+    // haver escala e inclinação — é isso que dá a sensação de trabalho.
+    expect(transform).toContain("scale(");
+    expect(transform).toContain("skewX(");
+
+    controller.destroy();
+    host.remove();
+  });
+
+  it("desenha a cena profissional quando o avatar é grande", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    const controller = await mountGrokSpecialistAvatar(host, {
+      moduleUrl: MODULO_FAKE,
+      specialist: "code",
+      state: "working",
+      size: 124
+    });
+
+    await quadros(3);
+
+    // O terminal, as linhas de código e o cursor do especialista de Código.
+    const cena = host.querySelectorAll(".gsa-stage g > *");
+    expect(cena.length).toBeGreaterThan(0);
+
+    controller.destroy();
+    host.remove();
+  });
+
+  it("NÃO desenha a cena num avatar de lista, onde ela seria borrão", async () => {
+    // A lista de tarefas usa 26px. Um terminal de 116 unidades num viewBox de
+    // 200 vira três pixels — e reconstruí-lo a cada quadro, por avatar, custaria
+    // dezenas de nós SVG por segundo para não mostrar nada.
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    const controller = await mountGrokSpecialistAvatar(host, {
+      moduleUrl: MODULO_FAKE,
+      specialist: "code",
+      state: "working",
+      size: 26
+    });
+
+    await quadros(3);
+
+    const artefatos = host.querySelectorAll(".gsa-stage text, .gsa-stage rect, .gsa-stage line");
+    expect(artefatos.length).toBe(0);
+
+    // E mesmo pequeno o CORPO continua animando: é ele que se lê nesse tamanho.
+    const corpo = host.querySelector<HTMLElement>(".gsa-avatar");
+    expect(corpo?.style.transform ?? "").toContain("scale(");
+
+    controller.destroy();
+    host.remove();
+  });
+});

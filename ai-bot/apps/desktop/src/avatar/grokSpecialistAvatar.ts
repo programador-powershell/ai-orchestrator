@@ -1,9 +1,39 @@
 /**
- * grok_specialist_avatar_v2.ts
+ * grok_professional_avatar_v3.ts
  *
- * Wrapper for an avatar package exported by Bible Strong Avatar Lab.
- * The avatar itself stays the black procedural sphere with white eyes.
- * Specialist identity comes from expression/animation + subtle SVG activity cues.
+ * TRUE professional-activity animation layer for a Grok-style procedural avatar.
+ *
+ * The previous wrapper only changed Avatar Lab expressions; the body stayed a
+ * perfect sphere because the exported avatar definition keeps body geometry
+ * outside the expression/animation steps.
+ *
+ * This version adds:
+ *   1. continuous body deformation (squash/stretch/skew/lean)
+ *   2. optional organic SVG displacement while working
+ *   3. black "blob limbs" that visually grow from the character
+ *   4. profession-specific choreography
+ *   5. 8 specialists x 5 states
+ *
+ * Specialists:
+ *   chat, code, data, design, agent, flow, tuning, security
+ *
+ * States:
+ *   active, owner, working, waiting, completed
+ *
+ * It is designed to wrap avatar.js exported by Bible Strong Avatar Lab.
+ *
+ * Example:
+ *
+ *   const bot = await mountGrokSpecialistAvatar("#bot", {
+ *     moduleUrl: "/avatars/grok/avatar.js",
+ *     specialist: "code",
+ *     state: "working",
+ *     size: 240,
+ *   });
+ *
+ *   bot.setState("waiting");
+ *   bot.setSpecialist("security");
+ *   bot.setState("working");
  */
 
 export type GrokSpecialist =
@@ -48,101 +78,154 @@ export interface MountGrokSpecialistOptions {
   specialist: GrokSpecialist;
   state?: GrokSpecialistState;
   size?: number | string;
+
+  /**
+   * Blob color. The Grok-style preset is black.
+   */
+  bodyColor?: string;
+
+  /**
+   * Accent is only used for task artifacts / status.
+   */
   accent?: string;
-  showActivityGlyphs?: boolean;
-  showStateRing?: boolean;
+
+  /**
+   * Strength of body deformation.
+   * 0 = none, 1 = intended effect, 1.5 = exaggerated.
+   */
+  deformation?: number;
+
+  /**
+   * Enable feTurbulence + feDisplacementMap during high-energy states.
+   */
+  organicWarp?: boolean;
+
+  /**
+   * Show tiny Owner/completed status cues.
+   */
+  statusCues?: boolean;
 }
 
 export interface GrokSpecialistAvatarController {
   readonly element: HTMLElement;
+
   getSpecialist(): GrokSpecialist;
   getState(): GrokSpecialistState;
+
   setSpecialist(specialist: GrokSpecialist): void;
   setState(state: GrokSpecialistState): void;
+
   setAccent(color: string): void;
-  replay(): void;
+  setDeformation(strength: number): void;
+
   pause(): void;
   resume(): void;
+  /** Reinicia a animação de emoção do estado atual. */
+  replay(): void;
   destroy(): void;
 }
 
-type SpecialistVisual = {
-  accent: string;
-  activeAnimations: readonly string[];
-  ownerAnimations: readonly string[];
-  workingAnimations: readonly string[];
-  waitingAnimations: readonly string[];
-  completedAnimations: readonly string[];
+type Pose = {
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+  rotate: number;
+  skewX: number;
+  warp: number;
 };
 
-const SPECIALIST_VISUALS: Record<GrokSpecialist, SpecialistVisual> = {
-  chat: {
-    accent: "#55c7ff",
-    activeAnimations: ["listening", "idle"],
-    ownerAnimations: ["proud", "listening", "idle"],
-    workingAnimations: ["listening", "working", "thinking"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["happy", "celebrate", "idle"],
-  },
-  code: {
-    accent: "#66e28f",
-    activeAnimations: ["idle", "listening"],
-    ownerAnimations: ["proud", "thinking", "idle"],
-    workingAnimations: ["working", "thinking", "searching"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["celebrate", "happy", "idle"],
-  },
-  data: {
-    accent: "#72a7ff",
-    activeAnimations: ["curious", "listening", "idle"],
-    ownerAnimations: ["proud", "curious", "idle"],
-    workingAnimations: ["searching", "thinking", "working"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["happy", "celebrate", "idle"],
-  },
-  design: {
-    accent: "#e985ff",
-    activeAnimations: ["curious", "idle", "listening"],
-    ownerAnimations: ["proud", "curious", "idle"],
-    workingAnimations: ["curious", "thinking", "excited", "working"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["happy", "celebrate", "idle"],
-  },
-  agent: {
-    accent: "#a995ff",
-    activeAnimations: ["listening", "idle"],
-    ownerAnimations: ["proud", "thinking", "idle"],
-    workingAnimations: ["thinking", "searching", "working"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["celebrate", "happy", "idle"],
-  },
-  flow: {
-    accent: "#ff9d62",
-    activeAnimations: ["idle", "listening"],
-    ownerAnimations: ["proud", "idle"],
-    workingAnimations: ["working", "searching", "thinking"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["celebrate", "happy", "idle"],
-  },
-  tuning: {
-    accent: "#f4ce64",
-    activeAnimations: ["curious", "idle"],
-    ownerAnimations: ["proud", "thinking", "idle"],
-    workingAnimations: ["thinking", "searching", "working"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["happy", "celebrate", "idle"],
-  },
-  security: {
-    accent: "#5de0c5",
-    activeAnimations: ["suspicious", "listening", "idle"],
-    ownerAnimations: ["proud", "suspicious", "idle"],
-    workingAnimations: ["searching", "suspicious", "working"],
-    waitingAnimations: ["sleeping", "drowsy", "idle"],
-    completedAnimations: ["happy", "celebrate", "idle"],
-  },
+type Point = {
+  x: number;
+  y: number;
 };
 
-const SPECIALIST_LABELS: Record<GrokSpecialist, string> = {
+type StageNodes = {
+  svg: SVGSVGElement;
+  back: SVGGElement;
+  front: SVGGElement;
+  artifacts: SVGGElement;
+  leftArm: SVGPathElement;
+  rightArm: SVGPathElement;
+  ownerRing: SVGCircleElement;
+  ownerDotA: SVGCircleElement;
+  ownerDotB: SVGCircleElement;
+  ownerDotC: SVGCircleElement;
+  completeBadge: SVGGElement;
+  filterId: string;
+  turbulence: SVGFETurbulenceElement;
+  displacement: SVGFEDisplacementMapElement;
+};
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const TAU = Math.PI * 2;
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
+
+const lerp = (a: number, b: number, amount: number): number =>
+  a + (b - a) * amount;
+
+const mixPose = (from: Pose, to: Pose, amount: number): Pose => ({
+  x: lerp(from.x, to.x, amount),
+  y: lerp(from.y, to.y, amount),
+  sx: lerp(from.sx, to.sx, amount),
+  sy: lerp(from.sy, to.sy, amount),
+  rotate: lerp(from.rotate, to.rotate, amount),
+  skewX: lerp(from.skewX, to.skewX, amount),
+  warp: lerp(from.warp, to.warp, amount),
+});
+
+const sin01 = (time: number, speed = 1, phase = 0): number =>
+  0.5 + 0.5 * Math.sin(time * speed + phase);
+
+const wave = (time: number, speed = 1, phase = 0): number =>
+  Math.sin(time * speed + phase);
+
+const pingPong = (time: number): number => {
+  const value = ((time % 2) + 2) % 2;
+  return value <= 1 ? value : 2 - value;
+};
+
+const ease = (value: number): number => {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+const makeSvg = <K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attributes: Record<string, string | number> = {},
+): SVGElementTagNameMap[K] => {
+  const node = document.createElementNS(SVG_NS, tag);
+
+  for (const [key, value] of Object.entries(attributes)) {
+    node.setAttribute(key, String(value));
+  }
+
+  return node;
+};
+
+const clear = (node: Element): void => {
+  while (node.firstChild) node.removeChild(node.firstChild);
+};
+
+const randomId = (): string =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID().replaceAll("-", "")
+    : `${Date.now()}${Math.random().toString(16).slice(2)}`;
+
+const SPECIALIST_ACCENT: Record<GrokSpecialist, string> = {
+  chat: "#55c7ff",
+  code: "#65df8d",
+  data: "#72a7ff",
+  design: "#e985ff",
+  agent: "#a995ff",
+  flow: "#ff9d62",
+  tuning: "#f4ce64",
+  security: "#5de0c5",
+};
+
+const SPECIALIST_LABEL: Record<GrokSpecialist, string> = {
   chat: "Chat",
   code: "Code",
   data: "Data",
@@ -153,7 +236,7 @@ const SPECIALIST_LABELS: Record<GrokSpecialist, string> = {
   security: "Security",
 };
 
-const STATE_LABELS: Record<GrokSpecialistState, string> = {
+const STATE_LABEL: Record<GrokSpecialistState, string> = {
   active: "Ativo",
   owner: "Owner",
   working: "Trabalhando",
@@ -161,32 +244,70 @@ const STATE_LABELS: Record<GrokSpecialistState, string> = {
   completed: "Concluído",
 };
 
-const FALLBACK_ANIMATIONS = [
-  "idle",
-  "listening",
-  "thinking",
-  "working",
-  "sleeping",
-] as const;
-
-const stateCandidates = (
-  specialist: GrokSpecialist,
-  state: GrokSpecialistState,
-): readonly string[] => {
-  const visual = SPECIALIST_VISUALS[specialist];
-
-  switch (state) {
-    case "active":
-      return visual.activeAnimations;
-    case "owner":
-      return visual.ownerAnimations;
-    case "working":
-      return visual.workingAnimations;
-    case "waiting":
-      return visual.waitingAnimations;
-    case "completed":
-      return visual.completedAnimations;
-  }
+/**
+ * Emotional states from the Avatar Lab vocabulary.
+ * The body choreography below is independent from this eye/head expression.
+ */
+export const GROK_SPECIALIST_BEHAVIOR_MAP: Record<
+  GrokSpecialist,
+  Record<GrokSpecialistState, readonly string[]>
+> = {
+  chat: {
+    active: ["listening", "idle"],
+    owner: ["proud", "listening", "idle"],
+    working: ["listening", "working", "thinking"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["happy", "celebrate", "idle"],
+  },
+  code: {
+    active: ["idle", "listening"],
+    owner: ["proud", "thinking", "idle"],
+    working: ["working", "thinking", "searching"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["celebrate", "happy", "idle"],
+  },
+  data: {
+    active: ["curious", "idle"],
+    owner: ["proud", "curious", "idle"],
+    working: ["searching", "thinking", "working"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["happy", "celebrate", "idle"],
+  },
+  design: {
+    active: ["curious", "idle"],
+    owner: ["proud", "curious", "idle"],
+    working: ["curious", "thinking", "working"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["happy", "celebrate", "idle"],
+  },
+  agent: {
+    active: ["listening", "idle"],
+    owner: ["proud", "thinking", "idle"],
+    working: ["thinking", "searching", "working"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["celebrate", "happy", "idle"],
+  },
+  flow: {
+    active: ["idle", "listening"],
+    owner: ["proud", "idle"],
+    working: ["working", "searching", "thinking"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["celebrate", "happy", "idle"],
+  },
+  tuning: {
+    active: ["curious", "idle"],
+    owner: ["proud", "thinking", "idle"],
+    working: ["thinking", "working", "searching"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["happy", "celebrate", "idle"],
+  },
+  security: {
+    active: ["suspicious", "listening", "idle"],
+    owner: ["proud", "suspicious", "idle"],
+    working: ["searching", "suspicious", "working"],
+    waiting: ["sleeping", "drowsy", "idle"],
+    completed: ["happy", "celebrate", "idle"],
+  },
 };
 
 const pickAnimation = (
@@ -194,35 +315,20 @@ const pickAnimation = (
   specialist: GrokSpecialist,
   state: GrokSpecialistState,
 ): string | undefined => {
-  const pool = new Set(available);
+  const known = new Set(available);
 
-  for (const animation of stateCandidates(specialist, state)) {
-    if (pool.has(animation)) return animation;
+  for (const candidate of GROK_SPECIALIST_BEHAVIOR_MAP[specialist][state]) {
+    if (known.has(candidate)) return candidate;
   }
 
-  for (const animation of FALLBACK_ANIMATIONS) {
-    if (pool.has(animation)) return animation;
+  for (const fallback of ["idle", "listening", "thinking", "working", "sleeping"]) {
+    if (known.has(fallback)) return fallback;
   }
 
   return available[0];
 };
 
-const resolveTarget = (target: Element | string): HTMLElement => {
-  const node =
-    typeof target === "string" ? document.querySelector(target) : target;
-
-  if (!node) {
-    throw new Error(`Avatar target not found: ${String(target)}`);
-  }
-
-  if (!(node instanceof HTMLElement)) {
-    throw new Error("Avatar target must be an HTMLElement.");
-  }
-
-  return node;
-};
-
-const loadAvatarModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
+const loadModule = async (moduleUrl: string): Promise<AvatarLabModule> => {
   const imported = (await import(
     /* @vite-ignore */
     moduleUrl
@@ -243,83 +349,15 @@ const loadAvatarModule = async (moduleUrl: string): Promise<AvatarLabModule> => 
   return imported as AvatarLabModule;
 };
 
-const SVG_NS = "http://www.w3.org/2000/svg";
+const resolveTarget = (target: Element | string): HTMLElement => {
+  const element =
+    typeof target === "string" ? document.querySelector(target) : target;
 
-const makeSvg = <K extends keyof SVGElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string | number> = {},
-): SVGElementTagNameMap[K] => {
-  const node = document.createElementNS(SVG_NS, tag);
-
-  for (const [key, value] of Object.entries(attrs)) {
-    node.setAttribute(key, String(value));
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`alvo do avatar do especialista não encontrado: ${String(target)}`);
   }
 
-  return node;
-};
-
-const appendLine = (
-  parent: SVGElement,
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  width = 2,
-  opacity = 0.85,
-): void => {
-  parent.appendChild(
-    makeSvg("line", {
-      x1,
-      y1,
-      x2,
-      y2,
-      stroke: "currentColor",
-      "stroke-width": width,
-      "stroke-linecap": "round",
-      opacity,
-    }),
-  );
-};
-
-const appendCircle = (
-  parent: SVGElement,
-  cx: number,
-  cy: number,
-  r: number,
-  opacity = 0.85,
-): void => {
-  parent.appendChild(
-    makeSvg("circle", {
-      cx,
-      cy,
-      r,
-      fill: "currentColor",
-      opacity,
-    }),
-  );
-};
-
-const appendPath = (
-  parent: SVGElement,
-  d: string,
-  width = 2,
-  opacity = 0.85,
-): void => {
-  parent.appendChild(
-    makeSvg("path", {
-      d,
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": width,
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-      opacity,
-    }),
-  );
-};
-
-const clear = (element: Element): void => {
-  while (element.firstChild) element.removeChild(element.firstChild);
+  return element;
 };
 
 const ensureStyles = (): void => {
@@ -329,23 +367,38 @@ const ensureStyles = (): void => {
   style.id = "gsa-style";
   style.textContent = `
 .gsa-root {
-  --gsa-size: 220px;
+  --gsa-size: 240px;
   --gsa-accent: #55c7ff;
+  --gsa-body: #000;
+  position: relative;
   width: var(--gsa-size);
   height: var(--gsa-size);
-  position: relative;
-  display: grid;
-  place-items: center;
-  isolation: isolate;
   overflow: visible;
+  isolation: isolate;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gsa-stage,
+.gsa-art-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.gsa-stage {
+  z-index: 1;
 }
 
 .gsa-avatar {
   position: absolute;
-  inset: 8%;
+  inset: 11%;
   z-index: 2;
-  display: grid;
-  place-items: center;
+  transform-origin: 50% 55%;
+  will-change: transform, filter;
 }
 
 .gsa-avatar > * {
@@ -353,156 +406,73 @@ const ensureStyles = (): void => {
   height: 100% !important;
 }
 
-.gsa-overlay {
-  position: absolute;
-  inset: 0;
+.gsa-art-layer {
   z-index: 3;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-  color: var(--gsa-accent);
 }
 
-.gsa-ring {
+.gsa-blob-limb {
   fill: none;
-  stroke: currentColor;
+  stroke: var(--gsa-body);
+  stroke-width: 15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.gsa-root[data-state="working"] .gsa-blob-limb,
+.gsa-root[data-state="owner"] .gsa-blob-limb {
+  opacity: 1;
+}
+
+.gsa-owner-ring {
+  fill: none;
+  stroke: var(--gsa-accent);
   stroke-width: 1.5;
+  stroke-dasharray: 10 8;
+  opacity: 0;
   transform-origin: 100px 100px;
-  opacity: 0;
 }
 
-.gsa-root[data-state="active"] .gsa-ring {
-  opacity: .18;
-  animation: gsa-breathe 3s ease-in-out infinite;
-}
-
-.gsa-root[data-state="owner"] .gsa-ring {
-  opacity: .74;
-  stroke-width: 2;
-  stroke-dasharray: 11 8;
-  animation: gsa-owner-spin 9s linear infinite;
-}
-
-.gsa-root[data-state="working"] .gsa-ring {
-  opacity: .38;
-  stroke-dasharray: 3 8;
-  animation: gsa-work-spin 3s linear infinite;
-}
-
-.gsa-root[data-state="waiting"] .gsa-ring {
-  opacity: .07;
-}
-
-.gsa-root[data-state="completed"] .gsa-ring {
-  opacity: .28;
-  animation: gsa-complete-pulse 2.6s ease-in-out infinite;
-}
-
-.gsa-glyph {
+.gsa-root[data-state="owner"] .gsa-owner-ring {
   opacity: .72;
-  transition: opacity .2s ease;
-}
-
-.gsa-root[data-state="working"] .gsa-glyph {
-  opacity: .95;
-}
-
-.gsa-root[data-state="waiting"] .gsa-glyph {
-  opacity: .14;
-}
-
-.gsa-root[data-state="completed"] .gsa-glyph {
-  opacity: .42;
-}
-
-.gsa-particle {
-  fill: currentColor;
-  opacity: 0;
-}
-
-.gsa-root[data-state="working"] .gsa-particle {
-  animation: gsa-particle 1.4s ease-in-out infinite;
-}
-
-.gsa-root[data-state="owner"] .gsa-particle {
-  animation: gsa-particle 2.8s ease-in-out infinite;
+  animation: gsa-owner-ring 8s linear infinite;
 }
 
 .gsa-owner-dot {
-  fill: currentColor;
+  fill: var(--gsa-accent);
   opacity: 0;
 }
 
 .gsa-root[data-state="owner"] .gsa-owner-dot {
-  opacity: .88;
-  animation: gsa-owner-dot 2s ease-in-out infinite;
+  opacity: .9;
+  animation: gsa-owner-dot 1.9s ease-in-out infinite;
 }
 
-.gsa-z {
-  fill: currentColor;
-  font: 700 12px ui-sans-serif, system-ui, sans-serif;
+.gsa-complete {
+  color: var(--gsa-accent);
   opacity: 0;
+  transform-origin: 169px 169px;
 }
 
-.gsa-root[data-state="waiting"] .gsa-z {
-  animation: gsa-z 2.4s ease-in-out infinite;
+.gsa-root[data-state="completed"] .gsa-complete {
+  opacity: 1;
+  animation: gsa-complete 2.5s ease-in-out infinite;
 }
 
-.gsa-check {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: 0;
-  transform-origin: 170px 167px;
-}
-
-.gsa-root[data-state="completed"] .gsa-check {
-  opacity: .95;
-  animation: gsa-check 2.5s ease-in-out infinite;
-}
-
-@keyframes gsa-breathe {
-  0%,100% { transform: scale(.985); opacity: .12; }
-  50% { transform: scale(1.018); opacity: .28; }
-}
-
-@keyframes gsa-owner-spin {
+@keyframes gsa-owner-ring {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
 
-@keyframes gsa-work-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(-360deg); }
-}
-
-@keyframes gsa-complete-pulse {
-  0%,100% { transform: scale(.99); opacity: .19; }
-  50% { transform: scale(1.025); opacity: .36; }
-}
-
-@keyframes gsa-particle {
-  0% { opacity: 0; transform: translate(0,0) scale(.7); }
-  30% { opacity: .9; }
-  100% { opacity: 0; transform: translate(8px,-10px) scale(1.08); }
-}
-
 @keyframes gsa-owner-dot {
-  0%,100% { opacity: .4; transform: scale(.7); }
-  50% { opacity: 1; transform: scale(1.15); }
+  0%,100% { transform: scale(.72); opacity: .45; }
+  50% { transform: scale(1.15); opacity: 1; }
 }
 
-@keyframes gsa-z {
-  0% { opacity: 0; transform: translate(0,4px) scale(.8); }
-  25% { opacity: .75; }
-  100% { opacity: 0; transform: translate(12px,-18px) scale(1.1); }
-}
-
-@keyframes gsa-check {
-  0%,70%,100% { transform: scale(.95); opacity: .72; }
-  82% { transform: scale(1.1); opacity: 1; }
+@keyframes gsa-complete {
+  0%,70%,100% { transform: scale(.94); opacity: .72; }
+  82% { transform: scale(1.12); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -516,263 +486,1203 @@ const ensureStyles = (): void => {
   document.head.appendChild(style);
 };
 
-const drawSpecialistGlyph = (
-  group: SVGGElement,
-  specialist: GrokSpecialist,
-): void => {
-  clear(group);
+const createStage = (): StageNodes => {
+  const filterId = `gsa-warp-${randomId()}`;
 
-  switch (specialist) {
-    case "chat": {
-      group.appendChild(
-        makeSvg("path", {
-          d: "M24 54 Q24 43 35 43 H61 Q72 43 72 54 V66 Q72 77 61 77 H46 L38 85 V77 H35 Q24 77 24 66 Z",
-          fill: "none",
-          stroke: "currentColor",
-          "stroke-width": 2.2,
-          opacity: 0.82,
-        }),
-      );
-      appendCircle(group, 38, 60, 2);
-      appendCircle(group, 48, 60, 2);
-      appendCircle(group, 58, 60, 2);
-      break;
-    }
-
-    case "code":
-      appendPath(group, "M37 50 L24 64 L37 78", 2.5, 0.9);
-      appendPath(group, "M61 50 L74 64 L61 78", 2.5, 0.9);
-      appendLine(group, 55, 47, 45, 81, 2.4, 0.82);
-      break;
-
-    case "data":
-      appendLine(group, 27, 82, 27, 68, 7, 0.48);
-      appendLine(group, 42, 82, 42, 54, 7, 0.66);
-      appendLine(group, 57, 82, 57, 39, 7, 0.9);
-      appendCircle(group, 29, 45, 3.2, 0.58);
-      appendCircle(group, 43, 35, 3.2, 0.72);
-      appendCircle(group, 58, 27, 3.2, 0.9);
-      appendPath(group, "M29 45 L43 35 L58 27", 1.6, 0.42);
-      break;
-
-    case "design":
-      appendPath(group, "M24 76 C34 38 63 41 76 66", 2.2, 0.85);
-      appendLine(group, 24, 76, 36, 42, 1.2, 0.34);
-      appendLine(group, 76, 66, 64, 42, 1.2, 0.34);
-      appendCircle(group, 24, 76, 3, 0.92);
-      appendCircle(group, 36, 42, 2.4, 0.58);
-      appendCircle(group, 64, 42, 2.4, 0.58);
-      appendCircle(group, 76, 66, 3, 0.92);
-      break;
-
-    case "agent": {
-      appendCircle(group, 50, 58, 5.4, 0.92);
-      const nodes = [
-        [27, 39],
-        [73, 39],
-        [27, 78],
-        [73, 78],
-      ] as const;
-
-      for (const [x, y] of nodes) {
-        appendLine(group, 50, 58, x, y, 1.3, 0.34);
-        appendCircle(group, x, y, 3.5, 0.68);
-      }
-      break;
-    }
-
-    case "flow":
-      appendCircle(group, 27, 58, 5.2, 0.76);
-      group.appendChild(
-        makeSvg("path", {
-          d: "M50 49 L59 58 L50 67 L41 58 Z",
-          fill: "none",
-          stroke: "currentColor",
-          "stroke-width": 2,
-          opacity: 0.82,
-        }),
-      );
-      group.appendChild(
-        makeSvg("rect", {
-          x: 70,
-          y: 50.5,
-          width: 15,
-          height: 15,
-          rx: 4,
-          fill: "none",
-          stroke: "currentColor",
-          "stroke-width": 2,
-          opacity: 0.9,
-        }),
-      );
-      appendLine(group, 32, 58, 41, 58, 1.7, 0.42);
-      appendLine(group, 59, 58, 70, 58, 1.7, 0.42);
-      break;
-
-    case "tuning": {
-      const rows = [41, 58, 75];
-      const knobX = [42, 65, 34];
-      rows.forEach((y, i) => {
-        appendLine(group, 24, y, 78, y, 1.4, 0.4);
-        // [ADAPTAÇÃO] fallback exigido pelo noUncheckedIndexedAccess do repo.
-        appendCircle(group, knobX[i] ?? 42, y, 4.1, 0.9);
-      });
-      break;
-    }
-
-    case "security":
-      appendPath(
-        group,
-        "M50 27 L72 36 V54 Q71 72 50 84 Q29 72 28 54 V36 Z",
-        2.2,
-        0.86,
-      );
-      appendLine(group, 35, 56, 65, 56, 1.8, 0.7);
-      break;
-  }
-};
-
-const createOverlay = (
-  specialist: GrokSpecialist,
-  showGlyphs: boolean,
-  showRing: boolean,
-): { overlay: SVGSVGElement; glyph: SVGGElement } => {
-  const overlay = makeSvg("svg", {
-    class: "gsa-overlay",
+  const svg = makeSvg("svg", {
+    class: "gsa-stage",
     viewBox: "0 0 200 200",
     "aria-hidden": "true",
   });
 
-  if (showRing) {
-    overlay.appendChild(
-      makeSvg("circle", {
-        class: "gsa-ring",
-        cx: 100,
-        cy: 100,
-        r: 91,
-      }),
-    );
-  }
+  const defs = makeSvg("defs");
 
-  const glyph = makeSvg("g", {
-    class: "gsa-glyph",
-    transform: "translate(4 4) scale(.62)",
+  const filter = makeSvg("filter", {
+    id: filterId,
+    x: "-30%",
+    y: "-30%",
+    width: "160%",
+    height: "160%",
   });
 
-  if (showGlyphs) {
-    drawSpecialistGlyph(glyph, specialist);
-    overlay.appendChild(glyph);
-  }
-
-  const particlePoints = [
-    [145, 45, 1.8],
-    [166, 67, 1.4],
-    [157, 94, 1.2],
-    [48, 151, 1.6],
-    [30, 129, 1.3],
-  ] as const;
-
-  particlePoints.forEach(([cx, cy, r], i) => {
-    overlay.appendChild(
-      makeSvg("circle", {
-        cx,
-        cy,
-        r,
-        class: "gsa-particle",
-        style: `animation-delay:${i * 150}ms`,
-      }),
-    );
+  const turbulence = makeSvg("feTurbulence", {
+    type: "fractalNoise",
+    baseFrequency: "0.012 0.017",
+    numOctaves: 2,
+    seed: 7,
+    result: "noise",
   });
 
-  const ownerDots = [
-    [79, 16, 2.4],
-    [100, 10, 3.2],
-    [121, 16, 2.4],
-  ] as const;
-
-  ownerDots.forEach(([cx, cy, r], i) => {
-    overlay.appendChild(
-      makeSvg("circle", {
-        cx,
-        cy,
-        r,
-        class: "gsa-owner-dot",
-        style: `animation-delay:${i * 220}ms`,
-      }),
-    );
+  const displacement = makeSvg("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "noise",
+    scale: 0,
+    xChannelSelector: "R",
+    yChannelSelector: "G",
   });
 
-  const z1 = makeSvg("text", {
-    x: 154,
-    y: 54,
-    class: "gsa-z",
-  });
-  z1.textContent = "Z";
-  overlay.appendChild(z1);
+  filter.appendChild(turbulence);
+  filter.appendChild(displacement);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
 
-  const z2 = makeSvg("text", {
-    x: 168,
-    y: 40,
-    class: "gsa-z",
-    style: "animation-delay:650ms",
-  });
-  z2.textContent = "z";
-  overlay.appendChild(z2);
+  const back = makeSvg("g");
+  const front = makeSvg("g");
+  const artifacts = makeSvg("g");
 
-  overlay.appendChild(
+  const leftArm = makeSvg("path", {
+    class: "gsa-blob-limb",
+    d: "M82 112 C70 120 63 129 58 139",
+  });
+
+  const rightArm = makeSvg("path", {
+    class: "gsa-blob-limb",
+    d: "M118 112 C130 120 137 129 142 139",
+  });
+
+  back.appendChild(leftArm);
+  back.appendChild(rightArm);
+
+  const ownerRing = makeSvg("circle", {
+    class: "gsa-owner-ring",
+    cx: 100,
+    cy: 100,
+    r: 88,
+  });
+
+  front.appendChild(ownerRing);
+
+  const ownerDotA = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 83,
+    cy: 12,
+    r: 2.2,
+  });
+
+  const ownerDotB = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 100,
+    cy: 8,
+    r: 3,
+    style: "animation-delay:180ms",
+  });
+
+  const ownerDotC = makeSvg("circle", {
+    class: "gsa-owner-dot",
+    cx: 117,
+    cy: 12,
+    r: 2.2,
+    style: "animation-delay:360ms",
+  });
+
+  front.appendChild(ownerDotA);
+  front.appendChild(ownerDotB);
+  front.appendChild(ownerDotC);
+
+  const completeBadge = makeSvg("g", {
+    class: "gsa-complete",
+    transform: "translate(169 169)",
+  });
+
+  completeBadge.appendChild(
     makeSvg("circle", {
-      cx: 170,
-      cy: 167,
-      r: 17,
-      class: "gsa-check",
+      cx: 0,
+      cy: 0,
+      r: 16,
+      fill: "none",
+      stroke: "currentColor",
       "stroke-width": 1.5,
+      opacity: 0.38,
     }),
   );
 
-  overlay.appendChild(
+  completeBadge.appendChild(
     makeSvg("path", {
-      d: "M161 167 L167 173 L179 159",
-      class: "gsa-check",
+      d: "M-8 0 L-2 6 L10 -8",
+      fill: "none",
+      stroke: "currentColor",
       "stroke-width": 3,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
     }),
   );
 
-  return { overlay, glyph };
+  front.appendChild(completeBadge);
+
+  svg.appendChild(back);
+  svg.appendChild(artifacts);
+  svg.appendChild(front);
+
+  return {
+    svg,
+    back,
+    front,
+    artifacts,
+    leftArm,
+    rightArm,
+    ownerRing,
+    ownerDotA,
+    ownerDotB,
+    ownerDotC,
+    completeBadge,
+    filterId,
+    turbulence,
+    displacement,
+  };
 };
 
-class Controller implements GrokSpecialistAvatarController {
+/**
+ * Non-round baseline for every professional.
+ *
+ * Even when merely ACTIVE, specialists do not all sit in the same perfect circle.
+ */
+const professionalBasePose = (specialist: GrokSpecialist): Pose => {
+  switch (specialist) {
+    case "chat":
+      return { x: 0, y: 0, sx: 1.06, sy: 0.97, rotate: -2, skewX: -2, warp: 2 };
+
+    case "code":
+      return { x: 0, y: 1, sx: 0.94, sy: 1.08, rotate: 4, skewX: -3, warp: 3 };
+
+    case "data":
+      return { x: -1, y: -1, sx: 0.90, sy: 1.13, rotate: -3, skewX: 2, warp: 3 };
+
+    case "design":
+      return { x: 0, y: 0, sx: 1.03, sy: 1.01, rotate: -8, skewX: 7, warp: 5 };
+
+    case "agent":
+      return { x: 0, y: 1, sx: 1.10, sy: 0.93, rotate: 0, skewX: 0, warp: 6 };
+
+    case "flow":
+      return { x: 0, y: 2, sx: 1.15, sy: 0.90, rotate: 1, skewX: 4, warp: 5 };
+
+    case "tuning":
+      return { x: 0, y: 1, sx: 0.98, sy: 1.05, rotate: 0, skewX: -4, warp: 3 };
+
+    case "security":
+      return { x: 0, y: 1, sx: 1.13, sy: 0.91, rotate: 0, skewX: 0, warp: 2 };
+  }
+};
+
+const stateModifier = (
+  state: GrokSpecialistState,
+  time: number,
+): Pose => {
+  switch (state) {
+    case "active":
+      return {
+        x: wave(time, 0.9) * 0.8,
+        y: wave(time, 1.1, 0.5) * 0.9,
+        sx: 1 + wave(time, 1.2) * 0.012,
+        sy: 1 - wave(time, 1.2) * 0.010,
+        rotate: wave(time, 0.7) * 1.2,
+        skewX: 0,
+        warp: 1,
+      };
+
+    case "owner":
+      return {
+        x: wave(time, 0.8) * 0.45,
+        y: -3 + wave(time, 1.0) * 0.6,
+        sx: 1.045 + wave(time, 1.3) * 0.012,
+        sy: 1.045 - wave(time, 1.3) * 0.006,
+        rotate: wave(time, 0.7) * 0.8,
+        skewX: 0,
+        warp: 2,
+      };
+
+    case "working":
+      return {
+        x: wave(time, 3.1) * 1.0,
+        y: wave(time, 3.8, 0.4) * 1.1,
+        sx: 1 + wave(time, 4.2) * 0.035,
+        sy: 1 - wave(time, 4.2) * 0.027,
+        rotate: wave(time, 2.6) * 1.5,
+        skewX: wave(time, 3.3) * 1.4,
+        warp: 7 + sin01(time, 2.2) * 6,
+      };
+
+    case "waiting":
+      return {
+        x: 0,
+        y: 15 + wave(time, 0.8) * 0.9,
+        sx: 1.12 + wave(time, 0.9) * 0.006,
+        sy: 0.78 - wave(time, 0.9) * 0.004,
+        rotate: -5 + wave(time, 0.5) * 0.7,
+        skewX: -3,
+        warp: 1,
+      };
+
+    case "completed":
+      return {
+        x: 0,
+        y: -2 + wave(time, 1.5) * 0.8,
+        sx: 1.04 + wave(time, 1.9) * 0.014,
+        sy: 1.02 - wave(time, 1.9) * 0.008,
+        rotate: wave(time, 1.0) * 1.3,
+        skewX: 0,
+        warp: 2,
+      };
+  }
+};
+
+const specialistWorkingPose = (
+  specialist: GrokSpecialist,
+  state: GrokSpecialistState,
+  time: number,
+): Pose => {
+  if (state !== "working") {
+    return { x: 0, y: 0, sx: 1, sy: 1, rotate: 0, skewX: 0, warp: 0 };
+  }
+
+  switch (specialist) {
+    /**
+     * CHAT
+     * Conversation is alternating attention: lean left -> center -> right.
+     * The body squashes on "speaking" beats.
+     */
+    case "chat": {
+      const side = wave(time, 1.8);
+      const talk = Math.max(0, wave(time, 6.5));
+      return {
+        x: side * 3.5,
+        y: -talk * 1.5,
+        sx: 1.04 + talk * 0.07,
+        sy: 0.97 - talk * 0.045,
+        rotate: side * 5,
+        skewX: -side * 4,
+        warp: 3 + talk * 5,
+      };
+    }
+
+    /**
+     * CODE
+     * Lean into the terminal and "type": fast asymmetric squash/stretch.
+     */
+    case "code": {
+      const typing = wave(time, 11);
+      const scan = wave(time, 2.3);
+      return {
+        x: scan * 1.6,
+        y: 5 + Math.abs(typing) * 1.2,
+        sx: 0.92 + typing * 0.035,
+        sy: 1.10 - typing * 0.028,
+        rotate: 7 + scan * 2,
+        skewX: -6 + typing * 1.8,
+        warp: 5 + Math.abs(typing) * 5,
+      };
+    }
+
+    /**
+     * DATA
+     * Stretch upward as if following values, then compress while comparing.
+     */
+    case "data": {
+      const inspect = sin01(time, 2.2);
+      const sweep = wave(time, 1.7);
+      return {
+        x: -3 + inspect * 5,
+        y: -5 * inspect,
+        sx: 0.88 + (1 - inspect) * 0.08,
+        sy: 1.12 + inspect * 0.11,
+        rotate: -6 + sweep * 3,
+        skewX: 4 + sweep * 3,
+        warp: 5 + inspect * 4,
+      };
+    }
+
+    /**
+     * DESIGN
+     * Organic asymmetric deformation following the Bézier control point.
+     */
+    case "design": {
+      const draw = wave(time, 1.6);
+      const pressure = sin01(time, 3.0);
+      return {
+        x: draw * 4,
+        y: -2 + pressure * 2,
+        sx: 1.02 + pressure * 0.08,
+        sy: 1.01 - pressure * 0.04,
+        rotate: -10 + draw * 9,
+        skewX: 9 + draw * 7,
+        warp: 9 + pressure * 8,
+      };
+    }
+
+    /**
+     * AGENT
+     * Core expands/contracts while "budding" child blobs.
+     */
+    case "agent": {
+      const dispatch = sin01(time, 2.1);
+      return {
+        x: 0,
+        y: 2 - dispatch * 3,
+        sx: 1.14 - dispatch * 0.10,
+        sy: 0.91 + dispatch * 0.11,
+        rotate: wave(time, 1.2) * 3,
+        skewX: wave(time, 1.5) * 3,
+        warp: 8 + dispatch * 8,
+      };
+    }
+
+    /**
+     * FLOW
+     * Stretch horizontally in the direction of the event packet.
+     */
+    case "flow": {
+      const travel = pingPong(time * 0.9);
+      const direction = travel * 2 - 1;
+      return {
+        x: direction * 5,
+        y: wave(time, 2.0) * 1.5,
+        sx: 1.17 + Math.abs(direction) * 0.08,
+        sy: 0.87 - Math.abs(direction) * 0.025,
+        rotate: direction * 3,
+        skewX: direction * 9,
+        warp: 8 + Math.abs(direction) * 7,
+      };
+    }
+
+    /**
+     * TUNING
+     * Alternating compression while "dialing in" parameters.
+     */
+    case "tuning": {
+      const knob = wave(time, 3.4);
+      const settle = wave(time, 6.2);
+      return {
+        x: knob * 2.5,
+        y: Math.abs(settle) * 1.8,
+        sx: 0.97 + knob * 0.055,
+        sy: 1.07 - knob * 0.035,
+        rotate: knob * 4,
+        skewX: -knob * 6,
+        warp: 5 + Math.abs(settle) * 5,
+      };
+    }
+
+    /**
+     * SECURITY
+     * Widen into a guarded/shield-like stance during each scanner pass.
+     */
+    case "security": {
+      const scan = pingPong(time * 1.2);
+      const brace = Math.sin(scan * Math.PI);
+      return {
+        x: 0,
+        y: 3 - brace * 3,
+        sx: 1.14 + brace * 0.10,
+        sy: 0.90 - brace * 0.045,
+        rotate: wave(time, 1.0) * 1.5,
+        skewX: wave(time, 1.6) * 2.2,
+        warp: 3 + brace * 5,
+      };
+    }
+  }
+};
+
+const combinePose = (...poses: Pose[]): Pose =>
+  poses.reduce<Pose>(
+    (result, pose) => ({
+      x: result.x + pose.x,
+      y: result.y + pose.y,
+      sx: result.sx * pose.sx,
+      sy: result.sy * pose.sy,
+      rotate: result.rotate + pose.rotate,
+      skewX: result.skewX + pose.skewX,
+      warp: result.warp + pose.warp,
+    }),
+    { x: 0, y: 0, sx: 1, sy: 1, rotate: 0, skewX: 0, warp: 0 },
+  );
+
+/**
+ * O ponto a `progress` (0..1) ao longo de uma polilinha.
+ *
+ * Devolve `null` quando a lista é curta demais, em vez de indexar às cegas. O
+ * índice é calculado, e sob `noUncheckedIndexedAccess` isso dá `Point |
+ * undefined` — o `!` que cala o compilador é justamente o que quebra no dia em
+ * que alguém encurtar a lista de pontos.
+ */
+const pointAlong = (
+  points: readonly Point[],
+  progress: number,
+  easing: (value: number) => number = (value) => value,
+): Point | null => {
+  if (points.length < 2) return null;
+
+  const scaled = clamp(progress, 0, 1) * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const a = points[index];
+  const b = points[index + 1];
+  if (!a || !b) return null;
+
+  const local = easing(scaled - index);
+  return { x: lerp(a.x, b.x, local), y: lerp(a.y, b.y, local) };
+};
+
+const armPath = (
+  shoulder: Point,
+  control: Point,
+  hand: Point,
+): string =>
+  `M${shoulder.x.toFixed(2)} ${shoulder.y.toFixed(2)} ` +
+  `Q${control.x.toFixed(2)} ${control.y.toFixed(2)} ` +
+  `${hand.x.toFixed(2)} ${hand.y.toFixed(2)}`;
+
+const hideArms = (stage: StageNodes): void => {
+  stage.leftArm.style.opacity = "0";
+  stage.rightArm.style.opacity = "0";
+};
+
+const showArms = (
+  stage: StageNodes,
+  left: { shoulder: Point; control: Point; hand: Point } | null,
+  right: { shoulder: Point; control: Point; hand: Point } | null,
+): void => {
+  if (left) {
+    stage.leftArm.setAttribute(
+      "d",
+      armPath(left.shoulder, left.control, left.hand),
+    );
+    stage.leftArm.style.opacity = "1";
+  } else {
+    stage.leftArm.style.opacity = "0";
+  }
+
+  if (right) {
+    stage.rightArm.setAttribute(
+      "d",
+      armPath(right.shoulder, right.control, right.hand),
+    );
+    stage.rightArm.style.opacity = "1";
+  } else {
+    stage.rightArm.style.opacity = "0";
+  }
+};
+
+const circle = (
+  group: SVGElement,
+  cx: number,
+  cy: number,
+  r: number,
+  fill: string,
+  opacity = 1,
+): SVGCircleElement => {
+  const node = makeSvg("circle", { cx, cy, r, fill, opacity });
+  group.appendChild(node);
+  return node;
+};
+
+const line = (
+  group: SVGElement,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  stroke: string,
+  width = 2,
+  opacity = 1,
+): SVGLineElement => {
+  const node = makeSvg("line", {
+    x1,
+    y1,
+    x2,
+    y2,
+    stroke,
+    "stroke-width": width,
+    "stroke-linecap": "round",
+    opacity,
+  });
+  group.appendChild(node);
+  return node;
+};
+
+const path = (
+  group: SVGElement,
+  d: string,
+  stroke: string,
+  width = 2,
+  fill = "none",
+  opacity = 1,
+): SVGPathElement => {
+  const node = makeSvg("path", {
+    d,
+    stroke,
+    "stroke-width": width,
+    fill,
+    opacity,
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  });
+  group.appendChild(node);
+  return node;
+};
+
+const rect = (
+  group: SVGElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  stroke: string,
+  fill = "none",
+  opacity = 1,
+): SVGRectElement => {
+  const node = makeSvg("rect", {
+    x,
+    y,
+    width,
+    height,
+    rx: radius,
+    stroke,
+    fill,
+    opacity,
+    "stroke-width": 1.8,
+  });
+  group.appendChild(node);
+  return node;
+};
+
+/**
+ * Profession-specific scene.
+ *
+ * These are not static badges: the blob's arms physically reach into the scene
+ * and manipulate the professional artifact.
+ */
+const renderProfessionActivity = (
+  stage: StageNodes,
+  specialist: GrokSpecialist,
+  state: GrokSpecialistState,
+  time: number,
+  accent: string,
+  bodyColor: string,
+): void => {
+  clear(stage.artifacts);
+
+  if (state === "waiting") {
+    hideArms(stage);
+
+    const z1 = makeSvg("text", {
+      x: 150,
+      y: 58,
+      fill: accent,
+      opacity: 0.55,
+      "font-size": 12,
+      "font-weight": 700,
+    });
+    z1.textContent = "Z";
+
+    const z2 = makeSvg("text", {
+      x: 165,
+      y: 42,
+      fill: accent,
+      opacity: 0.28,
+      "font-size": 9,
+      "font-weight": 700,
+    });
+    z2.textContent = "z";
+
+    stage.artifacts.appendChild(z1);
+    stage.artifacts.appendChild(z2);
+    return;
+  }
+
+  if (state === "completed") {
+    hideArms(stage);
+    return;
+  }
+
+  const working = state === "working";
+  const owner = state === "owner";
+  const energy = working ? 1 : owner ? 0.55 : 0.25;
+
+  switch (specialist) {
+    case "chat": {
+      /**
+       * CHAT:
+       * Two bubbles alternate; the blob leans into the active side.
+       */
+      const leftActive = sin01(time, working ? 2.4 : 0.8) > 0.5;
+
+      rect(
+        stage.artifacts,
+        15,
+        52,
+        44,
+        29,
+        11,
+        accent,
+        leftActive ? `${accent}16` : "none",
+        leftActive ? 0.9 : 0.34,
+      );
+
+      rect(
+        stage.artifacts,
+        141,
+        72,
+        44,
+        29,
+        11,
+        accent,
+        !leftActive ? `${accent}16` : "none",
+        !leftActive ? 0.9 : 0.34,
+      );
+
+      const dots: ReadonlyArray<readonly [number, number]> = leftActive
+        ? [
+            [28, 66],
+            [37, 66],
+            [46, 66],
+          ]
+        : [
+            [154, 86],
+            [163, 86],
+            [172, 86],
+          ];
+
+      dots.forEach(([x, y], index) => {
+        const pulse = 1 + sin01(time, 6, index * 0.8) * 1.5;
+        circle(stage.artifacts, x, y, pulse, accent, 0.7);
+      });
+
+      if (working) {
+        const hand = leftActive
+          ? { x: 57, y: 76 }
+          : { x: 143, y: 92 };
+
+        showArms(
+          stage,
+          leftActive
+            ? {
+                shoulder: { x: 78, y: 112 },
+                control: { x: 65, y: 102 },
+                hand,
+              }
+            : null,
+          !leftActive
+            ? {
+                shoulder: { x: 122, y: 112 },
+                control: { x: 135, y: 108 },
+                hand,
+              }
+            : null,
+        );
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "code": {
+      /**
+       * CODE:
+       * The blob bends forward over a terminal and taps keys with both limbs.
+       */
+      rect(stage.artifacts, 42, 125, 116, 45, 8, accent, "#07090b", 0.82);
+      line(stage.artifacts, 51, 137, 78, 137, accent, 2, 0.78);
+      line(stage.artifacts, 51, 147, 91, 147, accent, 2, 0.42);
+      line(stage.artifacts, 51, 157, 72, 157, accent, 2, 0.55);
+
+      const cursorX = 83 + pingPong(time * 2.2) * 43;
+      line(stage.artifacts, cursorX, 136, cursorX, 148, accent, 2, 0.9);
+
+      if (working) {
+        const tapL = 138 + Math.max(0, wave(time, 10)) * 6;
+        const tapR = 138 + Math.max(0, wave(time, 10, Math.PI)) * 6;
+
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 112 },
+            control: { x: 70, y: 126 },
+            hand: { x: 73, y: tapL },
+          },
+          {
+            shoulder: { x: 120, y: 112 },
+            control: { x: 130, y: 126 },
+            hand: { x: 125, y: tapR },
+          },
+        );
+
+        circle(stage.artifacts, 73, tapL + 3, 2.2, bodyColor, 0.95);
+        circle(stage.artifacts, 125, tapR + 3, 2.2, bodyColor, 0.95);
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "data": {
+      /**
+       * DATA:
+       * One limb follows the current graph point while the body itself stretches.
+       */
+      const baseY = 160;
+
+      const alturas = [0.32, 0.64, 0.47, 0.82];
+
+      [27, 44, 61, 78].forEach((x, index) => {
+        const h =
+          15 +
+          (alturas[index] ?? 0) * 45 +
+          wave(time, working ? 2.3 : 0.7, index) * 4 * energy;
+
+        rect(
+          stage.artifacts,
+          x,
+          baseY - h,
+          10,
+          h,
+          3,
+          accent,
+          `${accent}16`,
+          0.48 + index * 0.1,
+        );
+      });
+
+      const points = [
+        { x: 28, y: 119 },
+        { x: 48, y: 105 },
+        { x: 70, y: 114 },
+        { x: 94, y: 87 },
+        { x: 121, y: 99 },
+        { x: 150, y: 70 },
+        { x: 172, y: 80 },
+      ];
+
+      path(
+        stage.artifacts,
+        `M${points.map((p) => `${p.x} ${p.y}`).join(" L")}`,
+        accent,
+        2,
+        "none",
+        0.48,
+      );
+
+      points.forEach((p) => circle(stage.artifacts, p.x, p.y, 2.5, accent, 0.7));
+
+      const current = working ? pointAlong(points, pingPong(time * 0.7)) : null;
+
+      if (current) {
+        circle(stage.artifacts, current.x, current.y, 5, accent, 0.28);
+        circle(stage.artifacts, current.x, current.y, 2.2, accent, 0.95);
+
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 121, y: 106 },
+            control: {
+              x: lerp(133, current.x, 0.55),
+              y: lerp(111, current.y, 0.55),
+            },
+            hand: current,
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "design": {
+      /**
+       * DESIGN:
+       * The right limb literally drags a Bézier control point.
+       */
+      const p0 = { x: 25, y: 148 };
+      const p3 = { x: 173, y: 111 };
+      const controlA = {
+        x: 58 + wave(time, working ? 1.8 : 0.5) * 8 * energy,
+        y: 65 + wave(time, working ? 1.4 : 0.4) * 11 * energy,
+      };
+      const controlB = {
+        x: 132 + wave(time, working ? 1.6 : 0.4, 1) * 9 * energy,
+        y: 168 + wave(time, working ? 1.2 : 0.35, 2) * 8 * energy,
+      };
+
+      path(
+        stage.artifacts,
+        `M${p0.x} ${p0.y} C${controlA.x} ${controlA.y} ${controlB.x} ${controlB.y} ${p3.x} ${p3.y}`,
+        accent,
+        2.2,
+        "none",
+        0.8,
+      );
+
+      line(
+        stage.artifacts,
+        p0.x,
+        p0.y,
+        controlA.x,
+        controlA.y,
+        accent,
+        1,
+        0.25,
+      );
+      line(
+        stage.artifacts,
+        p3.x,
+        p3.y,
+        controlB.x,
+        controlB.y,
+        accent,
+        1,
+        0.25,
+      );
+
+      [p0, p3, controlA, controlB].forEach((p, index) =>
+        circle(stage.artifacts, p.x, p.y, index < 2 ? 3 : 2.5, accent, 0.76),
+      );
+
+      if (working) {
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 120, y: 106 },
+            control: { x: 130, y: 92 },
+            hand: controlB,
+          },
+        );
+
+        circle(
+          stage.artifacts,
+          controlB.x,
+          controlB.y,
+          6,
+          "none",
+          0,
+        ).setAttribute("stroke", accent);
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "agent": {
+      /**
+       * AGENT:
+       * Child blobs bud out from the main bot, orbit, then return.
+       */
+      const center = { x: 100, y: 100 };
+      const count = 4;
+
+      for (let i = 0; i < count; i++) {
+        const phase = i / count;
+        const dispatch = sin01(time, 1.4, phase * TAU);
+        const radius = 32 + dispatch * 42;
+        const angle = time * 0.55 + phase * TAU;
+
+        const x = center.x + Math.cos(angle) * radius;
+        const y = center.y + Math.sin(angle) * radius * 0.72;
+
+        line(
+          stage.artifacts,
+          center.x,
+          center.y,
+          x,
+          y,
+          accent,
+          1,
+          0.12 + dispatch * 0.24,
+        );
+
+        circle(
+          stage.artifacts,
+          x,
+          y,
+          3.5 + dispatch * 3.8,
+          bodyColor,
+          0.55 + dispatch * 0.4,
+        );
+
+        circle(
+          stage.artifacts,
+          x,
+          y,
+          1.6,
+          accent,
+          0.35 + dispatch * 0.6,
+        );
+      }
+
+      if (working) {
+        const p = pingPong(time * 1.5);
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 109 },
+            control: { x: 66, y: 100 },
+            hand: { x: 48 - p * 12, y: 78 + p * 9 },
+          },
+          {
+            shoulder: { x: 120, y: 109 },
+            control: { x: 134, y: 100 },
+            hand: { x: 152 + p * 12, y: 78 + p * 9 },
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "flow": {
+      /**
+       * FLOW:
+       * Trigger -> condition -> action.
+       * The blob passes a packet from node to node with alternating limbs.
+       */
+      const nodes = [
+        { x: 24, y: 132 },
+        { x: 66, y: 108 },
+        { x: 111, y: 138 },
+        { x: 162, y: 104 },
+      ];
+
+      path(
+        stage.artifacts,
+        `M${nodes.map((n) => `${n.x} ${n.y}`).join(" L")}`,
+        accent,
+        2,
+        "none",
+        0.32,
+      );
+
+      nodes.forEach((node, index) => {
+        if (index === 1) {
+          stage.artifacts.appendChild(
+            makeSvg("path", {
+              d: `M${node.x} ${node.y - 7} L${node.x + 7} ${node.y} L${node.x} ${node.y + 7} L${node.x - 7} ${node.y} Z`,
+              fill: `${accent}14`,
+              stroke: accent,
+              "stroke-width": 1.8,
+              opacity: 0.76,
+            }),
+          );
+        } else {
+          circle(stage.artifacts, node.x, node.y, 6, `${accent}18`, 1).setAttribute(
+            "stroke",
+            accent,
+          );
+        }
+      });
+
+      const packet = working ? pointAlong(nodes, (time * 0.48) % 1, ease) : null;
+
+      if (packet) {
+        circle(stage.artifacts, packet.x, packet.y, 4.5, accent, 0.92);
+        circle(stage.artifacts, packet.x, packet.y, 8, accent, 0.12);
+
+        const useLeft = packet.x < 100;
+
+        showArms(
+          stage,
+          useLeft
+            ? {
+                shoulder: { x: 80, y: 111 },
+                control: { x: 69, y: 121 },
+                hand: packet,
+              }
+            : null,
+          !useLeft
+            ? {
+                shoulder: { x: 120, y: 111 },
+                control: { x: 132, y: 119 },
+                hand: packet,
+              }
+            : null,
+        );
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "tuning": {
+      /**
+       * TUNING:
+       * Both limbs move real slider knobs up/down the rails.
+       */
+      const rows = [126, 145, 164];
+      const phases = [0, 1.7, 3.4];
+
+      rows.forEach((y, index) => {
+        line(stage.artifacts, 38, y, 162, y, accent, 1.4, 0.3);
+
+        const x =
+          62 +
+          sin01(time, working ? 2.6 + index * 0.4 : 0.5, phases[index]) * 76;
+
+        circle(stage.artifacts, x, y, 5, accent, 0.82);
+      });
+
+      if (working) {
+        const xA = 62 + sin01(time, 2.6, 0) * 76;
+        const xB = 62 + sin01(time, 3.0, 1.7) * 76;
+
+        showArms(
+          stage,
+          {
+            shoulder: { x: 80, y: 111 },
+            control: { x: 70, y: 128 },
+            hand: { x: xA, y: 126 },
+          },
+          {
+            shoulder: { x: 120, y: 111 },
+            control: { x: 130, y: 138 },
+            hand: { x: xB, y: 145 },
+          },
+        );
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+
+    case "security": {
+      /**
+       * SECURITY:
+       * The blob braces into a wider stance while one limb sweeps a scanner
+       * over a shield-like target.
+       */
+      path(
+        stage.artifacts,
+        "M100 119 L145 135 V153 Q143 176 100 190 Q57 176 55 153 V135 Z",
+        accent,
+        1.8,
+        `${accent}0d`,
+        0.45,
+      );
+
+      if (working) {
+        const scan = pingPong(time * 1.15);
+        const y = lerp(136, 177, scan);
+        const width = 28 + Math.sin(scan * Math.PI) * 15;
+
+        line(
+          stage.artifacts,
+          100 - width,
+          y,
+          100 + width,
+          y,
+          accent,
+          2,
+          0.92,
+        );
+
+        showArms(
+          stage,
+          null,
+          {
+            shoulder: { x: 120, y: 111 },
+            control: { x: 137, y: 122 },
+            hand: { x: 100 + width, y },
+          },
+        );
+
+        circle(stage.artifacts, 100 + width, y, 4, accent, 0.88);
+      } else {
+        hideArms(stage);
+      }
+      break;
+    }
+  }
+};
+
+/**
+ * Abaixo deste tamanho a cena profissional não é desenhada — ver o campo
+ * `scene`. 96px é onde um terminal de 116 unidades no viewBox ainda tem traço
+ * legível; a lista de tarefas usa 26px e a ficha de presença, 124px.
+ */
+const SCENE_MIN_PX = 96;
+
+/** ~24 quadros por segundo para a cena. O corpo continua a 60. */
+const SCENE_FRAME_MS = 42;
+
+class GrokAvatarController implements GrokSpecialistAvatarController {
   readonly element: HTMLElement;
 
-  private instance: AvatarLabInstance;
-  private available: readonly string[];
-  private root: HTMLDivElement;
-  private glyph: SVGGElement;
+  private readonly module: AvatarLabModule;
+  private readonly avatar: AvatarLabInstance;
+  private readonly root: HTMLDivElement;
+  private readonly avatarHost: HTMLDivElement;
+  private readonly stage: StageNodes;
+  private readonly reduceMotion: boolean;
+  private readonly organicWarp: boolean;
+  /**
+   * A cena profissional é desenhada num viewBox de 200x200 — um terminal, um
+   * gráfico, três sliders. Aos 26px da lista de tarefas ela é ilegível, e
+   * reconstruí-la a cada quadro custaria ~15 nós SVG por avatar, 60 vezes por
+   * segundo, para produzir borrão. O CORPO deformado continua animando em todo
+   * tamanho: é ele que se lê pequeno.
+   */
+  private readonly scene: boolean;
+  private lastScene = 0;
+
   private specialist: GrokSpecialist;
   private state: GrokSpecialistState;
   private accent: string;
-  private completedTimer?: number;
+  private bodyColor: string;
+  private deformation: number;
+
+  private raf = 0;
+  private destroyed = false;
+  private paused = false;
+
+  private startTime = performance.now();
+  private lastFrame = performance.now();
+
+  private currentPose: Pose = {
+    x: 0,
+    y: 0,
+    sx: 1,
+    sy: 1,
+    rotate: 0,
+    skewX: 0,
+    warp: 0,
+  };
 
   constructor(params: {
     element: HTMLElement;
-    instance: AvatarLabInstance;
-    available: readonly string[];
+    module: AvatarLabModule;
+    avatar: AvatarLabInstance;
     root: HTMLDivElement;
-    glyph: SVGGElement;
+    avatarHost: HTMLDivElement;
+    stage: StageNodes;
     specialist: GrokSpecialist;
     state: GrokSpecialistState;
     accent: string;
+    bodyColor: string;
+    deformation: number;
+    organicWarp: boolean;
+    scene: boolean;
   }) {
     this.element = params.element;
-    this.instance = params.instance;
-    this.available = params.available;
+    this.module = params.module;
+    this.avatar = params.avatar;
     this.root = params.root;
-    this.glyph = params.glyph;
+    this.avatarHost = params.avatarHost;
+    this.stage = params.stage;
     this.specialist = params.specialist;
     this.state = params.state;
     this.accent = params.accent;
+    this.bodyColor = params.bodyColor;
+    this.deformation = params.deformation;
+    this.organicWarp = params.organicWarp;
+    this.scene = params.scene;
 
-    this.sync();
-    this.playCurrent();
+    this.reduceMotion =
+      typeof matchMedia !== "undefined" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    this.applyIdentity();
+    this.playEmotion();
+    this.loop = this.loop.bind(this);
+    this.raf = requestAnimationFrame(this.loop);
   }
 
   getSpecialist(): GrokSpecialist {
@@ -784,21 +1694,20 @@ class Controller implements GrokSpecialistAvatarController {
   }
 
   setSpecialist(specialist: GrokSpecialist): void {
-    if (this.specialist === specialist) return;
+    if (specialist === this.specialist) return;
 
     this.specialist = specialist;
-    drawSpecialistGlyph(this.glyph, specialist);
-    this.setAccent(SPECIALIST_VISUALS[specialist].accent);
-    this.sync();
-    this.playCurrent();
+    this.accent = SPECIALIST_ACCENT[specialist];
+    this.applyIdentity();
+    this.playEmotion();
   }
 
   setState(state: GrokSpecialistState): void {
-    if (this.state === state) return;
+    if (state === this.state) return;
 
     this.state = state;
-    this.sync();
-    this.playCurrent();
+    this.applyIdentity();
+    this.playEmotion();
   }
 
   setAccent(color: string): void {
@@ -806,69 +1715,136 @@ class Controller implements GrokSpecialistAvatarController {
     this.root.style.setProperty("--gsa-accent", color);
   }
 
+  setDeformation(strength: number): void {
+    this.deformation = clamp(strength, 0, 2);
+  }
+
   replay(): void {
-    this.playCurrent();
+    this.playEmotion();
   }
 
   pause(): void {
-    this.instance.pause();
+    this.paused = true;
+    this.avatar.pause();
   }
 
   resume(): void {
-    this.playCurrent();
+    this.paused = false;
+    this.lastFrame = performance.now();
+    this.playEmotion();
   }
 
   destroy(): void {
-    if (this.completedTimer !== undefined) {
-      window.clearTimeout(this.completedTimer);
-    }
-
-    this.instance.destroy?.();
+    this.destroyed = true;
+    cancelAnimationFrame(this.raf);
+    this.avatar.destroy?.();
     this.root.remove();
   }
 
-  private sync(): void {
+  private applyIdentity(): void {
     this.root.dataset.specialist = this.specialist;
     this.root.dataset.state = this.state;
     this.root.style.setProperty("--gsa-accent", this.accent);
+    this.root.style.setProperty("--gsa-body", this.bodyColor);
     this.root.setAttribute(
       "aria-label",
-      `${SPECIALIST_LABELS[this.specialist]} — ${STATE_LABELS[this.state]}`,
+      `${SPECIALIST_LABEL[this.specialist]} — ${STATE_LABEL[this.state]}`,
     );
   }
 
-  private playCurrent(): void {
-    if (this.completedTimer !== undefined) {
-      window.clearTimeout(this.completedTimer);
-      this.completedTimer = undefined;
-    }
-
+  private playEmotion(): void {
     const animation = pickAnimation(
-      this.available,
+      this.module.availableAnimations,
       this.specialist,
       this.state,
     );
 
-    if (!animation) {
-      this.instance.stop();
-      return;
+    if (animation) this.avatar.play(animation);
+    else this.avatar.stop();
+  }
+
+  private targetPose(time: number): Pose {
+    const base = professionalBasePose(this.specialist);
+    const state = stateModifier(this.state, time);
+    const activity = specialistWorkingPose(this.specialist, this.state, time);
+
+    const combined = combinePose(base, state, activity);
+
+    const strength = this.deformation;
+
+    return {
+      x: combined.x * strength,
+      y: combined.y * strength,
+      sx: 1 + (combined.sx - 1) * strength,
+      sy: 1 + (combined.sy - 1) * strength,
+      rotate: combined.rotate * strength,
+      skewX: combined.skewX * strength,
+      warp: combined.warp * strength,
+    };
+  }
+
+  private applyPose(pose: Pose): void {
+    this.avatarHost.style.transform =
+      `translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) ` +
+      `rotate(${pose.rotate.toFixed(2)}deg) ` +
+      `skewX(${pose.skewX.toFixed(2)}deg) ` +
+      `scale(${pose.sx.toFixed(4)}, ${pose.sy.toFixed(4)})`;
+
+    if (this.organicWarp && pose.warp > 0.5 && !this.reduceMotion) {
+      this.avatarHost.style.filter = `url(#${this.stage.filterId})`;
+      this.stage.displacement.setAttribute("scale", pose.warp.toFixed(2));
+
+      const freqX = 0.010 + pose.warp * 0.00023;
+      const freqY = 0.015 + pose.warp * 0.00018;
+
+      this.stage.turbulence.setAttribute(
+        "baseFrequency",
+        `${freqX.toFixed(4)} ${freqY.toFixed(4)}`,
+      );
+    } else {
+      this.avatarHost.style.filter = "none";
+      this.stage.displacement.setAttribute("scale", "0");
+    }
+  }
+
+  private loop(now: number): void {
+    if (this.destroyed) return;
+
+    if (!this.paused) {
+      const dt = clamp((now - this.lastFrame) / 1000, 0, 0.08);
+      this.lastFrame = now;
+
+      const elapsed = this.reduceMotion
+        ? 0.7
+        : (now - this.startTime) / 1000;
+
+      const target = this.targetPose(elapsed);
+
+      /**
+       * Critically damped-like visual interpolation.
+       * Smooth state/specialist changes without an extra animation library.
+       */
+      const response = 1 - Math.exp(-dt * 11);
+      this.currentPose = mixPose(this.currentPose, target, response);
+      this.applyPose(this.currentPose);
+
+      // A cena é lenta por natureza (um cursor que varre, um pacote que anda),
+      // então 24 quadros por segundo bastam. Reconstruí-la a 60 não muda o que
+      // se vê e triplica o descarte de nós.
+      if (this.scene && now - this.lastScene >= SCENE_FRAME_MS) {
+        this.lastScene = now;
+        renderProfessionActivity(
+          this.stage,
+          this.specialist,
+          this.state,
+          elapsed,
+          this.accent,
+          this.bodyColor,
+        );
+      }
     }
 
-    this.instance.play(animation);
-
-    if (this.state === "completed" && animation === "celebrate") {
-      this.completedTimer = window.setTimeout(() => {
-        if (this.state !== "completed") return;
-
-        const settle = this.available.includes("happy")
-          ? "happy"
-          : this.available.includes("idle")
-            ? "idle"
-            : undefined;
-
-        if (settle) this.instance.play(settle);
-      }, 2800);
-    }
+    this.raf = requestAnimationFrame(this.loop);
   }
 }
 
@@ -878,21 +1854,26 @@ export async function mountGrokSpecialistAvatar(
 ): Promise<GrokSpecialistAvatarController> {
   if (typeof window === "undefined" || typeof document === "undefined") {
     throw new Error(
-      "mountGrokSpecialistAvatar() must run in the browser/client runtime.",
+      "mountGrokSpecialistAvatar() must run in a browser/client runtime.",
     );
   }
 
   ensureStyles();
 
   const element = resolveTarget(target);
-  const module = await loadAvatarModule(options.moduleUrl);
+  const module = await loadModule(options.moduleUrl);
 
+  const specialist = options.specialist;
   const state = options.state ?? "active";
-  const visual = SPECIALIST_VISUALS[options.specialist];
-  const accent = options.accent ?? visual.accent;
-  const showGlyphs = options.showActivityGlyphs ?? true;
-  const showRing = options.showStateRing ?? true;
-  const size = options.size ?? 220;
+  const accent = options.accent ?? SPECIALIST_ACCENT[specialist];
+  const bodyColor = options.bodyColor ?? "#000000";
+  const size = options.size ?? 240;
+  const deformation = clamp(options.deformation ?? 1, 0, 2);
+  // Tamanho em string ("100%") não dá para medir aqui sem layout: assume-se que
+  // quem pediu porcentagem quer o avatar grande, e a cena entra.
+  const scene = typeof size === "number" ? size >= SCENE_MIN_PX : true;
+  const organicWarp = options.organicWarp ?? true;
+  const statusCues = options.statusCues ?? true;
 
   const root = document.createElement("div");
   root.className = "gsa-root";
@@ -901,44 +1882,64 @@ export async function mountGrokSpecialistAvatar(
     typeof size === "number" ? `${size}px` : size,
   );
   root.style.setProperty("--gsa-accent", accent);
+  root.style.setProperty("--gsa-body", bodyColor);
+
+  const stage = createStage();
+
+  if (!statusCues) {
+    stage.ownerRing.style.display = "none";
+    stage.ownerDotA.style.display = "none";
+    stage.ownerDotB.style.display = "none";
+    stage.ownerDotC.style.display = "none";
+    stage.completeBadge.style.display = "none";
+  }
 
   const avatarHost = document.createElement("div");
   avatarHost.className = "gsa-avatar";
 
-  const { overlay, glyph } = createOverlay(
-    options.specialist,
-    showGlyphs,
-    showRing,
-  );
-
+  /**
+   * Order matters:
+   * stage has back limbs,
+   * avatar is the procedural body,
+   * stage front artifacts are in the same SVG but remain visually peripheral.
+   */
+  root.appendChild(stage.svg);
   root.appendChild(avatarHost);
-  root.appendChild(overlay);
+
   element.appendChild(root);
 
   const initialAnimation = pickAnimation(
     module.availableAnimations,
-    options.specialist,
+    specialist,
     state,
   );
 
-  const instance = module.createAvatar(avatarHost, {
+  const avatar = module.createAvatar(avatarHost, {
     animation: initialAnimation,
     size: "100%",
     autoplay: false,
   });
 
-  return new Controller({
+  return new GrokAvatarController({
     element,
-    instance,
-    available: module.availableAnimations,
+    module,
+    avatar,
     root,
-    glyph,
-    specialist: options.specialist,
+    avatarHost,
+    stage,
+    specialist,
     state,
     accent,
+    bodyColor,
+    deformation,
+    organicWarp,
+    scene,
   });
 }
 
+/**
+ * Backend/runtime -> emotional state mapper.
+ */
 export function grokVisualStateFromRuntime(input: {
   isOwner?: boolean;
   completed?: boolean;
@@ -975,64 +1976,18 @@ export function grokVisualStateFromRuntime(input: {
   return "active";
 }
 
-export const GROK_SPECIALIST_BEHAVIOR_MAP = Object.freeze({
-  chat: Object.freeze({
-    active: "listening",
-    owner: "proud",
-    working: "listening",
-    waiting: "sleeping",
-    completed: "happy",
-  }),
-  code: Object.freeze({
-    active: "idle",
-    owner: "proud",
-    working: "working",
-    waiting: "sleeping",
-    completed: "celebrate",
-  }),
-  data: Object.freeze({
-    active: "curious",
-    owner: "proud",
-    working: "searching",
-    waiting: "sleeping",
-    completed: "happy",
-  }),
-  design: Object.freeze({
-    active: "curious",
-    owner: "proud",
-    working: "curious",
-    waiting: "sleeping",
-    completed: "happy",
-  }),
-  agent: Object.freeze({
-    active: "listening",
-    owner: "proud",
-    working: "thinking",
-    waiting: "sleeping",
-    completed: "celebrate",
-  }),
-  flow: Object.freeze({
-    active: "idle",
-    owner: "proud",
-    working: "working",
-    waiting: "sleeping",
-    completed: "celebrate",
-  }),
-  tuning: Object.freeze({
-    active: "curious",
-    owner: "proud",
-    working: "thinking",
-    waiting: "sleeping",
-    completed: "happy",
-  }),
-  security: Object.freeze({
-    active: "suspicious",
-    owner: "proud",
-    working: "searching",
-    waiting: "sleeping",
-    completed: "happy",
-  }),
-} satisfies Record<
-  GrokSpecialist,
-  Record<GrokSpecialistState, string>
->);
+/**
+ * Quick integration demo:
+ *
+ * const bot = await mountGrokSpecialistAvatar("#bot", {
+ *   moduleUrl: "/avatar/avatar.js",
+ *   specialist: "design",
+ *   state: "working",
+ *   size: 260,
+ *   deformation: 1,
+ * });
+ *
+ * setTimeout(() => bot.setState("waiting"), 5000);
+ * setTimeout(() => bot.setState("working"), 9000);
+ * setTimeout(() => bot.setState("completed"), 14000);
+ */
