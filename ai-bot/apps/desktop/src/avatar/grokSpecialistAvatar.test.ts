@@ -1,5 +1,5 @@
 /**
- * O contrato do wrapper v2 (arquivo do usuário, verbatim): estado do runtime
+ * Contrato do motor profissional v3: estado do runtime
  * vira estado visual, especialista escolhe animação DO MÓDULO carregado por
  * URL, e o controller monta/desmonta sem vazar. O módulo de teste entra por
  * `data:` URL — o mesmo mecanismo do export real do Lab, sem arquivo em disco.
@@ -8,12 +8,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GROK_SPECIALIST_BEHAVIOR_MAP,
-  grokVisualStateFromRuntime,
-  mountGrokSpecialistAvatar,
-  type GrokSpecialist,
-  type GrokSpecialistState
-} from "./grokSpecialistAvatar";
+  PROFESSIONAL_GROK_BEHAVIOR_MAP,
+  professionalVisualStateFromRuntime,
+  mountProfessionalGrokAvatar,
+  type Specialist as GrokSpecialist,
+  type SpecialistState as GrokSpecialistState
+} from "./grok_professional_avatar_v3";
 import { GROK_STATE_LABELS, grokSpecialistOf } from "./GrokAvatar";
 
 const ESPECIALISTAS: GrokSpecialist[] = ["chat", "code", "data", "design", "agent", "flow", "tuning", "security"];
@@ -40,23 +40,23 @@ const MODULO_FAKE =
      }`
   );
 
-describe("grokVisualStateFromRuntime", () => {
+describe("professionalVisualStateFromRuntime", () => {
   it("concluído vence tudo, dono vem depois", () => {
-    expect(grokVisualStateFromRuntime({ completed: true, isOwner: true, status: "RUNNING" })).toBe("completed");
-    expect(grokVisualStateFromRuntime({ isOwner: true, status: "RUNNING" })).toBe("owner");
+    expect(professionalVisualStateFromRuntime({ completed: true, isOwner: true, status: "RUNNING" })).toBe("completed");
+    expect(professionalVisualStateFromRuntime({ isOwner: true, status: "RUNNING" })).toBe("owner");
   });
 
   it("traduz os status de execução e de fila", () => {
-    expect(grokVisualStateFromRuntime({ status: "RUNNING" })).toBe("working");
-    expect(grokVisualStateFromRuntime({ status: "verifying" })).toBe("working");
-    expect(grokVisualStateFromRuntime({ status: "WAITING_APPROVAL" })).toBe("waiting");
-    expect(grokVisualStateFromRuntime({ status: "QUEUED" })).toBe("waiting");
-    expect(grokVisualStateFromRuntime({ status: "COMPLETED" })).toBe("completed");
+    expect(professionalVisualStateFromRuntime({ status: "RUNNING" })).toBe("working");
+    expect(professionalVisualStateFromRuntime({ status: "verifying" })).toBe("working");
+    expect(professionalVisualStateFromRuntime({ status: "WAITING_APPROVAL" })).toBe("waiting");
+    expect(professionalVisualStateFromRuntime({ status: "QUEUED" })).toBe("waiting");
+    expect(professionalVisualStateFromRuntime({ status: "COMPLETED" })).toBe("completed");
   });
 
   it("status desconhecido ou vazio é presença ativa", () => {
-    expect(grokVisualStateFromRuntime({})).toBe("active");
-    expect(grokVisualStateFromRuntime({ status: "qualquer-coisa" })).toBe("active");
+    expect(professionalVisualStateFromRuntime({})).toBe("active");
+    expect(professionalVisualStateFromRuntime({ status: "qualquer-coisa" })).toBe("active");
   });
 });
 
@@ -64,7 +64,7 @@ describe("catálogo do wrapper", () => {
   it("cobre os oito especialistas nos cinco estados", () => {
     for (const specialist of ESPECIALISTAS) {
       for (const state of ESTADOS) {
-        expect(GROK_SPECIALIST_BEHAVIOR_MAP[specialist][state].length, `${specialist}/${state}`).toBeGreaterThan(0);
+        expect(PROFESSIONAL_GROK_BEHAVIOR_MAP[specialist][state].length, `${specialist}/${state}`).toBeGreaterThan(0);
       }
       expect(GROK_STATE_LABELS.owner.length).toBeGreaterThan(0);
     }
@@ -81,13 +81,13 @@ describe("catálogo do wrapper", () => {
   });
 });
 
-describe("mountGrokSpecialistAvatar", () => {
+describe("mountProfessionalGrokAvatar", () => {
   it("monta, toca a animação do estado e desmonta sem deixar nada", async () => {
     globalThis.__gsaPlays = [];
     const host = document.createElement("div");
     document.body.append(host);
 
-    const controller = await mountGrokSpecialistAvatar(host, {
+    const controller = await mountProfessionalGrokAvatar(host, {
       moduleUrl: MODULO_FAKE,
       specialist: "code",
       state: "working"
@@ -154,7 +154,7 @@ describe("animação v3", () => {
     const host = document.createElement("div");
     document.body.append(host);
 
-    const controller = await mountGrokSpecialistAvatar(host, {
+    const controller = await mountProfessionalGrokAvatar(host, {
       moduleUrl: MODULO_FAKE,
       specialist: "code",
       state: "working",
@@ -178,7 +178,7 @@ describe("animação v3", () => {
     const host = document.createElement("div");
     document.body.append(host);
 
-    const controller = await mountGrokSpecialistAvatar(host, {
+    const controller = await mountProfessionalGrokAvatar(host, {
       moduleUrl: MODULO_FAKE,
       specialist: "code",
       state: "working",
@@ -202,7 +202,7 @@ describe("animação v3", () => {
     const host = document.createElement("div");
     document.body.append(host);
 
-    const controller = await mountGrokSpecialistAvatar(host, {
+    const controller = await mountProfessionalGrokAvatar(host, {
       moduleUrl: MODULO_FAKE,
       specialist: "code",
       state: "working",

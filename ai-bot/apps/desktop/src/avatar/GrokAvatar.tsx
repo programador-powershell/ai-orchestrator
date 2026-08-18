@@ -1,6 +1,5 @@
 /**
- * GrokAvatar — a ponte React do wrapper `grokSpecialistAvatar.ts` (v2, arquivo
- * fornecido pelo usuário e mantido verbatim).
+ * GrokAvatar — a ponte React do wrapper `grok_professional_avatar_v3.ts` (motor profissional v3).
  *
  * O wrapper monta o avatar de um MÓDULO carregado por URL — a interface do
  * export JavaScript do Bible Strong Avatar Lab (`createAvatar` +
@@ -18,11 +17,11 @@
 import { useEffect, useRef } from "react";
 
 import {
-  mountGrokSpecialistAvatar,
-  type GrokSpecialist,
-  type GrokSpecialistAvatarController,
-  type GrokSpecialistState
-} from "./grokSpecialistAvatar";
+  mountProfessionalGrokAvatar,
+  type Specialist as GrokSpecialist,
+  type ProfessionalGrokController as GrokSpecialistAvatarController,
+  type SpecialistState as GrokSpecialistState
+} from "./grok_professional_avatar_v3";
 
 export type { GrokSpecialist, GrokSpecialistState };
 
@@ -100,7 +99,7 @@ export function GrokAvatar({
     const host = hostRef.current;
     if (!host) return;
     let vivo = true;
-    const montagem = mountGrokSpecialistAvatar(host, {
+    const montagem = mountProfessionalGrokAvatar(host, {
       moduleUrl: LAB_MODULE_URL,
       specialist: propsRef.current.specialist,
       state: propsRef.current.state,

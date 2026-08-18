@@ -24,7 +24,7 @@
  *
  * Example:
  *
- *   const bot = await mountGrokSpecialistAvatar("#bot", {
+ *   const bot = await mountProfessionalGrokAvatar("#bot", {
  *     moduleUrl: "/avatars/grok/avatar.js",
  *     specialist: "code",
  *     state: "working",
@@ -1991,3 +1991,20 @@ export function grokVisualStateFromRuntime(input: {
  * setTimeout(() => bot.setState("working"), 9000);
  * setTimeout(() => bot.setState("completed"), 14000);
  */
+
+
+/**
+ * Canonical v3 API.
+ *
+ * The project historically consumed the same implementation through the
+ * GrokSpecialist* names. These aliases expose the generated v3 contract without
+ * duplicating a second animation engine.
+ */
+export type Specialist = GrokSpecialist;
+export type SpecialistState = GrokSpecialistState;
+export type MountProfessionalGrokOptions = MountGrokSpecialistOptions;
+export type ProfessionalGrokController = GrokSpecialistAvatarController;
+
+export const mountProfessionalGrokAvatar = mountGrokSpecialistAvatar;
+export const professionalVisualStateFromRuntime = grokVisualStateFromRuntime;
+export const PROFESSIONAL_GROK_BEHAVIOR_MAP = GROK_SPECIALIST_BEHAVIOR_MAP;

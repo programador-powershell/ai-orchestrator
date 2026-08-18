@@ -1,4 +1,4 @@
-/** BANCADA TEMPORÁRIA — wrapper v2 × estados, com o stand-in do Lab. Não versionar. */
+/** BANCADA TEMPORÁRIA — motor profissional v3 × estados, com o stand-in do Lab. Não versionar. */
 
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
