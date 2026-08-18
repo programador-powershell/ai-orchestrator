@@ -99,11 +99,16 @@ export function GrokAvatar({
     const host = hostRef.current;
     if (!host) return;
     let vivo = true;
+    const tamanho = tamanhoInicialRef.current;
+    const tamanhoNumerico = typeof tamanho === "number" ? tamanho : 124;
     const montagem = mountProfessionalGrokAvatar(host, {
       moduleUrl: LAB_MODULE_URL,
       specialist: propsRef.current.specialist,
       state: propsRef.current.state,
-      size: tamanhoInicialRef.current
+      size: tamanho,
+      deformation: tamanhoNumerico >= 96 ? 1.28 : 0.92,
+      organicWarp: true,
+      statusCues: true
     });
     montagem.then(
       (controller) => {

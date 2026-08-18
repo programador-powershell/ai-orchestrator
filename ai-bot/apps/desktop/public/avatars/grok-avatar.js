@@ -91,20 +91,31 @@ export function createAvatar(target, options = {}) {
   );
   defs.append(grad);
 
-  const body = el("g", {});
-  const sombra = el("ellipse", { cx: 0, cy: 92, rx: 62, ry: 12, fill: "#000", opacity: 0.4 });
-  const esfera = el("circle", { cx: 0, cy: 0, r: 84, fill: `url(#${uid}-body)`, stroke: "#34363b", "stroke-width": 1.2 });
+  // Separa silhueta e olhos. O motor profissional deforma o PATH preto sem
+  // achatar os olhos junto, que é a principal diferença visual desta correção.
+  const body = el("g", { "data-grok-motion-root": "true" });
+  const sombra = el("ellipse", { cx: 0, cy: 92, rx: 62, ry: 12, fill: "#000", opacity: 0.4, "data-grok-shadow": "true" });
+  const professionalBody = el("g", { "data-grok-professional-body": "true" });
+  const esfera = el("path", {
+    d: "M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z",
+    fill: `url(#${uid}-body)`,
+    stroke: "#34363b",
+    "stroke-width": 1.2,
+    "data-grok-body-shape": "true"
+  });
   const brilho = el("path", {
     d: "M -58 -60 A 84 84 0 0 1 52 -66",
     fill: "none",
     stroke: "#ffffff",
     "stroke-width": 1.6,
     opacity: 0.15,
-    "stroke-linecap": "round"
+    "stroke-linecap": "round",
+    "data-grok-body-highlight": "true"
   });
-  const olhoE = el("ellipse", { cx: -16, cy: -4, rx: 6, ry: 15, fill: "#fff" });
-  const olhoD = el("ellipse", { cx: 16, cy: -4, rx: 6, ry: 15, fill: "#fff" });
-  body.append(esfera, brilho, olhoE, olhoD);
+  professionalBody.append(esfera, brilho);
+  const olhoE = el("ellipse", { cx: -16, cy: -4, rx: 6, ry: 15, fill: "#fff", "data-grok-eye-left": "true" });
+  const olhoD = el("ellipse", { cx: 16, cy: -4, rx: 6, ry: 15, fill: "#fff", "data-grok-eye-right": "true" });
+  body.append(professionalBody, olhoE, olhoD);
   svg.append(defs, sombra, body);
   host.appendChild(svg);
 

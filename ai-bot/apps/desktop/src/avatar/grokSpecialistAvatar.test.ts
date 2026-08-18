@@ -140,83 +140,116 @@ describe("stand-in público", () => {
 });
 
 /**
- * A camada v3: o corpo DEFORMA e a cena profissional é desenhada — mas só em
- * quem tem tamanho para mostrá-la.
+ * A camada v4: a SILHUETA deforma, as camadas ficam na ordem certa e a cena só
+ * entra em quem tem tamanho para mostrá-la.
+ *
+ * O módulo falso daqui expõe `data-grok-body-shape`, como o stand-in real —
+ * sem isso o motor cai no ramo de compatibilidade (que ainda usa scale no
+ * hospedeiro) e o teste passaria sem exercitar a silhueta, que é justamente o
+ * que mudou.
  */
+const MODULO_COM_SILHUETA =
+  "data:text/javascript," +
+  encodeURIComponent(
+    `export const availableAnimations = ["idle","listening","thinking","working","searching","sleeping","drowsy","happy","celebrate","proud","curious","suspicious"];
+     export function createAvatar(target) {
+       const NS = "http://www.w3.org/2000/svg";
+       const svg = document.createElementNS(NS, "svg");
+       svg.setAttribute("viewBox", "-100 -100 200 200");
+       const corpo = document.createElementNS(NS, "path");
+       corpo.setAttribute("d", "M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
+       corpo.setAttribute("data-grok-body-shape", "true");
+       svg.appendChild(corpo);
+       target.appendChild(svg);
+       return { play(){}, pause(){}, stop(){}, destroy(){ svg.remove(); } };
+     }`
+  );
+
 const quadros = async (quantos: number): Promise<void> => {
   for (let i = 0; i < quantos; i += 1) {
     await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
   }
 };
 
-describe("animação v3", () => {
-  it("deforma o corpo em vez de deixar a esfera perfeita", async () => {
+describe("animação v4", () => {
+  it("deforma a SILHUETA, não a caixa do rosto", async () => {
     const host = document.createElement("div");
     document.body.append(host);
 
     const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_FAKE,
+      moduleUrl: MODULO_COM_SILHUETA,
       specialist: "code",
       state: "working",
-      size: 124
+      size: 150
     });
 
-    await quadros(3);
+    const corpo = host.querySelector<SVGPathElement>("[data-grok-body-shape=true]");
+    expect(corpo).toBeTruthy();
 
-    const corpo = host.querySelector<HTMLElement>(".gsa-avatar");
-    const transform = corpo?.style.transform ?? "";
-    // O v2 não mexia no corpo: a esfera ficava perfeita e parada. Aqui tem de
-    // haver escala e inclinação — é isso que dá a sensação de trabalho.
-    expect(transform).toContain("scale(");
-    expect(transform).toContain("skewX(");
+    await quadros(4);
+    const primeiro = corpo?.getAttribute("d") ?? "";
+    await quadros(6);
+    const segundo = corpo?.getAttribute("d") ?? "";
+
+    // O corpo deixou de ser um círculo escalado: o próprio `d` muda por quadro.
+    expect(primeiro).not.toBe("M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
+    expect(segundo).not.toBe(primeiro);
+
+    // E o rosto só INCLINA — se voltasse a escalar, os olhos viravam elipses.
+    const rosto = host.querySelector<HTMLElement>(".gsa-avatar");
+    expect(rosto?.style.transform ?? "").not.toContain("scale(");
 
     controller.destroy();
     host.remove();
   });
 
-  it("desenha a cena profissional quando o avatar é grande", async () => {
+  it("empilha as camadas na ordem: braços atrás, corpo no meio, cena na frente", async () => {
     const host = document.createElement("div");
     document.body.append(host);
 
     const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_FAKE,
+      moduleUrl: MODULO_COM_SILHUETA,
       specialist: "code",
       state: "working",
-      size: 124
+      size: 150
     });
 
-    await quadros(3);
+    const root = host.querySelector(".gsa-root");
+    const ordem = [...(root?.children ?? [])].map((filho) => filho.getAttribute("class"));
 
-    // O terminal, as linhas de código e o cursor do especialista de Código.
-    const cena = host.querySelectorAll(".gsa-stage g > *");
-    expect(cena.length).toBeGreaterThan(0);
+    // A ordem do DOM É a ordem de pintura. Com a cena atrás do corpo, o terminal
+    // ficava escondido pela bolinha preta — que era o defeito do v3.
+    expect(ordem).toEqual(["gsa-stage", "gsa-avatar", "gsa-art-layer"]);
+
+    await quadros(4);
+    // Braços na traseira; terminal, gráfico e sliders na frontal.
+    expect(host.querySelectorAll(".gsa-stage .gsa-blob-limb").length).toBe(2);
+    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line").length).toBeGreaterThan(0);
 
     controller.destroy();
     host.remove();
   });
 
   it("NÃO desenha a cena num avatar de lista, onde ela seria borrão", async () => {
-    // A lista de tarefas usa 26px. Um terminal de 116 unidades num viewBox de
+    // A lista de tarefas usa 26 px. Um terminal de 116 unidades num viewBox de
     // 200 vira três pixels — e reconstruí-lo a cada quadro, por avatar, custaria
     // dezenas de nós SVG por segundo para não mostrar nada.
     const host = document.createElement("div");
     document.body.append(host);
 
     const controller = await mountProfessionalGrokAvatar(host, {
-      moduleUrl: MODULO_FAKE,
+      moduleUrl: MODULO_COM_SILHUETA,
       specialist: "code",
       state: "working",
       size: 26
     });
 
-    await quadros(3);
+    await quadros(4);
+    expect(host.querySelectorAll(".gsa-art-layer rect, .gsa-art-layer line, .gsa-art-layer text").length).toBe(0);
 
-    const artefatos = host.querySelectorAll(".gsa-stage text, .gsa-stage rect, .gsa-stage line");
-    expect(artefatos.length).toBe(0);
-
-    // E mesmo pequeno o CORPO continua animando: é ele que se lê nesse tamanho.
-    const corpo = host.querySelector<HTMLElement>(".gsa-avatar");
-    expect(corpo?.style.transform ?? "").toContain("scale(");
+    // Mesmo pequeno a SILHUETA continua viva: é ela que se lê nesse tamanho.
+    const corpo = host.querySelector<SVGPathElement>("[data-grok-body-shape=true]");
+    expect(corpo?.getAttribute("d")).not.toBe("M 84 0 A 84 84 0 1 1 -84 0 A 84 84 0 1 1 84 0 Z");
 
     controller.destroy();
     host.remove();

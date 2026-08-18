@@ -141,7 +141,10 @@ type Point = {
 };
 
 type StageNodes = {
+  /** Back layer. `svg` name is preserved for the existing tests. */
   svg: SVGSVGElement;
+  /** Front layer: professional props must be ABOVE the black avatar. */
+  frontSvg: SVGSVGElement;
   back: SVGGElement;
   front: SVGGElement;
   artifacts: SVGGElement;
@@ -152,9 +155,12 @@ type StageNodes = {
   ownerDotB: SVGCircleElement;
   ownerDotC: SVGCircleElement;
   completeBadge: SVGGElement;
-  filterId: string;
-  turbulence: SVGFETurbulenceElement;
-  displacement: SVGFEDisplacementMapElement;
+};
+
+type MorphTargets = {
+  bodyPath: SVGPathElement | null;
+  highlight: SVGPathElement | null;
+  shadow: SVGEllipseElement | null;
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -208,11 +214,6 @@ const makeSvg = <K extends keyof SVGElementTagNameMap>(
 const clear = (node: Element): void => {
   while (node.firstChild) node.removeChild(node.firstChild);
 };
-
-const randomId = (): string =>
-  typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID().replaceAll("-", "")
-    : `${Date.now()}${Math.random().toString(16).slice(2)}`;
 
 const SPECIALIST_ACCENT: Record<GrokSpecialist, string> = {
   chat: "#55c7ff",
@@ -487,148 +488,191 @@ const ensureStyles = (): void => {
 };
 
 const createStage = (): StageNodes => {
-  const filterId = `gsa-warp-${randomId()}`;
-
-  const svg = makeSvg("svg", {
-    class: "gsa-stage",
-    viewBox: "0 0 200 200",
-    "aria-hidden": "true",
+  // v3 tinha UM SVG inteiro em z-index 1 e o avatar em z-index 2. Resultado:
+  // terminal/gráfico/Bézier/scanner ficavam atrás da bolinha preta. Agora há
+  // uma camada traseira e outra FRONTAL de verdade.
+  const backSvg = makeSvg("svg", {
+    class: "gsa-stage", viewBox: "0 0 200 200", "aria-hidden": "true",
   });
-
-  const defs = makeSvg("defs");
-
-  const filter = makeSvg("filter", {
-    id: filterId,
-    x: "-30%",
-    y: "-30%",
-    width: "160%",
-    height: "160%",
+  const frontSvg = makeSvg("svg", {
+    class: "gsa-art-layer", viewBox: "0 0 200 200", "aria-hidden": "true",
   });
-
-  const turbulence = makeSvg("feTurbulence", {
-    type: "fractalNoise",
-    baseFrequency: "0.012 0.017",
-    numOctaves: 2,
-    seed: 7,
-    result: "noise",
-  });
-
-  const displacement = makeSvg("feDisplacementMap", {
-    in: "SourceGraphic",
-    in2: "noise",
-    scale: 0,
-    xChannelSelector: "R",
-    yChannelSelector: "G",
-  });
-
-  filter.appendChild(turbulence);
-  filter.appendChild(displacement);
-  defs.appendChild(filter);
-  svg.appendChild(defs);
 
   const back = makeSvg("g");
   const front = makeSvg("g");
   const artifacts = makeSvg("g");
 
   const leftArm = makeSvg("path", {
-    class: "gsa-blob-limb",
-    d: "M82 112 C70 120 63 129 58 139",
+    class: "gsa-blob-limb", d: "M82 112 C70 120 63 129 58 139",
   });
-
   const rightArm = makeSvg("path", {
-    class: "gsa-blob-limb",
-    d: "M118 112 C130 120 137 129 142 139",
+    class: "gsa-blob-limb", d: "M118 112 C130 120 137 129 142 139",
   });
-
   back.appendChild(leftArm);
   back.appendChild(rightArm);
+  backSvg.appendChild(back);
 
   const ownerRing = makeSvg("circle", {
-    class: "gsa-owner-ring",
-    cx: 100,
-    cy: 100,
-    r: 88,
+    class: "gsa-owner-ring", cx: 100, cy: 100, r: 88,
   });
-
   front.appendChild(ownerRing);
 
-  const ownerDotA = makeSvg("circle", {
-    class: "gsa-owner-dot",
-    cx: 83,
-    cy: 12,
-    r: 2.2,
-  });
-
-  const ownerDotB = makeSvg("circle", {
-    class: "gsa-owner-dot",
-    cx: 100,
-    cy: 8,
-    r: 3,
-    style: "animation-delay:180ms",
-  });
-
-  const ownerDotC = makeSvg("circle", {
-    class: "gsa-owner-dot",
-    cx: 117,
-    cy: 12,
-    r: 2.2,
-    style: "animation-delay:360ms",
-  });
-
+  const ownerDotA = makeSvg("circle", { class: "gsa-owner-dot", cx: 83, cy: 12, r: 2.2 });
+  const ownerDotB = makeSvg("circle", { class: "gsa-owner-dot", cx: 100, cy: 8, r: 3, style: "animation-delay:180ms" });
+  const ownerDotC = makeSvg("circle", { class: "gsa-owner-dot", cx: 117, cy: 12, r: 2.2, style: "animation-delay:360ms" });
   front.appendChild(ownerDotA);
   front.appendChild(ownerDotB);
   front.appendChild(ownerDotC);
 
-  const completeBadge = makeSvg("g", {
-    class: "gsa-complete",
-    transform: "translate(169 169)",
-  });
-
-  completeBadge.appendChild(
-    makeSvg("circle", {
-      cx: 0,
-      cy: 0,
-      r: 16,
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": 1.5,
-      opacity: 0.38,
-    }),
-  );
-
-  completeBadge.appendChild(
-    makeSvg("path", {
-      d: "M-8 0 L-2 6 L10 -8",
-      fill: "none",
-      stroke: "currentColor",
-      "stroke-width": 3,
-      "stroke-linecap": "round",
-      "stroke-linejoin": "round",
-    }),
-  );
-
+  const completeBadge = makeSvg("g", { class: "gsa-complete", transform: "translate(169 169)" });
+  completeBadge.appendChild(makeSvg("circle", { cx: 0, cy: 0, r: 16, fill: "none", stroke: "currentColor", "stroke-width": 1.5, opacity: 0.38 }));
+  completeBadge.appendChild(makeSvg("path", { d: "M-8 0 L-2 6 L10 -8", fill: "none", stroke: "currentColor", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" }));
   front.appendChild(completeBadge);
 
-  svg.appendChild(back);
-  svg.appendChild(artifacts);
-  svg.appendChild(front);
+  frontSvg.appendChild(artifacts);
+  frontSvg.appendChild(front);
 
   return {
-    svg,
-    back,
-    front,
-    artifacts,
-    leftArm,
-    rightArm,
-    ownerRing,
-    ownerDotA,
-    ownerDotB,
-    ownerDotC,
-    completeBadge,
-    filterId,
-    turbulence,
-    displacement,
+    svg: backSvg, frontSvg, back, front, artifacts, leftArm, rightArm,
+    ownerRing, ownerDotA, ownerDotB, ownerDotC, completeBadge,
   };
+};
+
+const findMorphTargets = (avatarHost: HTMLElement): MorphTargets => ({
+  bodyPath: avatarHost.querySelector<SVGPathElement>("[data-grok-body-shape='true']"),
+  highlight: avatarHost.querySelector<SVGPathElement>("[data-grok-body-highlight='true']"),
+  shadow: avatarHost.querySelector<SVGEllipseElement>("[data-grok-shadow='true']"),
+});
+
+const cyclicPoint = (points: readonly Point[], index: number): Point | null => {
+  if (points.length === 0) return null;
+  const wrapped = ((index % points.length) + points.length) % points.length;
+  return points[wrapped] ?? null;
+};
+
+const smoothClosedPath = (points: readonly Point[]): string => {
+  if (points.length < 3) return "";
+  const first = points[0];
+  if (!first) return "";
+  let d = `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`;
+
+  for (let i = 0; i < points.length; i += 1) {
+    const p0 = cyclicPoint(points, i - 1);
+    const p1 = cyclicPoint(points, i);
+    const p2 = cyclicPoint(points, i + 1);
+    const p3 = cyclicPoint(points, i + 2);
+    if (!p0 || !p1 || !p2 || !p3) continue;
+
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+  }
+  return `${d} Z`;
+};
+
+const angleDistance = (a: number, b: number): number =>
+  Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+const lobe = (angle: number, target: number, sharpness = 4): number => {
+  const c = Math.max(0, Math.cos(angleDistance(angle, target)));
+  return Math.pow(c, sharpness);
+};
+
+/**
+ * Deforma o PATH real do corpo. Não é mais uma ellipse por CSS. Cada profissão
+ * cria sua própria silhueta enquanto trabalha.
+ */
+const professionalBlobPath = (
+  specialist: GrokSpecialist,
+  state: GrokSpecialistState,
+  time: number,
+  pose: Pose,
+  organic: boolean,
+): string => {
+  const points: Point[] = [];
+  const count = 28;
+  const baseR = 84;
+  let rx = baseR * pose.sx;
+  let ry = baseR * pose.sy;
+
+  if (state === "waiting") {
+    rx *= 1.08;
+    ry *= 0.88;
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * TAU - Math.PI / 2;
+    let radial = 0;
+
+    if (organic) {
+      radial += Math.sin(angle * 3 + time * 1.2) * pose.warp * 0.30;
+      radial += Math.sin(angle * 5 - time * 0.8 + 0.7) * pose.warp * 0.17;
+    }
+
+    if (state === "working") {
+      switch (specialist) {
+        case "chat": {
+          const target = wave(time, 1.75) >= 0 ? 0 : Math.PI;
+          radial += lobe(angle, target, 5) * 21;
+          radial -= lobe(angle, target + Math.PI, 5) * 4;
+          break;
+        }
+        case "code":
+          radial += lobe(angle, Math.PI / 2, 5) * 20;
+          radial += lobe(angle, 0.22, 6) * 11;
+          radial -= lobe(angle, -Math.PI / 2, 4) * 7;
+          break;
+        case "data": {
+          const target = -0.55 + wave(time, 1.1) * 0.38;
+          radial += lobe(angle, target, 5) * 23;
+          radial += lobe(angle, Math.PI / 2, 6) * 6;
+          break;
+        }
+        case "design":
+          radial += lobe(angle, -0.55, 5) * (15 + sin01(time, 2.2) * 11);
+          radial += lobe(angle, 2.25, 5) * (9 + sin01(time, 1.7, 1.4) * 10);
+          radial -= lobe(angle, 0.9, 6) * 6;
+          break;
+        case "agent":
+          for (const target of [-Math.PI / 2, 0, Math.PI / 2, Math.PI]) {
+            radial += lobe(angle, target, 8) * (8 + sin01(time, 2.0, target) * 10);
+          }
+          break;
+        case "flow":
+          radial += lobe(angle, 0, 5) * 22;
+          radial += lobe(angle, Math.PI, 5) * 22;
+          radial -= lobe(angle, Math.PI / 2, 5) * 6;
+          radial -= lobe(angle, -Math.PI / 2, 5) * 6;
+          break;
+        case "tuning": {
+          const target = wave(time, 2.6) >= 0 ? 0 : Math.PI;
+          radial += lobe(angle, target, 5) * 16;
+          radial += lobe(angle, Math.PI / 2, 6) * 7;
+          break;
+        }
+        case "security":
+          radial += lobe(angle, 0, 5) * 18;
+          radial += lobe(angle, Math.PI, 5) * 18;
+          radial += lobe(angle, Math.PI / 2, 7) * 23;
+          radial -= lobe(angle, -Math.PI / 2, 5) * 5;
+          break;
+      }
+    } else if (state === "owner") {
+      radial += lobe(angle, -Math.PI / 2, 5) * 7;
+      radial += lobe(angle, 0, 6) * 3;
+      radial += lobe(angle, Math.PI, 6) * 3;
+    } else if (state === "completed") {
+      radial += Math.sin(angle * 2 + time * 1.4) * 1.4;
+    }
+
+    points.push({
+      x: Math.cos(angle) * (rx + radial),
+      y: Math.sin(angle) * (ry + radial),
+    });
+  }
+  return smoothClosedPath(points);
 };
 
 /**
@@ -1611,6 +1655,7 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
   private readonly root: HTMLDivElement;
   private readonly avatarHost: HTMLDivElement;
   private readonly stage: StageNodes;
+  private readonly morph: MorphTargets;
   private readonly reduceMotion: boolean;
   private readonly organicWarp: boolean;
   /**
@@ -1667,6 +1712,7 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
     this.root = params.root;
     this.avatarHost = params.avatarHost;
     this.stage = params.stage;
+    this.morph = findMorphTargets(this.avatarHost);
     this.specialist = params.specialist;
     this.state = params.state;
     this.accent = params.accent;
@@ -1783,28 +1829,43 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
     };
   }
 
-  private applyPose(pose: Pose): void {
-    this.avatarHost.style.transform =
-      `translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) ` +
-      `rotate(${pose.rotate.toFixed(2)}deg) ` +
-      `skewX(${pose.skewX.toFixed(2)}deg) ` +
-      `scale(${pose.sx.toFixed(4)}, ${pose.sy.toFixed(4)})`;
-
-    if (this.organicWarp && pose.warp > 0.5 && !this.reduceMotion) {
-      this.avatarHost.style.filter = `url(#${this.stage.filterId})`;
-      this.stage.displacement.setAttribute("scale", pose.warp.toFixed(2));
-
-      const freqX = 0.010 + pose.warp * 0.00023;
-      const freqY = 0.015 + pose.warp * 0.00018;
-
-      this.stage.turbulence.setAttribute(
-        "baseFrequency",
-        `${freqX.toFixed(4)} ${freqY.toFixed(4)}`,
+  private applyPose(pose: Pose, time: number): void {
+    if (this.morph.bodyPath) {
+      this.morph.bodyPath.setAttribute(
+        "d",
+        professionalBlobPath(
+          this.specialist, this.state, time, pose,
+          this.organicWarp && !this.reduceMotion,
+        ),
       );
+
+      // Somente uma leve inclinação do rosto inteiro; o squash/stretch principal
+      // está na SILHUETA do bodyPath. Assim os olhos não viram elipses deformadas.
+      this.avatarHost.style.transform =
+        `translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) ` +
+        `rotate(${(pose.rotate * 0.62).toFixed(2)}deg) ` +
+        `skewX(${(pose.skewX * 0.28).toFixed(2)}deg)`;
+
+      if (this.morph.highlight) {
+        this.morph.highlight.style.opacity =
+          this.state === "working" ? "0.07" : this.state === "waiting" ? "0.05" : "0.12";
+      }
+      if (this.morph.shadow) {
+        this.morph.shadow.setAttribute("rx", (62 * clamp(pose.sx, 0.78, 1.42)).toFixed(2));
+        this.morph.shadow.setAttribute("ry", this.state === "waiting" ? "9" : "12");
+      }
     } else {
-      this.avatarHost.style.filter = "none";
-      this.stage.displacement.setAttribute("scale", "0");
+      // Compatibilidade com um export arbitrário que ainda não expose o hook.
+      this.avatarHost.style.transform =
+        `translate(${pose.x.toFixed(2)}px, ${pose.y.toFixed(2)}px) ` +
+        `rotate(${pose.rotate.toFixed(2)}deg) ` +
+        `skewX(${pose.skewX.toFixed(2)}deg) ` +
+        `scale(${pose.sx.toFixed(4)}, ${pose.sy.toFixed(4)})`;
     }
+
+    // O v3 aplicava url(#filter) de um SVG irmão sobre uma DIV HTML; isso não é
+    // portável. A deformação orgânica agora está no próprio path.
+    this.avatarHost.style.filter = "none";
   }
 
   private loop(now: number): void {
@@ -1826,7 +1887,7 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
        */
       const response = 1 - Math.exp(-dt * 11);
       this.currentPose = mixPose(this.currentPose, target, response);
-      this.applyPose(this.currentPose);
+      this.applyPose(this.currentPose, elapsed);
 
       // A cena é lenta por natureza (um cursor que varre, um pacote que anda),
       // então 24 quadros por segundo bastam. Reconstruí-la a 60 não muda o que
@@ -1898,13 +1959,14 @@ export async function mountGrokSpecialistAvatar(
   avatarHost.className = "gsa-avatar";
 
   /**
-   * Order matters:
-   * stage has back limbs,
-   * avatar is the procedural body,
-   * stage front artifacts are in the same SVG but remain visually peripheral.
+   * Ordem física real:
+   *   backSvg(z1) -> avatar(z2) -> frontSvg(z3).
+   * Assim o bot consegue colocar a mão atrás do corpo e o objeto profissional
+   * na frente dele, em vez de a esfera esconder a atividade.
    */
   root.appendChild(stage.svg);
   root.appendChild(avatarHost);
+  root.appendChild(stage.frontSvg);
 
   element.appendChild(root);
 
