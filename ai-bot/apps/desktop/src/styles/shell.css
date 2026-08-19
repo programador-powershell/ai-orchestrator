@@ -454,7 +454,14 @@ select {
   height: 28px;
   min-width: 28px;
   padding: 0 10px;
-  margin-left: auto;
+  /*
+   * Ocupa a linha.
+   *
+   * O `margin-left: auto` de antes empurrava o botão para a direita porque à
+   * esquerda ficava o retrato do bot. Com o retrato na barra superior, a margem
+   * virou um buraco do tamanho do ícone que saiu.
+   */
+  flex: 1;
   border: 1px solid var(--accent-glow);
   border-radius: var(--radius-sm);
   background: var(--accent-soft);

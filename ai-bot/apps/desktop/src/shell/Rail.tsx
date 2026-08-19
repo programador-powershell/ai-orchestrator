@@ -79,11 +79,23 @@ function RailEmpty({ icon: Icon, hint }: { icon: LucideIcon; hint: string }) {
  * A ATIVA fica visível mesmo vazia: é para onde o próximo texto vai, e sumir com
  * ela faria a pessoa achar que perdeu o lugar.
  */
-export function conversasVisiveis<T extends { id: string; turns: number }>(
+export function conversasVisiveis<T extends { id: string; turns: number; lastSeq?: number; title?: string }>(
   todas: readonly T[],
   ativa: string | null
 ): T[] {
-  return todas.filter((item) => item.turns > 0 || item.id === ativa);
+  return todas.filter(
+    (item) =>
+      // `lastSeq` é o sinal CONFIÁVEL de que houve conversa: ele é reconstruído
+      // lendo o fim do log quando a sessão reabre. `turns` não é — ele é cache
+      // do cabeçalho, gravado com atraso, e volta ZERADO quando o gateway morre
+      // antes da descarga. Filtrar por ele escondia conversa de verdade, que foi
+      // exatamente o defeito: clicar em "nova conversa" fazia a anterior sumir.
+      (item.lastSeq ?? 0) > 0 ||
+      item.turns > 0 ||
+      // Título é conteúdo: só ganha um quem já falou alguma coisa.
+      (item.title ?? "") !== "" ||
+      item.id === ativa
+  );
 }
 
 function ConversationsRail() {

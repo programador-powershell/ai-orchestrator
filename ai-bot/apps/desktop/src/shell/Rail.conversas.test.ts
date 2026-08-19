@@ -38,3 +38,32 @@ describe("conversas visíveis na barra", () => {
     expect(conversasVisiveis(todas, null).map((s) => s.id)).toEqual(["z", "a"]);
   });
 });
+
+/**
+ * O sinal de "esta conversa tem conteúdo" não pode ser um contador de cache.
+ *
+ * `turns` mora no cabeçalho da sessão e é gravado com atraso; quando o gateway
+ * morre antes da descarga, ele volta ZERADO — enquanto o log, que é a fonte,
+ * continua inteiro. `lastSeq` é reconstruído lendo o fim do log na reabertura, e
+ * por isso é ele que responde. Filtrar por `turns` fazia a conversa anterior
+ * sumir da barra ao clicar em "nova conversa".
+ */
+describe("conversa com contador zerado", () => {
+  it("continua visível quando o log tem seq", () => {
+    const todas = [
+      { id: "a", turns: 0, lastSeq: 42, title: "qual a capital da frança?" },
+      { id: "vazia", turns: 0, lastSeq: 0, title: "" }
+    ];
+
+    expect(conversasVisiveis(todas, null).map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("continua visível quando tem título, mesmo sem contador nem seq", () => {
+    const todas = [
+      { id: "titulada", turns: 0, lastSeq: 0, title: "conversa antiga" },
+      { id: "crua", turns: 0, lastSeq: 0, title: "" }
+    ];
+
+    expect(conversasVisiveis(todas, null).map((s) => s.id)).toEqual(["titulada"]);
+  });
+});
