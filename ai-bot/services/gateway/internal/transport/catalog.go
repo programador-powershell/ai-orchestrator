@@ -31,6 +31,7 @@ import (
 
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/protocol"
+	"aibot/gateway/internal/specialist"
 )
 
 // CatalogVault é o cofre visto por estas rotas: grava, apaga e responde se
@@ -334,7 +335,82 @@ func (s *Server) getCatalog(w http.ResponseWriter, _ *http.Request) {
 		"providers": views,
 		"models":    modelViews,
 		"search":    document.extras["search"],
+		// O modelo fixado para cada especialista. Vem do ROTEADOR, e não do
+		// arquivo: é ele quem decide o turno, e mostrar o arquivo deixaria a tela
+		// discordar do que está em vigor quando um plugin mexer no catálogo.
+		"specialists": s.models.SpecialistModels(),
 	})
+}
+
+// patchSpecialistModel fixa (ou solta) o modelo de UM especialista.
+//
+// Corpo: {"specialist":"code","model":"claude-sonnet-5"}. Modelo vazio SOLTA a
+// escolha e devolve o comando à preferência por skill da definição — apagar é a
+// mesma rota, porque "voltar ao automático" é o caminho de volta natural e não
+// merece um verbo próprio.
+func (s *Server) patchSpecialistModel(w http.ResponseWriter, r *http.Request) {
+	if !s.catalogReady(w) {
+		return
+	}
+	var corpo struct {
+		Specialist string `json:"specialist"`
+		Model      string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&corpo); err != nil {
+		s.fail(w, http.StatusBadRequest, "corpo", "corpo inválido: "+err.Error())
+		return
+	}
+	corpo.Specialist = strings.TrimSpace(corpo.Specialist)
+	corpo.Model = strings.TrimSpace(corpo.Model)
+	if corpo.Specialist == "" {
+		s.fail(w, http.StatusBadRequest, "especialista", "informe o especialista")
+		return
+	}
+	if !specialist.Exists(corpo.Specialist) {
+		s.fail(w, http.StatusBadRequest, "especialista",
+			fmt.Sprintf("não existe especialista %q neste gateway", corpo.Specialist))
+		return
+	}
+
+	// Modelo tem de existir E ser utilizável: fixar um modelo cuja chave não foi
+	// cadastrada criaria uma configuração que parece feita e não atende nenhum
+	// turno.
+	if corpo.Model != "" && !s.models.Usable(corpo.Model) {
+		s.fail(w, http.StatusBadRequest, "modelo",
+			fmt.Sprintf("o modelo %q não está no catálogo utilizável — confira se o provedor está habilitado e com chave", corpo.Model))
+		return
+	}
+
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+
+	document, err := s.readCatalogDocument()
+	if err != nil {
+		s.fail(w, http.StatusInternalServerError, "catalogo", err.Error())
+		return
+	}
+
+	atual := s.models.SpecialistModels()
+	if corpo.Model == "" {
+		delete(atual, corpo.Specialist)
+	} else {
+		atual[corpo.Specialist] = corpo.Model
+	}
+
+	bruto, err := json.Marshal(atual)
+	if err != nil {
+		s.fail(w, http.StatusInternalServerError, "catalogo", "serializar os especialistas: "+err.Error())
+		return
+	}
+	document.extras["specialists"] = bruto
+
+	if err := s.writeCatalogDocument(document); err != nil {
+		s.fail(w, http.StatusInternalServerError, "catalogo", err.Error())
+		return
+	}
+	s.models.SetSpecialistModels(atual)
+
+	s.ok(w, map[string]any{"specialists": atual})
 }
 
 func (s *Server) viewOf(provider modelrouter.Provider) providerView {

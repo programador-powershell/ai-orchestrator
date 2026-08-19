@@ -277,7 +277,7 @@ func serve() error {
 	// catálogo regravam o mesmo arquivo, e dois joins independentes seriam dois
 	// lugares para divergirem no dia em que o nome mudar.
 	catalogPath := filepath.Join(cfg.DataDir, "catalog.json")
-	providers, catalog, searchBackend, vpsConfig, err := loadCatalog(catalogPath)
+	providers, catalog, searchBackend, vpsConfig, modelPorEspecialista, err := loadCatalog(catalogPath)
 	if err != nil {
 		return err
 	}
@@ -297,6 +297,10 @@ func serve() error {
 	// política que existe em struct e não tem chamador — que é como a anterior
 	// virou decoração.
 	models.SetAllowed(sessionPolicy.AllowedModels)
+	// O modelo escolhido para cada especialista em Configurações → Motores. Sem
+	// esta linha o arquivo guardaria a escolha e o roteador a ignoraria — mais
+	// uma configuração que existe em disco e não decide nada.
+	models.SetSpecialistModels(modelPorEspecialista)
 
 	// O microkernel aplica capacidades como efeitos reversíveis. Grok é o
 	// primeiro plugin embutido: o adaptador xAI continua atrás do contrato do
@@ -818,7 +822,11 @@ type catalogFile struct {
 	// Search é o motor de busca da ferramenta `web.search`. Nasce vazio: sem ele
 	// a ferramenta recusa dizendo o que configurar, e recusar é melhor do que
 	// mandar a consulta do usuário para um buscador que ninguém escolheu.
-	Search supervisor.SearchBackend `json:"search"`
+	// Specialists fixa o modelo de cada especialista, escolhido em
+	// Configurações → Motores. Vazio = cada um segue a preferência por skill da
+	// própria definição, que é o padrão de fábrica.
+	Specialists map[string]string        `json:"specialists,omitempty"`
+	Search      supervisor.SearchBackend `json:"search"`
 	// VPS é o servidor da TI ({host, port, user, workdir, fingerprint}). Nasce
 	// vazio: sem ele o ambiente aparece cinza dizendo o que preencher, e o
 	// padrão de execução continua no local. Preenchido E respondendo, a VPS
@@ -834,7 +842,7 @@ type catalogFile struct {
 // que sobe já falando com a internet, antes de alguém configurar, é um gateway
 // que manda o primeiro prompt para onde o padrão apontar. A VPS nasce vazia
 // pelo mesmo princípio: apontar servidor é decisão da TI, não default nosso.
-func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supervisor.SearchBackend, sandbox.VPSConfig, error) {
+func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supervisor.SearchBackend, sandbox.VPSConfig, map[string]string, error) {
 	var empty supervisor.SearchBackend
 	var noVPS sandbox.VPSConfig
 
@@ -842,26 +850,26 @@ func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supe
 	if err == nil {
 		var parsed catalogFile
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, nil, empty, noVPS, fmt.Errorf("ler %s: %w", path, err)
+			return nil, nil, empty, noVPS, nil, fmt.Errorf("ler %s: %w", path, err)
 		}
-		return parsed.Providers, parsed.Models, parsed.Search, parsed.VPS, nil
+		return parsed.Providers, parsed.Models, parsed.Search, parsed.VPS, parsed.Specialists, nil
 	}
 	if !os.IsNotExist(err) {
-		return nil, nil, empty, noVPS, fmt.Errorf("ler %s: %w", path, err)
+		return nil, nil, empty, noVPS, nil, fmt.Errorf("ler %s: %w", path, err)
 	}
 
 	seed, err := defaultCatalog()
 	if err != nil {
-		return nil, nil, empty, noVPS, err
+		return nil, nil, empty, noVPS, nil, err
 	}
 	pretty, err := json.MarshalIndent(seed, "", "  ")
 	if err != nil {
-		return nil, nil, empty, noVPS, err
+		return nil, nil, empty, noVPS, nil, err
 	}
 	if err := os.WriteFile(path, pretty, 0o600); err != nil {
-		return nil, nil, empty, noVPS, fmt.Errorf("gravar %s: %w", path, err)
+		return nil, nil, empty, noVPS, nil, fmt.Errorf("gravar %s: %w", path, err)
 	}
-	return seed.Providers, seed.Models, seed.Search, seed.VPS, nil
+	return seed.Providers, seed.Models, seed.Search, seed.VPS, seed.Specialists, nil
 }
 
 // protocolModel encurta a montagem do catálogo semente. Os ids são editáveis no

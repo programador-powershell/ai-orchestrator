@@ -139,6 +139,8 @@ func (s *Server) Handler() http.Handler {
 	// O aplicativo nativo devolve por aqui o resultado das ferramentas de máquina.
 	mux.Handle("POST /v1/host/tool-result", s.auth(s.postHostResult))
 
+	mux.Handle("PATCH /v1/catalog/specialists", s.auth(s.patchSpecialistModel))
+
 	mux.HandleFunc("GET /v1/stream", s.stream)
 
 	return s.cors(mux)

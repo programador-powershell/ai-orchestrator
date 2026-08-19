@@ -161,6 +161,13 @@ type Router struct {
 	// configurou (tudo passa); mapa vazio = a política liberou NADA. Ver
 	// SetAllowed para o porquê de os dois não serem a mesma coisa.
 	allowed map[string]bool
+	// bySpecialist é o modelo escolhido para cada especialista, pela tela de
+	// Configurações. Vazio = ninguém escolheu, e vale a preferência por skill da
+	// definição. Ver Resolve: ele entra DEPOIS da escolha explícita do turno e
+	// ANTES da preferência da definição — quem digitou agora manda mais que uma
+	// configuração de ontem, e uma configuração de ontem manda mais que um
+	// padrão de fábrica.
+	bySpecialist map[string]string
 }
 
 type catalogLayer struct {
@@ -170,6 +177,53 @@ type catalogLayer struct {
 }
 
 const userCatalogLayer = "user-catalog"
+
+// Usable diz se um id de modelo pode atender AGORA: existe no catálogo, o
+// provedor está habilitado e a chave dele está no cofre. É a mesma pergunta que
+// o Resolve faz, exposta para a borda poder recusar uma configuração que
+// nasceria morta.
+func (r *Router) Usable(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, entry := range r.models {
+		if entry.ID == id {
+			return r.usable(entry)
+		}
+	}
+	return false
+}
+
+// SetSpecialistModels fixa o modelo de cada especialista.
+//
+// Mapa vazio ou nil apaga a escolha e devolve o comando à preferência por skill
+// da definição — que é o padrão de fábrica, e não "nenhum modelo".
+func (r *Router) SetSpecialistModels(byID map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(byID) == 0 {
+		r.bySpecialist = nil
+		return
+	}
+	r.bySpecialist = make(map[string]string, len(byID))
+	for id, model := range byID {
+		id = strings.TrimSpace(id)
+		model = strings.TrimSpace(model)
+		if id != "" && model != "" {
+			r.bySpecialist[id] = model
+		}
+	}
+}
+
+// SpecialistModels devolve uma CÓPIA do que está em vigor.
+func (r *Router) SpecialistModels() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	saida := make(map[string]string, len(r.bySpecialist))
+	for id, model := range r.bySpecialist {
+		saida[id] = model
+	}
+	return saida
+}
 
 // New monta o roteador.
 func New(client *http.Client, keys KeyProvider) *Router {
@@ -458,6 +512,17 @@ func (r *Router) Resolve(specialistID, userChoice string) (Entry, Provider, erro
 		// conversa antiga, ou removida do catálogo pelo admin depois. Cai para a
 		// preferência do especialista — e o `state` seguinte conta ao cliente
 		// qual modelo realmente atendeu.
+	}
+
+	// A escolha da tela, por especialista. Modelo que saiu do catálogo depois de
+	// configurado NÃO derruba o turno: cai para a preferência de skill, igual a
+	// uma escolha de usuário inválida.
+	if fixado, tem := r.bySpecialist[specialistID]; tem && fixado != userChoice {
+		for _, entry := range r.models {
+			if entry.ID == fixado && r.usable(entry) {
+				return entry, r.providers[entry.ProviderID], nil
+			}
+		}
 	}
 
 	definition := specialist.GetOrDefault(specialistID)

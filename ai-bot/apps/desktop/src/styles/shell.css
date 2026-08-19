@@ -3331,3 +3331,20 @@ select {
   color: var(--ink);
   background: var(--hover);
 }
+
+/* Uma linha por especialista, na escolha de modelo. */
+.settings-especialista {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-especialista-nome {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 560;
+}

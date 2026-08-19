@@ -106,6 +106,22 @@
 ### :up: V.2
 ### :warning: Latest Changes
 
+- **Modelo por especialista, em Configurações → Motores & Fusion.** É a mesma
+  ideia do "motor por aba" do orquestrador, traduzida para o vocabulário daqui:
+  lá se escolhia por ABA, e aqui não há abas — o que existe é especialista. Uma
+  linha por bot, com "Automático" ou um modelo do catálogo.
+  A escolha vale no **gateway**, não no cliente: é ele que resolve o modelo de
+  cada turno e que sabe quem está atendendo, inclusive quando a equipe **delega**
+  para um especialista que não é o dono da conversa. Guardar isso no app faria a
+  escolha valer só para aquela janela e errar todo turno delegado.
+  A ordem ficou: **escolha do turno > modelo fixado > preferência da definição >
+  padrão do catálogo** — quem digitou agora manda mais que uma configuração de
+  ontem, e ela manda mais que um padrão de fábrica. Modelo que sai do catálogo
+  depois de configurado **não derruba o turno**: cai para a preferência, como já
+  acontecia com escolha de usuário inválida. Fixar um modelo sem chave é
+  recusado na hora, com a frase do gateway — configuração que nasce morta é pior
+  que configuração ausente.
+
 - **As Configurações ganharam o MENU do orquestrador**, item por item e na mesma
   ordem: Conexão, Motores & Fusion, Provedores (BYOK), Memória, Extensões,
   Plugins & trilha, Conectores (MCP), Runtime local, Ship (build & deploy),

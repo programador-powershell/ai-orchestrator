@@ -94,6 +94,8 @@ export interface CatalogModel {
 interface CatalogSnapshot {
   providers: CatalogProvider[];
   models: CatalogModel[];
+  /** Modelo fixado por especialista. Chave ausente = automático. */
+  specialists: Record<string, string>;
 }
 
 /** Os dialetos que o gateway aceita — a mesma lista fechada do catalog.go. */
@@ -112,9 +114,18 @@ export const PROVIDER_KINDS = [
  * Campo ausente vira valor neutro em vez de derrubar a lista inteira.
  */
 function parseCatalog(raw: unknown): CatalogSnapshot {
-  const snapshot: CatalogSnapshot = { providers: [], models: [] };
+  const snapshot: CatalogSnapshot = { providers: [], models: [], specialists: {} };
   if (typeof raw !== "object" || raw === null) return snapshot;
-  const data = raw as { providers?: unknown; models?: unknown };
+  const data = raw as { providers?: unknown; models?: unknown; specialists?: unknown };
+
+  // O mapa de modelo por especialista. Entrada sem valor é entrada que não
+  // existe: o gateway trata vazio como "automático", e guardar a chave vazia
+  // aqui faria o select mostrar uma escolha que ninguém fez.
+  if (typeof data.specialists === "object" && data.specialists !== null) {
+    for (const [id, model] of Object.entries(data.specialists as Record<string, unknown>)) {
+      if (typeof model === "string" && model !== "") snapshot.specialists[id] = model;
+    }
+  }
 
   if (Array.isArray(data.providers)) {
     for (const item of data.providers) {
@@ -782,6 +793,13 @@ export function CatalogSection({
         ))}
 
         <ModelForm providers={providers} onSubmit={addModel} />
+
+        <EspecialistasSection
+          client={gateway}
+          fixados={snapshot?.specialists ?? {}}
+          models={models}
+          onChange={reload}
+        />
       </div>
     );
   }
@@ -862,6 +880,107 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="settings-row">
       <span className="settings-key">{label}</span>
       <span className="settings-value">{value}</span>
+    </div>
+  );
+}
+
+/* --------------------- modelo por especialista --------------------------- */
+
+/**
+ * Um modelo por especialista — a mesma ideia do "motor por aba" do orquestrador,
+ * traduzida para o vocabulário daqui: lá a pessoa escolhia por ABA, e aqui não
+ * há abas; o que existe é especialista.
+ *
+ * A escolha vale no GATEWAY, não no cliente. É ele que resolve o modelo de cada
+ * turno e que sabe quem está atendendo — inclusive quando a equipe delega para
+ * um especialista que não é o dono da conversa. Guardar isto no app faria a
+ * escolha valer só para esta janela e errar todo turno delegado.
+ *
+ * Ordem que o gateway aplica, e que a explicação da tela precisa refletir:
+ * escolha do turno > modelo fixado aqui > preferência da definição > padrão.
+ */
+function EspecialistasSection({
+  client,
+  fixados,
+  models,
+  onChange
+}: {
+  client: CatalogClient;
+  fixados: Record<string, string>;
+  models: CatalogModel[];
+  onChange: () => Promise<void>;
+}) {
+  const especialistas = useApp((state) => state.specialists);
+  const [falha, setFalha] = useState("");
+  const [salvando, setSalvando] = useState("");
+
+  async function fixar(especialista: string, model: string) {
+    setSalvando(especialista);
+    try {
+      await client.patch("/v1/catalog/specialists", { specialist: especialista, model });
+      setFalha("");
+      await onChange();
+    } catch (cause) {
+      setFalha(reasonOf(cause));
+    } finally {
+      setSalvando("");
+    }
+  }
+
+  if (especialistas.length === 0) {
+    return (
+      <p className="settings-empty">
+        a lista de especialistas chega com a conexão do gateway.
+      </p>
+    );
+  }
+
+  return (
+    <div className="settings-cardx">
+      <div className="settings-cardx-title">
+        <Cpu size={13} aria-hidden />
+        Modelo por especialista
+        <small>vale para todo turno, inclusive os que a equipe delega</small>
+      </div>
+
+      {falha !== "" && (
+        <p className="settings-feedback" data-ok="false">
+          {falha}
+        </p>
+      )}
+
+      {especialistas.map((quem) => {
+        const Glyph = SPECIALIST_ICON[quem.id] ?? Bot;
+        return (
+          <div key={quem.id} className="settings-especialista">
+            <span className="settings-especialista-nome">
+              <Glyph size={13} strokeWidth={1.75} aria-hidden />
+              {quem.name}
+            </span>
+            <label className="settings-field">
+              <select
+                aria-label={`modelo do especialista ${quem.id}`}
+                disabled={salvando === quem.id}
+                value={fixados[quem.id] ?? ""}
+                onChange={(event) => void fixar(quem.id, event.target.value)}
+              >
+                <option value="">Automático — o especialista escolhe</option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label} · {model.providerId}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        );
+      })}
+
+      <p className="settings-help">
+        "Automático" deixa a preferência da definição decidir. O modelo escolhido no
+        seletor da barra superior continua vencendo os dois — quem digitou agora manda
+        mais que uma configuração de ontem.
+      </p>
     </div>
   );
 }
