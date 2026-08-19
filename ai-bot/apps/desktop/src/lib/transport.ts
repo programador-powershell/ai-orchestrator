@@ -61,6 +61,14 @@ export interface TransportOptions {
   token: string;
   onEnvelope: (envelope: Envelope) => void;
   onStatus: (status: Status) => void;
+  /**
+   * Conversa a retomar na PRIMEIRA conexão.
+   *
+   * Sem isto, abrir a janela criava conversa nova toda vez: a sessão nasce no
+   * aperto de mão, e um `hello` sem dica faz o gateway abrir outra. Recarregar
+   * a página três vezes deixava três conversas vazias na barra lateral.
+   */
+  session?: string;
 }
 
 /** Quem está do outro lado. O gateway usa isto para separar app de CLI no log. */
@@ -175,7 +183,7 @@ export function createTransport(options: TransportOptions): Transport {
   let status: Status = "offline";
 
   /** Sessão vinda do `ready`. É ela que vai no envelope de saída. */
-  let session = "";
+  let session = options.session ?? "";
 
   /** Último `seq` visto — o marco do replay. */
   let lastSeq = 0;

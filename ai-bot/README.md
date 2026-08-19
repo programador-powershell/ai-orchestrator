@@ -155,6 +155,18 @@
 
 ### :pushpin: Fixes
 
+- **A barra lateral enchia de conversas que ninguém começou.** A sessão nasce no
+  aperto de mão do WebSocket, então abrir a janela, recarregar a página ou
+  reconectar criava mais uma — todas com zero turno e sem título. Duas
+  correções: o app agora **lembra a conversa aberta** (só o id, um ponteiro; as
+  linhas continuam vindo do replay do gateway) e a manda como `sessionHint` na
+  primeira conexão, em vez de pedir uma nova; e a barra **só lista conversa com
+  turno**, mantendo a ativa visível mesmo vazia, que é para onde o próximo texto
+  vai.
+- **Cada conversa passou a mostrar o AVATAR do especialista**, e não um ícone
+  genérico. O ícone dizia "isto é uma conversa", que a lista inteira já diz; o
+  retrato diz de quem ela é, que é o que se procura ao correr o olho pela barra.
+
 - **NENHUM navegador conseguia abrir o WebSocket do gateway: dois caracteres
   trocados na constante do handshake.** A RFC 6455 fixa
   `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`; o código tinha

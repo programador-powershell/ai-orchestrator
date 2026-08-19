@@ -35,7 +35,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RailKind, Task } from "@aibot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
-import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
+import { MASTER, specialistById } from "../lib/specialists";
 import { BotAvatar } from "../avatar/BotAvatar";
 import {
   GROK_STATE_LABELS,
@@ -116,17 +116,37 @@ function PresenceCard() {
 
 /* ------------------------------- conversas ------------------------------- */
 
+/**
+ * Quais conversas entram na barra.
+ *
+ * Conversa sem nenhum turno NÃO é conversa. A sessão nasce no aperto de mão do
+ * WebSocket, não no primeiro pedido — quem abre a janela já ganha uma. Com isso,
+ * reconexão, recarga da página e reinício do app geravam, cada um, mais uma
+ * linha vazia: a barra enchia de "conversas" que ninguém começou.
+ *
+ * A ATIVA fica visível mesmo vazia: é para onde o próximo texto vai, e sumir com
+ * ela faria a pessoa achar que perdeu o lugar.
+ */
+export function conversasVisiveis<T extends { id: string; turns: number }>(
+  todas: readonly T[],
+  ativa: string | null
+): T[] {
+  return todas.filter((item) => item.turns > 0 || item.id === ativa);
+}
+
 function ConversationsRail() {
-  const sessions = useApp((state) => state.sessions);
+  const todas = useApp((state) => state.sessions);
   const session = useApp((state) => state.session);
   const openSession = useApp((state) => state.openSession);
   const forkSession = useApp((state) => state.forkSession);
+
+  const sessions = conversasVisiveis(todas, session);
 
   if (sessions.length === 0) {
     return (
       <RailEmpty
         icon={MessagesSquare}
-        hint="As conversas salvas aparecem aqui, cada uma com o ícone do especialista que atendeu por último."
+        hint="As conversas salvas aparecem aqui, cada uma com o avatar do especialista que atendeu por último."
       />
     );
   }
@@ -134,9 +154,11 @@ function ConversationsRail() {
   return (
     <ul className="rail-list">
       {sessions.map((item) => {
-        // O ícone é o do especialista da sessão — é ele que diz, de relance, que
-        // tipo de trabalho está guardado ali dentro.
-        const Icon = SPECIALIST_ICON[item.specialist ?? ""] ?? Bot;
+        // O BOT, e não um ícone: é o avatar do especialista que atendeu por
+        // último naquela conversa. O ícone genérico dizia "isto é uma conversa",
+        // que a lista inteira já diz; o retrato diz DE QUEM ela é, que é a
+        // informação que a pessoa procura ao correr o olho pela barra.
+        const especialista = grokSpecialistOf(item.specialist ?? "");
         return (
           // O botão de ramificar é IRMÃO do botão da conversa, não filho:
           // botão dentro de botão é HTML inválido e o clique dos dois brigaria.
@@ -148,8 +170,14 @@ function ConversationsRail() {
               onClick={() => openSession(item.id)}
               title={item.title}
             >
-              <Icon size={14} aria-hidden />
-              <span className="rail-item-label">{item.title}</span>
+              <GrokAvatar
+                specialist={especialista}
+                state={item.id === session ? "active" : "waiting"}
+                size={22}
+              />
+              <span className="rail-item-label">
+                {item.title === "" ? "Conversa sem título" : item.title}
+              </span>
               <span className="rail-item-meta">{item.turns}</span>
             </button>
             <button
