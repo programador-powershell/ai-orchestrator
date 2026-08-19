@@ -550,12 +550,24 @@ func (s *Server) sessionSSE(w http.ResponseWriter, r *http.Request) {
 	subscription := s.bus.Subscribe(sessionID)
 	defer subscription.Close()
 
-	if history, err := s.store.Since(sessionID, from, store.MaxEventBatch); err == nil {
+	// O histórico vem PAGINADO, como no replay do WebSocket (stream.go):
+	// MaxEventBatch é tamanho de página do store, não teto do replay. Uma
+	// chamada única entregava só o primeiro lote, e o resto do log — gravado
+	// antes da assinatura — não tem outro caminho até o cliente: não passa
+	// pelo bus, e o filtro `seq <= from` do laço ao vivo não o cobre.
+	for {
+		history, err := s.store.Since(sessionID, from, store.MaxEventBatch)
+		if err != nil || len(history) == 0 {
+			break
+		}
 		for _, envelope := range history {
 			writeSSE(w, envelope)
 			from = envelope.Seq
 		}
 		flusher.Flush()
+		if len(history) < store.MaxEventBatch {
+			break
+		}
 	}
 
 	heartbeat := time.NewTicker(20 * time.Second)
