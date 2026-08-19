@@ -52,6 +52,7 @@ import (
 	"aibot/gateway/internal/supervisor"
 	"aibot/gateway/internal/transport"
 	"aibot/gateway/internal/update"
+	"aibot/gateway/internal/workspace"
 	"aibot/gateway/internal/worktree"
 )
 
@@ -395,9 +396,16 @@ func serve() error {
 		sandbox.NewCloudRunner(),
 	)
 
+	// O gerente de workspaces (internal/workspace): congela ONDE cada execução
+	// trabalha. A v1 resolve para a pasta local da sessão — a MESMA função que
+	// antes alimentava o Toolbox.Root —, e é a peça que o cluster troca depois
+	// (Puter no source/staging, worker-daemon no materialize).
+	workspaces := workspace.NewManager(func(sessionID string) string {
+		return sessionRoot(durable, sessionID)
+	})
+
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{
-		Root:      func(sessionID string) string { return sessionRoot(durable, sessionID) },
 		Memory:    recall,
 		Net:       guard,
 		MCP:       hub,
@@ -575,6 +583,7 @@ func serve() error {
 		// supervisor não importar internal/pack — a dependência aponta para cá.
 		Hooks:      hookRunner,
 		PackPrompt: pack.PromptFor,
+		Workspaces: workspaces,
 	})
 	sup.InstallCrewTools(registry)
 

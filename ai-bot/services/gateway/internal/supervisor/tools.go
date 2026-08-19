@@ -39,6 +39,7 @@ import (
 	"aibot/gateway/internal/netguard"
 	"aibot/gateway/internal/sandbox"
 	"aibot/gateway/internal/schedule"
+	"aibot/gateway/internal/workspace"
 	"aibot/gateway/internal/worktree"
 )
 
@@ -219,10 +220,6 @@ func errHostDisconnected(tool string) error {
 
 // Toolbox junta as dependências e instala as ferramentas locais.
 type Toolbox struct {
-	// Root devolve a raiz do projeto da sessão. TODO caminho de arquivo é
-	// confinado a ela. Se devolver "", as ferramentas de arquivo recusam — é
-	// melhor que cair na pasta do processo, que seria o binário do gateway.
-	Root      func(sessionID string) string
 	Memory    *memory.Store
 	Net       *netguard.Guard
 	MCP       *mcphub.Hub
@@ -395,11 +392,19 @@ func withinRoot(root, candidate string) bool {
 	return strings.HasPrefix(candidate, root+string(filepath.Separator))
 }
 
-func (t *Toolbox) root(sessionID string) string {
-	if t.Root == nil {
+// root devolve a raiz do workspace da EXECUÇÃO pendurada no contexto — quem a
+// congela é o supervisor, no começo do turno/tarefa (workspace.Plan +
+// Materialize). A ferramenta nunca calcula um diretório: ela recebe uma
+// execução cujo workspace já foi decidido. Vazio = a sessão não tem pasta de
+// projeto (ou o contexto veio sem execução), e cada ferramenta recusa com o
+// motivo dela — cair na pasta do processo seria trabalhar dentro do binário
+// do gateway.
+func (t *Toolbox) root(ctx context.Context) string {
+	execution, ok := workspace.FromContext(ctx)
+	if !ok {
 		return ""
 	}
-	return t.Root(sessionID)
+	return execution.LocalRoot
 }
 
 /* ------------------------------- arquivos -------------------------------- */
@@ -408,14 +413,14 @@ func (t *Toolbox) root(sessionID string) string {
 // dentro do prompt não ajuda o modelo e derruba a sessão.
 const maxReadBytes = 512 << 10
 
-func (t *Toolbox) fsRead(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) fsRead(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
 	}
-	path, err := resolveInside(t.root(sessionID), args.Path)
+	path, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -430,7 +435,7 @@ func (t *Toolbox) fsRead(_ context.Context, sessionID string, raw json.RawMessag
 	return string(content), nil
 }
 
-func (t *Toolbox) fsWrite(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) fsWrite(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -438,7 +443,7 @@ func (t *Toolbox) fsWrite(_ context.Context, sessionID string, raw json.RawMessa
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
 	}
-	path, err := resolveInside(t.root(sessionID), args.Path)
+	path, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -451,14 +456,14 @@ func (t *Toolbox) fsWrite(_ context.Context, sessionID string, raw json.RawMessa
 	return fmt.Sprintf("gravado: %s (%d bytes)", args.Path, len(args.Content)), nil
 }
 
-func (t *Toolbox) fsList(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) fsList(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
 	}
-	path, err := resolveInside(t.root(sessionID), args.Path)
+	path, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -492,7 +497,7 @@ const (
 	searchMaxSize    = 1 << 20
 )
 
-func (t *Toolbox) fsSearch(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) fsSearch(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Query string `json:"query"`
 		Path  string `json:"path"`
@@ -503,7 +508,7 @@ func (t *Toolbox) fsSearch(_ context.Context, sessionID string, raw json.RawMess
 	if strings.TrimSpace(args.Query) == "" {
 		return "", errors.New("informe o texto a procurar em \"query\"")
 	}
-	base, err := resolveInside(t.root(sessionID), args.Path)
+	base, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -578,7 +583,7 @@ func isProbablyText(content []byte) bool {
 	return true
 }
 
-func (t *Toolbox) fsPatch(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) fsPatch(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path    string `json:"path"`
 		Find    string `json:"find"`
@@ -590,7 +595,7 @@ func (t *Toolbox) fsPatch(_ context.Context, sessionID string, raw json.RawMessa
 	if args.Find == "" {
 		return "", errors.New("informe o trecho exato a trocar em \"find\"")
 	}
-	path, err := resolveInside(t.root(sessionID), args.Path)
+	path, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -619,7 +624,7 @@ func (t *Toolbox) fsPatch(_ context.Context, sessionID string, raw json.RawMessa
 /* ---------------------------------- git ---------------------------------- */
 
 func (t *Toolbox) git(ctx context.Context, sessionID string, arguments ...string) (string, error) {
-	root := t.root(sessionID)
+	root := t.root(ctx)
 	if root == "" {
 		return "", errNoRoot
 	}

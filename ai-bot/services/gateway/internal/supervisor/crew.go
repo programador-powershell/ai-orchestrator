@@ -26,6 +26,7 @@ import (
 	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
+	"aibot/gateway/internal/workspace"
 	"aibot/gateway/internal/worktree"
 )
 
@@ -296,16 +297,30 @@ func (s *Supervisor) runCrew(
 					workerID = fmt.Sprintf("%s-r%d", workerID, attempt)
 				}
 
-				_ = s.emit(sessionID, turn, protocol.KindTaskDispatch, orchestrator, protocol.TaskDispatch{
-					Task:     task,
-					WorkerID: workerID,
-					Wave:     waveIndex + 1,
-				})
+				// O plano é congelado ANTES do despacho para viajar no envelope:
+				// a tela (e o log) sabem desde já em que workspace e época esta
+				// execução trabalha. Na v1 é sempre local/1; o campo existe para
+				// o contrato não mudar no dia em que o scheduler multi-PC entrar.
+				dispatch := protocol.TaskDispatch{
+					Task:      task,
+					WorkerID:  workerID,
+					TaskRunID: workerID,
+					Wave:      waveIndex + 1,
+				}
+				if s.deps.Workspaces != nil {
+					if plan, err := s.deps.Workspaces.Plan(ctx, workspace.PlanRequest{
+						SessionID: sessionID, TaskID: task.ID, BotID: task.Specialist, Attempt: attempt,
+					}); err == nil {
+						dispatch.WorkspacePlanID = plan.ID
+						dispatch.LeaseEpoch = plan.LeaseEpoch
+					}
+				}
+				_ = s.emit(sessionID, turn, protocol.KindTaskDispatch, orchestrator, dispatch)
 
 				group.Add(1)
 				go func(position int, task protocol.Task, workerID string) {
 					defer group.Done()
-					outcomes[position] = s.runWorker(workerCtx, sessionID, turn, task, workerID, waveIndex+1, results)
+					outcomes[position] = s.runWorker(workerCtx, sessionID, turn, task, workerID, waveIndex+1, attempt, results)
 				}(position, task, workerID)
 			}
 			group.Wait()
@@ -401,7 +416,7 @@ func (s *Supervisor) runWorker(
 	sessionID, turn string,
 	task protocol.Task,
 	workerID string,
-	wave int,
+	wave, attempt int,
 	upstream map[string]string,
 ) protocol.WorkerDone {
 	definition := specialist.GetOrDefault(task.Specialist)
@@ -411,6 +426,12 @@ func (s *Supervisor) runWorker(
 		Specialist: definition.ID,
 	}
 	done := protocol.WorkerDone{TaskID: task.ID, WorkerID: workerID}
+
+	// O workspace da TAREFA, congelado antes de qualquer ferramenta rodar. Na
+	// v1 ele aponta para a mesma pasta da sessão (o worktree isolado continua
+	// sendo do gerente de cópias, como era); quando o scheduler multi-PC
+	// entrar, é este plano que dirá worker, snapshot e época.
+	ctx = s.workspaceDaTarefa(ctx, sessionID, task.ID, definition.ID, attempt)
 
 	entry, _, err := s.deps.Models.Resolve(definition.ID, task.Model)
 	if err != nil {

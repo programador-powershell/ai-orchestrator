@@ -24,7 +24,7 @@ func (t *Toolbox) installShipTools(registry *Registry) {
 		"gera o Dockerfile de publicação da stack detectada ou informada. args: {stack?, path?}", t.shipDockerfile)
 }
 
-func (t *Toolbox) shipDetect(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) shipDetect(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
 	}
@@ -33,7 +33,7 @@ func (t *Toolbox) shipDetect(_ context.Context, sessionID string, raw json.RawMe
 	}
 	// O mesmo confinamento das ferramentas de arquivo: detectar stack fora da
 	// pasta do projeto seria ler o disco da pessoa com outro nome.
-	root, err := resolveInside(t.root(sessionID), args.Path)
+	root, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +57,7 @@ func (t *Toolbox) shipDetect(_ context.Context, sessionID string, raw json.RawMe
 	return strings.Join(lines, "\n"), nil
 }
 
-func (t *Toolbox) shipDockerfile(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) shipDockerfile(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Stack string `json:"stack"`
 		Path  string `json:"path"`
@@ -78,7 +78,7 @@ func (t *Toolbox) shipDockerfile(_ context.Context, sessionID string, raw json.R
 		}
 		stack = found
 	} else {
-		root, err := resolveInside(t.root(sessionID), args.Path)
+		root, err := resolveInside(t.root(ctx), args.Path)
 		if err != nil {
 			return "", err
 		}

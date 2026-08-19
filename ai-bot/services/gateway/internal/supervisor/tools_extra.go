@@ -99,14 +99,14 @@ func scanSkip(name string) bool {
 	return false
 }
 
-func (t *Toolbox) secretsScan(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+func (t *Toolbox) secretsScan(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
 	}
-	base, err := resolveInside(t.root(sessionID), args.Path)
+	base, err := resolveInside(t.root(ctx), args.Path)
 	if err != nil {
 		return "", err
 	}

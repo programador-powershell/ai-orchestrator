@@ -55,7 +55,6 @@ func procToolbox(t *testing.T, environments *sandbox.Registry) (*Registry, *proc
 	host := &procHostSpy{}
 	registry.SetBridge(host)
 	toolbox := &Toolbox{
-		Root:         func(string) string { return root },
 		Environments: environments,
 	}
 	toolbox.Install(registry)
@@ -69,10 +68,10 @@ func TestProcRunNoAmbienteLocalVaiParaOAplicativoNativo(t *testing.T) {
 	// ConPTY é o Rust. No ambiente local nada muda em relação a antes.
 	fake := &procFakeRunner{id: protocol.EnvDocker}
 	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), fake)
-	registry, host, _ := procToolbox(t, environments)
+	registry, host, root := procToolbox(t, environments)
 
 	args := json.RawMessage(`{"command":"go build ./...","cwd":"."}`)
-	output, err := registry.Call(context.Background(), "proc.run", "s1", args)
+	output, err := registry.Call(ctxComRoot(root), "proc.run", "s1", args)
 	if err != nil {
 		t.Fatalf("proc.run: %v", err)
 	}
@@ -101,7 +100,7 @@ func TestProcRunForaDoLocalNaoPassaPeloAplicativoNativo(t *testing.T) {
 		t.Fatalf("Set: %v", err)
 	}
 
-	output, err := registry.Call(context.Background(), "proc.run", "s1",
+	output, err := registry.Call(ctxComRoot(root), "proc.run", "s1",
 		json.RawMessage(`{"command":"go test ./..."}`))
 	if err != nil {
 		t.Fatalf("proc.run: %v", err)
@@ -133,12 +132,12 @@ func TestProcRunForaDoLocalNaoPassaPeloAplicativoNativo(t *testing.T) {
 func TestProcRunConfinaOCwdNaPastaDoProjeto(t *testing.T) {
 	fake := &procFakeRunner{id: protocol.EnvDocker}
 	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), fake)
-	registry, _, _ := procToolbox(t, environments)
+	registry, _, root := procToolbox(t, environments)
 	if err := environments.Set("s1", protocol.EnvDocker); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 
-	if _, err := registry.Call(context.Background(), "proc.run", "s1",
+	if _, err := registry.Call(ctxComRoot(root), "proc.run", "s1",
 		json.RawMessage(`{"command":"ls","cwd":"../.."}`)); err == nil {
 		t.Fatal("cwd fora da pasta do projeto tinha de ser recusado")
 	}
@@ -151,12 +150,12 @@ func TestProcRunRecusaAmbienteIndisponivel(t *testing.T) {
 	// A VPS está declarada e SEM configuração no catálogo. A recusa vem com o
 	// motivo acionável, e não com um erro genérico de ferramenta.
 	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), sandbox.NewVPSRunner(sandbox.VPSConfig{}))
-	registry, host, _ := procToolbox(t, environments)
+	registry, host, root := procToolbox(t, environments)
 	if err := environments.Set("s1", protocol.EnvVPS); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 
-	_, err := registry.Call(context.Background(), "proc.run", "s1",
+	_, err := registry.Call(ctxComRoot(root), "proc.run", "s1",
 		json.RawMessage(`{"command":"make"}`))
 	if err == nil {
 		t.Fatal("ambiente indisponível tinha de recusar")
@@ -170,8 +169,8 @@ func TestProcRunRecusaAmbienteIndisponivel(t *testing.T) {
 }
 
 func TestProcRunSemComandoRecusaAntesDeDecidirODestino(t *testing.T) {
-	registry, host, _ := procToolbox(t, sandbox.NewRegistry(sandbox.NewLocalRunner()))
-	if _, err := registry.Call(context.Background(), "proc.run", "s1",
+	registry, host, root := procToolbox(t, sandbox.NewRegistry(sandbox.NewLocalRunner()))
+	if _, err := registry.Call(ctxComRoot(root), "proc.run", "s1",
 		json.RawMessage(`{"command":"   "}`)); err == nil {
 		t.Fatal("comando em branco tinha de ser recusado")
 	}

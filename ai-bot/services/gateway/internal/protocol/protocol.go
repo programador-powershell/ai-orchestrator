@@ -553,8 +553,18 @@ type Task struct {
 
 // TaskDispatch entrega a tarefa ao trabalhador.
 type TaskDispatch struct {
-	Task     Task   `json:"task"`
+	Task Task `json:"task"`
+	// WorkerID hoje é o processo lógico da onda (w-1-t1); no cluster ele passa
+	// a ser o PC registrado ("pc-02") e o processo lógico vive no TaskRunID.
+	// Os dois campos existem desde já para a tela não ter de reaprender o
+	// contrato no dia da troca.
 	WorkerID string `json:"workerId"`
+	// TaskRunID identifica ESTA execução da tarefa (tentativa incluída).
+	TaskRunID string `json:"taskRunId,omitempty"`
+	// WorkspacePlanID é o plano congelado em que a execução trabalha, e
+	// LeaseEpoch a época do lease no congelamento (ver internal/workspace).
+	WorkspacePlanID string `json:"workspacePlanId,omitempty"`
+	LeaseEpoch      uint64 `json:"leaseEpoch,omitempty"`
 	// Wave é a onda topológica do DAG — tudo na mesma onda pode rodar junto.
 	Wave int `json:"wave"`
 }

@@ -685,3 +685,20 @@ sem revogar o que a pessoa autorizou à mão.
 Só a fase 9 depende do Puter. Se o aval não vier, o cluster funciona com o
 workspace num volume do PC — e a fase 9 vira a troca de uma implementação de
 plano de arquivos por outra.
+
+## Estado da implementação
+
+Auditado em 2026-08-19, item a item, contra o código. A coluna "onde vai
+morar" aponta a peça que já existe (ou que acabou de nascer) para receber a
+implementação.
+
+| Item | Estado | Onde está hoje / onde vai morar |
+| --- | --- | --- |
+| **WorkspacePlan v1 (Plan + Context + fs/git/proc no mesmo root)** | :white_check_mark: Feito | `internal/workspace/` — plano congelado por turno/tarefa, execução no contexto, ferramentas sem `Root(sessionID)`; a cerca (`Promote`) já recusa época velha. Backend local: `Source.Provider="local"`, worker `local`, época 1. |
+| Worker-daemon multi-PC | :x: Falta | `sandbox.Runner` ainda representa AMBIENTES (local/docker/wsl/vps/cloud), não PCs registrados no cluster. O daemon entra em cima do `HostBridge`, com registro/heartbeat/capacidades; o `Materialize` do `workspace.Manager` é o ponto que ele passa a implementar. |
+| Runtime snapshot | :x: Falta | Não há resolver por manifesto/fingerprint/cache. O campo já viaja (`Plan.Runtime.SnapshotDigest`, hoje `"host"`); o resolver troca o valor por um digest de verdade e o daemon materializa a partir do cache. |
+| Puter materialize/publish | :x: Falta | Nada conectado à execução. O `workspace.Manager` isola exatamente esta troca: `Source/Staging` com URIs `puter:///...` e um `Materialize`/`Promote` que falam com a instância. Vendorização pendente de TI/SI. |
+| Staging + fence/epoch | :warning: Parcial | A CERCA já é código (`workspace.Promote` recusa `ErrStaleWorkspace`; testada com o cenário PC-02/PC-03) e o `LeaseEpoch` viaja no plano e no `task.dispatch`. O que falta é o STAGING real: a v1 escreve direto (`local://inplace`), sem área de espera separada. |
+| Checkpoint shadow-git | :x: Falta | Especificado no desenho (baseline por tarefa em sombra endereçada por conteúdo). O lugar dele já existe: `Execution.ShadowGitDir`, vazio na v1. |
+| Aprovação durável | :x: Falta | Os portões ainda usam `s.gates`/`s.waiting` (channels em memória) — gateway que reinicia perde a pendência. O destino é o log durável da sessão, como o `ask`/`reply` já fazem. |
+| Lease distribuído | :x: Falta | O store ainda usa `.lock` com PID local (válido para um PC). A interface `workspace.Leases` já existe com a implementação v1 (`local`/época 1); o lease de verdade entra pelo banco compartilhado sem tocar na cerca. |

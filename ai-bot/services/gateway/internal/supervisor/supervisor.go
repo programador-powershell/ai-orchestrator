@@ -30,6 +30,7 @@ import (
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
+	"aibot/gateway/internal/workspace"
 	"aibot/gateway/internal/worktree"
 )
 
@@ -83,6 +84,12 @@ type Deps struct {
 	// PackPrompt devolve o texto que os pacotes corporativos anexam ao prompt de
 	// sistema de um especialista (internal/pack.PromptFor). Pode ser nil.
 	PackPrompt func(specialistID string) string
+	// Workspaces congela ONDE cada execução trabalha (internal/workspace): o
+	// plano v1 aponta para a pasta local da sessão, e é pendurado no contexto
+	// no começo do turno/tarefa — a ferramenta nunca calcula um diretório, ela
+	// recebe uma execução cujo workspace já foi decidido. Nil = nenhum
+	// workspace é pendurado e as ferramentas de arquivo recusam com motivo.
+	Workspaces *workspace.Manager
 }
 
 // turnHandle é o cancelamento de UM turno, com IDENTIDADE.
@@ -199,6 +206,10 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// até as sub-equipes. Criá-lo dentro de `task.dispatch` daria cota nova a cada
 	// nível da árvore, que é exatamente o que o teto existe para impedir.
 	ctx = withCrewBudget(ctx)
+	// O WORKSPACE do turno também nasce aqui, congelado UMA vez: fs.read,
+	// git.diff e proc.run deste turno enxergam o mesmo root porque leem a mesma
+	// execução do contexto — nenhuma ferramenta resolve diretório sozinha.
+	ctx = s.comWorkspace(ctx, sessionID, "", "")
 	s.mu.Lock()
 	if previous, ok := s.running[sessionID]; ok {
 		previous.cancel()
@@ -1165,6 +1176,43 @@ func (s *Supervisor) ReportTurnFailure(sessionID string, err error) {
 }
 
 /* -------------------------------- apoio --------------------------------- */
+
+// comWorkspace congela o plano de workspace e pendura a execução no contexto.
+//
+// UMA vez por turno/tarefa, nunca por ferramenta: resolver o workspace a cada
+// fs.read abriria a janela clássica — fs.read na época 17, a tarefa é
+// reatribuída, fs.write na época 18, em outro worker. O plano congelado é o
+// que garante que todas as ferramentas do mesmo turno enxergam o mesmo root.
+//
+// Falha aqui NÃO derruba o turno: o contexto segue sem execução e as
+// ferramentas de arquivo recusam com motivo — um turno de pura conversa nunca
+// precisou de workspace.
+func (s *Supervisor) comWorkspace(ctx context.Context, sessionID, taskID, botID string) context.Context {
+	return s.workspaceDaTarefa(ctx, sessionID, taskID, botID, 1)
+}
+
+// workspaceDaTarefa é o comWorkspace com a TENTATIVA explícita: a refação de
+// uma onda congela um plano novo (attempt 2), o mesmo que foi anunciado no
+// despacho — plano do envelope e plano da execução não podem divergir.
+func (s *Supervisor) workspaceDaTarefa(ctx context.Context, sessionID, taskID, botID string, attempt int) context.Context {
+	if s.deps.Workspaces == nil {
+		return ctx
+	}
+	plan, err := s.deps.Workspaces.Plan(ctx, workspace.PlanRequest{
+		SessionID: sessionID,
+		TaskID:    taskID,
+		BotID:     botID,
+		Attempt:   attempt,
+	})
+	if err != nil {
+		return ctx
+	}
+	execution, err := s.deps.Workspaces.Materialize(ctx, plan)
+	if err != nil {
+		return ctx
+	}
+	return workspace.WithExecution(ctx, execution)
+}
 
 // mustPayload serializa para envelope efêmero. Só recebe tipos deste pacote,
 // que sempre serializam; o erro vira payload vazio em vez de derrubar o turno.

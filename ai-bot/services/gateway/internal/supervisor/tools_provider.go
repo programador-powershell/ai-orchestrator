@@ -73,7 +73,7 @@ func (t *Toolbox) imageGenerate(ctx context.Context, sessionID string, raw json.
 	}
 	// A pasta de destino é o confinamento; sem raiz de projeto não há onde
 	// gravar, e devolver base64 no lugar comeria o contexto inteiro do turno.
-	root := t.root(sessionID)
+	root := t.root(ctx)
 	if root == "" {
 		return "", errNoRoot
 	}

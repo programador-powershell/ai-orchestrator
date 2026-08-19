@@ -18,7 +18,7 @@ func shipToolbox(t *testing.T) (*Registry, string) {
 	t.Helper()
 	root := t.TempDir()
 	registry := NewRegistry()
-	toolbox := &Toolbox{Root: func(string) string { return root }}
+	toolbox := &Toolbox{}
 	toolbox.installShipTools(registry)
 	return registry, root
 }
@@ -36,10 +36,11 @@ func writeProjectFile(t *testing.T, root, relative, content string) {
 
 func TestShipDetectReportsTheProjectStack(t *testing.T) {
 	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
 	writeProjectFile(t, root, "package.json", `{"name":"x","dependencies":{"next":"15"}}`)
 	writeProjectFile(t, root, "next.config.js", "module.exports = {}")
 
-	output, err := registry.Call(context.Background(), "ship.detect", "s1", nil)
+	output, err := registry.Call(ctx, "ship.detect", "s1", nil)
 	if err != nil {
 		t.Fatalf("ship.detect: %v", err)
 	}
@@ -50,9 +51,10 @@ func TestShipDetectReportsTheProjectStack(t *testing.T) {
 
 func TestShipDetectSaysWhatToDoWhenNothingMatches(t *testing.T) {
 	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
 	writeProjectFile(t, root, "notas.md", "só texto")
 
-	output, err := registry.Call(context.Background(), "ship.detect", "s1", nil)
+	output, err := registry.Call(ctx, "ship.detect", "s1", nil)
 	if err != nil {
 		t.Fatalf("nada detectado não é erro de ferramenta: %v", err)
 	}
@@ -63,26 +65,32 @@ func TestShipDetectSaysWhatToDoWhenNothingMatches(t *testing.T) {
 }
 
 func TestShipDetectStaysInsideTheProject(t *testing.T) {
-	registry, _ := shipToolbox(t)
+	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
+	_ = root
 	args, _ := json.Marshal(map[string]string{"path": "../fora"})
-	if _, err := registry.Call(context.Background(), "ship.detect", "s1", args); err == nil {
+	if _, err := registry.Call(ctx, "ship.detect", "s1", args); err == nil {
 		t.Fatal("caminho fora do projeto foi aceito")
 	}
 }
 
 func TestShipDetectRefusesSessionWithoutRoot(t *testing.T) {
 	registry := NewRegistry()
-	toolbox := &Toolbox{Root: func(string) string { return "" }}
+	toolbox := &Toolbox{}
 	toolbox.installShipTools(registry)
+	// Contexto SEM execução: é a sessão sem pasta de projeto — a recusa vem
+	// da ferramenta, com motivo, exatamente como antes da migração.
 	if _, err := registry.Call(context.Background(), "ship.detect", "s1", nil); err == nil {
 		t.Fatal("sessão sem pasta de projeto deveria recusar com motivo")
 	}
 }
 
 func TestShipDockerfileByExplicitStack(t *testing.T) {
-	registry, _ := shipToolbox(t)
+	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
+	_ = root
 	args, _ := json.Marshal(map[string]string{"stack": "nextjs"})
-	output, err := registry.Call(context.Background(), "ship.dockerfile", "s1", args)
+	output, err := registry.Call(ctx, "ship.dockerfile", "s1", args)
 	if err != nil {
 		t.Fatalf("ship.dockerfile: %v", err)
 	}
@@ -100,9 +108,10 @@ func TestShipDockerfileByExplicitStack(t *testing.T) {
 
 func TestShipDockerfileDetectsWhenStackIsOmitted(t *testing.T) {
 	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
 	writeProjectFile(t, root, "go.mod", "module exemplo\n\ngo 1.22\n")
 
-	output, err := registry.Call(context.Background(), "ship.dockerfile", "s1", nil)
+	output, err := registry.Call(ctx, "ship.dockerfile", "s1", nil)
 	if err != nil {
 		t.Fatalf("ship.dockerfile: %v", err)
 	}
@@ -115,9 +124,11 @@ func TestShipDockerfileDetectsWhenStackIsOmitted(t *testing.T) {
 }
 
 func TestShipDockerfileRefusesUnknownStackWithGuidance(t *testing.T) {
-	registry, _ := shipToolbox(t)
+	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
+	_ = root
 	args, _ := json.Marshal(map[string]string{"stack": "cobol-on-rails"})
-	_, err := registry.Call(context.Background(), "ship.dockerfile", "s1", args)
+	_, err := registry.Call(ctx, "ship.dockerfile", "s1", args)
 	if err == nil {
 		t.Fatal("stack inexistente foi aceita")
 	}
@@ -128,9 +139,10 @@ func TestShipDockerfileRefusesUnknownStackWithGuidance(t *testing.T) {
 
 func TestShipDockerfileRefusesWhenNothingIsDetected(t *testing.T) {
 	registry, root := shipToolbox(t)
+	ctx := ctxComRoot(root)
 	writeProjectFile(t, root, "leia-me.txt", "nada aqui")
 
-	_, err := registry.Call(context.Background(), "ship.dockerfile", "s1", nil)
+	_, err := registry.Call(ctx, "ship.dockerfile", "s1", nil)
 	if err == nil {
 		t.Fatal("sem stack e sem detecção deveria recusar com motivo")
 	}

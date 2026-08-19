@@ -168,6 +168,32 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **O WORKSPACE virou plano congelado — o primeiro passo do cluster
+  (`internal/workspace`).** A regra nova do gateway: nenhuma ferramenta de
+  projeto recebe ou calcula um diretório — ela recebe uma EXECUÇÃO cujo
+  workspace já foi decidido. O supervisor congela o `WorkspacePlan` uma vez por
+  turno/tarefa (sessão, task, bot, tentativa, worker, época de lease, source,
+  runtime, staging, baseline — tudo validado campo a campo) e pendura a
+  execução materializada no contexto; `fs.*`, `git.*`, `proc.run`, `ship.*` e a
+  varredura de segredos leem dali. Resolver o workspace por ferramenta abriria
+  a janela clássica do cluster: `fs.read` na época 17, tarefa reatribuída,
+  `fs.write` na época 18 em outro PC.
+  - A **cerca já é código**: `Promote` compara worker+época do plano com o
+    lease vigente e recusa (`ErrStaleWorkspace`) — o worker que perdeu o lease
+    pode terminar, mas não vira verdade. Testado com o cenário PC-02/PC-03.
+  - O plano **persistente não carrega caminho físico** (`local://…` na v1;
+    `puter:///…` depois): o caminho local vive só na `Execution`, dentro do
+    worker que materializou.
+  - `task.dispatch` ganhou `taskRunId`, `workspacePlanId` e `leaseEpoch` — o
+    processo lógico da onda se separa do PC do cluster ANTES de existirem dois,
+    para o contrato não mudar no dia da troca.
+  - **v1 local de propósito**: `Source.Provider="local"`, worker `local`,
+    época 1 — mesma pasta, mesmas recusas de sempre (sessão sem pasta de
+    projeto continua recusando com motivo). O que muda agora é a arquitetura;
+    Puter, worker-daemon e lease distribuído trocam só o backend. O estado de
+    cada peça do cluster está em **docs/arquitetura-cluster.md → "Estado da
+    implementação"**.
+
 - **O FUSION do orquestrador foi portado para o gateway** — três estratégias, os
   papéis e os prompts vindos de lá quase palavra por palavra, porque são o
   produto do ajuste de quem usou a coisa:

@@ -144,7 +144,7 @@ func (t *Toolbox) runInEnvironment(
 				"ponha o `cd` dentro do próprio comando em vez de usar \"cwd\"")
 		}
 	} else {
-		resolved, err := t.workdir(sessionID, cwd)
+		resolved, err := t.workdir(ctx, cwd)
 		if err != nil {
 			return "", err
 		}
@@ -266,8 +266,8 @@ func (t *Toolbox) notify(sessionID string, notice protocol.Notice) {
 // Sem raiz de projeto o comando é RECUSADO em vez de rodar na pasta do
 // processo, que é onde mora o binário do gateway. No ambiente local isto não
 // aparece porque quem resolve o diretório é o host.
-func (t *Toolbox) workdir(sessionID, relative string) (string, error) {
-	root := t.root(sessionID)
+func (t *Toolbox) workdir(ctx context.Context, relative string) (string, error) {
+	root := t.root(ctx)
 	if root == "" {
 		return "", errNoRoot
 	}

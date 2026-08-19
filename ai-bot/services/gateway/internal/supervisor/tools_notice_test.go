@@ -66,7 +66,6 @@ func noticeToolbox(t *testing.T, timeline *noticeLog, runners ...sandbox.Runner)
 	registry.SetBridge(&procHostSpy{})
 	bus := &noticeSpyBus{timeline: timeline}
 	toolbox := &Toolbox{
-		Root:         func(string) string { return t.TempDir() },
 		Environments: sandbox.NewRegistry(append([]sandbox.Runner{sandbox.NewLocalRunner()}, runners...)...),
 		Notices:      bus,
 		Specialist:   func(string) string { return "code" },
@@ -95,7 +94,7 @@ func TestProcRunAnunciaAntesDeRodarNoDocker(t *testing.T) {
 	docker := &noticeSpyRunner{id: protocol.EnvDocker, timeline: timeline, available: true}
 	registry, bus := noticeToolbox(t, timeline, docker)
 
-	output, err := registry.Call(context.Background(), "proc.run", "s1",
+	output, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"docker compose up -d"}`))
 	if err != nil {
 		t.Fatalf("proc.run: %v", err)
@@ -132,7 +131,7 @@ func TestProcRunPedidoExplicitoDoModeloTambemAnuncia(t *testing.T) {
 
 	// O comando em si não fala de docker — quem pediu o container foi o
 	// modelo, pelo argumento `env`.
-	if _, err := registry.Call(context.Background(), "proc.run", "s1",
+	if _, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"go test ./...","env":"docker"}`)); err != nil {
 		t.Fatalf("proc.run: %v", err)
 	}
@@ -153,7 +152,7 @@ func TestProcRunSemSbxCaiNoAiJailDaVPSComAviso(t *testing.T) {
 	vps := &noticeSpyRunner{id: protocol.EnvVPS, timeline: timeline, available: true}
 	registry, bus := noticeToolbox(t, timeline, docker, vps)
 
-	output, err := registry.Call(context.Background(), "proc.run", "s1",
+	output, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"docker build ."}`))
 	if err != nil {
 		t.Fatalf("proc.run: %v", err)
@@ -184,7 +183,7 @@ func TestProcRunComandoComumNaoDisparaAviso(t *testing.T) {
 
 	// Comando sem nada de container, sessão no ambiente local: vai ao host,
 	// sem popup nenhum — aviso de rotina é aviso que ninguém lê.
-	if _, err := registry.Call(context.Background(), "proc.run", "s1",
+	if _, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"go build ./..."}`)); err != nil {
 		t.Fatalf("proc.run: %v", err)
 	}

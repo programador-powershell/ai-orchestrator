@@ -404,7 +404,17 @@ export interface Task {
 
 export interface TaskDispatch {
   task: Task;
+  /**
+   * Hoje é o processo lógico da onda (w-1-t1); no cluster passa a ser o PC
+   * registrado ("pc-02") e o processo lógico vive no taskRunId. Os dois campos
+   * existem desde já para o contrato não mudar no dia da troca.
+   */
   workerId: string;
+  /** Esta execução da tarefa (tentativa incluída). */
+  taskRunId?: string;
+  /** O plano de workspace congelado e a época do lease (internal/workspace). */
+  workspacePlanId?: string;
+  leaseEpoch?: number;
   wave: number;
 }
 

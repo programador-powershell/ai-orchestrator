@@ -6,7 +6,6 @@
 package supervisor
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -53,9 +52,9 @@ func TestImageGenerateGravaNoProjeto(t *testing.T) {
 	defer server.Close()
 
 	root := t.TempDir()
-	box := &Toolbox{Root: func(string) string { return root }, Models: providerRouter(server.URL)}
+	box := &Toolbox{Models: providerRouter(server.URL)}
 
-	out, err := box.imageGenerate(context.Background(), "s1",
+	out, err := box.imageGenerate(ctxComRoot(root), "s1",
 		json.RawMessage(`{"prompt":"um gato","count":2}`))
 	if err != nil {
 		t.Fatalf("gerar: %v", err)
@@ -78,30 +77,30 @@ func TestImageGenerateGravaNoProjeto(t *testing.T) {
 }
 
 func TestImageGenerateRecusas(t *testing.T) {
-	box := &Toolbox{Root: func(string) string { return t.TempDir() }, Models: providerRouter("http://127.0.0.1:1")}
+	box := &Toolbox{Models: providerRouter("http://127.0.0.1:1")}
 
-	if _, err := box.imageGenerate(context.Background(), "s1", json.RawMessage(`{"prompt":" "}`)); err == nil {
+	if _, err := box.imageGenerate(ctxComRoot(t.TempDir()), "s1", json.RawMessage(`{"prompt":" "}`)); err == nil {
 		t.Fatal("prompt vazio devia recusar")
 	}
-	if _, err := box.imageGenerate(context.Background(), "s1",
+	if _, err := box.imageGenerate(ctxComRoot(t.TempDir()), "s1",
 		json.RawMessage(`{"prompt":"x","count":9}`)); err == nil {
 		t.Fatal("count acima do teto devia recusar, não ser cortado em silêncio")
 	}
 
-	semRoteador := &Toolbox{Root: func(string) string { return t.TempDir() }}
-	if _, err := semRoteador.imageGenerate(context.Background(), "s1",
+	semRoteador := &Toolbox{}
+	if _, err := semRoteador.imageGenerate(ctxComRoot(t.TempDir()), "s1",
 		json.RawMessage(`{"prompt":"x"}`)); err == nil {
 		t.Fatal("sem roteador devia recusar com motivo")
 	}
 }
 
 func TestFinetuneSubmitRecusaCaminhoLocal(t *testing.T) {
-	box := &Toolbox{Root: func(string) string { return t.TempDir() }, Models: providerRouter("http://127.0.0.1:1")}
+	box := &Toolbox{Models: providerRouter("http://127.0.0.1:1")}
 
 	for _, candidate := range []string{"./dados/treino.jsonl", "treino.jsonl", `C:\dados\treino.jsonl`, "/tmp/t.json"} {
 		args := json.RawMessage(`{"model":"gpt-4o-mini","trainingFile":"` +
 			strings.ReplaceAll(candidate, `\`, `\\`) + `"}`)
-		_, err := box.finetuneSubmit(context.Background(), "s1", args)
+		_, err := box.finetuneSubmit(ctxComRoot(t.TempDir()), "s1", args)
 		if err == nil {
 			t.Fatalf("%q passou como id de arquivo do provedor", candidate)
 		}
@@ -126,8 +125,8 @@ func TestFinetuneStatusNaoEcoaChave(t *testing.T) {
 	}))
 	defer server.Close()
 
-	box := &Toolbox{Root: func(string) string { return t.TempDir() }, Models: providerRouter(server.URL)}
-	out, err := box.finetuneStatus(context.Background(), "s1", json.RawMessage(`{"jobId":"ftjob-1"}`))
+	box := &Toolbox{Models: providerRouter(server.URL)}
+	out, err := box.finetuneStatus(ctxComRoot(t.TempDir()), "s1", json.RawMessage(`{"jobId":"ftjob-1"}`))
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -149,8 +148,8 @@ func TestFinetuneStatusResume(t *testing.T) {
 	}))
 	defer server.Close()
 
-	box := &Toolbox{Root: func(string) string { return t.TempDir() }, Models: providerRouter(server.URL)}
-	out, err := box.finetuneStatus(context.Background(), "s1", nil)
+	box := &Toolbox{Models: providerRouter(server.URL)}
+	out, err := box.finetuneStatus(ctxComRoot(t.TempDir()), "s1", nil)
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
@@ -162,10 +161,10 @@ func TestFinetuneStatusResume(t *testing.T) {
 }
 
 func TestFinetuneStatusIDInvalido(t *testing.T) {
-	box := &Toolbox{Root: func(string) string { return t.TempDir() }, Models: providerRouter("http://127.0.0.1:1")}
+	box := &Toolbox{Models: providerRouter("http://127.0.0.1:1")}
 	// O id entra no CAMINHO da URL; deixar passar "../" trocaria a rota chamada
 	// com a chave do provedor no cabeçalho.
-	if _, err := box.finetuneStatus(context.Background(), "s1",
+	if _, err := box.finetuneStatus(ctxComRoot(t.TempDir()), "s1",
 		json.RawMessage(`{"jobId":"../../models"}`)); err == nil {
 		t.Fatal("id com barra devia ser recusado")
 	}
