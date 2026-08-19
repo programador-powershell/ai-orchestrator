@@ -168,6 +168,31 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **ONDA 1 da paridade com o orquestrador: a tela de DADOS desenha e exporta
+  de verdade.** Era a superfície mais reclamada e 100% casca — nenhum caminho
+  do gateway produzia o JSON que a tela espera. Agora:
+  - `schema.export` devolve JSON estruturado (tables/relations/indexes + SQL;
+    `format:"erd"` acrescenta o diagrama textual) e `sql.render` devolve
+    `{sql, dialect}` — DDL completo por dialeto (postgres/mysql/sqlite/mssql/
+    ansi): mapa de tipos (uuid/serial/jsonb), `DEFAULT now()` traduzido,
+    tabela de junção n-n com PK composta, FK com ON UPDATE/ON DELETE validados
+    e `CREATE [UNIQUE] INDEX` com nome determinístico. A entrada antiga
+    continua valendo; o badge FK sai da UNIÃO de `references` e `relations`.
+  - **Rail de tabelas funcional**: abas Tabelas/Relações com contadores, busca
+    (tabela também por campo), e clicar FOCA o cartão no diagrama (scroll +
+    realce). Relação órfã aparece acusada em âmbar — antes era descartada em
+    silêncio; o status ganhou o contador de problemas.
+  - **Baixar `schema.sql` e o SVG do diagrama** como arquivo (o SVG é
+    serializado com prólogo/xmlns/estilos resolvidos — sem isso abriria como
+    retângulo preto) e **"Pedir ao agente"** embutindo o schema REAL no
+    composer.
+  - As ferramentas de contrato estruturado (schema/sql/design/flow/secrets/
+    osv/finetune) ganharam teto inline maior no Tool Output Gateway: projetar
+    o JSON delas em início+fim entregaria à tela um JSON picotado.
+  - 16 testes novos no gateway (contrato, dialetos, junção, índices,
+    compatibilidade) e 27 no cliente; conferência cruzada confirmou que as
+    duas metades falam o MESMO JSON, campo a campo.
+
 - **O CONTEXT RUNTIME entrou: janela do modelo ≠ memória do agente.** A
   especificação (docs/context-runtime.md) foi implantada INTEGRADA ao que já
   existia — o log de envelopes JÁ ERA o Event Store, o modelrouter JÁ ERA o

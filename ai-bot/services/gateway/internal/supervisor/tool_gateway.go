@@ -27,6 +27,21 @@ const (
 	projectionTail = 3000
 )
 
+// inlineLimitFor devolve o teto inline da ferramenta. As de CONTRATO
+// ESTRUTURADO — cuja saída é um JSON que uma superfície parseia inteiro —
+// ganham o teto antigo do log (20 000): projetá-las em início+fim entregaria
+// à tela um JSON picotado que não parseia. Acima disso o comportamento é o
+// mesmo de antes do gateway existir (o truncate do log), e a busca do
+// integral por artifactRef na tela fica como evolução registrada.
+func inlineLimitFor(tool string) int {
+	switch tool {
+	case "schema.export", "sql.render", "design.replicate",
+		"flow.validate", "secrets.scan", "osv.query", "finetune.status":
+		return 20000
+	}
+	return inlineToolLimit
+}
+
 // tailHeavy diz se o FIM da saída importa mais que o começo para esta
 // ferramenta.
 func tailHeavy(tool string) bool {
@@ -41,7 +56,7 @@ func tailHeavy(tool string) bool {
 // artefato + projeção. Falha ao gravar o artefato NÃO derruba a ferramenta —
 // cai no truncamento antigo, que era o comportamento de antes do gateway.
 func (s *Supervisor) projectToolOutput(sessionID, tool, output string) (projected, ref string, rawBytes int, truncated bool) {
-	if len(output) <= inlineToolLimit {
+	if len(output) <= inlineLimitFor(tool) {
 		return output, "", len(output), false
 	}
 	rawBytes = len(output)

@@ -1336,3 +1336,135 @@ button.chip {
   font-size: var(--fs-small);
   user-select: text;
 }
+
+/* --------------------- tela de Dados: foco, export, rail ----------------- */
+
+/* O invólucro do ERD é quem rola: sem ele, um schema mais largo que a coluna
+   estourava a grade da superfície — e é nele que o efeito de foco procura o
+   cartão por data-tabela. */
+.erd-wrap {
+  min-width: 0;
+  overflow: auto;
+}
+
+/* O corpo do cartão nunca teve regra própria e caía no fill PRETO padrão de
+   SVG — invisível até aqui porque o gateway nunca tinha emitido o JSON que
+   enche o diagrama. Painel + linha forte, como os nós do DAG. */
+.erd-table {
+  fill: var(--panel);
+  stroke: var(--line-strong);
+}
+
+/* O clique no cartão seleciona (schemaFoco.selecionar); o cursor é o único
+   aviso de que o desenho responde. */
+.erd-card {
+  cursor: pointer;
+}
+
+/* O realce do foco vai no CONTORNO do corpo: o cabeçalho já carrega a matiz
+   da tabela (inline), e recolorir área seria brigar com o dado. A transição
+   evita o pisca ao navegar pela lista do rail. */
+.erd-card[data-focada="true"] .erd-table {
+  stroke: var(--accent);
+  stroke-width: 2;
+  transition: stroke var(--t-fast) var(--swift);
+}
+
+/* Problemas > 0 no status ganham a cor de aviso — âmbar, não vermelho: relação
+   órfã é schema INCOMPLETO (a tabela pode vir no próximo export), não erro
+   fatal. Zero fica na cor de sempre, sem pintar celebração onde não há dado. */
+.surface-status [data-problemas="true"] {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.surface-status [data-problemas="true"] b {
+  color: inherit;
+}
+
+/* Abas Tabelas/Relações do rail de Dados: o mesmo par ativo/inativo dos itens
+   do rail (accent-soft + accent-strong), para "selecionado" ter UMA cara na
+   barra inteira. */
+.rail-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 2px;
+}
+
+.rail-tabs button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift);
+}
+
+.rail-tabs button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rail-tabs button[data-active="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* O contador mora NA aba: diz quanto existe do outro lado sem trocar de aba. */
+.rail-tab-count {
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+.rail-tabs button[data-active="true"] .rail-tab-count {
+  color: inherit;
+}
+
+.rail-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--faint);
+}
+
+.rail-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  outline: none;
+}
+
+.rail-search input::placeholder {
+  color: var(--faint);
+}
+
+/* Relação órfã: âmbar no ícone e no rótulo, o MESMO âmbar do contador de
+   problemas do status — é o mesmo fato, dito em dois lugares. */
+.rail-item[data-orfa="true"] {
+  color: var(--warn);
+}
+
+.rail-item[data-orfa="true"]:disabled {
+  cursor: default;
+  opacity: 0.75;
+}

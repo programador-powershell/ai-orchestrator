@@ -9,22 +9,43 @@
  * schema chega por `tool.result`, não é documento nosso —, então o arrasto se
  * perderia no próximo resultado. Arrasto que volta sozinho é pior do que arrasto
  * nenhum: ensina que a tela esquece.
+ *
+ * O snapshot derivado é PUBLICADO no store de módulo `schemaFoco`, e é por lá
+ * que o rail de tabelas (TablesRail) navega: o rail pede o foco, esta tela rola
+ * até o cartão. Os tipos do snapshot moram no mesmo módulo — importá-los daqui
+ * faria o rail depender da superfície, e o rail monta antes dela.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Check, Copy, Database, Download, LayoutGrid, TableProperties } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, Copy, Database, Download, ImageDown, LayoutGrid, Sparkles, TableProperties } from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import {
+  problemasDoSchema,
+  rotuloDaRelacao,
+  SCHEMA_VAZIO,
+  useSchemaFoco,
+  type Cardinality,
+  type Column,
+  type IndexDef,
+  type Relation,
+  type SchemaSnapshot,
+  type Table
+} from "../lib/schemaFoco";
 import { useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 
 /* -------------------------------- dialeto ------------------------------- */
 
-const DIALECTS = ["postgres", "mysql", "ansi"] as const;
+// Os cinco que o gateway aceita e gera (tools_data.go) — oferecer menos aqui
+// seria esconder capacidade que já existe do outro lado do fio.
+const DIALECTS = ["postgres", "mysql", "sqlite", "mssql", "ansi"] as const;
 type Dialect = (typeof DIALECTS)[number];
 
 const DIALECT_LABEL: Record<Dialect, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL",
+  sqlite: "SQLite",
+  mssql: "SQL Server",
   ansi: "ANSI"
 };
 
@@ -33,41 +54,8 @@ function isDialect(value: string): value is Dialect {
 }
 
 /* --------------------------- leitura do tool.result --------------------- */
-
-interface Column {
-  name: string;
-  type: string;
-  pk: boolean;
-  fk: boolean;
-  required: boolean;
-}
-
-interface Table {
-  name: string;
-  columns: Column[];
-  note: string;
-}
-
-type Cardinality = "1" | "n";
-
-interface Relation {
-  id: string;
-  from: string;
-  fromColumn: string;
-  to: string;
-  toColumn: string;
-  fromCard: Cardinality;
-  toCard: Cardinality;
-}
-
-interface SchemaSnapshot {
-  tables: Table[];
-  relations: Relation[];
-  sql: string;
-  dialect: string;
-}
-
-const EMPTY: SchemaSnapshot = { tables: [], relations: [], sql: "", dialect: "" };
+/* Os tipos do snapshot (Column, Table, Relation, IndexDef, SchemaSnapshot)
+   moram em ../lib/schemaFoco: são o vocabulário COMPARTILHADO com o rail. */
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -170,16 +158,80 @@ function readRelations(value: unknown): Relation[] {
   return out;
 }
 
+/** Um campo de índice pode vir como texto ou como objeto — mesma tolerância
+ *  das colunas: o formato é do gateway e ele ainda está ganhando este campo. */
+function readIndexFields(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && item !== "") {
+      out.push(item);
+      continue;
+    }
+    const record = asRecord(item);
+    if (!record) continue;
+    const name = asText(record.name) || asText(record.column) || asText(record.field);
+    if (name !== "") out.push(name);
+  }
+  return out;
+}
+
+function readIndexList(value: unknown, fallbackTable: string): IndexDef[] {
+  if (!Array.isArray(value)) return [];
+  const out: IndexDef[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record) continue;
+    const table = asText(record.table) || asText(record.on) || fallbackTable;
+    const fields = readIndexFields(record.fields ?? record.columns);
+    // Índice sem tabela ou sem campo não indexa nada; entrada quebrada sai,
+    // como as colunas sem nome saem em readColumns.
+    if (table === "" || fields.length === 0) continue;
+    out.push({
+      // O nome gerado segue a convenção idx_<tabela>_<campos> do orquestrador:
+      // é o que o CREATE INDEX vai usar, então o prompt e a tela mostram o mesmo.
+      name: asText(record.name) || `idx_${table}_${fields.join("_")}`,
+      table,
+      fields,
+      unique: asFlag(record.unique)
+    });
+  }
+  return out;
+}
+
+/**
+ * Índices vêm de DOIS lugares porque o formato ainda não está batido: a lista
+ * do topo (`indexes: [{table, fields}]`, como o gateway vai emitir) e dentro de
+ * cada tabela (`tables[].indexes`, como um export de banco costuma agrupar).
+ * Campo ausente = lista vazia — o gateway de hoje não emite nenhum dos dois e a
+ * tela não pode quebrar por isso.
+ */
+function readIndexes(source: Record<string, unknown>): IndexDef[] {
+  const out = readIndexList(source.indexes, "");
+  const rawTables = source.tables;
+  if (Array.isArray(rawTables)) {
+    for (const item of rawTables) {
+      const record = asRecord(item);
+      if (!record) continue;
+      const table = asText(record.name) || asText(record.table);
+      if (table === "") continue;
+      out.push(...readIndexList(record.indexes, table));
+    }
+  }
+  return out;
+}
+
 function parse(result: ToolResult): SchemaSnapshot {
   const raw = result.output ?? "";
   const root = asRecord(safeJson(raw));
   // `sql.render` pode devolver só o texto do DDL; isso ainda enche o rodapé.
-  if (!root) return { ...EMPTY, sql: raw.trim() };
+  if (!root) return { ...SCHEMA_VAZIO, sql: raw.trim() };
 
   const source = asRecord(root.schema) ?? root;
   return {
     tables: readTables(source.tables),
     relations: readRelations(source.relations ?? source.references ?? source.edges),
+    indexes: readIndexes(source),
     sql: asText(root.sql) || asText(root.ddl),
     dialect: asText(root.dialect)
   };
@@ -191,7 +243,7 @@ function parse(result: ToolResult): SchemaSnapshot {
  * chegou por último, que é o que a pessoa acabou de pedir.
  */
 /** Os resultados relevantes, do mais novo ao mais velho — varredura barata por delta. */
-function schemaResults(lines: ConversationLine[]): ToolResult[] {
+export function schemaResults(lines: ConversationLine[]): ToolResult[] {
   const out: ToolResult[] = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const results = lines[index]?.toolResults;
@@ -206,7 +258,7 @@ function schemaResults(lines: ConversationLine[]): ToolResult[] {
   return out;
 }
 
-function readSchema(recent: ReadonlyArray<ToolResult>): SchemaSnapshot {
+export function readSchema(recent: ReadonlyArray<ToolResult>): SchemaSnapshot {
   let structure: SchemaSnapshot | null = null;
   let sql = "";
   let dialect = "";
@@ -224,6 +276,9 @@ function readSchema(recent: ReadonlyArray<ToolResult>): SchemaSnapshot {
   return {
     tables: structure?.tables ?? [],
     relations: structure?.relations ?? [],
+    // Os índices seguem a ESTRUTURA (vêm do mesmo resultado que trouxe as
+    // tabelas): índice do export anterior sobre tabelas novas mentiria.
+    indexes: structure?.indexes ?? [],
     sql,
     dialect: dialect || structure?.dialect || ""
   };
@@ -389,17 +444,118 @@ function useCopy(): [CopyState, (text: string) => void] {
   return [state, copy];
 }
 
+/* ------------------------------- exportar ------------------------------- */
+
+/**
+ * Download por Blob + âncora, portado do orquestrador (DataView.downloadText):
+ * é o caminho que funciona na WebView do Tauri — não há diálogo nativo de
+ * salvar exposto ao cliente, e `window.open` de data-URL é bloqueado pela CSP.
+ * O revoke imediato é seguro: o clique já entregou o blob ao download.
+ */
+function baixarArquivo(nome: string, texto: string): void {
+  const tipo = nome.endsWith(".svg") ? "image/svg+xml" : "application/sql";
+  const blob = new Blob([texto], { type: tipo });
+  const url = URL.createObjectURL(blob);
+  const ancora = document.createElement("a");
+  ancora.href = url;
+  ancora.download = nome;
+  ancora.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * O SVG que está no DOM depende do CSS da página: as classes .erd-* e as
+ * variáveis de tema. Serializado cru, o arquivo abriria com texto invisível e
+ * retângulo preto (fill padrão de SVG). O empacote injeta um <style> com as
+ * cores RESOLVIDAS — tema claro fixo, porque arquivo exportado não carrega o
+ * tema do app — logo depois da tag de abertura, e o prólogo XML que
+ * visualizador de arquivo espera. Os matizes por tabela sobrevivem sozinhos:
+ * já saem inline no atributo style de cada cabeçalho.
+ */
+export function empacotarSvg(markup: string): string {
+  const abertura = markup.indexOf(">");
+  if (!markup.startsWith("<svg") || abertura < 0) return markup;
+
+  let cabeca = markup.slice(0, abertura + 1);
+  // O XMLSerializer declara o namespace sozinho (o elemento nasce no namespace
+  // SVG), mas quem serializar por outerHTML não ganha o xmlns — e sem ele o
+  // arquivo abre como XML genérico, sem desenho nenhum.
+  if (!cabeca.includes("xmlns=")) {
+    cabeca = `${cabeca.slice(0, 4)} xmlns="http://www.w3.org/2000/svg"${cabeca.slice(4)}`;
+  }
+
+  const estilo =
+    "<style>" +
+    "text{fill:#26241f;font-family:ui-sans-serif,system-ui,sans-serif;font-size:11.5px}" +
+    ".erd-table{fill:#ffffff;stroke:rgba(30,28,24,0.16)}" +
+    ".erd-table-name{font-size:11.5px;font-weight:600}" +
+    ".erd-column{fill:#7a766d;font-family:ui-monospace,monospace;font-size:10px}" +
+    ".erd-key{fill:hsl(172 44% 38%)}" +
+    ".erd-rel{fill:none;stroke:rgba(30,28,24,0.28);stroke-width:1.4;stroke-dasharray:4 3}" +
+    "</style>";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${cabeca}${estilo}${markup.slice(abertura + 1)}`;
+}
+
+/**
+ * O prompt do "Pedir ao agente" leva o schema REAL — tabelas, campos, FKs e
+ * índices. Sem isso, numa conversa nova (ou numa longa, já compactada) o
+ * modelo não vê o diagrama que está na tela e propõe migração de cabeça. O
+ * formato compacto `tabela(campo tipo PK, …)` é o do orquestrador
+ * (askAgentForMigration): denso para caber no contexto, explícito para o
+ * modelo citar campos pelo nome.
+ */
+export function promptComSchema(snapshot: SchemaSnapshot, dialect: string): string {
+  const tabelas = snapshot.tables.map((table) => {
+    const campos = table.columns
+      .map((column) => {
+        let spec = column.type === "" ? column.name : `${column.name} ${column.type}`;
+        if (column.pk) spec += " PK";
+        if (column.fk) spec += " FK";
+        if (column.required) spec += " NOT NULL";
+        return spec;
+      })
+      .join(", ");
+    return `${table.name}(${campos})`;
+  });
+  const relacoes = snapshot.relations.map(
+    (relation) => `${rotuloDaRelacao(relation)} (${relation.fromCard}-${relation.toCard})`
+  );
+  const indices = snapshot.indexes.map(
+    (index) => `${index.name} em ${index.table}(${index.fields.join(", ")})${index.unique ? " UNIQUE" : ""}`
+  );
+  const linhas = [
+    "Analise o schema e proponha a próxima migração.",
+    `Schema atual (${dialect}): ${tabelas.join("; ")}`
+  ];
+  // Linha vazia é ruído para o modelo: seção sem conteúdo simplesmente não vai.
+  if (relacoes.length > 0) linhas.push(`Relações: ${relacoes.join("; ")}`);
+  if (indices.length > 0) linhas.push(`Índices: ${indices.join("; ")}`);
+  return linhas.join("\n");
+}
+
 /* --------------------------------- ERD ---------------------------------- */
 
-function Erd({ snapshot }: { snapshot: SchemaSnapshot }): ReactNode {
+function Erd({
+  snapshot,
+  focada,
+  onSelect
+}: {
+  snapshot: SchemaSnapshot;
+  /** Nome da tabela em destaque (vem do rail, via schemaFoco); null = nenhuma. */
+  focada: string | null;
+  onSelect: (nome: string) => void;
+}): ReactNode {
   const diagram = useMemo(() => layout(snapshot.tables), [snapshot.tables]);
   const wires = useMemo(() => {
     const out: Wire[] = [];
     snapshot.relations.forEach((relation, order) => {
       const a = diagram.byName.get(relation.from.toLowerCase());
       const b = diagram.byName.get(relation.to.toLowerCase());
-      // Relação para tabela que não veio no export vira ruído: sai de cena,
-      // porque uma ponta solta sugere um erro de modelagem que não existe.
+      // Relação sem as duas pontas no export não tem onde ancorar a linha —
+      // fica fora do DESENHO, mas não some do mapa: o contador de problemas do
+      // status a acusa (problemasDoSchema). Descartar calado ensinava que a
+      // tela concorda com um schema que na verdade está quebrado.
       if (a === undefined || b === undefined || a === b) return;
       out.push(route(relation, a, b, order));
     });
@@ -441,7 +597,17 @@ function Erd({ snapshot }: { snapshot: SchemaSnapshot }): ReactNode {
       })}
 
       {diagram.nodes.map((node) => (
-        <g key={node.table.name}>
+        // `data-tabela` é a âncora do scroll (o rail foca por nome, e o efeito
+        // da superfície procura o grupo por este atributo); `data-focada` é o
+        // realce, resolvido no CSS. O clique só SELECIONA — rolar até o cartão
+        // que a pessoa acabou de clicar arrancaria a tela da mão dela.
+        <g
+          key={node.table.name}
+          className="erd-card"
+          data-tabela={node.table.name.toLowerCase()}
+          data-focada={focada !== null && focada.toLowerCase() === node.table.name.toLowerCase()}
+          onClick={() => onSelect(node.table.name)}
+        >
           <title>{node.table.note || node.table.name}</title>
           <rect className="erd-table" x={node.x} y={node.y} width={CARD_W} height={node.h} rx={10} />
           {/* Cabeçalho com os cantos de baixo retos: um path evita precisar de
@@ -500,10 +666,42 @@ export function SchemaSurface(): ReactNode {
   // regerar custa uma ida ao modelo.
   const [dialect, setDialect] = useState<Dialect>("postgres");
   const [copyState, copy] = useCopy();
-  const [exportState, exportSql] = useCopy();
+
+  const tabelaFocada = useSchemaFoco((state) => state.tabelaFocada);
+  const nonce = useSchemaFoco((state) => state.nonce);
+  const erdWrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Publica o derivado para o rail. O snapshot vazio TAMBÉM é publicado: trocar
+  // de conversa tem que limpar o rail, senão ele lista o schema da anterior.
+  useEffect(() => {
+    useSchemaFoco.getState().publicar(snapshot);
+  }, [snapshot]);
+
+  // O pedido de foco do rail: rola até o cartão. Depende do NONCE, não do nome
+  // — re-focar a mesma tabela depois de rolar para longe precisa rolar de novo.
+  useEffect(() => {
+    if (nonce === 0) return;
+    const alvo = useSchemaFoco.getState().tabelaFocada;
+    if (alvo === null || erdWrapRef.current === null) return;
+    const cartao = erdWrapRef.current.querySelector(`[data-tabela="${CSS.escape(alvo.toLowerCase())}"]`);
+    // jsdom não implementa scrollIntoView; sem o guard, montar a superfície num
+    // teste quebraria por causa de um gesto puramente visual.
+    if (cartao && typeof cartao.scrollIntoView === "function") {
+      cartao.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    }
+  }, [nonce]);
 
   const columns = snapshot.tables.reduce((total, table) => total + table.columns.length, 0);
+  // Relações órfãs deixaram de sumir caladas: o diagrama continua sem desenhá-las
+  // (não há onde ancorar), mas o status conta e nomeia cada uma.
+  const problemas = useMemo(() => problemasDoSchema(snapshot.tables, snapshot.relations), [snapshot]);
   const mismatch = snapshot.dialect !== dialect;
+
+  function baixarSvg(): void {
+    const svg = erdWrapRef.current?.querySelector("svg.erd");
+    if (!svg) return;
+    baixarArquivo("schema.svg", empacotarSvg(new XMLSerializer().serializeToString(svg)));
+  }
 
   return (
     <div className="surface schema-surface">
@@ -524,15 +722,31 @@ export function SchemaSurface(): ReactNode {
             </option>
           ))}
         </select>
+        {/* Export de VERDADE, em arquivo — copiar já tem botão no painel de
+            SQL. O download por Blob + âncora é o mesmo do orquestrador. */}
+        <button
+          type="button"
+          className="btn"
+          disabled={snapshot.tables.length === 0}
+          title={
+            snapshot.tables.length === 0
+              ? "nenhum diagrama ainda"
+              : "baixa o diagrama como schema.svg, com o layout desta tela"
+          }
+          onClick={baixarSvg}
+        >
+          <ImageDown size={13} aria-hidden="true" />
+          Baixar SVG
+        </button>
         <button
           type="button"
           className="btn"
           disabled={snapshot.sql === ""}
-          title={snapshot.sql === "" ? "nenhum SQL gerado ainda" : "copia o SQL gerado para a área de transferência"}
-          onClick={() => exportSql(snapshot.sql)}
+          title={snapshot.sql === "" ? "nenhum SQL gerado ainda" : "baixa o SQL gerado como schema.sql"}
+          onClick={() => baixarArquivo("schema.sql", snapshot.sql)}
         >
-          {exportState === "done" ? <Check size={13} aria-hidden="true" /> : <Download size={13} aria-hidden="true" />}
-          {exportState === "done" ? "copiado" : exportState === "fail" ? "não deu" : "Exportar SQL"}
+          <Download size={13} aria-hidden="true" />
+          Baixar schema.sql
         </button>
       </TopbarActions>
 
@@ -542,6 +756,17 @@ export function SchemaSurface(): ReactNode {
         <span className="chip">{snapshot.tables.length} tabelas</span>
         <span className="chip">{snapshot.relations.length} relações</span>
         <span className="surface-toolbar-spacer" />
+        {snapshot.tables.length > 0 ? (
+          <button
+            type="button"
+            className="btn"
+            title="preenche o composer com o schema real — tabelas, campos, FKs e índices — e o pedido da próxima migração"
+            onClick={() => setInput(promptComSchema(snapshot, DIALECT_LABEL[dialect]))}
+          >
+            <Sparkles size={13} aria-hidden="true" />
+            Pedir ao agente
+          </button>
+        ) : null}
         <span
           className="chip"
           title="As caixas são posicionadas por um empacotamento automático a cada resultado. Não existe arrastar porque não haveria onde guardar a posição — ela se perderia no próximo schema."
@@ -570,7 +795,15 @@ export function SchemaSurface(): ReactNode {
             </button>
           </div>
         ) : (
-          <Erd snapshot={snapshot} />
+          /* O invólucro é quem rola (um schema largo estouraria a grade) e é a
+             raiz onde o efeito de foco procura o cartão por data-tabela. */
+          <div className="erd-wrap" ref={erdWrapRef}>
+            <Erd
+              snapshot={snapshot}
+              focada={tabelaFocada}
+              onSelect={(nome) => useSchemaFoco.getState().selecionar(nome)}
+            />
+          </div>
         )}
 
         <section className="card schema-sql">
@@ -625,6 +858,23 @@ export function SchemaSurface(): ReactNode {
         </span>
         <span>
           relações <b>{snapshot.relations.length}</b>
+        </span>
+        <span>
+          índices <b>{snapshot.indexes.length}</b>
+        </span>
+        {/* O tooltip NOMEIA cada relação órfã: um número sozinho manda a pessoa
+            caçar o problema no diagrama — que é justamente onde ele não aparece. */}
+        <span
+          data-problemas={problemas.length > 0}
+          title={
+            problemas.length === 0
+              ? "nenhuma relação órfã"
+              : `relações apontando para tabela ou coluna que não existe: ${problemas
+                  .map((relation) => rotuloDaRelacao(relation))
+                  .join("; ")}`
+          }
+        >
+          problemas <b>{problemas.length}</b>
         </span>
         <span>
           dialeto <b>{DIALECT_LABEL[dialect]}</b>

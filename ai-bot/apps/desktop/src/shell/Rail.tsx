@@ -17,7 +17,6 @@ import {
   Check,
   ChevronsLeft,
   ChevronsRight,
-  Database,
   FileText,
   FolderOpen,
   GitBranch,
@@ -36,6 +35,7 @@ import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
 import { MASTER, specialistById } from "../lib/specialists";
 import { GrokAvatar, grokSpecialistOf, type GrokSpecialistState } from "../avatar/GrokAvatar";
+import { TablesRail } from "./rails/TablesRail";
 
 /** O recorte do store que os componentes do crew leem. Deriva do próprio store
  *  para não virar uma segunda declaração do contrato, que envelheceria sozinha. */
@@ -443,14 +443,8 @@ function LayersRail() {
   );
 }
 
-function TablesRail() {
-  return (
-    <RailEmpty
-      icon={Database}
-      hint="As tabelas e colunas aparecem aqui quando o especialista Dados ler um banco ou um arquivo de schema."
-    />
-  );
-}
+// O TablesRail de verdade mora em ./rails/TablesRail (abas, busca e foco no
+// diagrama) — o placeholder daqui morreu com a Onda 1 da paridade.
 
 function NodesRail() {
   return <RailEmpty icon={Workflow} hint="Os nós do fluxo aparecem aqui quando houver um fluxo montado." />;

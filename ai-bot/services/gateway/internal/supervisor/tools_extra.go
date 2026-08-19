@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"aibot/gateway/internal/pack"
@@ -35,10 +34,21 @@ type SecretUser interface {
 func (t *Toolbox) InstallExtraTools(registry *Registry) {
 	registry.Register("secrets.scan",
 		"procura segredo exposto nos arquivos do projeto. args: {path?}", t.secretsScan)
+	// As duas ferramentas de dados devolvem JSON, não texto: a tela de Dados
+	// (SchemaSurface) desenha o diagrama a partir do tool.result, e texto plano
+	// deixava o painel vazio para sempre. A descrição soletra o formato porque
+	// ela é o ÚNICO contrato que o modelo vê — implementação em tools_data.go.
 	registry.Register("sql.render",
-		"monta o SQL de um schema. args: {dialect, schema}", t.sqlRender)
+		"monta o DDL completo do schema por dialeto (tipos mapeados, DEFAULT traduzido, FK com ON UPDATE/ON DELETE, "+
+			"tabela de junção para n-n, CREATE [UNIQUE] INDEX) e devolve JSON {sql, dialect}. "+
+			"args: {dialect: postgres|mysql|ansi|sqlite|mssql, schema: {name, "+
+			"tables: [{name, fields: [{name, type, primaryKey?, unique?, nullable?, defaultValue?, references?: {table, field}}]}], "+
+			"relations?: [{fromTable, fromField, toTable, toField, cardinality?: \"1-1\"|\"1-n\"|\"n-n\", onUpdate?, onDelete?}], "+
+			"indexes?: [{table, fields, unique?}]}}", t.sqlRender)
 	registry.Register("schema.export",
-		"exporta o schema como SQL ou ERD textual. args: {dialect, schema, format?}", t.schemaExport)
+		"exporta o schema como JSON estruturado {tables, relations, indexes, dialect, sql} — é este JSON que a tela de "+
+			"Dados transforma em diagrama ERD. args: os mesmos de sql.render, mais {format?: \"erd\"} para incluir também "+
+			"o diagrama textual no campo \"erd\"", t.schemaExport)
 	registry.Register("osv.query",
 		"consulta vulnerabilidade conhecida de uma dependência. args: {ecosystem, name, version}", t.osvQuery)
 	registry.Register("webhook.post",
@@ -188,162 +198,9 @@ func mask(value string) string {
 
 /* --------------------------------- schema --------------------------------- */
 
-type schemaField struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	PrimaryKey bool   `json:"primaryKey"`
-	Unique     bool   `json:"unique"`
-	Nullable   bool   `json:"nullable"`
-	Default    string `json:"defaultValue"`
-	References *struct {
-		Table string `json:"table"`
-		Field string `json:"field"`
-	} `json:"references"`
-}
-
-type schemaTable struct {
-	Name   string        `json:"name"`
-	Fields []schemaField `json:"fields"`
-}
-
-type schemaDoc struct {
-	Name    string        `json:"name"`
-	Tables  []schemaTable `json:"tables"`
-	Dialect string        `json:"dialect"`
-}
-
-func (t *Toolbox) sqlRender(_ context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args struct {
-		Dialect string    `json:"dialect"`
-		Schema  schemaDoc `json:"schema"`
-	}
-	if err := decodeArgs(raw, &args); err != nil {
-		return "", err
-	}
-	if len(args.Schema.Tables) == 0 {
-		return "", errors.New("informe o schema em \"schema\" com pelo menos uma tabela")
-	}
-	return renderSQL(args.Schema, args.Dialect), nil
-}
-
-func (t *Toolbox) schemaExport(_ context.Context, _ string, raw json.RawMessage) (string, error) {
-	var args struct {
-		Dialect string    `json:"dialect"`
-		Format  string    `json:"format"`
-		Schema  schemaDoc `json:"schema"`
-	}
-	if err := decodeArgs(raw, &args); err != nil {
-		return "", err
-	}
-	if len(args.Schema.Tables) == 0 {
-		return "", errors.New("informe o schema em \"schema\" com pelo menos uma tabela")
-	}
-	if strings.EqualFold(args.Format, "erd") {
-		return renderERD(args.Schema), nil
-	}
-	return renderSQL(args.Schema, args.Dialect), nil
-}
-
-// quote aplica a citação do dialeto. Não é detalhe: uma coluna chamada `order`
-// sem citação quebra no Postgres e passa no MySQL, e o schema "funciona" até o
-// dia em que alguém troca de banco.
-func quote(dialect, identifier string) string {
-	if strings.EqualFold(dialect, "mysql") {
-		return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
-	}
-	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
-}
-
-func renderSQL(doc schemaDoc, dialect string) string {
-	if dialect == "" {
-		dialect = doc.Dialect
-	}
-	if dialect == "" {
-		dialect = "postgres"
-	}
-
-	var out strings.Builder
-	fmt.Fprintf(&out, "-- %s (%s)\n\n", orDefault(doc.Name, "schema"), dialect)
-
-	// Chave estrangeira sai em ALTER depois de todas as tabelas: emitir a
-	// referência dentro do CREATE obriga a ordenar as tabelas topologicamente, e
-	// um ciclo de referência (que é legítimo) não teria ordem nenhuma.
-	var constraints []string
-
-	for _, table := range doc.Tables {
-		fmt.Fprintf(&out, "CREATE TABLE %s (\n", quote(dialect, table.Name))
-		lines := make([]string, 0, len(table.Fields)+1)
-		var primary []string
-
-		for _, field := range table.Fields {
-			line := "  " + quote(dialect, field.Name) + " " + orDefault(field.Type, "text")
-			if !field.Nullable {
-				line += " NOT NULL"
-			}
-			if field.Default != "" {
-				line += " DEFAULT " + field.Default
-			}
-			if field.Unique && !field.PrimaryKey {
-				line += " UNIQUE"
-			}
-			lines = append(lines, line)
-			if field.PrimaryKey {
-				primary = append(primary, quote(dialect, field.Name))
-			}
-			if field.References != nil && field.References.Table != "" {
-				constraints = append(constraints, fmt.Sprintf(
-					"ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s);",
-					quote(dialect, table.Name),
-					quote(dialect, fmt.Sprintf("fk_%s_%s", table.Name, field.Name)),
-					quote(dialect, field.Name),
-					quote(dialect, field.References.Table),
-					quote(dialect, orDefault(field.References.Field, "id")),
-				))
-			}
-		}
-		if len(primary) > 0 {
-			lines = append(lines, "  PRIMARY KEY ("+strings.Join(primary, ", ")+")")
-		}
-		out.WriteString(strings.Join(lines, ",\n"))
-		out.WriteString("\n);\n\n")
-	}
-
-	if len(constraints) > 0 {
-		sort.Strings(constraints)
-		out.WriteString(strings.Join(constraints, "\n"))
-		out.WriteString("\n")
-	}
-	return out.String()
-}
-
-// renderERD desenha o diagrama em texto. Existe porque um schema revisado no
-// chat é lido, não executado — e ler CREATE TABLE para entender relação é o
-// trabalho que o diagrama poupa.
-func renderERD(doc schemaDoc) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, "%s\n\n", orDefault(doc.Name, "schema"))
-	for _, table := range doc.Tables {
-		fmt.Fprintf(&out, "┌─ %s\n", table.Name)
-		for _, field := range table.Fields {
-			marker := " "
-			switch {
-			case field.PrimaryKey:
-				marker = "◆"
-			case field.References != nil:
-				marker = "→"
-			case field.Unique:
-				marker = "○"
-			}
-			fmt.Fprintf(&out, "│ %s %s: %s", marker, field.Name, orDefault(field.Type, "text"))
-			if field.References != nil {
-				fmt.Fprintf(&out, "  ⇒ %s.%s", field.References.Table, orDefault(field.References.Field, "id"))
-			}
-			out.WriteString("\n")
-		}
-		out.WriteString("└─\n\n")
-	}
-	return out.String()
-}
+// sql.render e schema.export moram em tools_data.go: cresceram de "SQL é texto"
+// para o motor de DDL multi-dialeto + export estruturado que a tela de Dados
+// consome, e este arquivo é o catálogo, não o lugar de um motor.
 
 func orDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
