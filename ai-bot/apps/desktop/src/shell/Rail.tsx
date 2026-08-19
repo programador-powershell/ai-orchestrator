@@ -136,6 +136,7 @@ function ConversationsRail() {
   const session = useApp((state) => state.session);
   const openSession = useApp((state) => state.openSession);
   const forkSession = useApp((state) => state.forkSession);
+  const atividade = useApp((state) => state.atividadeDasConversas);
 
   const sessions = conversasVisiveis(todas, session);
 
@@ -158,6 +159,13 @@ function ConversationsRail() {
    */
   const linha = (item: (typeof sessions)[number], filha: boolean) => {
     const especialista = grokSpecialistOf(item.botId ?? item.specialist ?? "");
+    // O sinal da linha: o retrato TRABALHA enquanto a delegação roda (o mesmo
+    // estado visual do bot em ação — nada de anel novo inventado), e o ponto
+    // marca resultado que chegou com a pessoa em outra conversa. Abrir limpa.
+    const sinal = atividade[item.id];
+    const estado =
+      sinal === "trabalhando" ? "working" : item.id === session ? "active" : "waiting";
+    const objetivo = (item.lastGoal ?? "").trim();
     return (
       // O botão de ramificar é IRMÃO do botão da conversa, não filho:
       // botão dentro de botão é HTML inválido e o clique dos dois brigaria.
@@ -166,17 +174,31 @@ function ConversationsRail() {
           type="button"
           className="rail-item"
           data-active={item.id === session}
+          data-atividade={sinal}
           onClick={() => openSession(item.id)}
-          title={filha ? `Falar direto com ${item.title}` : item.title}
+          title={
+            filha
+              ? objetivo === ""
+                ? `Falar direto com ${item.title}`
+                : `${item.title} — ${objetivo}`
+              : item.title
+          }
         >
-          <GrokAvatar
-            specialist={especialista}
-            state={item.id === session ? "active" : "waiting"}
-            size={filha ? 18 : 22}
-          />
-          <span className="rail-item-label">
-            {item.title === "" ? "Conversa sem título" : item.title}
+          <GrokAvatar specialist={especialista} state={estado} size={filha ? 18 : 22} />
+          <span className="rail-item-text">
+            <span className="rail-item-label">
+              {item.title === "" ? "Conversa sem título" : item.title}
+            </span>
+            {/* O subtítulo é O QUE o bot está fazendo — o título já diz de
+                quem a conversa é. Sem ele, duas filhas do mesmo bot em
+                conversas diferentes eram linhas idênticas. */}
+            {filha && objetivo !== "" ? (
+              <span className="rail-item-sub">{objetivo}</span>
+            ) : null}
           </span>
+          {sinal === "naoLida" ? (
+            <span className="rail-item-dot" aria-label="Atividade não lida" />
+          ) : null}
           <span className="rail-item-meta">{item.turns}</span>
         </button>
         {/*

@@ -33,6 +33,7 @@ import (
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
+	"aibot/gateway/internal/store"
 )
 
 const (
@@ -363,6 +364,11 @@ func (s *Supervisor) delegate(
 	// Espelho, e não mudança de lugar: a conversa do dono continua mostrando a
 	// delegação inteira (é ela que a pessoa está lendo). O que a filha recebe é
 	// o par pergunta/resposta, que é o que a torna continuável.
+	//
+	// A memória é lida ANTES do espelho: o espelho grava o pedido novo na
+	// conversa do bot, e lê-la depois faria o objetivo atual chegar duas vezes
+	// ao modelo — no histórico e no briefing.
+	memoriaDoBot := s.childHistory(sessionID, target.ID)
 	filho := s.mirrorDelegation(sessionID, target, payload.Goal)
 	// O id da filha viaja no PRÓPRIO envelope de delegação, e não é recalculado
 	// no cliente: a regra que forma o id (o par pai+bot) mora no store, e
@@ -385,8 +391,7 @@ func (s *Supervisor) delegate(
 		payload.Result = outcome
 		_ = s.emit(sessionID, turn, protocol.KindDelegate, originActor, payload)
 		if filho != "" && succeeded {
-			// Só o resultado BOM vira conversa: registrar a recusa faria a
-			// conversa do bot abrir com um erro que não é dele.
+			// O resultado bom entra na VOZ do bot: é a resposta dele.
 			_ = s.emit(filho, turn, protocol.KindMessage, protocol.Actor{
 				Kind:       protocol.ActorSpecialist,
 				ID:         target.ID,
@@ -395,6 +400,21 @@ func (s *Supervisor) delegate(
 			_ = s.emit(filho, turn, protocol.KindDone, protocol.Actor{
 				Kind:       protocol.ActorSpecialist,
 				ID:         target.ID,
+				Specialist: target.ID,
+			}, protocol.Done{Specialist: target.ID})
+		}
+		if filho != "" && !succeeded {
+			// A falha TAMBÉM vira registro — mas como aviso do SISTEMA, não como
+			// fala do bot: escrevê-la na voz dele o apresentaria pelo pior. Sem
+			// este registro a conversa do bot ficava com a pergunta sem resposta,
+			// como se ele tivesse ignorado a pessoa — e falha é um estado de
+			// primeira classe, não um silêncio.
+			_ = s.emit(filho, turn, protocol.KindMessage,
+				protocol.Actor{Kind: protocol.ActorSupervisor},
+				protocol.Message{Role: "system",
+					Text: "A tarefa não terminou: " + truncate(outcome, 2000)})
+			_ = s.emit(filho, turn, protocol.KindDone, protocol.Actor{
+				Kind:       protocol.ActorSupervisor,
 				Specialist: target.ID,
 			}, protocol.Done{Specialist: target.ID})
 		}
@@ -409,7 +429,7 @@ func (s *Supervisor) delegate(
 		ID:         target.ID,
 		Specialist: target.ID,
 	}
-	messages := s.delegateMessages(origin, target, request, depth)
+	messages := s.delegateMessages(origin, target, request, depth, memoriaDoBot)
 
 	for round := 0; round < maxDelegationRounds; round++ {
 		if ctx.Err() != nil {
@@ -474,8 +494,9 @@ func (s *Supervisor) delegateMessages(
 	origin, target specialist.Definition,
 	request delegateRequest,
 	depth int,
+	memory []modelrouter.ChatMessage,
 ) []modelrouter.ChatMessage {
-	messages := make([]modelrouter.ChatMessage, 0, 6)
+	messages := make([]modelrouter.ChatMessage, 0, 6+len(memory))
 
 	// A política do admin entra AQUI TAMBÉM — nenhum especialista a remove —, e
 	// ela vale ainda mais aqui, onde quem escolheu o especialista foi um modelo e
@@ -489,10 +510,19 @@ func (s *Supervisor) delegateMessages(
 		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: contract})
 	}
 
-	// O histórico da conversa NÃO desce. O delegado foi chamado para uma coisa
-	// pontual e o que ele precisa saber está no objetivo; mandar a conversa
-	// inteira o convidaria a responder à pessoa por cima de quem a atende — e a
-	// pagar o contexto de todo mundo em cada delegação.
+	// O histórico da conversa DA MÃE não desce — o delegado foi chamado para
+	// uma coisa pontual, e mandar a conversa inteira o convidaria a responder à
+	// pessoa por cima de quem a atende. Mas o que ELE MESMO já fez nesta
+	// conversa desce: sem essa memória, o bot chamado pela segunda vez não
+	// lembrava nem da própria resposta anterior, e "agora faça o site inteiro"
+	// chegava sem o HTML de dez minutos atrás.
+	if len(memory) > 0 {
+		messages = append(messages, modelrouter.ChatMessage{Role: "system",
+			Content: "A seguir, o que você já conversou em chamadas anteriores DESTA mesma conversa. " +
+				"É o seu trabalho anterior aqui — continue de onde parou em vez de recomeçar."})
+		messages = append(messages, memory...)
+	}
+
 	var briefing strings.Builder
 	fmt.Fprintf(&briefing, "O especialista %s (%s) está atendendo uma conversa e chamou VOCÊ para uma coisa.\n\n",
 		origin.Name, origin.ID)
@@ -531,6 +561,35 @@ func (s *Supervisor) mirrorDelegation(parentID string, target specialist.Definit
 		// sentido.
 		_ = s.emit(meta.ID, "", protocol.KindMessage, protocol.Actor{Kind: protocol.ActorUser},
 			protocol.Message{Role: "user", Text: goal})
+		// O pedido também vira o SUBTÍTULO da linha na barra (o título é o nome
+		// do bot; este diz o que ele está fazendo). No meta, e não lido do log
+		// no handshake — o `ready` não pode pagar cinquenta logs por um
+		// subtítulo.
+		_, _ = s.deps.Store.UpdateSession(meta.ID, func(m *store.SessionMeta) {
+			m.LastGoal = truncate(strings.TrimSpace(goal), 200)
+		})
 	}
 	return meta.ID
+}
+
+// childHistory devolve o que o bot delegado já conversou NESTA conversa — os
+// pedidos anteriores e o que ele respondeu.
+//
+// É o que torna a segunda chamada uma CONTINUAÇÃO: sem isto, "agora faça o site
+// inteiro" chegava a um bot que não lembrava nem do próprio HTML de dez minutos
+// atrás, porque cada delegação nascia só com o briefing. Lida ANTES de o
+// espelho gravar o pedido novo — senão o objetivo atual apareceria duas vezes,
+// no histórico e no briefing.
+//
+// Conversa inexistente (primeira chamada) devolve vazio, que é o correto: não
+// há passado a lembrar.
+func (s *Supervisor) childHistory(parentID, botID string) []modelrouter.ChatMessage {
+	if s.deps.Store == nil || strings.TrimSpace(parentID) == "" {
+		return nil
+	}
+	memory, err := s.history(store.ChildSessionID(parentID, botID))
+	if err != nil {
+		return nil
+	}
+	return memory
 }

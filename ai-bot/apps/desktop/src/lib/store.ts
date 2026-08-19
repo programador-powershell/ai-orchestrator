@@ -168,6 +168,14 @@ export interface AppData {
    * (.docx → documentos, .sql → dados).
    */
   attachments: Attachment[];
+  /**
+   * O que cada conversa de bot está fazendo AGORA, para a barra sinalizar sem
+   * abrir: "trabalhando" enquanto a delegação roda, "naoLida" quando o
+   * resultado chegou e a pessoa estava em outra conversa. Abrir a conversa
+   * limpa. Vive só nesta janela (não persiste, não vem no ready): é sinal de
+   * atenção, não histórico — perder no reinício é aceitável, inventar não.
+   */
+  atividadeDasConversas: Record<string, "trabalhando" | "naoLida">;
   error: string;
 }
 
@@ -242,6 +250,7 @@ export function initialAppData(): AppData {
     avatars: {},
     input: "",
     attachments: [],
+    atividadeDasConversas: {},
     error: ""
   };
 }
@@ -365,7 +374,8 @@ function sessionMetaOf(summary: SessionSummary): SessionMeta {
     syncedSeq: 0,
     turns: summary.turns,
     botId: summary.botId,
-    parentId: summary.parentId
+    parentId: summary.parentId,
+    lastGoal: summary.lastGoal
   };
 }
 
@@ -420,8 +430,15 @@ function comConversaDoBot(state: AppData, parentId: string, delegation: Delegate
   // Gateway antigo não manda o campo, e delegação com espelho falhado manda
   // vazio. Nos dois casos a delegação segue valendo — o que se perde é a linha
   // lateral, não a resposta.
-  if (id === "" || parentId === "" || state.sessions.some((item) => item.id === id)) {
+  if (id === "" || parentId === "") {
     return state.sessions;
+  }
+  const objetivo = (delegation.goal ?? "").trim();
+  if (state.sessions.some((item) => item.id === id)) {
+    // A filha já existe: a chamada nova só troca o SUBTÍTULO — o pedido em
+    // curso. É o que separa "Código · landing page" de "Código · agora o CSS".
+    if (objetivo === "" || delegation.done === true) return state.sessions;
+    return comMetaDaSessao(state.sessions, id, (meta) => ({ ...meta, lastGoal: objetivo }));
   }
   const bot = specialistById(state.specialists, delegation.to);
   const agora = new Date().toISOString();
@@ -434,6 +451,7 @@ function comConversaDoBot(state: AppData, parentId: string, delegation: Delegate
       parentId,
       createdAt: agora,
       updatedAt: agora,
+      lastGoal: objetivo,
       // Já tem conteúdo de verdade: o gateway gravou o pedido ali antes de
       // publicar este envelope. Zero aqui faria o filtro da barra escondê-la
       // justamente na hora em que ela precisa aparecer.
@@ -854,6 +872,23 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       // trabalhar e não teria onde clicar para continuar com ele.
       const sessions = comConversaDoBot(state, envelope.session, delegation);
 
+      // O SINAL da linha: trabalhando enquanto a delegação roda; quando fecha,
+      // vira "não lida" — a menos que a pessoa esteja com ela aberta, caso em
+      // que não há nada por ler que ela já não esteja vendo.
+      let atividade = state.atividadeDasConversas;
+      const filhaID = (delegation.session ?? "").trim();
+      if (filhaID !== "") {
+        atividade = { ...atividade };
+        if (delegation.done !== true) {
+          atividade[filhaID] = "trabalhando";
+        } else if (state.session === filhaID) {
+          delete atividade[filhaID];
+        } else {
+          atividade[filhaID] = "naoLida";
+        }
+      }
+      state = { ...state, atividadeDasConversas: atividade };
+
       /*
        * A delegação NÃO passa por aprovação, e isso é decisão de produto, não
        * esquecimento: escolher de quem é o assunto é trabalho do bot. O portão
@@ -1212,8 +1247,12 @@ export const useApp = create<AppState>()(
         if (id === get().session) return;
         // Mesma regra do newSession: a troca é do transporte, que tem o token.
         transport?.switchSession(id);
+        // Abrir LÊ: o sinal de "não lida" (ou "trabalhando" — a pessoa está
+        // olhando) desta conversa se apaga aqui.
+        const atividade = { ...get().atividadeDasConversas };
+        delete atividade[id];
         // As linhas voltam pelo replay do gateway, não de um cache local.
-        set({ ...conversationReset(), session: id });
+        set({ ...conversationReset(), session: id, atividadeDasConversas: atividade });
       },
 
       /**

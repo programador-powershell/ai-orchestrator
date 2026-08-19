@@ -615,6 +615,37 @@ select {
   text-overflow: ellipsis;
 }
 
+/* Título + subtítulo empilhados na linha. A coluna encolhe (min-width: 0) para
+   o ellipsis funcionar dentro do flex. */
+.rail-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 1px;
+}
+
+/* O QUE o bot está fazendo — o título já diz de quem a conversa é. */
+.rail-item-sub {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+/* Resultado que chegou com a pessoa em outra conversa: um ponto na cor de
+   acento, não um número — a linha já tem um contador, e dois números lado a
+   lado viram ruído. Abrir a conversa apaga. */
+.rail-item-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .rail-item-meta {
   margin-left: auto;
   font-size: var(--fs-micro);

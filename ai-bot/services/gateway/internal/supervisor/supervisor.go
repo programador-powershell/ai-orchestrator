@@ -763,6 +763,33 @@ func (s *Supervisor) history(sessionID string) ([]modelrouter.ChatMessage, error
 				Role:    "user",
 				Content: toolEvidence(result.Tool, truncate(body, 2000)),
 			})
+
+		// A DELEGAÇÃO também volta — pelo mesmo motivo da evidência de
+		// ferramenta. Sem esta dobra, o turno seguinte via só a síntese final do
+		// dono: nem o fato estruturado "deleguei X ao bot Y", nem o resultado
+		// bruto do delegado. O dono então redelegava a mesma coisa ou afirmava
+		// de memória o que era do outro — a caixa-preta clássica de sub-agente.
+		// A delegação é gravada DUAS vezes (abre e fecha), e a chave é o Done:
+		// o envelope inicial vira o pedido, o final vira o resultado.
+		case protocol.KindDelegate:
+			var delegation protocol.Delegate
+			if err := envelope.Decode(&delegation); err != nil || delegation.To == "" {
+				continue
+			}
+			if !delegation.Done {
+				out = append(out, modelrouter.ChatMessage{
+					Role:    "assistant",
+					Content: fmt.Sprintf("Deleguei ao especialista %s: %s", delegation.To, truncate(delegation.Goal, 400)),
+				})
+				continue
+			}
+			if strings.TrimSpace(delegation.Result) == "" {
+				continue
+			}
+			out = append(out, modelrouter.ChatMessage{
+				Role:    "user",
+				Content: fmt.Sprintf("Resultado do especialista %s:\n%s", delegation.To, truncate(delegation.Result, 2000)),
+			})
 		}
 	}
 	// Corta pelo FIM: o começo da conversa é o que menos importa para o próximo

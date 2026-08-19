@@ -93,6 +93,44 @@ describe("a conversa do bot na barra lateral", () => {
     expect(estado.delegations).toHaveLength(1);
   });
 
+  it("a linha do bot SINALIZA: trabalhando enquanto roda, não lida quando fecha longe", () => {
+    // É a tríade da sidebar do Grok Bot: working / unread / (needs attention já
+    // tem cartão próprio). Sem o sinal, a única forma de saber se o bot acabou
+    // era abrir a conversa dele de tempos em tempos.
+    let estado = applyEnvelope(initialAppData(), delegacao(ABERTA));
+    expect(estado.atividadeDasConversas["s-1-code"]).toBe("trabalhando");
+
+    // A pessoa está na conversa da MÃE quando o resultado chega: vira não lida.
+    estado = applyEnvelope(
+      { ...estado, session: "s-1" },
+      delegacao({ ...ABERTA, done: true, result: "pronto" }, 2)
+    );
+    expect(estado.atividadeDasConversas["s-1-code"]).toBe("naoLida");
+  });
+
+  it("resultado que chega com a conversa ABERTA não vira não lida", () => {
+    let estado = applyEnvelope(initialAppData(), delegacao(ABERTA));
+    estado = applyEnvelope(
+      { ...estado, session: "s-1-code" },
+      delegacao({ ...ABERTA, done: true, result: "pronto" }, 2)
+    );
+
+    expect(estado.atividadeDasConversas["s-1-code"]).toBeUndefined();
+  });
+
+  it("o pedido vira o subtítulo da linha — e a chamada seguinte o troca", () => {
+    let estado = applyEnvelope(initialAppData(), delegacao(ABERTA));
+    expect(estado.sessions.find((s) => s.id === "s-1-code")?.lastGoal).toBe(
+      "faça um HTML de página de vendas"
+    );
+
+    estado = applyEnvelope(estado, delegacao({ ...ABERTA, done: true, result: "ok" }, 2));
+    estado = applyEnvelope(estado, delegacao({ ...ABERTA, goal: "agora o CSS" }, 3));
+
+    expect(estado.sessions.find((s) => s.id === "s-1-code")?.lastGoal).toBe("agora o CSS");
+    expect(estado.sessions.filter((s) => s.id === "s-1-code")).toHaveLength(1);
+  });
+
   it("a delegação continua sendo registrada como sempre foi", () => {
     // O espelho é acessório. Se ele passasse a decidir o que entra em
     // `delegations`, o popup do bot dependeria de a conversa filha ter dado

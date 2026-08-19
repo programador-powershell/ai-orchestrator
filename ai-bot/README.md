@@ -140,6 +140,34 @@
     que clicar na filha abre a conversa dela e que cada linha usa o retrato do
     seu próprio bot.
 
+- **A conversa do bot ficou VIVA — seis avanços da comparação com o Grok Bot**
+  (melhorias 2, 3, 4, 6, 7 e 8 do confronto, todas verificadas contra o código
+  antes de entrar):
+  - **O bot lembra do próprio trabalho.** A segunda chamada ao mesmo bot desce
+    com o que ele já conversou NESTA conversa — pedidos anteriores e respostas.
+    Antes, "agora faça o site inteiro" chegava a um bot sem o próprio HTML de
+    dez minutos atrás. A memória é lida antes de o espelho gravar o pedido
+    novo, senão o objetivo atual chegaria em dobro ao modelo.
+  - **Falha virou registro na conversa do bot** — como aviso do sistema, não na
+    voz dele: pergunta sem resposta e sem marcador parecia que o bot ignorou a
+    pessoa.
+  - **A linha da filha sinaliza**: o retrato TRABALHA enquanto a delegação
+    roda (o estado `working` do próprio slime) e um ponto de acento marca
+    resultado que chegou com a pessoa em outra conversa — abrir limpa. É a
+    tríade da sidebar do Grok Bot (working / unread / needs-attention, esta
+    última já coberta pelos cartões).
+  - **O dono lembra do que delegou.** O `history()` passou a dobrar os
+    envelopes de delegação: o turno seguinte da mãe vê "deleguei X ao bot Y" e
+    o resultado bruto — sem isso o dono redelegava a mesma coisa ou afirmava de
+    memória o que era do outro.
+  - **A filha ganhou subtítulo**: o último pedido feito ao bot (`lastGoal`, no
+    meta — nunca lido do log no handshake). O título diz de QUEM a conversa é;
+    o subtítulo diz O QUE ele está fazendo. Duas filhas do mesmo bot em
+    conversas diferentes deixaram de ser linhas idênticas.
+  - **O herói central da conversa é o DONO dela**: abrir a conversa do Código
+    mostra o Código no centro ("Esta conversa é com Código"), não o master. O
+    conceito visual do avatar não mudou — só quem aparece.
+
 - **O FUSION do orquestrador foi portado para o gateway** — três estratégias, os
   papéis e os prompts vindos de lá quase palavra por palavra, porque são o
   produto do ajuste de quem usou a coisa:

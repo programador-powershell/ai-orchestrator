@@ -167,6 +167,38 @@ describe("a conversa do bot na barra desenhada", () => {
 
     expect(montados.map((avatar) => avatar.size)).toEqual([22, 18, 22]);
   });
+
+  it("a filha mostra O QUE o bot está fazendo — o título só diz de quem ela é", () => {
+    useApp.setState({
+      sessions: useApp
+        .getState()
+        .sessions.map((item) =>
+          item.id === "s1-code" ? { ...item, lastGoal: "faça um HTML de página de vendas" } : item
+        )
+    });
+    monta();
+
+    const filha = container.querySelector('.rail-item-row[data-child="true"]');
+    expect(filha?.querySelector(".rail-item-sub")?.textContent).toBe(
+      "faça um HTML de página de vendas"
+    );
+    // E o tooltip carrega o pedido inteiro, para o truncado não esconder nada.
+    expect(filha?.querySelector(".rail-item")?.getAttribute("title")).toContain(
+      "faça um HTML de página de vendas"
+    );
+  });
+
+  it("o ponto de não lida aparece — e some da conversa aberta", () => {
+    useApp.setState({ atividadeDasConversas: { "s1-code": "naoLida" } });
+    monta();
+
+    expect(container.querySelectorAll(".rail-item-dot")).toHaveLength(1);
+
+    act(() => {
+      useApp.setState({ atividadeDasConversas: {} });
+    });
+    expect(container.querySelectorAll(".rail-item-dot")).toHaveLength(0);
+  });
 });
 
 /**

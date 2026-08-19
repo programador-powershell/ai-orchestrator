@@ -15,7 +15,7 @@
  * arquivo só decide o que entra nela.
  */
 
-import { GrokAvatar } from "../avatar/GrokAvatar";
+import { GrokAvatar, grokSpecialistOf } from "../avatar/GrokAvatar";
 import {
   memo,
   useCallback,
@@ -328,22 +328,41 @@ function Hero({ compact }: { compact: boolean }): ReactNode {
   const specialists = useApp((state) => state.specialists);
   const avatars = useApp((state) => state.avatars);
   const setInput = useApp((state) => state.setInput);
+  const activeSpecialist = useApp((state) => state.activeSpecialist);
 
   const masterAvatar = avatars[MASTER.id] ?? MASTER.avatar;
+
+  // De QUEM é esta conversa. Numa conversa que já tem dono (a de um bot, ou a
+  // que já foi roteada) o herói é ELE — a conversa com um bot "é" aquele bot,
+  // visivelmente. Só a conversa recém-nascida, sem dono, mostra o master. O id
+  // passa por grokSpecialistOf porque office/work/master não estão na união do
+  // slime — o mapa aproxima pelo ofício.
+  const dono = activeSpecialist !== "" && activeSpecialist !== MASTER_ID
+    ? specialistById(specialists, activeSpecialist)
+    : null;
+  const heroiEspecialista = grokSpecialistOf(dono?.id ?? "chat");
+  const heroiNome = dono?.name ?? MASTER.name;
+  const heroiHue = dono?.hue ?? MASTER.hue;
+  const heroiTitulo = dono
+    ? `Esta conversa é com ${dono.name} — ${dono.tagline}.`
+    : "Escreva o que você quer fazer. Eu escolho o especialista.";
+  const heroiSub = dono
+    ? "O que você escrever aqui vai direto para ele."
+    : "Um campo de texto só — o master lê o pedido e chama quem atende.";
 
   if (compact) {
     // Na coluna estreita o herói roubaria o palco do editor/documento; fica a
     // frase, que é o que orienta.
     return (
-      <div className="hero hero-compact" style={hueStyle(MASTER.hue)}>
+      <div className="hero hero-compact" style={hueStyle(heroiHue)}>
         <BotAvatar avatar={masterAvatar} size={28} />
-        <p className="hero-sub">Escreva o que você quer fazer. Eu escolho o especialista.</p>
+        <p className="hero-sub">{heroiTitulo}</p>
       </div>
     );
   }
 
   return (
-    <div className="hero" style={hueStyle(MASTER.hue)}>
+    <div className="hero" style={hueStyle(heroiHue)}>
       {/*
         O BOT fica AQUI, no centro, e não na barra lateral.
         É a tela de "escreva o que você quer" — o bot é o assunto dela, não um
@@ -352,10 +371,10 @@ function Hero({ compact }: { compact: boolean }): ReactNode {
         listas, onde ele precisa ser desenhável em qualquer tamanho.
       */}
       <div className="hero-avatar">
-        <GrokAvatar specialist="chat" state="active" size={148} title={MASTER.name} />
+        <GrokAvatar specialist={heroiEspecialista} state="active" size={148} title={heroiNome} />
       </div>
-      <h1 className="hero-title">Escreva o que você quer fazer. Eu escolho o especialista.</h1>
-      <p className="hero-sub">Um campo de texto só — o master lê o pedido e chama quem atende.</p>
+      <h1 className="hero-title">{heroiTitulo}</h1>
+      <p className="hero-sub">{heroiSub}</p>
       <div className="grid-2 hero-examples">
         {EXAMPLES.map((example) => {
           const spec = resolveSpecialist(specialists, example.specialist);

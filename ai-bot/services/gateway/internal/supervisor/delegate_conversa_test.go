@@ -120,6 +120,122 @@ func TestDelegateAbreAConversaDoBot(t *testing.T) {
 	if !strings.Contains(delegations[1].Result, "cobranca(id, valor, vencimento)") {
 		t.Errorf("o resultado sumiu da conversa de quem delegou: %q", delegations[1].Result)
 	}
+
+	// 5. O pedido vira o SUBTÍTULO da linha: o título diz de quem a conversa é,
+	// o LastGoal diz o que ele está fazendo — sem isso, duas filhas do mesmo
+	// bot em conversas diferentes são linhas idênticas na barra.
+	if meta, err := dataStore.GetSession(filhoID); err != nil || meta.LastGoal != goodRequest().Goal {
+		t.Errorf("o subtítulo da filha devia ser o pedido: %q (%v)", meta.LastGoal, err)
+	}
+}
+
+// A segunda chamada ao mesmo bot é uma CONTINUAÇÃO: o sub-turno dele desce com
+// o que ele mesmo já conversou nesta conversa. Sem essa memória, "agora faça o
+// site inteiro" chegava a um bot que não lembrava nem do próprio HTML.
+func TestDelegateMessagesCarregamAMemoriaDoBot(t *testing.T) {
+	dataStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("abrir o store: %v", err)
+	}
+	defer dataStore.Close()
+
+	const sessionID = "s-continuacao"
+	if _, err := dataStore.CreateSession(store.SessionMeta{ID: sessionID, Title: "site"}); err != nil {
+		t.Fatalf("criar sessão: %v", err)
+	}
+
+	supervisor := New(Deps{
+		Store: dataStore,
+		Bus:   eventbus.New(dataStore),
+		Gate:  permissions.NewGate(permissions.DefaultPolicy()),
+		Tools: NewRegistry(),
+	})
+
+	// Primeira chamada já aconteceu: a conversa do bot tem o par pedido/resposta.
+	filho := supervisor.mirrorDelegation(sessionID, specialist.GetOrDefault("data"), "modele a tabela de clientes")
+	if filho == "" {
+		t.Fatal("o espelho não abriu a conversa do bot")
+	}
+	if err := supervisor.emit(filho, "t0", protocol.KindMessage,
+		protocol.Actor{Kind: protocol.ActorSpecialist, ID: "data", Specialist: "data"},
+		protocol.Message{Role: "assistant", Text: "cliente(id, nome, email)"}); err != nil {
+		t.Fatalf("gravar a resposta anterior: %v", err)
+	}
+
+	// Segunda chamada: a memória é lida ANTES de o espelho gravar o pedido novo.
+	memoria := supervisor.childHistory(sessionID, "data")
+	_ = supervisor.mirrorDelegation(sessionID, specialist.GetOrDefault("data"), "agora a tabela de pedidos")
+
+	messages := supervisor.delegateMessages(
+		specialist.GetOrDefault("code"), specialist.GetOrDefault("data"),
+		delegateRequest{Specialist: "data", Goal: "agora a tabela de pedidos"},
+		firstDelegationDepth, memoria)
+
+	texto := ""
+	pedidoNovo := 0
+	for _, message := range messages {
+		texto += message.Role + ": " + message.Content + "\n"
+		if strings.Contains(message.Content, "agora a tabela de pedidos") {
+			pedidoNovo++
+		}
+	}
+	if !strings.Contains(texto, "modele a tabela de clientes") {
+		t.Errorf("o pedido anterior não desceu ao sub-turno:\n%s", texto)
+	}
+	if !strings.Contains(texto, "cliente(id, nome, email)") {
+		t.Errorf("a resposta anterior do próprio bot não desceu ao sub-turno:\n%s", texto)
+	}
+	// O objetivo atual aparece UMA vez (no briefing) — a memória foi lida antes
+	// de o espelho gravá-lo, senão ele chegaria em dobro.
+	if pedidoNovo != 1 {
+		t.Errorf("o objetivo atual aparece %d vezes no sub-turno, esperava 1:\n%s", pedidoNovo, texto)
+	}
+}
+
+// A delegação volta ao histórico da MÃE: sem a dobra de KindDelegate, o turno
+// seguinte via só a síntese final do dono — nem o fato "deleguei X ao bot Y",
+// nem o resultado bruto — e o dono redelegava a mesma coisa.
+func TestHistoryDobraADelegacao(t *testing.T) {
+	dataStore, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("abrir o store: %v", err)
+	}
+	defer dataStore.Close()
+
+	const sessionID = "s-historia"
+	if _, err := dataStore.CreateSession(store.SessionMeta{ID: sessionID, Title: "site"}); err != nil {
+		t.Fatalf("criar sessão: %v", err)
+	}
+
+	supervisor := New(Deps{
+		Store: dataStore,
+		Bus:   eventbus.New(dataStore),
+		Gate:  permissions.NewGate(permissions.DefaultPolicy()),
+		Tools: NewRegistry(),
+	})
+	actor := protocol.Actor{Kind: protocol.ActorSpecialist, ID: "chat", Specialist: "chat"}
+
+	// O par abre/fecha, como o delegate() grava.
+	_ = supervisor.emit(sessionID, "t1", protocol.KindDelegate, actor,
+		protocol.Delegate{From: "chat", To: "code", Goal: "faça o html", Depth: 1})
+	_ = supervisor.emit(sessionID, "t1", protocol.KindDelegate, actor,
+		protocol.Delegate{From: "chat", To: "code", Goal: "faça o html", Depth: 1,
+			Done: true, Result: "<html>pronto</html>"})
+
+	history, err := supervisor.history(sessionID)
+	if err != nil {
+		t.Fatalf("ler o histórico: %v", err)
+	}
+	texto := ""
+	for _, message := range history {
+		texto += message.Role + ": " + message.Content + "\n"
+	}
+	if !strings.Contains(texto, "Deleguei ao especialista code: faça o html") {
+		t.Errorf("o fato da delegação não voltou ao histórico:\n%s", texto)
+	}
+	if !strings.Contains(texto, "<html>pronto</html>") {
+		t.Errorf("o resultado do delegado não voltou ao histórico:\n%s", texto)
+	}
 }
 
 // Delegação que NÃO deu certo não abre a conversa do bot com um erro que não é
@@ -162,11 +278,20 @@ func TestDelegateNaoEspelhaFracasso(t *testing.T) {
 	}
 
 	// A conversa do bot pode até existir (o pedido foi feito a ele), mas a
-	// resposta que nunca veio não pode estar lá.
+	// resposta que nunca veio não pode estar lá — e a falha TEM de estar, como
+	// aviso do sistema: pergunta sem resposta e sem marcador parece que o bot
+	// ignorou a pessoa, e falha é estado de primeira classe.
 	filhoID := store.ChildSessionID(sessionID, "data")
+	registroDeFalha := false
 	for _, fala := range mensagensDe(t, dataStore, filhoID) {
 		if fala.Role == "assistant" {
 			t.Errorf("a conversa do bot guardou uma resposta que não existiu: %+v", fala)
 		}
+		if fala.Role == "system" && strings.Contains(fala.Text, "A tarefa não terminou") {
+			registroDeFalha = true
+		}
+	}
+	if !registroDeFalha {
+		t.Error("a falha não foi registrada na conversa do bot — ficou pergunta sem resposta")
 	}
 }

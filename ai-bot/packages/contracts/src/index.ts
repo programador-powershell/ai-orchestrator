@@ -252,6 +252,8 @@ export interface SessionSummary {
   botId?: string;
   /** A conversa que a originou (delegação). Vazio = conversa raiz. */
   parentId?: string;
+  /** O último pedido feito ao bot — o subtítulo da linha na barra. */
+  lastGoal?: string;
 }
 
 export interface Ready {
@@ -583,6 +585,8 @@ export interface SessionMeta {
   botId?: string;
   /** A conversa que deu origem a esta (delegação). Vazio = conversa raiz. */
   parentId?: string;
+  /** O último pedido feito ao bot desta conversa (só conversa de bot o tem). */
+  lastGoal?: string;
   projectId?: string;
   createdAt: string;
   updatedAt: string;

@@ -318,6 +318,9 @@ type SessionSummary struct {
 	// por um instante e depois pularem para baixo do dono.
 	BotID    string `json:"botId,omitempty"`
 	ParentID string `json:"parentId,omitempty"`
+	// O último pedido feito ao bot desta conversa — o subtítulo da linha. O
+	// título diz de QUEM a conversa é; este diz O QUE ele está fazendo.
+	LastGoal string `json:"lastGoal,omitempty"`
 }
 
 // Model é um modelo oferecido ao usuário. O usuário escolhe; a política decide

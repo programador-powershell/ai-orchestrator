@@ -94,6 +94,14 @@ type SessionMeta struct {
 	// aparece aninhada sob a conversa que a criou, e clicar nela leva a pessoa a
 	// falar direto com aquele bot, sem passar pelo dono.
 	ParentID string `json:"parentId,omitempty"`
+	// LastGoal é o ÚLTIMO pedido feito ao bot desta conversa (só conversa de
+	// bot o tem). É o subtítulo da linha na barra: o título diz de QUEM a
+	// conversa é, e este diz O QUE ele está fazendo — sem ele, duas filhas do
+	// mesmo bot em conversas diferentes são linhas idênticas. Mora no meta, e
+	// não numa leitura do log no handshake: abrir o log de até cinquenta
+	// conversas para montar o `ready` pesaria o primeiro quadro em nome de um
+	// subtítulo.
+	LastGoal string `json:"lastGoal,omitempty"`
 	// ProjectID agrupa sessões em pasta. Vazio = solta.
 	ProjectID string    `json:"projectId,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
