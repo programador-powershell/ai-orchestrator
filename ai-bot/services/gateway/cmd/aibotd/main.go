@@ -33,6 +33,7 @@ import (
 	"aibot/gateway/internal/backup"
 	"aibot/gateway/internal/config"
 	"aibot/gateway/internal/eventbus"
+	"aibot/gateway/internal/fleet"
 	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/mcphub"
 	"aibot/gateway/internal/memory"
@@ -396,13 +397,33 @@ func serve() error {
 		sandbox.NewCloudRunner(),
 	)
 
+	// A FROTA (internal/fleet): este processo se inscreve como worker com
+	// identidade de máquina real (pc-<hostname>, arquitetura, CPUs), e é ela a
+	// dona dos LEASES de tarefa — com época PERSISTIDA, para o reinício do
+	// gateway não devolver toda tarefa à época 1 e deixar resultado velho
+	// passar pela cerca. O heartbeat mantém o registro vivo; o worker-daemon
+	// remoto vai bater no mesmo lugar.
+	frota, err := fleet.Open(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("abrir o registro da frota: %w", err)
+	}
+	log.Info("worker local registrado", "id", frota.Self().ID, "cpus", frota.Self().CPUs)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			frota.Heartbeat()
+		}
+	}()
+
 	// O gerente de workspaces (internal/workspace): congela ONDE cada execução
 	// trabalha. A v1 resolve para a pasta local da sessão — a MESMA função que
 	// antes alimentava o Toolbox.Root —, e é a peça que o cluster troca depois
-	// (Puter no source/staging, worker-daemon no materialize).
-	workspaces := workspace.NewManager(func(sessionID string) string {
+	// (Puter no source/staging, worker-daemon no materialize). Os leases vêm da
+	// frota: o plano congela worker e época REAIS.
+	workspaces := workspace.NewManagerWithLeases(func(sessionID string) string {
 		return sessionRoot(durable, sessionID)
-	})
+	}, frota)
 
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{
@@ -585,6 +606,7 @@ func serve() error {
 		Hooks:      hookRunner,
 		PackPrompt: pack.PromptFor,
 		Workspaces: workspaces,
+		Runs:       fleet.NewRunLog(durable),
 	})
 	sup.InstallCrewTools(registry)
 

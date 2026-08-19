@@ -69,6 +69,16 @@ func NewManager(roots func(sessionID string) string) *Manager {
 	return &Manager{roots: roots, leases: localLeases{}}
 }
 
+// NewManagerWithLeases monta o gerente com um dono de leases DE VERDADE (a
+// frota, com época persistida) no lugar do local/1 fixo da v1. É a troca de
+// backend que o desenho prometia: a cerca não muda uma linha.
+func NewManagerWithLeases(roots func(sessionID string) string, leases Leases) *Manager {
+	if leases == nil {
+		return NewManager(roots)
+	}
+	return &Manager{roots: roots, leases: leases}
+}
+
 // Plan congela o contrato da execução. É AQUI que worker, época e workspace
 // são decididos — a ferramenta lá na ponta só lê o que foi congelado.
 func (m *Manager) Plan(ctx context.Context, request PlanRequest) (Plan, error) {

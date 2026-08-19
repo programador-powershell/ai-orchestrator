@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"aibot/gateway/internal/fleet"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
@@ -297,31 +298,54 @@ func (s *Supervisor) runCrew(
 					workerID = fmt.Sprintf("%s-r%d", workerID, attempt)
 				}
 
-				// O plano é congelado ANTES do despacho para viajar no envelope:
-				// a tela (e o log) sabem desde já em que workspace e época esta
-				// execução trabalha. Na v1 é sempre local/1; o campo existe para
-				// o contrato não mudar no dia em que o scheduler multi-PC entrar.
+				// O plano é congelado UMA VEZ, antes do despacho — e é ESTE plano
+				// que o trabalhador executa e promove. A versão anterior congelava
+				// um segundo plano dentro do runWorker: os dois saíam idênticos na
+				// v1 (dobra determinística), mas eram duas decisões — e no dia em
+				// que o lease pudesse andar entre o despacho e a execução, o
+				// envelope anunciaria uma época e o trabalho rodaria em outra. A
+				// tarefa executa exatamente dentro do plano que foi despachado, ou
+				// não executa.
 				dispatch := protocol.TaskDispatch{
 					Task:      task,
 					WorkerID:  workerID,
 					TaskRunID: workerID,
 					Wave:      waveIndex + 1,
 				}
+				var plan *workspace.Plan
 				if s.deps.Workspaces != nil {
-					if plan, err := s.deps.Workspaces.Plan(ctx, workspace.PlanRequest{
+					if frozen, err := s.deps.Workspaces.Plan(ctx, workspace.PlanRequest{
 						SessionID: sessionID, TaskID: task.ID, BotID: task.Specialist, Attempt: attempt,
 					}); err == nil {
-						dispatch.WorkspacePlanID = plan.ID
-						dispatch.LeaseEpoch = plan.LeaseEpoch
+						plan = &frozen
+						dispatch.WorkspacePlanID = frozen.ID
+						dispatch.LeaseEpoch = frozen.LeaseEpoch
 					}
 				}
 				_ = s.emit(sessionID, turn, protocol.KindTaskDispatch, orchestrator, dispatch)
 
+				// O TaskRun vira REGISTRO durável no despacho e ganha desfecho no
+				// fim: é o primeiro degrau da retomada distribuída — primeiro a
+				// execução existe em disco, depois ela vira retomável.
+				if s.deps.Runs != nil {
+					run := fleet.Run{
+						ID: workerID, TaskID: task.ID, Turn: turn, Wave: waveIndex + 1,
+					}
+					if plan != nil {
+						run.WorkerID = plan.WorkerID
+						run.PlanID = plan.ID
+						run.Epoch = plan.LeaseEpoch
+					}
+					s.deps.Runs.Start(sessionID, run)
+				}
+
 				group.Add(1)
-				go func(position int, task protocol.Task, workerID string) {
+				go func(position int, task protocol.Task, workerID string, plan *workspace.Plan) {
 					defer group.Done()
-					outcomes[position] = s.runWorker(workerCtx, sessionID, turn, task, workerID, waveIndex+1, attempt, results)
-				}(position, task, workerID)
+					outcome := s.runWorker(workerCtx, sessionID, turn, task, workerID, waveIndex+1, plan, results)
+					s.deps.Runs.Finish(sessionID, workerID, outcome.Error)
+					outcomes[position] = outcome
+				}(position, task, workerID, plan)
 			}
 			group.Wait()
 
@@ -416,7 +440,8 @@ func (s *Supervisor) runWorker(
 	sessionID, turn string,
 	task protocol.Task,
 	workerID string,
-	wave, attempt int,
+	wave int,
+	plan *workspace.Plan,
 	upstream map[string]string,
 ) protocol.WorkerDone {
 	definition := specialist.GetOrDefault(task.Specialist)
@@ -427,11 +452,21 @@ func (s *Supervisor) runWorker(
 	}
 	done := protocol.WorkerDone{TaskID: task.ID, WorkerID: workerID}
 
-	// O workspace da TAREFA, congelado antes de qualquer ferramenta rodar. Na
-	// v1 ele aponta para a mesma pasta da sessão (o worktree isolado continua
-	// sendo do gerente de cópias, como era); quando o scheduler multi-PC
-	// entrar, é este plano que dirá worker, snapshot e época.
-	ctx = s.workspaceDaTarefa(ctx, sessionID, task.ID, definition.ID, attempt)
+	// A tarefa executa DENTRO do plano que foi despachado — o mesmo objeto que
+	// viajou no envelope, não um segundo congelamento por conta própria. É a
+	// primeira metade da regra do cluster; a segunda é o Promote lá embaixo:
+	// worker que perdeu o lease pode terminar, mas não vira verdade.
+	// Sem plano (gateway sem Workspaces, ou congelamento falhou no despacho) o
+	// contexto segue sem execução e as ferramentas de arquivo recusam com
+	// motivo — nunca caem na pasta do processo.
+	if plan != nil && s.deps.Workspaces != nil {
+		execution, err := s.deps.Workspaces.Materialize(ctx, *plan)
+		if err != nil {
+			done.Error = "não foi possível materializar o workspace da tarefa: " + err.Error()
+			return done
+		}
+		ctx = workspace.WithExecution(ctx, execution)
+	}
 
 	entry, _, err := s.deps.Models.Resolve(definition.ID, task.Model)
 	if err != nil {
@@ -551,6 +586,19 @@ func (s *Supervisor) runWorker(
 			if strings.TrimSpace(result) == "" {
 				done.Error = "o trabalhador terminou sem produzir resultado"
 				return done
+			}
+			// A CERCA, na hora de aceitar: o resultado só vira verdade se o
+			// worker AINDA detém o lease na época em que o plano foi congelado.
+			// Na v1 local isso sempre passa — mas é aqui que o PC-02 que perdeu
+			// a rede e voltou depois do PC-03 assumir vai bater, e o chamador
+			// não vai precisar aprender regra nova.
+			if plan != nil && s.deps.Workspaces != nil {
+				if err := s.deps.Workspaces.Promote(ctx, *plan,
+					workspace.Publication{StagingURI: plan.Staging.URI}); err != nil {
+					done.OK = false
+					done.Error = "o resultado não pôde ser promovido: " + err.Error()
+					return done
+				}
 			}
 			done.OK = true
 			done.Result = result

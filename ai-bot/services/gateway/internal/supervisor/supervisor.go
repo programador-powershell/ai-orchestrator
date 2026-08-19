@@ -24,6 +24,7 @@ import (
 
 	"aibot/gateway/internal/contextrt"
 	"aibot/gateway/internal/eventbus"
+	"aibot/gateway/internal/fleet"
 	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/memory"
 	"aibot/gateway/internal/modelrouter"
@@ -85,6 +86,9 @@ type Deps struct {
 	// PackPrompt devolve o texto que os pacotes corporativos anexam ao prompt de
 	// sistema de um especialista (internal/pack.PromptFor). Pode ser nil.
 	PackPrompt func(specialistID string) string
+	// Runs registra cada execução de tarefa em disco (fleet.RunLog). Nil = sem
+	// registro, e a equipe roda como sempre rodou.
+	Runs *fleet.RunLog
 	// Workspaces congela ONDE cada execução trabalha (internal/workspace): o
 	// plano v1 aponta para a pasta local da sessão, e é pendurado no contexto
 	// no começo do turno/tarefa — a ferramenta nunca calcula um diretório, ela

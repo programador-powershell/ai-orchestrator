@@ -168,6 +168,26 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **O CICLO DO CLUSTER FECHOU: a tarefa executa exatamente o plano que foi
+  despachado.** O `runWorker` congelava um SEGUNDO plano por conta própria —
+  idêntico na v1, mas duas decisões: no dia em que o lease andasse entre o
+  despacho e a execução, o envelope anunciaria uma época e o trabalho rodaria
+  em outra. Agora o plano é congelado UMA vez na onda, viaja no envelope,
+  é materializado pelo trabalhador e PROMOVIDO na aceitação — o cenário
+  PC-02/PC-03 (worker que perdeu a rede terminando depois do sucessor) bate na
+  cerca e o desfecho diz por quê, com teste de ponta a ponta nos dois sentidos.
+  E as ENTIDADES da fase 2 nasceram (`internal/fleet`):
+  - **Registro de workers**: este processo se inscreve com identidade de
+    máquina real (`pc-<hostname>`, arquitetura, CPUs) e heartbeat de 30s — o
+    plano congela worker e época REAIS, não mais `local`/1 fixos.
+  - **Lease com época PERSISTIDA** (TTL 3min): dono renova na mesma época;
+    vago/vencido faz a época ANDAR (nunca voltar — sobrevive a reinício, senão
+    o gateway que cai e volta deixaria resultado velho passar por atual);
+    alheio válido é recusado — lease não se rouba, se espera vencer.
+  - **TaskRun persistente**: cada execução vira registro durável por sessão
+    (despacho → desfecho, com plano e época) — o primeiro degrau da retomada
+    distribuída: primeiro a execução existe em disco, depois vira retomável.
+
 - **ONDA 1 da paridade com o orquestrador: a tela de DADOS desenha e exporta
   de verdade.** Era a superfície mais reclamada e 100% casca — nenhum caminho
   do gateway produzia o JSON que a tela espera. Agora:
