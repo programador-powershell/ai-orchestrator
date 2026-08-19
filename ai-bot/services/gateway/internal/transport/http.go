@@ -22,6 +22,7 @@ import (
 
 	"aibot/gateway/internal/config"
 	"aibot/gateway/internal/eventbus"
+	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/permissions"
 	"aibot/gateway/internal/protocol"
@@ -43,6 +44,9 @@ type Server struct {
 	bus    *eventbus.Bus
 	sup    *supervisor.Supervisor
 	models *modelrouter.Router
+	// fusion são os presets de várias cabeças e quem usa cada um. Fica aqui
+	// porque a rota do catálogo é quem os edita, e o supervisor os consome.
+	fusion *fusion.Registry
 	gate   *permissions.Gate
 	// environments guarda ONDE o próximo comando de cada sessão roda. Fica no
 	// servidor porque duas coisas dependem dele e não podem divergir: o `ready`,
@@ -80,6 +84,7 @@ func NewServer(
 	bus *eventbus.Bus,
 	sup *supervisor.Supervisor,
 	models *modelrouter.Router,
+	fusionRegistry *fusion.Registry,
 	gate *permissions.Gate,
 	environments *sandbox.Registry,
 	vault CatalogVault,
@@ -92,6 +97,7 @@ func NewServer(
 		bus:          bus,
 		sup:          sup,
 		models:       models,
+		fusion:       fusionRegistry,
 		gate:         gate,
 		environments: environments,
 		vault:        vault,
@@ -140,6 +146,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/host/tool-result", s.auth(s.postHostResult))
 
 	mux.Handle("PATCH /v1/catalog/specialists", s.auth(s.patchSpecialistModel))
+	mux.Handle("PUT /v1/catalog/fusion", s.auth(s.putFusionPreset))
+	mux.Handle("DELETE /v1/catalog/fusion/{id}", s.auth(s.deleteFusionPreset))
 
 	mux.HandleFunc("GET /v1/stream", s.stream)
 

@@ -48,6 +48,8 @@ export interface Transport {
   post(path: string, body: unknown): Promise<unknown>;
   /** Um PATCH autenticado — usado para chave e estado de provedor existente. */
   patch(path: string, body: unknown): Promise<unknown>;
+  /** Um PUT autenticado — grava o recurso inteiro (os presets de fusion). */
+  put(path: string, body: unknown): Promise<unknown>;
   /** Um GET autenticado — mesma regra de token e de erro do `post`. */
   get(path: string): Promise<unknown>;
   /** Um DELETE autenticado — idem. `del` porque `delete` é palavra reservada. */
@@ -408,6 +410,10 @@ export function createTransport(options: TransportOptions): Transport {
 
     patch(path: string, body: unknown): Promise<unknown> {
       return request("PATCH", path, body);
+    },
+
+    put(path: string, body: unknown): Promise<unknown> {
+      return request("PUT", path, body);
     },
 
     get(path: string): Promise<unknown> {

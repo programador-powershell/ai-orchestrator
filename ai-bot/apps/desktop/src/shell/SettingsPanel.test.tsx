@@ -364,6 +364,7 @@ describe("catálogo x estado da conexão", () => {
     get: async () => ({ providers: [], models: [] }),
     post: async () => ({}),
     patch: async () => ({}),
+    put: async () => ({}),
     del: async () => ({})
   };
 
@@ -404,5 +405,94 @@ describe("catálogo x estado da conexão", () => {
     expect(container.querySelectorAll('input[type="password"]').length).toBe(1);
 
     useApp.setState({ status: "connecting" });
+  });
+});
+
+/**
+ * O Fusion na tela.
+ *
+ * Ele era um cartao dizendo "nao existe neste produto" — e a frase de la estava
+ * ERRADA sobre o proprio conceito: dizia que fusion e "varios modelos
+ * respondendo a mesma pergunta". Nao e. O orquestrador DECOMPOE em focos que nao
+ * se repetem, e por isso o merge custa uma vez por parte, e nao tres vezes pelo
+ * todo. O motor portado do orquestrador guarda essa divisao.
+ */
+describe("presets de fusion na tela", () => {
+  const catalogo = {
+    providers: [{ id: "p", name: "P", kind: "openai", baseUrl: "x", enabled: true, needsKey: false, hasKey: true, canDelete: true }],
+    models: [
+      { id: "grande", providerId: "p", label: "Grande", context: 0, canDelete: true },
+      { id: "barato", providerId: "p", label: "Barato", context: 0, canDelete: true }
+    ],
+    specialists: { code: "fusion:trio" },
+    fusion: [
+      { id: "trio", name: "Trio", description: "divide e costura", strategy: "merge", orchestrator: "grande", executors: ["barato", "grande"] }
+    ]
+  };
+
+  const cliente = {
+    get: async () => catalogo,
+    post: async () => ({}),
+    patch: async () => ({}),
+    put: async () => ({}),
+    del: async () => ({})
+  };
+
+  const montar = async () => {
+    useApp.setState({
+      status: "ready",
+      specialists: [
+        { id: "code", name: "Código", tagline: "", surface: "editor", rail: "files", hue: 0 },
+        { id: "design", name: "Design", tagline: "", surface: "canvas", rail: "layers", hue: 0 }
+      ] as never
+    });
+    await act(async () => {
+      root.render(<CatalogSection client={cliente} scope="models" />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+  };
+
+  it("lista o preset com estrategia e tamanho do painel", async () => {
+    await montar();
+
+    const texto = container.textContent ?? "";
+    expect(texto).toContain("Presets de fusion");
+    expect(texto).toContain("Trio");
+    expect(texto).toContain("merge");
+    expect(texto).toContain("2 executores");
+    // E a frase errada de antes nao pode voltar.
+    expect(texto).not.toContain("não existe neste produto");
+  });
+
+  it("oferece o preset na escolha do especialista, junto dos modelos", async () => {
+    await montar();
+
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="modelo do especialista code"]');
+    expect(select).toBeTruthy();
+
+    const valores = [...(select?.options ?? [])].map((option) => option.value);
+    expect(valores).toContain("");
+    expect(valores).toContain("grande");
+    expect(valores).toContain("fusion:trio");
+
+    // E o especialista que ja usa o preset aparece com ele escolhido.
+    expect(select?.value).toBe("fusion:trio");
+  });
+
+  it("o editor abre com as tres estrategias", async () => {
+    await montar();
+
+    const novo = [...container.querySelectorAll<HTMLButtonElement>("button")].find((botao) =>
+      botao.textContent?.includes("Novo preset")
+    );
+    await act(async () => {
+      novo?.click();
+    });
+
+    const estrategia = container.querySelector<HTMLSelectElement>('select[aria-label="estratégia do preset"]');
+    const valores = [...(estrategia?.options ?? [])].map((option) => option.value);
+    expect(valores).toEqual(["merge", "orchestrate", "race"]);
   });
 });

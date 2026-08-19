@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
@@ -339,6 +340,9 @@ func (s *Server) getCatalog(w http.ResponseWriter, _ *http.Request) {
 		// arquivo: é ele quem decide o turno, e mostrar o arquivo deixaria a tela
 		// discordar do que está em vigor quando um plugin mexer no catálogo.
 		"specialists": s.models.SpecialistModels(),
+		// Os presets de várias cabeças. A atribuição de quem usa qual está em
+		// "specialists", com o valor "fusion:<id>".
+		"fusion": s.fusionPresets(),
 	})
 }
 
@@ -375,7 +379,15 @@ func (s *Server) patchSpecialistModel(w http.ResponseWriter, r *http.Request) {
 	// Modelo tem de existir E ser utilizável: fixar um modelo cuja chave não foi
 	// cadastrada criaria uma configuração que parece feita e não atende nenhum
 	// turno.
-	if corpo.Model != "" && !s.models.Usable(corpo.Model) {
+	// O campo aceita DUAS coisas, porque na vida real elas são a mesma decisão:
+	// um id de modelo, ou "fusion:<preset>" para o bot responder com um painel.
+	if presetID, ehFusion := fusion.AssignedPreset(corpo.Model); ehFusion {
+		if s.fusion == nil || !s.fusion.Has(presetID) {
+			s.fail(w, http.StatusBadRequest, "fusion",
+				fmt.Sprintf("não existe preset de fusion %q — crie o preset antes de atribuí-lo", presetID))
+			return
+		}
+	} else if corpo.Model != "" && !s.models.Usable(corpo.Model) {
 		s.fail(w, http.StatusBadRequest, "modelo",
 			fmt.Sprintf("o modelo %q não está no catálogo utilizável — confira se o provedor está habilitado e com chave", corpo.Model))
 		return
@@ -408,7 +420,13 @@ func (s *Server) patchSpecialistModel(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, http.StatusInternalServerError, "catalogo", err.Error())
 		return
 	}
+	// Os dois registros recebem o mapa inteiro: o roteador ignora o que começa
+	// com "fusion:" e o registro de fusion ignora o resto. Cada um filtra o que
+	// é seu, e não há um terceiro lugar guardando "de quem é esta linha".
 	s.models.SetSpecialistModels(atual)
+	if s.fusion != nil {
+		s.fusion.SetAssignments(atual)
+	}
 
 	s.ok(w, map[string]any{"specialists": atual})
 }
@@ -929,4 +947,152 @@ func (s *Server) probeProvider(ctx context.Context, provider modelrouter.Provide
 		// prova exatamente o que o teste quer provar — que há alguém lá.
 		return true, fmt.Sprintf("endereço alcançado (HTTP %d); este dialeto não valida a chave no teste", status)
 	}
+}
+
+/* ------------------------------ fusion ----------------------------------- */
+
+// fusionPresets é a lista em vigor, para o GET do catálogo.
+func (s *Server) fusionPresets() []fusion.Preset {
+	if s.fusion == nil {
+		return []fusion.Preset{}
+	}
+	return s.fusion.Presets()
+}
+
+// putFusionPreset cria ou substitui um preset.
+//
+// Um verbo só para as duas coisas porque a tela edita: quem abre um preset,
+// mexe e salva não está "criando" nem "atualizando" — está gravando o que vê.
+func (s *Server) putFusionPreset(w http.ResponseWriter, r *http.Request) {
+	if !s.catalogReady(w) {
+		return
+	}
+	var preset fusion.Preset
+	if err := json.NewDecoder(r.Body).Decode(&preset); err != nil {
+		s.fail(w, http.StatusBadRequest, "bad_request", "corpo inválido: "+err.Error())
+		return
+	}
+
+	preset.ID = strings.TrimSpace(preset.ID)
+	preset.Name = strings.TrimSpace(preset.Name)
+	preset.Orchestrator = strings.TrimSpace(preset.Orchestrator)
+	if preset.ID == "" {
+		s.fail(w, http.StatusBadRequest, "preset", "informe o id do preset")
+		return
+	}
+	if preset.Name == "" {
+		preset.Name = preset.ID
+	}
+	if !preset.Strategy.Valid() {
+		s.fail(w, http.StatusBadRequest, "estrategia",
+			fmt.Sprintf("estratégia %q não existe — use merge, orchestrate ou race", preset.Strategy))
+		return
+	}
+	// Orquestrador e executores precisam ATENDER: preset montado com modelo sem
+	// chave nasce morto, e a pessoa só descobriria no meio de uma conversa.
+	if !s.models.Usable(preset.Orchestrator) {
+		s.fail(w, http.StatusBadRequest, "orquestrador",
+			fmt.Sprintf("o modelo %q não está no catálogo utilizável", preset.Orchestrator))
+		return
+	}
+	limpos := make([]string, 0, len(preset.Executors))
+	for _, executor := range preset.Executors {
+		executor = strings.TrimSpace(executor)
+		if executor == "" {
+			continue
+		}
+		if !s.models.Usable(executor) {
+			s.fail(w, http.StatusBadRequest, "executor",
+				fmt.Sprintf("o modelo %q não está no catálogo utilizável", executor))
+			return
+		}
+		limpos = append(limpos, executor)
+	}
+	if len(limpos) > fusion.MaxExecutors {
+		s.fail(w, http.StatusBadRequest, "executor",
+			fmt.Sprintf("no máximo %d executores por preset", fusion.MaxExecutors))
+		return
+	}
+	preset.Executors = limpos
+
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+
+	lista := s.fusionPresets()
+	trocado := false
+	for i := range lista {
+		if lista[i].ID == preset.ID {
+			lista[i] = preset
+			trocado = true
+			break
+		}
+	}
+	if !trocado {
+		lista = append(lista, preset)
+	}
+	if err := s.saveFusion(lista); err != nil {
+		s.fail(w, http.StatusInternalServerError, "catalogo", err.Error())
+		return
+	}
+	s.ok(w, map[string]any{"fusion": lista})
+}
+
+// deleteFusionPreset remove um preset.
+//
+// A atribuição de quem o usava NÃO é apagada aqui: o registro devolve "não há
+// preset" e o turno segue com um modelo só. Varrer as atribuições apagaria em
+// silêncio uma configuração que a pessoa pode querer de volta ao recriar o
+// preset com o mesmo id.
+func (s *Server) deleteFusionPreset(w http.ResponseWriter, r *http.Request) {
+	if !s.catalogReady(w) {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		s.fail(w, http.StatusBadRequest, "preset", "informe o id do preset")
+		return
+	}
+
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+
+	lista := s.fusionPresets()
+	restante := make([]fusion.Preset, 0, len(lista))
+	achou := false
+	for _, preset := range lista {
+		if preset.ID == id {
+			achou = true
+			continue
+		}
+		restante = append(restante, preset)
+	}
+	if !achou {
+		s.fail(w, http.StatusNotFound, "preset", fmt.Sprintf("não existe preset %q", id))
+		return
+	}
+	if err := s.saveFusion(restante); err != nil {
+		s.fail(w, http.StatusInternalServerError, "catalogo", err.Error())
+		return
+	}
+	s.ok(w, map[string]any{"fusion": restante})
+}
+
+// saveFusion grava a lista no catálogo e aplica a quente.
+func (s *Server) saveFusion(lista []fusion.Preset) error {
+	document, err := s.readCatalogDocument()
+	if err != nil {
+		return err
+	}
+	bruto, err := json.Marshal(lista)
+	if err != nil {
+		return fmt.Errorf("serializar os presets de fusion: %w", err)
+	}
+	document.extras["fusion"] = bruto
+	if err := s.writeCatalogDocument(document); err != nil {
+		return err
+	}
+	if s.fusion != nil {
+		s.fusion.SetPresets(lista)
+	}
+	return nil
 }

@@ -33,6 +33,7 @@ import (
 	"aibot/gateway/internal/backup"
 	"aibot/gateway/internal/config"
 	"aibot/gateway/internal/eventbus"
+	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/mcphub"
 	"aibot/gateway/internal/memory"
 	"aibot/gateway/internal/modelrouter"
@@ -277,7 +278,7 @@ func serve() error {
 	// catálogo regravam o mesmo arquivo, e dois joins independentes seriam dois
 	// lugares para divergirem no dia em que o nome mudar.
 	catalogPath := filepath.Join(cfg.DataDir, "catalog.json")
-	providers, catalog, searchBackend, vpsConfig, modelPorEspecialista, err := loadCatalog(catalogPath)
+	providers, catalog, searchBackend, vpsConfig, modelPorEspecialista, presetsDeFusion, err := loadCatalog(catalogPath)
 	if err != nil {
 		return err
 	}
@@ -301,6 +302,12 @@ func serve() error {
 	// esta linha o arquivo guardaria a escolha e o roteador a ignoraria — mais
 	// uma configuração que existe em disco e não decide nada.
 	models.SetSpecialistModels(modelPorEspecialista)
+
+	// O registro de fusion: presets e quem usa cada um. Vazio = ninguém
+	// configurou, e todo turno segue com um modelo só.
+	fusionRegistry := fusion.NewRegistry()
+	fusionRegistry.SetPresets(presetsDeFusion)
+	fusionRegistry.SetAssignments(modelPorEspecialista)
 
 	// O microkernel aplica capacidades como efeitos reversíveis. Grok é o
 	// primeiro plugin embutido: o adaptador xAI continua atrás do contrato do
@@ -563,6 +570,7 @@ func serve() error {
 		Tools:     registry,
 		Router:    router,
 		Worktrees: worktrees,
+		Fusion:    fusionRegistry,
 		// Os ganchos e os prompts dos pacotes corporativos. Por função para o
 		// supervisor não importar internal/pack — a dependência aponta para cá.
 		Hooks:      hookRunner,
@@ -632,7 +640,7 @@ func serve() error {
 	// O cofre e o caminho do catálogo entram aqui para as rotas de
 	// /v1/catalog: a chave do provedor vai ao cofre e o arquivo é regravado e
 	// aplicado a quente sem reiniciar o processo.
-	server := transport.NewServer(cfg, durable, bus, sup, models, gate, environments, vault, catalogPath, log)
+	server := transport.NewServer(cfg, durable, bus, sup, models, fusionRegistry, gate, environments, vault, catalogPath, log)
 	// A ponte fecha o ciclo: as ferramentas de máquina saem daqui para o
 	// aplicativo nativo e voltam pelo mesmo protocolo.
 	registry.SetBridge(server)
@@ -825,8 +833,13 @@ type catalogFile struct {
 	// Specialists fixa o modelo de cada especialista, escolhido em
 	// Configurações → Motores. Vazio = cada um segue a preferência por skill da
 	// própria definição, que é o padrão de fábrica.
-	Specialists map[string]string        `json:"specialists,omitempty"`
-	Search      supervisor.SearchBackend `json:"search"`
+	Specialists map[string]string `json:"specialists,omitempty"`
+	// Fusion são os presets de várias cabeças (ver internal/fusion). QUEM usa
+	// qual vive no MESMO campo `specialists`, com o valor "fusion:<id>" — ou o
+	// bot responde com um modelo, ou com um painel; dois campos deixariam a
+	// pergunta "qual vence?" para o código responder em silêncio.
+	Fusion []fusion.Preset          `json:"fusion,omitempty"`
+	Search supervisor.SearchBackend `json:"search"`
 	// VPS é o servidor da TI ({host, port, user, workdir, fingerprint}). Nasce
 	// vazio: sem ele o ambiente aparece cinza dizendo o que preencher, e o
 	// padrão de execução continua no local. Preenchido E respondendo, a VPS
@@ -842,7 +855,7 @@ type catalogFile struct {
 // que sobe já falando com a internet, antes de alguém configurar, é um gateway
 // que manda o primeiro prompt para onde o padrão apontar. A VPS nasce vazia
 // pelo mesmo princípio: apontar servidor é decisão da TI, não default nosso.
-func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supervisor.SearchBackend, sandbox.VPSConfig, map[string]string, error) {
+func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supervisor.SearchBackend, sandbox.VPSConfig, map[string]string, []fusion.Preset, error) {
 	var empty supervisor.SearchBackend
 	var noVPS sandbox.VPSConfig
 
@@ -850,26 +863,26 @@ func loadCatalog(path string) ([]modelrouter.Provider, []modelrouter.Entry, supe
 	if err == nil {
 		var parsed catalogFile
 		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return nil, nil, empty, noVPS, nil, fmt.Errorf("ler %s: %w", path, err)
+			return nil, nil, empty, noVPS, nil, nil, fmt.Errorf("ler %s: %w", path, err)
 		}
-		return parsed.Providers, parsed.Models, parsed.Search, parsed.VPS, parsed.Specialists, nil
+		return parsed.Providers, parsed.Models, parsed.Search, parsed.VPS, parsed.Specialists, parsed.Fusion, nil
 	}
 	if !os.IsNotExist(err) {
-		return nil, nil, empty, noVPS, nil, fmt.Errorf("ler %s: %w", path, err)
+		return nil, nil, empty, noVPS, nil, nil, fmt.Errorf("ler %s: %w", path, err)
 	}
 
 	seed, err := defaultCatalog()
 	if err != nil {
-		return nil, nil, empty, noVPS, nil, err
+		return nil, nil, empty, noVPS, nil, nil, err
 	}
 	pretty, err := json.MarshalIndent(seed, "", "  ")
 	if err != nil {
-		return nil, nil, empty, noVPS, nil, err
+		return nil, nil, empty, noVPS, nil, nil, err
 	}
 	if err := os.WriteFile(path, pretty, 0o600); err != nil {
-		return nil, nil, empty, noVPS, nil, fmt.Errorf("gravar %s: %w", path, err)
+		return nil, nil, empty, noVPS, nil, nil, fmt.Errorf("gravar %s: %w", path, err)
 	}
-	return seed.Providers, seed.Models, seed.Search, seed.VPS, seed.Specialists, nil
+	return seed.Providers, seed.Models, seed.Search, seed.VPS, seed.Specialists, seed.Fusion, nil
 }
 
 // protocolModel encurta a montagem do catálogo semente. Os ids são editáveis no

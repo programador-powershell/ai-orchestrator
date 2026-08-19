@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"aibot/gateway/internal/eventbus"
+	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/memory"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/permissions"
@@ -48,6 +49,14 @@ const maxHistoryMessages = 40
 // não pode ser lido como consentimento.
 const approvalTimeout = 10 * time.Minute
 
+// FusionPresets é quem sabe se um especialista responde com várias cabeças.
+//
+// Interface, e não o struct do catálogo, porque o supervisor não deve saber de
+// onde a configuração vem — arquivo hoje, política assinada amanhã.
+type FusionPresets interface {
+	PresetFor(specialist string) (fusion.Preset, bool)
+}
+
 // Deps são as peças que o supervisor orquestra.
 type Deps struct {
 	Store  *store.Store
@@ -63,6 +72,9 @@ type Deps struct {
 	// serializa. Pode ser nil (fora de um repositório, ou sem git na estação) — e
 	// aí a tarefa que pediu isolamento falha em vez de rodar no compartilhado.
 	Worktrees *worktree.Manager
+	// Fusion devolve o preset configurado para um especialista. Nil = ninguém
+	// configurou fusion, e todo turno usa um modelo só — que é o padrão.
+	Fusion FusionPresets
 	// PromptMaster devolve o prompt do admin. Pode ser nil.
 	PromptMaster func() string
 	// Hooks são os ganchos declarativos dos pacotes corporativos (ver hooks.go).
@@ -516,12 +528,80 @@ func (s *Supervisor) runModel(
 	messages []modelrouter.ChatMessage,
 ) (string, modelrouter.Usage, error) {
 	sink := &streamSink{supervisor: s, session: sessionID, turn: turn, actor: actor}
+
+	// FUSION: várias cabeças num turno só.
+	//
+	// Entra aqui, e não no roteador de modelos, porque é aqui que existem as
+	// duas coisas de que ele precisa — o especialista que está atendendo (para
+	// a política de papéis) e o sink que leva os deltas à tela. O turno inteiro
+	// continua igual do lado de fora: entra `messages`, sai texto.
+	if preset, temFusion := s.presetDeFusion(actor.Specialist); temFusion && len(messages) > 0 {
+		texto, err := s.rodarFusion(ctx, sessionID, preset, actor.Specialist, messages, sink)
+		// O uso não é somado por etapa: cada sub-chamada tem o seu, e o
+		// roteador só devolve o da chamada que ele fez. Contabilizar fusion por
+		// dentro é trabalho da próxima rodada — e é melhor devolver zero do que
+		// um número inventado.
+		return texto, modelrouter.Usage{}, err
+	}
+
 	usage, err := s.deps.Models.Stream(ctx, modelrouter.Request{
 		Model:          model,
 		Messages:       messages,
 		ConversationID: sessionID,
 	}, sink)
 	return sink.builder.String(), usage, err
+}
+
+// presetDeFusion devolve o preset configurado para o especialista, se houver.
+func (s *Supervisor) presetDeFusion(specialist string) (fusion.Preset, bool) {
+	if s.deps.Fusion == nil || specialist == "" {
+		return fusion.Preset{}, false
+	}
+	return s.deps.Fusion.PresetFor(specialist)
+}
+
+// rodarFusion traduz o turno para o motor de fusion e de volta.
+//
+// A última mensagem é a PERGUNTA e o resto é histórico — a mesma divisão do
+// motor original, e ela importa: os construtores de prompt do fusion já incluem
+// a pergunta, então mandá-la duas vezes faria cada etapa recebê-la em dobro.
+func (s *Supervisor) rodarFusion(
+	ctx context.Context,
+	sessionID string,
+	preset fusion.Preset,
+	specialist string,
+	messages []modelrouter.ChatMessage,
+	sink *streamSink,
+) (string, error) {
+	pergunta := messages[len(messages)-1].Content
+	historico := messages[:len(messages)-1]
+
+	deps := fusion.Deps{
+		// Quiet é bastidor: o texto inteiro, sem passar pela tela.
+		Quiet: func(ctx context.Context, model string, m []modelrouter.ChatMessage) (string, error) {
+			texto, _, err := s.deps.Models.Complete(ctx, modelrouter.Request{
+				Model:          model,
+				Messages:       m,
+				ConversationID: sessionID,
+			})
+			return texto, err
+		},
+		// Stream é o que a pessoa vê chegando — e só uma etapa por turno usa
+		// isto, senão dois textos disputariam a mesma bolha.
+		Stream: func(ctx context.Context, model string, m []modelrouter.ChatMessage) (string, error) {
+			_, err := s.deps.Models.Stream(ctx, modelrouter.Request{
+				Model:          model,
+				Messages:       m,
+				ConversationID: sessionID,
+			}, sink)
+			return sink.builder.String(), err
+		},
+		Stage: func(texto string) {
+			s.thinking(sessionID, sink.turn, sink.actor, texto, false)
+		},
+	}
+
+	return fusion.Run(ctx, preset, specialist, pergunta, historico, deps)
 }
 
 /* ------------------------------- contexto ------------------------------- */

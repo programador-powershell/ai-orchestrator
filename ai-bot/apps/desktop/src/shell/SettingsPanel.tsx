@@ -67,6 +67,7 @@ export interface CatalogClient {
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
   patch(path: string, body: unknown): Promise<unknown>;
+  put(path: string, body: unknown): Promise<unknown>;
   del(path: string): Promise<unknown>;
 }
 
@@ -96,7 +97,50 @@ interface CatalogSnapshot {
   models: CatalogModel[];
   /** Modelo fixado por especialista. Chave ausente = automático. */
   specialists: Record<string, string>;
+  /** Presets de fusion — várias cabeças num turno só. */
+  fusion: FusionPreset[];
 }
+
+/** Um preset de fusion, como o gateway o guarda. */
+export interface FusionPreset {
+  id: string;
+  name: string;
+  description?: string;
+  strategy: "merge" | "orchestrate" | "race";
+  orchestrator: string;
+  executors: string[];
+}
+
+/**
+ * As três estratégias e o que cada uma faz.
+ *
+ * O texto explica a MECÂNICA, não o marketing: quem escolhe aqui está decidindo
+ * quantas chamadas de modelo o turno vai custar.
+ */
+export const FUSION_STRATEGIES: ReadonlyArray<{
+  id: FusionPreset["strategy"];
+  label: string;
+  hint: string;
+}> = [
+  {
+    id: "merge",
+    label: "Merge",
+    hint: "o orquestrador divide a pergunta em focos que não se repetem, os executores trabalham em paralelo e ele costura as partes"
+  },
+  {
+    id: "orchestrate",
+    label: "Orchestrate",
+    hint: "o orquestrador escreve a especificação, o executor produz, e o orquestrador revisa a conformidade"
+  },
+  {
+    id: "race",
+    label: "Race",
+    hint: "todos recebem a mesma pergunta e vale quem responder primeiro; os outros são descartados"
+  }
+];
+
+/** O prefixo que diz "este especialista responde com fusion" (ver o gateway). */
+export const FUSION_PREFIX = "fusion:";
 
 /** Os dialetos que o gateway aceita — a mesma lista fechada do catalog.go. */
 export const PROVIDER_KINDS = [
@@ -114,9 +158,28 @@ export const PROVIDER_KINDS = [
  * Campo ausente vira valor neutro em vez de derrubar a lista inteira.
  */
 function parseCatalog(raw: unknown): CatalogSnapshot {
-  const snapshot: CatalogSnapshot = { providers: [], models: [], specialists: {} };
+  const snapshot: CatalogSnapshot = { providers: [], models: [], specialists: {}, fusion: [] };
   if (typeof raw !== "object" || raw === null) return snapshot;
-  const data = raw as { providers?: unknown; models?: unknown; specialists?: unknown };
+  const data = raw as { providers?: unknown; models?: unknown; specialists?: unknown; fusion?: unknown };
+
+  if (Array.isArray(data.fusion)) {
+    for (const item of data.fusion) {
+      if (typeof item !== "object" || item === null) continue;
+      const preset = item as Partial<FusionPreset>;
+      if (typeof preset.id !== "string" || preset.id === "") continue;
+      snapshot.fusion.push({
+        id: preset.id,
+        name: typeof preset.name === "string" && preset.name !== "" ? preset.name : preset.id,
+        description: typeof preset.description === "string" ? preset.description : "",
+        strategy:
+          preset.strategy === "orchestrate" || preset.strategy === "race" ? preset.strategy : "merge",
+        orchestrator: typeof preset.orchestrator === "string" ? preset.orchestrator : "",
+        executors: Array.isArray(preset.executors)
+          ? preset.executors.filter((item): item is string => typeof item === "string" && item !== "")
+          : []
+      });
+    }
+  }
 
   // O mapa de modelo por especialista. Entrada sem valor é entrada que não
   // existe: o gateway trata vazio como "automático", e guardar a chave vazia
@@ -794,10 +857,18 @@ export function CatalogSection({
 
         <ModelForm providers={providers} onSubmit={addModel} />
 
+        <FusionSection
+          client={gateway}
+          presets={snapshot?.fusion ?? []}
+          models={models}
+          onChange={reload}
+        />
+
         <EspecialistasSection
           client={gateway}
           fixados={snapshot?.specialists ?? {}}
           models={models}
+          presets={snapshot?.fusion ?? []}
           onChange={reload}
         />
       </div>
@@ -884,6 +955,242 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/* ------------------------------ fusion ----------------------------------- */
+
+/**
+ * Os presets de fusion — várias cabeças num turno só.
+ *
+ * Porte do "Motor por aba" do orquestrador, com a diferença de lugar que muda
+ * tudo: lá o motor rodava no cliente, com a chave do provedor no navegador;
+ * aqui o preset é executado pelo GATEWAY, que tem o cofre, o roteador e o
+ * orçamento do turno.
+ *
+ * A escolha de QUEM usa cada preset vive na mesma linha do modelo, logo abaixo:
+ * ou o especialista responde com um modelo, ou com um painel.
+ */
+function FusionSection({
+  client,
+  presets,
+  models,
+  onChange
+}: {
+  client: CatalogClient;
+  presets: FusionPreset[];
+  models: CatalogModel[];
+  onChange: () => Promise<void>;
+}) {
+  const [rascunho, setRascunho] = useState<FusionPreset | null>(null);
+  const [falha, setFalha] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  const vazio = (): FusionPreset => ({
+    id: "",
+    name: "",
+    description: "",
+    strategy: "merge",
+    orchestrator: models[0]?.id ?? "",
+    executors: models[1] ? [models[1].id] : models[0] ? [models[0].id] : []
+  });
+
+  async function salvar() {
+    if (rascunho === null) return;
+    setSalvando(true);
+    try {
+      await client.put("/v1/catalog/fusion", rascunho);
+      setFalha("");
+      setRascunho(null);
+      await onChange();
+    } catch (cause) {
+      setFalha(reasonOf(cause));
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function remover(id: string) {
+    try {
+      await client.del("/v1/catalog/fusion/" + encodeURIComponent(id));
+      setFalha("");
+      await onChange();
+    } catch (cause) {
+      setFalha(reasonOf(cause));
+    }
+  }
+
+  const trocar = (mudanca: Partial<FusionPreset>) =>
+    setRascunho((atual) => (atual === null ? atual : { ...atual, ...mudanca }));
+
+  return (
+    <div className="settings-section">
+      <div className="settings-cardx">
+        <div className="settings-cardx-title">
+          <Blocks size={13} aria-hidden />
+          Presets de fusion
+          <span className="settings-chip-pill">{presets.length}</span>
+          <span className="settings-head-spacer" />
+          <button
+            type="button"
+            className="settings-button"
+            onClick={() => setRascunho(rascunho === null ? vazio() : null)}
+          >
+            <Plus size={13} aria-hidden />
+            {rascunho === null ? "Novo preset" : "Cancelar"}
+          </button>
+        </div>
+
+        <p className="settings-help">
+          Um preset roda o turno em VÁRIOS modelos. Quem orquestra nunca escreve o entregável
+          final, e quem executa nunca replaneja — é essa divisão que evita pagar três vezes pelo
+          mesmo texto.
+        </p>
+
+        {falha !== "" && (
+          <p className="settings-feedback" data-ok="false">
+            {falha}
+          </p>
+        )}
+
+        {presets.length === 0 && rascunho === null && (
+          <p className="settings-empty">nenhum preset criado.</p>
+        )}
+
+        {presets.map((preset) => (
+          <div key={preset.id} className="settings-cardx">
+            <div className="settings-cardx-title">
+              {preset.name}
+              <span className="settings-chip-pill" data-tone="accent">
+                {preset.strategy}
+              </span>
+              <span className="settings-head-spacer" />
+              <small>
+                {preset.orchestrator} → {preset.executors.length} executor
+                {preset.executors.length === 1 ? "" : "es"}
+              </small>
+              <button
+                type="button"
+                className="settings-button"
+                data-kind="ghost"
+                aria-label={"editar preset " + preset.id}
+                onClick={() => setRascunho({ ...preset })}
+              >
+                Editar
+              </button>
+              <button
+                type="button"
+                className="settings-button"
+                data-kind="ghost"
+                aria-label={"remover preset " + preset.id}
+                onClick={() => void remover(preset.id)}
+              >
+                <Trash2 size={13} aria-hidden />
+              </button>
+            </div>
+            {preset.description !== "" && <p className="settings-help">{preset.description}</p>}
+          </div>
+        ))}
+
+        {rascunho !== null && (
+          <div className="settings-cardx">
+            <div className="settings-cardx-title">
+              <Blocks size={13} aria-hidden />
+              {rascunho.id === "" ? "Novo preset" : "Editando " + rascunho.id}
+            </div>
+
+            <div className="settings-grid">
+              <label className="settings-field">
+                Id
+                <input
+                  aria-label="id do preset"
+                  placeholder="ex.: trio"
+                  value={rascunho.id}
+                  onChange={(event) => trocar({ id: event.target.value.trim() })}
+                />
+              </label>
+              <label className="settings-field">
+                Nome
+                <input
+                  aria-label="nome do preset"
+                  placeholder="nome exibido"
+                  value={rascunho.name}
+                  onChange={(event) => trocar({ name: event.target.value })}
+                />
+              </label>
+              <label className="settings-field">
+                Estratégia
+                <select
+                  aria-label="estratégia do preset"
+                  value={rascunho.strategy}
+                  onChange={(event) =>
+                    trocar({ strategy: event.target.value as FusionPreset["strategy"] })
+                  }
+                >
+                  {FUSION_STRATEGIES.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="settings-field">
+                Orquestrador
+                <select
+                  aria-label="orquestrador do preset"
+                  value={rascunho.orchestrator}
+                  onChange={(event) => trocar({ orchestrator: event.target.value })}
+                >
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <p className="settings-help">
+              {FUSION_STRATEGIES.find((item) => item.id === rascunho.strategy)?.hint}
+            </p>
+
+            <p className="approval-summary">Executores</p>
+            {models.map((model) => {
+              const marcado = rascunho.executors.includes(model.id);
+              return (
+                <label key={model.id} className="settings-check">
+                  <input
+                    type="checkbox"
+                    aria-label={"executor " + model.id}
+                    checked={marcado}
+                    onChange={() =>
+                      trocar({
+                        executors: marcado
+                          ? rascunho.executors.filter((id) => id !== model.id)
+                          : [...rascunho.executors, model.id]
+                      })
+                    }
+                  />
+                  {model.label}
+                </label>
+              );
+            })}
+
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="settings-button"
+                data-kind="primary"
+                disabled={salvando || rascunho.id === ""}
+                onClick={() => void salvar()}
+              >
+                Salvar preset
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------- modelo por especialista --------------------------- */
 
 /**
@@ -903,11 +1210,13 @@ function EspecialistasSection({
   client,
   fixados,
   models,
+  presets,
   onChange
 }: {
   client: CatalogClient;
   fixados: Record<string, string>;
   models: CatalogModel[];
+  presets: FusionPreset[];
   onChange: () => Promise<void>;
 }) {
   const especialistas = useApp((state) => state.specialists);
@@ -968,6 +1277,11 @@ function EspecialistasSection({
                 {models.map((model) => (
                   <option key={model.id} value={model.id}>
                     {model.label} · {model.providerId}
+                  </option>
+                ))}
+                {presets.map((preset) => (
+                  <option key={preset.id} value={FUSION_PREFIX + preset.id}>
+                    Fusion · {preset.name} ({preset.strategy})
                   </option>
                 ))}
               </select>
@@ -1213,20 +1527,6 @@ function MotoresSection({ client }: { client: CatalogClient | null }) {
         </div>
       </div>
       <CatalogSection client={client} scope="models" />
-      <div className="settings-section">
-        <div className="settings-cardx">
-          <div className="settings-cardx-title">
-            <Blocks size={13} aria-hidden />
-            Presets de fusion
-            <span className="settings-chip-pill">não existe neste produto</span>
-          </div>
-          <p className="settings-help">
-            Fusion é vários modelos respondendo a mesma pergunta e um fundindo as respostas. O
-            que existe aqui é a equipe de especialistas, que DIVIDE a tarefa em vez de repetir a
-            pergunta em três modelos — e cobra uma vez por parte, não três vezes pelo todo.
-          </p>
-        </div>
-      </div>
     </>
   );
 }

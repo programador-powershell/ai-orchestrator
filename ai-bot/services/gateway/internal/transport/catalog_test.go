@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"aibot/gateway/internal/config"
+	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/modelrouter"
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/secrets"
@@ -48,6 +49,7 @@ func newCatalogHarness(t *testing.T) (*Server, *modelrouter.Router, *secrets.Vau
 		config.Config{Token: catalogTestToken},
 		nil, nil, nil,
 		router,
+		fusion.NewRegistry(),
 		nil, nil,
 		vault,
 		catalogPath,

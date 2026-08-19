@@ -106,6 +106,31 @@
 ### :up: V.2
 ### :warning: Latest Changes
 
+- **O FUSION do orquestrador foi portado para o gateway** — três estratégias, os
+  papéis e os prompts vindos de lá quase palavra por palavra, porque são o
+  produto do ajuste de quem usou a coisa:
+  - **merge**: o orquestrador mede a complexidade do pedido, decide QUANTOS
+    executores acionar (1 a 4) e dá a cada um um foco exclusivo; eles rodam em
+    paralelo e ele costura as partes. Pergunta simples vira resposta direta —
+    sem decomposição nem integração — para não pagar painel por "que horas
+    são?".
+  - **orchestrate**: o orquestrador escreve a especificação, o executor produz e
+    o orquestrador revisa a conformidade sem reescrever do zero. Orquestrador e
+    executor no mesmo modelo respondem direto, sem as três idas.
+  - **race**: todos recebem a pergunta e vale quem responder primeiro; os
+    perdedores são cancelados na hora, senão a corrida gastaria o que economizou.
+  A regra de ouro atravessa as três: **quem orquestra nunca produz o entregável
+  final, e quem executa nunca replaneja**. E a política de papéis muda por
+  especialista — Segurança usa salvaguarda (o menos restrito explora, o restrito
+  entrega), Código usa custo (o mais inteligente especifica, o mais barato
+  implementa), o resto usa capacidade.
+  **Roda no gateway, não no cliente**: é ele que tem o cofre, o roteador e o
+  orçamento do turno. Só UMA etapa é transmitida à tela por vez — quatro
+  executores ao vivo embaralhariam quatro textos na mesma bolha.
+  Em Configurações → Motores & Fusion dá para criar, editar e remover preset, e
+  atribuí-lo a um especialista na mesma linha onde se escolhe o modelo: ou o bot
+  responde com um modelo, ou com um painel.
+
 - **O bot foi para o CENTRO da tela**, que é onde ele é o assunto: a tela de
   "escreva o que você quer" abre com o slime animando, e não com um retrato de
   canto. O cartão de presença saiu da barra lateral, e o botão de **personalizar
