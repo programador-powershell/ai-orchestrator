@@ -351,9 +351,29 @@ func (s *Supervisor) delegate(
 		Reason: strings.TrimSpace(request.Reason),
 		Depth:  depth,
 	}
+	// A CONVERSA DO BOT.
+	//
+	// O trabalho do delegado ganha conversa própria, pendurada nesta: na barra
+	// lateral ela aparece aninhada sob a conversa que a criou, e clicar nela
+	// leva a pessoa a falar direto com aquele bot. Antes o Código respondia
+	// dentro da conversa do Conversa e sumia — não sobrava com quem falar
+	// depois, e pedir "agora faça o site inteiro" obrigava a passar tudo pelo
+	// dono de novo.
+	//
+	// Espelho, e não mudança de lugar: a conversa do dono continua mostrando a
+	// delegação inteira (é ela que a pessoa está lendo). O que a filha recebe é
+	// o par pergunta/resposta, que é o que a torna continuável.
+	filho := s.mirrorDelegation(sessionID, target, payload.Goal)
+	// O id da filha viaja no PRÓPRIO envelope de delegação, e não é recalculado
+	// no cliente: a regra que forma o id (o par pai+bot) mora no store, e
+	// reescrevê-la em TypeScript criaria uma segunda regra que discorda em
+	// silêncio no dia em que a primeira mudar.
+	payload.Session = filho
+
 	// Antes de executar, e não depois: é este envelope que faz o popup do bot
-	// aparecer na hora certa. Anunciar quem entrou junto com o resultado anuncia
-	// alguém que já foi embora.
+	// aparecer na hora certa — e agora também a linha dele na barra lateral.
+	// Anunciar quem entrou junto com o resultado anuncia alguém que já foi
+	// embora.
 	_ = s.emit(sessionID, turn, protocol.KindDelegate, originActor, payload)
 
 	// finish fecha o popup. TODA saída daqui para baixo passa por ele — um
@@ -364,6 +384,20 @@ func (s *Supervisor) delegate(
 		payload.Done = true
 		payload.Result = outcome
 		_ = s.emit(sessionID, turn, protocol.KindDelegate, originActor, payload)
+		if filho != "" && succeeded {
+			// Só o resultado BOM vira conversa: registrar a recusa faria a
+			// conversa do bot abrir com um erro que não é dele.
+			_ = s.emit(filho, turn, protocol.KindMessage, protocol.Actor{
+				Kind:       protocol.ActorSpecialist,
+				ID:         target.ID,
+				Specialist: target.ID,
+			}, protocol.Message{Role: "assistant", Text: outcome})
+			_ = s.emit(filho, turn, protocol.KindDone, protocol.Actor{
+				Kind:       protocol.ActorSpecialist,
+				ID:         target.ID,
+				Specialist: target.ID,
+			}, protocol.Done{Specialist: target.ID})
+		}
 		if !succeeded {
 			return fmt.Sprintf("DELEGAÇÃO PARA %s NÃO DEU CERTO: %s", target.ID, outcome)
 		}
@@ -473,4 +507,30 @@ func (s *Supervisor) delegateMessages(
 
 	messages = append(messages, modelrouter.ChatMessage{Role: "user", Content: briefing.String()})
 	return messages
+}
+
+// mirrorDelegation abre (ou reabre) a conversa do bot delegado e registra ali o
+// pedido que ele recebeu.
+//
+// Devolve o id da conversa filha, ou vazio quando não deu para criar. Vazio NÃO
+// interrompe a delegação: o trabalho do delegado importa mais que o espelho
+// dele, e uma falha de disco aqui não pode derrubar a resposta que a pessoa
+// está esperando — ela só perde a conversa lateral.
+func (s *Supervisor) mirrorDelegation(parentID string, target specialist.Definition, goal string) string {
+	if s.deps.Store == nil || strings.TrimSpace(parentID) == "" {
+		return ""
+	}
+	meta, err := s.deps.Store.ChildSession(parentID, target.ID, target.Name)
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(goal) != "" {
+		// O pedido entra como fala do USUÁRIO na conversa do bot, e não como
+		// recado do sistema: para quem abre depois, o que aconteceu ali foi
+		// alguém pedir uma coisa a ele — e é assim que a continuação faz
+		// sentido.
+		_ = s.emit(meta.ID, "", protocol.KindMessage, protocol.Actor{Kind: protocol.ActorUser},
+			protocol.Message{Role: "user", Text: goal})
+	}
+	return meta.ID
 }

@@ -69,12 +69,45 @@ function RailEmpty({ icon: Icon, hint }: { icon: LucideIcon; hint: string }) {
 /* ------------------------------- conversas ------------------------------- */
 
 /**
+ * Agrupa as conversas: a do dono primeiro, as dos bots que ela acionou logo
+ * abaixo.
+ *
+ * É a forma do Grok Bot, e ela existe porque a unidade da conversa mudou. Antes
+ * o especialista chamado respondia dentro da conversa de quem o chamou e sumia;
+ * agora ele tem conversa própria, e a barra precisa mostrar o vínculo — senão
+ * viram duas linhas soltas sem relação visível, que é o "ficou misturado".
+ *
+ * Filha órfã (o pai foi apagado, ou ainda não chegou na lista) sobe para a raiz
+ * em vez de sumir: esconder conversa por causa de um vínculo quebrado é perder
+ * trabalho da pessoa por um detalhe de arrumação.
+ */
+export function agruparConversas<T extends { id: string; parentId?: string }>(
+  visiveis: readonly T[]
+): Array<{ dona: T; filhas: T[] }> {
+  const existe = new Set(visiveis.map((item) => item.id));
+  const filhasPor = new Map<string, T[]>();
+  for (const item of visiveis) {
+    const pai = item.parentId ?? "";
+    if (pai === "" || !existe.has(pai)) continue;
+    const lista = filhasPor.get(pai) ?? [];
+    lista.push(item);
+    filhasPor.set(pai, lista);
+  }
+  return visiveis
+    .filter((item) => {
+      const pai = item.parentId ?? "";
+      return pai === "" || !existe.has(pai);
+    })
+    .map((dona) => ({ dona, filhas: filhasPor.get(dona.id) ?? [] }));
+}
+
+/**
  * Quais conversas entram na barra.
  *
- * Conversa sem nenhum turno NÃO é conversa. A sessão nasce no aperto de mão do
+ * Conversa sem nada dentro NÃO é conversa. A sessão nasce no aperto de mão do
  * WebSocket, não no primeiro pedido — quem abre a janela já ganha uma. Com isso,
  * reconexão, recarga da página e reinício do app geravam, cada um, mais uma
- * linha vazia: a barra enchia de "conversas" que ninguém começou.
+ * linha vazia.
  *
  * A ATIVA fica visível mesmo vazia: é para onde o próximo texto vai, e sumir com
  * ela faria a pessoa achar que perdeu o lugar.
@@ -115,47 +148,67 @@ function ConversationsRail() {
     );
   }
 
+  /**
+   * Uma linha da barra.
+   *
+   * O retrato é o do bot: numa conversa comum, o especialista que atendeu por
+   * último; numa conversa de bot, o dono dela. O ícone genérico de antes dizia
+   * "isto é uma conversa", que a lista inteira já diz — o retrato diz DE QUEM
+   * ela é, que é o que a pessoa procura ao correr o olho.
+   */
+  const linha = (item: (typeof sessions)[number], filha: boolean) => {
+    const especialista = grokSpecialistOf(item.botId ?? item.specialist ?? "");
+    return (
+      // O botão de ramificar é IRMÃO do botão da conversa, não filho:
+      // botão dentro de botão é HTML inválido e o clique dos dois brigaria.
+      <li key={item.id} className="rail-item-row" data-child={filha}>
+        <button
+          type="button"
+          className="rail-item"
+          data-active={item.id === session}
+          onClick={() => openSession(item.id)}
+          title={filha ? `Falar direto com ${item.title}` : item.title}
+        >
+          <GrokAvatar
+            specialist={especialista}
+            state={item.id === session ? "active" : "waiting"}
+            size={filha ? 18 : 22}
+          />
+          <span className="rail-item-label">
+            {item.title === "" ? "Conversa sem título" : item.title}
+          </span>
+          <span className="rail-item-meta">{item.turns}</span>
+        </button>
+        {/*
+          Ramificar é da conversa RAIZ. A conversa de um bot é o registro do que
+          aquele bot fez nesta conversa; copiá-la para uma sessão solta criaria
+          um bot órfão, sem o pedido que o chamou.
+        */}
+        {!filha && (
+          <button
+            type="button"
+            className="rail-item-fork"
+            onClick={() => forkSession(item.id)}
+            title="Ramificar esta conversa — o histórico é copiado para uma sessão nova"
+            aria-label={`Ramificar a conversa ${item.title}`}
+          >
+            <GitBranch size={13} aria-hidden />
+          </button>
+        )}
+      </li>
+    );
+  };
+
   return (
     <ul className="rail-list">
-      {sessions.map((item) => {
-        // O BOT, e não um ícone: é o avatar do especialista que atendeu por
-        // último naquela conversa. O ícone genérico dizia "isto é uma conversa",
-        // que a lista inteira já diz; o retrato diz DE QUEM ela é, que é a
-        // informação que a pessoa procura ao correr o olho pela barra.
-        const especialista = grokSpecialistOf(item.specialist ?? "");
-        return (
-          // O botão de ramificar é IRMÃO do botão da conversa, não filho:
-          // botão dentro de botão é HTML inválido e o clique dos dois brigaria.
-          <li key={item.id} className="rail-item-row">
-            <button
-              type="button"
-              className="rail-item"
-              data-active={item.id === session}
-              onClick={() => openSession(item.id)}
-              title={item.title}
-            >
-              <GrokAvatar
-                specialist={especialista}
-                state={item.id === session ? "active" : "waiting"}
-                size={22}
-              />
-              <span className="rail-item-label">
-                {item.title === "" ? "Conversa sem título" : item.title}
-              </span>
-              <span className="rail-item-meta">{item.turns}</span>
-            </button>
-            <button
-              type="button"
-              className="rail-item-fork"
-              onClick={() => forkSession(item.id)}
-              title="Ramificar esta conversa — o histórico é copiado para uma sessão nova"
-              aria-label={`Ramificar a conversa ${item.title}`}
-            >
-              <GitBranch size={13} aria-hidden />
-            </button>
-          </li>
-        );
-      })}
+      {agruparConversas(sessions).map((grupo) => (
+        <li key={grupo.dona.id} className="rail-group">
+          <ul className="rail-list">
+            {linha(grupo.dona, false)}
+            {grupo.filhas.map((filha) => linha(filha, true))}
+          </ul>
+        </li>
+      ))}
     </ul>
   );
 }

@@ -356,6 +356,8 @@ func (s *Server) sessionSummaries() []protocol.SessionSummary {
 			Model:      meta.Model,
 			UpdatedAt:  meta.UpdatedAt,
 			Turns:      meta.Turns,
+			BotID:      meta.BotID,
+			ParentID:   meta.ParentID,
 		})
 	}
 	return out

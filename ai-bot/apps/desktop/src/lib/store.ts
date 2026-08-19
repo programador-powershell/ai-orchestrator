@@ -358,8 +358,52 @@ function sessionMetaOf(summary: SessionSummary): SessionMeta {
     updatedAt: summary.updatedAt,
     lastSeq: 0,
     syncedSeq: 0,
-    turns: summary.turns
+    turns: summary.turns,
+    botId: summary.botId,
+    parentId: summary.parentId
   };
+}
+
+/**
+ * A lista de conversas com a conversa DAQUELE bot dentro dela.
+ *
+ * Busca-ou-cria, e do lado de cá pelo mesmo motivo do gateway: um bot chamado
+ * dez vezes na mesma conversa tem UMA conversa com dez trechos. O segundo
+ * envelope da mesma delegação (o `done`) cai aqui de novo e não pode duplicar a
+ * linha.
+ *
+ * O título é o NOME do especialista, não o objetivo: a linha responde "com quem
+ * eu falo aqui", e o objetivo já está escrito dentro da conversa, como a
+ * primeira fala.
+ */
+function comConversaDoBot(state: AppData, parentId: string, delegation: Delegate): SessionMeta[] {
+  const id = (delegation.session ?? "").trim();
+  // Gateway antigo não manda o campo, e delegação com espelho falhado manda
+  // vazio. Nos dois casos a delegação segue valendo — o que se perde é a linha
+  // lateral, não a resposta.
+  if (id === "" || parentId === "" || state.sessions.some((item) => item.id === id)) {
+    return state.sessions;
+  }
+  const bot = specialistById(state.specialists, delegation.to);
+  const agora = new Date().toISOString();
+  return [
+    {
+      id,
+      title: bot.name,
+      specialist: bot.id,
+      botId: bot.id,
+      parentId,
+      createdAt: agora,
+      updatedAt: agora,
+      // Já tem conteúdo de verdade: o gateway gravou o pedido ali antes de
+      // publicar este envelope. Zero aqui faria o filtro da barra escondê-la
+      // justamente na hora em que ela precisa aparecer.
+      lastSeq: 1,
+      syncedSeq: 0,
+      turns: 1
+    },
+    ...state.sessions
+  ];
 }
 
 /**
@@ -748,6 +792,12 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       const delegation = payloadOf<Delegate>(envelope);
       if (!delegation) return state;
 
+      // A conversa do bot entra na barra AGORA, junto com o popup — não na
+      // próxima abertura do app. Ela existe no gateway desde este envelope; se
+      // a lista só soubesse dela no `ready` seguinte, a pessoa veria o Código
+      // trabalhar e não teria onde clicar para continuar com ele.
+      const sessions = comConversaDoBot(state, envelope.session, delegation);
+
       /*
        * A delegação NÃO passa por aprovação, e isso é decisão de produto, não
        * esquecimento: escolher de quem é o assunto é trabalho do bot. O portão
@@ -755,7 +805,7 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
        * `approval.request` como qualquer outra.
        */
       if (delegation.done !== true) {
-        return { ...state, delegations: [...state.delegations, delegation] };
+        return { ...state, sessions, delegations: [...state.delegations, delegation] };
       }
 
       const index = openDelegationIndex(state.delegations, delegation);
@@ -763,16 +813,16 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
         // Conclusão sem abertura à vista (replay parcial, janela aberta no meio
         // do turno): entra como concluída em vez de sumir. Perder o evento
         // apagaria a única prova de que a troca de bot aconteceu.
-        return { ...state, delegations: [...state.delegations, delegation] };
+        return { ...state, sessions, delegations: [...state.delegations, delegation] };
       }
 
       const next = state.delegations.slice();
       const open = next[index];
-      if (!open) return state;
+      if (!open) return { ...state, sessions };
       // A entrada aberta é MARCADA, não duplicada: são o mesmo acontecimento, e
       // duas linhas na lista fariam o popup reabrir uma delegação já encerrada.
       next[index] = { ...open, ...delegation, done: true };
-      return { ...state, delegations: next };
+      return { ...state, sessions, delegations: next };
     }
 
     case "notice": {

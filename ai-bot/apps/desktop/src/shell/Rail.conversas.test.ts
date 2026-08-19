@@ -7,7 +7,7 @@
  * projeto foi "por que aparecem bots em conversas se eu nem pedi nada?".
  */
 import { describe, expect, it } from "vitest";
-import { conversasVisiveis } from "./Rail";
+import { agruparConversas, conversasVisiveis } from "./Rail";
 
 const sessao = (id: string, turns: number) => ({ id, turns });
 
@@ -65,5 +65,61 @@ describe("conversa com contador zerado", () => {
     ];
 
     expect(conversasVisiveis(todas, null).map((s) => s.id)).toEqual(["titulada"]);
+  });
+});
+
+/**
+ * A conversa do bot fica ABAIXO da conversa que o chamou.
+ *
+ * Antes, pedir um HTML na conversa do Conversa fazia o Código responder ali
+ * dentro e sumir: não sobrava com quem falar. Agora ele tem conversa própria, e
+ * a barra precisa mostrar de quem ela é — solta na raiz, ela vira mais uma
+ * linha sem relação com nada, que foi o "ficou misturado".
+ */
+describe("agrupamento por dono", () => {
+  const raiz = (id: string) => ({ id });
+  const filha = (id: string, parentId: string) => ({ id, parentId });
+
+  it("pendura cada bot sob a conversa que o criou", () => {
+    const grupos = agruparConversas([
+      raiz("s1"),
+      filha("s1-code", "s1"),
+      filha("s1-design", "s1"),
+      raiz("s2")
+    ]);
+
+    expect(grupos.map((g) => g.dona.id)).toEqual(["s1", "s2"]);
+    expect(grupos[0]?.filhas.map((f) => f.id)).toEqual(["s1-code", "s1-design"]);
+    expect(grupos[1]?.filhas).toEqual([]);
+  });
+
+  it("preserva a ordem que veio do gateway, dentro e fora do grupo", () => {
+    const grupos = agruparConversas([
+      raiz("s2"),
+      filha("s1-design", "s1"),
+      raiz("s1"),
+      filha("s1-code", "s1")
+    ]);
+
+    expect(grupos.map((g) => g.dona.id)).toEqual(["s2", "s1"]);
+    expect(grupos[1]?.filhas.map((f) => f.id)).toEqual(["s1-design", "s1-code"]);
+  });
+
+  it("filha órfã sobe para a raiz em vez de sumir", () => {
+    // O pai pode ter ficado fora do corte de recentes do `ready`, ou ter sido
+    // apagado. Esconder a conversa por causa disso seria perder trabalho da
+    // pessoa por um detalhe de arrumação.
+    const grupos = agruparConversas([raiz("s2"), filha("s9-code", "s9")]);
+
+    expect(grupos.map((g) => g.dona.id)).toEqual(["s2", "s9-code"]);
+  });
+
+  it("cada conversa aparece UMA vez", () => {
+    const entrada = [raiz("s1"), filha("s1-code", "s1"), raiz("s2"), filha("s9-code", "s9")];
+
+    const vistos = agruparConversas(entrada).flatMap((g) => [g.dona.id, ...g.filhas.map((f) => f.id)]);
+
+    expect(vistos.length).toBe(entrada.length);
+    expect(new Set(vistos).size).toBe(entrada.length);
   });
 });

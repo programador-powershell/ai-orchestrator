@@ -81,6 +81,19 @@ type SessionMeta struct {
 	Specialist string `json:"specialist,omitempty"`
 	Model      string `json:"model,omitempty"`
 	CWD        string `json:"cwd,omitempty"`
+	// BotID é o DONO da conversa: o especialista com quem se fala aqui.
+	//
+	// Diferente de `Specialist`, que é "quem atendeu por último" e muda a cada
+	// turno. Uma conversa de bot tem dono fixo — é a conversa DELE —, e é isso
+	// que permite abrir o Código e continuar falando com o Código.
+	BotID string `json:"botId,omitempty"`
+	// ParentID é a conversa que deu origem a esta.
+	//
+	// Quando o dono da conversa delega para outro especialista, o trabalho do
+	// delegado ganha conversa própria pendurada aqui: na barra lateral ela
+	// aparece aninhada sob a conversa que a criou, e clicar nela leva a pessoa a
+	// falar direto com aquele bot, sem passar pelo dono.
+	ParentID string `json:"parentId,omitempty"`
 	// ProjectID agrupa sessões em pasta. Vazio = solta.
 	ProjectID string    `json:"projectId,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`

@@ -304,6 +304,14 @@ type SessionSummary struct {
 	Model      string    `json:"model,omitempty"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 	Turns      int       `json:"turns"`
+	// O bot dono e a conversa de origem. Vazios numa conversa comum; num par,
+	// dizem que esta linha é a conversa daquele bot pendurada naquela outra.
+	//
+	// Vêm no resumo porque a barra lateral desenha o aninhamento no PRIMEIRO
+	// quadro: buscar o vínculo depois faria as filhas aparecerem soltas na raiz
+	// por um instante e depois pularem para baixo do dono.
+	BotID    string `json:"botId,omitempty"`
+	ParentID string `json:"parentId,omitempty"`
 }
 
 // Model é um modelo oferecido ao usuário. O usuário escolhe; a política decide
@@ -632,6 +640,9 @@ type Delegate struct {
 	Depth  int    `json:"depth"`            // 1 = primeira delegação
 	Done   bool   `json:"done,omitempty"`   // true quando o delegado terminou
 	Result string `json:"result,omitempty"`
+	// A conversa do bot delegado, pendurada nesta. Vazio quando não deu para
+	// abrir — o espelho é acessório e não pode derrubar a delegação.
+	Session string `json:"session,omitempty"`
 }
 
 // State publica uma mudança observável.

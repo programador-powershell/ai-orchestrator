@@ -636,6 +636,40 @@ select {
   color: var(--ink);
 }
 
+/* A conversa de um bot fica ANINHADA sob a conversa que o chamou.
+
+   O recuo sozinho não diz de quem a linha é — numa lista de títulos curtos ele
+   lê como margem, não como vínculo. O fio em "L" liga a filha ao dono e é o que
+   transforma duas linhas soltas numa conversa com um bot dentro. */
+.rail-group + .rail-group {
+  margin-top: 5px;
+}
+
+.rail-item-row[data-child="true"] {
+  position: relative;
+  margin-left: 15px;
+  padding-left: 11px;
+}
+
+.rail-item-row[data-child="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  /* De cima da linha até a METADE dela: o fio encosta no meio do retrato do
+     bot, e não no pé da linha — parar embaixo faria a última filha ter um fio
+     sobrando, apontando para o nada. */
+  top: -4px;
+  bottom: 50%;
+  width: 8px;
+  /* `--faint` diluído, e não `--line`: a linha de 9% que separa painéis some
+     no escuro, e um fio invisível não liga coisa nenhuma — ele CARREGA o
+     significado ("esta conversa é daquela"), então precisa ser visto. */
+  border-left: 1px solid color-mix(in srgb, var(--faint) 50%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--faint) 50%, transparent);
+  border-bottom-left-radius: 7px;
+  pointer-events: none;
+}
+
 .rail-empty {
   display: flex;
   flex-direction: column;

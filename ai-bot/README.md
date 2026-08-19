@@ -106,6 +106,40 @@
 ### :up: V.2
 ### :warning: Latest Changes
 
+- **Cada bot chamado ganhou CONVERSA PRÓPRIA, aninhada sob a que o chamou.**
+  Antes, pedir um HTML na conversa do Conversa fazia ele acionar o Código, o
+  Código respondia ali dentro e sumia: não sobrava com quem falar. Quem quisesse
+  continuar — "agora faça o site inteiro" — tinha de passar tudo pelo dono de
+  novo, repetindo o contexto a cada pedido, e a barra lateral misturava tudo numa
+  linha só.
+  Agora a delegação abre a conversa DAQUELE bot, com o pedido e a resposta
+  dentro, e a barra a desenha recuada sob a conversa de origem, ligada por um
+  fio: clicar nela é falar direto com ele — o modo da conversa já nasce sendo o
+  dele, então a continuação não passa pelo dono.
+  - **Uma conversa por par (origem, bot)**, e não uma por chamada: um bot
+    acionado dez vezes tem UMA conversa com dez trechos. A chave é derivada do
+    par, então duas chamadas simultâneas convergem para a mesma pasta.
+  - **É ESPELHO, não mudança de lugar**: a conversa do dono continua mostrando a
+    delegação inteira, que é o que a pessoa está lendo.
+  - **Só o resultado BOM vira conversa.** Recusa e falha ficam na conversa de
+    quem delegou — abrir a conversa do bot com um erro que não é dele seria
+    apresentá-lo pelo pior.
+  - A linha aparece **no mesmo instante do popup**, porque o id da conversa
+    filha viaja no próprio envelope de delegação. Recalculá-lo no cliente criaria
+    uma segunda regra de formação de id, que discordaria em silêncio no dia em
+    que a primeira mudasse.
+  - Filha órfã (origem apagada, ou fora do corte de recentes) **sobe para a
+    raiz** em vez de sumir: esconder conversa por causa de um vínculo quebrado é
+    perder trabalho da pessoa por um detalhe de arrumação.
+  - **Ramificar continua sendo da conversa raiz**: copiar a conversa de um bot
+    para uma sessão solta criaria um bot órfão, sem o pedido que o chamou.
+  - **Cobertura:** três testes de store (busca-ou-cria, recusa sem origem ou sem
+    bot, id estável no disco), dois de delegação no gateway (a conversa nasce
+    continuável, com o par pedido/resposta; e a delegação que falha não a
+    preenche), seis de estado no cliente e seis da barra desenhada — inclusive
+    que clicar na filha abre a conversa dela e que cada linha usa o retrato do
+    seu próprio bot.
+
 - **O FUSION do orquestrador foi portado para o gateway** — três estratégias, os
   papéis e os prompts vindos de lá quase palavra por palavra, porque são o
   produto do ajuste de quem usou a coisa:

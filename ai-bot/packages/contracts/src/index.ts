@@ -241,6 +241,10 @@ export interface SessionSummary {
   model?: string;
   updatedAt: string;
   turns: number;
+  /** O bot dono desta conversa. Vazio = conversa comum. */
+  botId?: string;
+  /** A conversa que a originou (delegação). Vazio = conversa raiz. */
+  parentId?: string;
 }
 
 export interface Ready {
@@ -471,6 +475,15 @@ export interface Delegate {
   depth: number;
   done?: boolean;
   result?: string;
+  /**
+   * A conversa DO BOT delegado, pendurada na conversa que o chamou. É por ela
+   * que a barra lateral desenha a linha aninhada e que se fala direto com ele.
+   *
+   * Vem pronta do gateway em vez de ser remontada aqui: a regra que forma o id
+   * é do store, e uma segunda cópia dela em TypeScript discordaria em silêncio
+   * no dia em que a primeira mudasse.
+   */
+  session?: string;
 }
 
 /**
@@ -551,6 +564,10 @@ export interface SessionMeta {
   specialist?: string;
   model?: string;
   cwd?: string;
+  /** O bot DONO desta conversa. Vazio = conversa comum, sem dono fixo. */
+  botId?: string;
+  /** A conversa que deu origem a esta (delegação). Vazio = conversa raiz. */
+  parentId?: string;
   projectId?: string;
   createdAt: string;
   updatedAt: string;
