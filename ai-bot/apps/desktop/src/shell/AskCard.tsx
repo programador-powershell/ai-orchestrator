@@ -68,6 +68,13 @@ export function AskCard() {
           {ask.question}
         </p>
 
+        {/* O corpo da decisão — o PLANO, no caso da aprovação de plano — vem
+            ABERTO, não atrás de um <details> como no cartão de aprovação de
+            ferramenta. Lá o detalhe é argumento técnico opcional; aqui ele é o
+            próprio objeto da pergunta: um cartão que diz "aprovar o plano?"
+            sem mostrar o plano pede um sim no escuro. */}
+        {ask.detail ? <pre className="ask-detail">{ask.detail}</pre> : null}
+
         <p className="approval-note">
           {ask.blocking
             ? "A resposta está parada esperando isto — o supervisor só continua depois que você responder."

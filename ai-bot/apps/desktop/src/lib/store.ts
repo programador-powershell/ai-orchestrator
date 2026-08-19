@@ -34,7 +34,6 @@ import {
   type Escalate,
   type Gate,
   type GateDecision,
-  type Hello,
   type Message,
   type ModelInfo,
   type Notice,
@@ -60,7 +59,7 @@ import {
 import { DEFAULT_ENVIRONMENT, FALLBACK_ENVIRONMENTS } from "./environments";
 import { preferenceStorage } from "./persistStorage";
 import { FALLBACK_SPECIALISTS, specialistById } from "./specialists";
-import { CLIENT_NAME, CLIENT_VERSION, createTransport, type Transport } from "./transport";
+import { createTransport, type Transport } from "./transport";
 
 /* ------------------------------- o formato ------------------------------ */
 
@@ -1116,26 +1115,21 @@ export const useApp = create<AppState>()(
       setSpecialistOverride: (id) => set({ specialistOverride: id }),
 
       newSession: () => {
-        // Sessão nova é um `hello` novo na MESMA conexão: o token já foi aceito
-        // no primeiro frame, e sem `sessionHint` o gateway abre uma sessão.
-        transport?.resumeFrom(0);
-        transport?.send<Hello>("hello", {
-          client: CLIENT_NAME,
-          version: CLIENT_VERSION,
-          resumeFrom: 0
-        });
+        // Sessão nova é um `hello` novo na MESMA conexão, e ele é do TRANSPORTE
+        // (`switchSession`), não montado aqui: o hello de troca reapresenta o
+        // token, e o token vive só na closure do transporte. A versão anterior
+        // montava o frame aqui, sem token — e o gateway o descartava em
+        // silêncio: "nova conversa" limpava a tela, mas todo pedido seguinte
+        // caía na sessão antiga, cujo modo gravado respondia sempre com o
+        // mesmo especialista.
+        transport?.switchSession(null);
         set({ ...conversationReset(), session: null });
       },
 
       openSession: (id) => {
         if (id === get().session) return;
-        transport?.resumeFrom(0);
-        transport?.send<Hello>("hello", {
-          client: CLIENT_NAME,
-          version: CLIENT_VERSION,
-          sessionHint: id,
-          resumeFrom: 0
-        });
+        // Mesma regra do newSession: a troca é do transporte, que tem o token.
+        transport?.switchSession(id);
         // As linhas voltam pelo replay do gateway, não de um cache local.
         set({ ...conversationReset(), session: id });
       },

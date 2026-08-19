@@ -509,8 +509,20 @@ export function Rail() {
 
       {railOpen ? (
         <div className="rail-body">
-          <p className="rail-kind">{RAIL_TITLE[active.rail] ?? active.rail}</p>
-          {renderRail(active.rail)}
+          {/* As CONVERSAS vêm sempre, antes do trilho do ofício. A versão
+              anterior trocava a lista inteira pelo trilho do especialista
+              ativo — quem caía numa conversa de Design via "Camadas" no lugar
+              das conversas e ficava PRESO: sem lista, não há como abrir outra
+              conversa nem ver a atual na barra. A lista é a navegação do app;
+              o trilho do ofício é conteúdo daquela tela, e mora abaixo. */}
+          <p className="rail-kind">{RAIL_TITLE.conversations}</p>
+          <ConversationsRail />
+          {active.rail !== "conversations" ? (
+            <>
+              <p className="rail-kind">{RAIL_TITLE[active.rail] ?? active.rail}</p>
+              {renderRail(active.rail)}
+            </>
+          ) : null}
         </div>
       ) : null}
     </aside>

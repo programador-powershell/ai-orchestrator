@@ -1423,6 +1423,25 @@ select {
   background: var(--code-bg);
 }
 
+/* O corpo da pergunta do supervisor — o plano a aprovar. ABERTO, ao contrário
+   do detalhe colapsável da aprovação de ferramenta: ele é o próprio objeto da
+   decisão. Rola sozinho para um plano de vinte passos não empurrar os botões
+   para fora da tela. */
+.ask-detail {
+  margin: 0;
+  padding: 9px;
+  max-height: 40vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .approval-detail > summary {
   padding: 6px 9px;
   font-size: var(--fs-micro);

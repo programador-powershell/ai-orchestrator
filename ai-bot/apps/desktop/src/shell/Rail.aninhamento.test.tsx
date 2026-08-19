@@ -168,3 +168,34 @@ describe("a conversa do bot na barra desenhada", () => {
     expect(montados.map((avatar) => avatar.size)).toEqual([22, 18, 22]);
   });
 });
+
+/**
+ * As conversas ficam na barra em QUALQUER tela.
+ *
+ * O defeito era um aprisionamento: cair numa conversa de Design trocava a
+ * lista inteira pelo trilho do ofício ("Camadas"), e a pessoa ficava sem como
+ * abrir outra conversa — "estou preso na tela de design". A lista é a
+ * navegação do app; o trilho do ofício é conteúdo daquela tela e mora abaixo.
+ */
+describe("a barra numa tela que não é de conversa", () => {
+  it("mostra as conversas E o trilho do ofício, nesta ordem", () => {
+    useApp.setState({ activeSpecialist: "design", activeSurface: "canvas" });
+    monta();
+
+    const titulos = [...container.querySelectorAll(".rail-kind")].map(
+      (titulo) => titulo.textContent
+    );
+    expect(titulos).toEqual(["Conversas", "Camadas"]);
+    // E a lista é a de verdade, com as três conversas clicáveis.
+    expect(container.querySelectorAll(".rail-item-row")).toHaveLength(3);
+  });
+
+  it("na tela de conversa, a lista aparece UMA vez", () => {
+    monta();
+
+    const titulos = [...container.querySelectorAll(".rail-kind")].map(
+      (titulo) => titulo.textContent
+    );
+    expect(titulos).toEqual(["Conversas"]);
+  });
+});

@@ -240,6 +240,40 @@
 
 ### :pushpin: Fixes
 
+- **O gateway IGNORAVA o segundo `hello` — e cinco sintomas saíam dessa causa
+  só.** O cliente sempre trocou de sessão mandando um novo `hello` na mesma
+  conexão ("nova conversa" e clicar numa conversa da barra são isso), mas o
+  `handleInbound` não tinha case para ele: o frame morria em silêncio.
+  Resultado: "nova sessão" só limpava a tela; todo pedido seguinte caía na
+  sessão ANTIGA; e como o modo da conversa é fixo depois do primeiro turno, o
+  mesmo especialista respondia para sempre — "independente do que peço ele
+  sempre carrega no design". Agora o leitor entrega o hello ao escritor (que é
+  quem assina o barramento), a troca refaz assinatura + `ready` + replay, e o
+  leitor **espera a troca concluir** antes do próximo frame — o prompt que vem
+  depois do hello já é da sessão nova, nunca da errada. O hello de troca
+  **reapresenta o token** (frame forjado numa conexão autenticada não escolhe a
+  sessão de ninguém), e por isso a troca virou API do transporte
+  (`switchSession`): o token vive só na closure dele — a versão anterior, em
+  que o store montava o hello sem token, era exatamente o que o gateway teria
+  de recusar. Coberto por teste de integração com cliente RFC 6455 escrito à
+  mão que **confere o `Sec-WebSocket-Accept`** (a lição do bug do GUID: cliente
+  permissivo esconde defeito de handshake).
+- **O cartão "propôs um plano. Aprovar?" não mostrava o PLANO.** O gateway
+  sempre o mandou no campo `detail` do ask; o contrato do cliente nem declarava
+  o campo e o cartão não o desenhava — um pedido de sim no escuro. O corpo
+  agora aparece aberto (não atrás de um `<details>` fechado, como no cartão de
+  ferramenta, porque aqui ele é o próprio objeto da decisão), com rolagem
+  própria para plano comprido não empurrar os botões para fora.
+- **Cair numa tela de ofício APRISIONAVA a pessoa.** A barra lateral trocava a
+  lista de conversas pelo trilho do especialista ativo (Design mostrava
+  "Camadas"), e sem lista não havia como abrir outra conversa — "estou preso na
+  tela de design". As conversas agora vêm SEMPRE, no topo da barra, e o trilho
+  do ofício mora abaixo delas: a lista é a navegação do app; o trilho é
+  conteúdo daquela tela.
+- **"vercel" entrou nos gatilhos do Código** — pedido de app para deploy é
+  vocabulário inequívoco de código, e a régua da lista (o radical torna ESTE
+  especialista mais provável que os outros) segura.
+
 - **A barra lateral enchia de conversas que ninguém começou.** A sessão nasce no
   aperto de mão do WebSocket, então abrir a janela, recarregar a página ou
   reconectar criava mais uma — todas com zero turno e sem título. Duas

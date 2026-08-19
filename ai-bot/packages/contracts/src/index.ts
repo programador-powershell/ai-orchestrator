@@ -437,6 +437,14 @@ export interface Ask {
   askId: string;
   question: string;
   options?: string[];
+  /**
+   * O corpo da decisão — o plano proposto, por exemplo. Separado da pergunta
+   * porque a pergunta é a frase que se lê antes de decidir; o detail é o que
+   * se CONFERE antes de apertar. O gateway sempre o mandou; o campo faltava
+   * aqui, e o cartão pedia "Aprovar?" escondendo exatamente o que seria
+   * aprovado.
+   */
+  detail?: string;
   blocking: boolean;
 }
 

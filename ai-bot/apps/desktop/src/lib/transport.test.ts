@@ -288,3 +288,88 @@ describe("gatewayReason", () => {
     );
   });
 });
+
+/**
+ * A troca de sessão é do TRANSPORTE, porque só ele tem o token.
+ *
+ * O defeito que esta suíte guarda: o store montava o hello de troca por conta
+ * própria — sem token, que ele não tem de propósito — e o gateway, que exige o
+ * token em todo hello, descartava o frame. "Nova conversa" limpava a tela e
+ * todos os pedidos seguintes continuavam caindo na sessão antiga, cujo modo
+ * gravado respondia sempre com o mesmo especialista.
+ */
+describe("troca de sessão", () => {
+  beforeEach(() => {
+    sockets = [];
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  function abrir() {
+    const transport = createTransport({
+      url: URL_GATEWAY,
+      token: "segredo",
+      onEnvelope: () => {},
+      onStatus: () => {}
+    });
+    transport.start();
+    const socket = connect(0);
+    return { transport, socket };
+  }
+
+  function helloDe(raw: string | undefined): Hello & { token?: string } {
+    if (raw === undefined) throw new Error("nenhum frame nesse índice");
+    const envelope = JSON.parse(raw) as Envelope;
+    if (envelope.kind !== "hello") throw new Error(`esperava hello, veio ${envelope.kind}`);
+    return envelope.payload as Hello & { token?: string };
+  }
+
+  it("nova conversa: hello COM token, sem dica, do começo", () => {
+    const { transport, socket } = abrir();
+
+    transport.switchSession(null);
+
+    const hello = helloDe(socket.sent[1]);
+    expect(hello.token).toBe("segredo");
+    expect(hello.sessionHint).toBeUndefined();
+    expect(hello.resumeFrom).toBe(0);
+  });
+
+  it("abrir uma conversa: hello COM token e com a dica dela", () => {
+    const { transport, socket } = abrir();
+
+    transport.switchSession("s-outra");
+
+    const hello = helloDe(socket.sent[1]);
+    expect(hello.token).toBe("segredo");
+    expect(hello.sessionHint).toBe("s-outra");
+    expect(hello.resumeFrom).toBe(0);
+  });
+
+  it("a troca zera o marco de replay: seq é POR SESSÃO", () => {
+    const { transport, socket } = abrir();
+    // A conversa antiga andou até o seq 7…
+    socket.deliver(line(7, "história antiga"));
+
+    transport.switchSession("s-outra");
+
+    // …e o hello da troca pede a nova DO COMEÇO. Levar o marco antigo pediria
+    // replay a partir de um ponto que a sessão nova nem alcançou, e o início
+    // da conversa nunca chegaria.
+    expect(helloDe(socket.sent[1]).resumeFrom).toBe(0);
+  });
+
+  it("sem socket aberto, a troca é silenciosa — o offline já aparece na tela", () => {
+    const { transport, socket } = abrir();
+    socket.close();
+
+    transport.switchSession("s-outra");
+
+    expect(socket.sent).toHaveLength(1); // só o hello original
+  });
+});

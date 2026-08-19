@@ -281,7 +281,7 @@ var catalog = []Definition{
 		// empatar com `security`, a margem mínima matou a decisão dos dois, e o
 		// pedido caiu na clarificação.
 		Triggers: []string{"codig", "funcao", "bug", "refator", "compil", "test", "build", "lint", "commit", "branch", "merge", "stack trace", "erro de", "implement", "classe", "metodo", "endpoint", "typescript", "python", "rust", "golang", "javascript",
-			"aplicac", "aplicativo", "next.js", "nextjs", "react", "vue.js", "angular", "django", "flask",
+			"aplicac", "aplicativo", "next.js", "nextjs", "react", "vue.js", "angular", "django", "flask", "vercel",
 			"api", "backend", "front-end", "frontend", "biblioteca", "framework", "microservic", "crud"},
 		Deliverables: []string{"aplicac", "aplicativo", "app", "api", "site", "portal", "sistema",
 			"backend", "frontend", "front-end", "servico", "microservic", "crud", "landing", "pagina", "programa"},

@@ -31,6 +31,21 @@ export interface Transport {
   send<P>(kind: EnvelopeKind, payload: P): void;
   resumeFrom(seq: number): void;
   /**
+   * Troca a sessão NA MESMA conexão: um novo `hello` autenticado, com dica
+   * (abrir uma conversa) ou sem (conversa nova).
+   *
+   * Mora aqui — e não como um `send("hello")` montado pelo store — pelo mesmo
+   * motivo do `post`: o hello de troca REAPRESENTA o token, e o token vive só
+   * nesta closure. Foi um bug real: o store montava o hello sem token porque
+   * não o tem, e o gateway, que exige o token em todo hello, teria de escolher
+   * entre recusar a troca ou aceitar um frame não autenticado.
+   *
+   * A sessão interna NÃO muda aqui: quem diz qual sessão vale é o `ready` que
+   * o gateway responde — adotar a dica antes da resposta faria uma troca
+   * recusada deixar cliente e servidor cada um numa conversa.
+   */
+  switchSession(hint: string | null): void;
+  /**
    * Um POST autenticado no MESMO gateway.
    *
    * Mora aqui, e não no store, por causa do token: ele já vive nesta closure, e
@@ -402,6 +417,20 @@ export function createTransport(options: TransportOptions): Transport {
 
     resumeFrom(seq: number): void {
       lastSeq = Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
+    },
+
+    switchSession(hint: string | null): void {
+      if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+      // O marco de replay é POR SESSÃO; a nova começa do zero.
+      lastSeq = 0;
+      const hello: HelloFrame = {
+        client: CLIENT_NAME,
+        version: CLIENT_VERSION,
+        token,
+        resumeFrom: 0
+      };
+      if (hint !== null && hint !== "") hello.sessionHint = hint;
+      writeEnvelope(socket, "hello", hello);
     },
 
     post(path: string, body: unknown): Promise<unknown> {
