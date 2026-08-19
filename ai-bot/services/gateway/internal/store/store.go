@@ -120,6 +120,46 @@ type Store struct {
 
 	mu       sync.Mutex
 	sessions map[string]*sessionHandle
+
+	// metas é o cache do que JÁ FOI LIDO do disco. Correto porque o .lock
+	// garante que este processo é o ÚNICO escritor da pasta — o disco não muda
+	// por fora. Sem ele, cada ready (e agora cada troca de sessão, pelo
+	// re-hello) relia e re-desserializava TODOS os meta.json: com trezentas
+	// conversas e antivírus no caminho, ~centenas de ms de I/O repetido por
+	// clique, para dados que não mudaram.
+	metas *metaCache
+}
+
+// metaCache é um mutex FOLHA de propósito: writeMeta roda com handle.mu
+// segurado e está proibido de tocar Store.mu (ver o bloco "cabeçalho
+// pendente") — este mutex não adquire nenhum outro, então pode ser tomado de
+// qualquer contexto sem fechar ciclo.
+type metaCache struct {
+	mu      sync.Mutex
+	entries map[string]SessionMeta
+}
+
+func newMetaCache() *metaCache {
+	return &metaCache{entries: make(map[string]SessionMeta)}
+}
+
+func (c *metaCache) get(dir string) (SessionMeta, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	meta, ok := c.entries[dir]
+	return meta, ok
+}
+
+func (c *metaCache) put(dir string, meta SessionMeta) {
+	c.mu.Lock()
+	c.entries[dir] = meta
+	c.mu.Unlock()
+}
+
+func (c *metaCache) del(dir string) {
+	c.mu.Lock()
+	delete(c.entries, dir)
+	c.mu.Unlock()
 }
 
 // sessionHandle mantém o arquivo aberto e o seq corrente de uma sessão.
@@ -129,6 +169,10 @@ type sessionHandle struct {
 	file     *os.File
 	path     string
 	metaPath string
+	// dir e metas espelham cada gravação de cabeçalho no cache de listagem —
+	// sem isso, a conversa recém-fechada voltaria VELHA do disco na barra.
+	dir   string
+	metas *metaCache
 
 	// metaDirty diz que o cabeçalho em memória está à frente do disco, e
 	// metaTimer é a gravação já agendada (nil = nenhuma). Ver metaFlushDelay.
@@ -184,7 +228,8 @@ func Open(root string) (*Store, error) {
 		return nil, fmt.Errorf("gravar trava: %w", err)
 	}
 
-	return &Store{root: root, lock: lock, sessions: make(map[string]*sessionHandle)}, nil
+	return &Store{root: root, lock: lock, sessions: make(map[string]*sessionHandle),
+		metas: newMetaCache()}, nil
 }
 
 // stale diz se a trava aponta para um processo que não existe mais.
@@ -238,6 +283,11 @@ func (h *sessionHandle) flushMetaAsync() {
 func (h *sessionHandle) writeMeta() error {
 	if err := writeJSONAtomic(h.metaPath, h.meta); err != nil {
 		return err
+	}
+	// Espelha no cache de listagem. metaCache é mutex-folha: seguro daqui,
+	// mesmo com handle.mu na mão (Store.mu continua proibido).
+	if h.metas != nil {
+		h.metas.put(h.dir, h.meta)
 	}
 	h.metaDirty = false
 	return nil
@@ -338,6 +388,7 @@ func (s *Store) CreateSession(meta SessionMeta) (SessionMeta, error) {
 	if err := writeJSONAtomic(filepath.Join(directory, "meta.json"), meta); err != nil {
 		return SessionMeta{}, err
 	}
+	s.metas.put(safeID(meta.ID), meta)
 	return meta, nil
 }
 
@@ -420,12 +471,19 @@ func (s *Store) ListSessions() ([]SessionMeta, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		var meta SessionMeta
-		path := filepath.Join(s.root, "sessions", entry.Name(), "meta.json")
-		if err := readJSON(path, &meta); err != nil {
-			// Sessão ilegível não derruba a listagem: a pessoa perde UMA linha
-			// da barra lateral, não o acesso ao histórico inteiro.
-			continue
+		// O cache responde primeiro; o disco é o fallback do primeiro encontro.
+		// O ReadDir continua rodando (é ele que enxerga sessão nova), mas o
+		// open+read+parse por pasta — o custo real da listagem — só acontece
+		// uma vez por sessão na vida do processo.
+		meta, cached := s.metas.get(entry.Name())
+		if !cached {
+			path := filepath.Join(s.root, "sessions", entry.Name(), "meta.json")
+			if err := readJSON(path, &meta); err != nil {
+				// Sessão ilegível não derruba a listagem: a pessoa perde UMA linha
+				// da barra lateral, não o acesso ao histórico inteiro.
+				continue
+			}
+			s.metas.put(entry.Name(), meta)
 		}
 		if handle, ok := live[meta.ID]; ok {
 			handle.mu.Lock()
@@ -452,6 +510,7 @@ func (s *Store) DeleteSession(id string) error {
 		delete(s.sessions, id)
 	}
 	s.mu.Unlock()
+	s.metas.del(safeID(id))
 	return os.RemoveAll(s.sessionDir(id))
 }
 
@@ -725,6 +784,29 @@ func seqOfLine(line []byte) (uint64, bool) {
 	if len(line) == 0 {
 		return 0, false
 	}
+	// FAST PATH: o escritor deste log é ÚNICO e sempre grava json.Marshal de
+	// protocol.Envelope, cuja ordem de campos é fixa — o `"seq":` aparece nos
+	// primeiros bytes de toda linha legítima. Procurar o literal e parsear o
+	// inteiro ali evita o json.Unmarshal POR LINHA da varredura fria: a
+	// primeira Since() pós-reinício semeia o índice varrendo o log inteiro, e
+	// num log de 10 MB isso era um decode completo por linha só para descartar
+	// tudo menos um número.
+	if start := bytes.Index(line[:min(len(line), 128)], []byte(`"seq":`)); start >= 0 {
+		value := uint64(0)
+		found := false
+		for _, digit := range line[start+len(`"seq":`):] {
+			if digit < '0' || digit > '9' {
+				break
+			}
+			value = value*10 + uint64(digit-'0')
+			found = true
+		}
+		if found && value > 0 {
+			return value, true
+		}
+	}
+	// O caminho completo continua sendo a rede de segurança: uma linha escrita
+	// por uma versão antiga (ou editada à mão) ainda é lida do jeito lento.
 	var head struct {
 		Seq uint64 `json:"seq"`
 	}
@@ -782,6 +864,8 @@ func (s *Store) handle(id string) (*sessionHandle, error) {
 		meta:     meta,
 		path:     logPath,
 		metaPath: filepath.Join(directory, "meta.json"),
+		dir:      safeID(id),
+		metas:    s.metas,
 	}
 	s.sessions[id] = handle
 	return handle, nil

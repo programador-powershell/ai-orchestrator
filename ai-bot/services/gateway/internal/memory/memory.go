@@ -169,7 +169,18 @@ type Store struct {
 	index map[string]searchIndex
 	// counter desempata ids gerados no mesmo segundo.
 	counter uint64
+	// touchDirty/touchTimer são o debounce dos contadores de uso: o Touch roda
+	// no caminho do turno (buildMessages), e reescrever o arquivo inteiro com
+	// fsync ali era pagar serialização + disco na frente da resposta para
+	// atualizar ESTATÍSTICA. Mesma receita do metaFlushDelay do store.
+	touchDirty bool
+	touchTimer *time.Timer
 }
+
+// touchFlushDelay coalesce os Touch de uma rajada numa gravação só. Perder
+// 200 ms de contadores numa queda não perde memória nenhuma — contador de uso
+// é curadoria, não conteúdo.
+const touchFlushDelay = 200 * time.Millisecond
 
 // buildSearchIndex quebra o texto do item uma vez.
 func buildSearchIndex(item Item) searchIndex {
@@ -427,13 +438,30 @@ func (s *Store) Touch(ids []string) error {
 		return nil
 	}
 
-	if err := s.persist(); err != nil {
-		for id, item := range backup {
-			s.items[id] = item
-		}
-		return err
+	// A gravação é ADIADA, não imediata: os contadores já valem em memória (o
+	// Search desta sessão os vê), e o arquivo é reescrito UMA vez por rajada,
+	// fora do caminho da resposta. O rollback da versão antiga foi embora com
+	// razão: não há mais falha de disco síncrona para desfazer, e contador é
+	// estatística — o pior caso de uma queda é perder 200 ms de contagem.
+	s.touchDirty = true
+	if s.touchTimer == nil {
+		s.touchTimer = time.AfterFunc(touchFlushDelay, s.flushTouches)
 	}
 	return nil
+}
+
+// flushTouches é o disparo do debounce do Touch.
+func (s *Store) flushTouches() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.touchTimer = nil
+	if !s.touchDirty {
+		return
+	}
+	// Erro ignorado como no flush do cabeçalho do store: o próximo Touch (ou
+	// qualquer outra gravação) tenta de novo — perder contadores não perde
+	// memória.
+	_ = s.persist()
 }
 
 /* -------------------------------- busca -------------------------------- */
@@ -933,6 +961,9 @@ func limitHits(hits []Hit, limit int) []Hit {
 // sobre ela. O rename é a única operação que o sistema de arquivos promete
 // atômica, então é ele quem publica a versão nova.
 func (s *Store) persist() error {
+	// Qualquer gravação completa leva os contadores pendentes junto — o
+	// arquivo é reescrito inteiro, então o debounce do Touch pega carona.
+	defer func() { s.touchDirty = false }()
 	payload := fileContent{Version: fileVersion, Items: s.sortedItems()}
 	// Indentado porque este arquivo é feito para a pessoa abrir no editor,
 	// conferir o que o AI-BOT guardou e apagar o que não quer.

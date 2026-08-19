@@ -319,6 +319,25 @@
 
 ### :pushpin: Fixes
 
+- **Caça de desempenho no GATEWAY — 13 achados por revisão adversarial: 3
+  confirmados como saudáveis ("não mexer"), 10 corrigidos.** O mais grave era
+  de CORREÇÃO, não velocidade: o fanout do barramento enviava por uma cópia
+  fora de trava enquanto um Close() concorrente (troca de sessão, aba fechada)
+  fechava o canal — `send on closed channel` é pânico, e o processo INTEIRO
+  caía por causa de um clique. O envio agora acontece sob a trava de leitura
+  (o drop só roda depois da remoção sob escrita — invariante documentado dos
+  dois lados), com teste de estresse. Os demais: `ReadArtifact` lê SÓ a fatia
+  (Stat + ReadAt — antes materializava 60 MB para devolver 16 KiB); cache de
+  `meta.json` no store (cada ready relia e re-desserializava TODAS as
+  conversas; mutex-folha por causa do ciclo documentado handle.mu/Store.mu);
+  fast-path do `seq` na varredura fria (um decode JSON por linha virou busca
+  de literal); replay em RAJADA no WebSocket (um write() por envelope virou um
+  punhado por lote de 500 — bytes no fio idênticos); `memory.Touch` saiu do
+  caminho da resposta (debounce de 200 ms, contador é estatística); `fs.read`
+  por faixa recorta nos bytes; `fs.search` pré-filtra com bytes.Contains
+  DEPOIS do contador de varridos (antes dele, query sem resultado tornaria o
+  passeio ilimitado).
+
 - **Caça de desempenho no cliente — 9 gargalos confirmados por revisão
   adversarial, 7 corrigidos.** O pior: cada linha da barra montava um avatar
   com DOIS laços de animação a 60fps que nunca pausavam — 30 conversas ≈ 60

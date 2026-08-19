@@ -306,13 +306,27 @@ func (s *Server) replay(connection *Conn, sessionID string, from uint64) (uint64
 		if err != nil || len(batch) == 0 {
 			return delivered, nil
 		}
+		// A RAJADA: um prazo por lote e uma escrita em lote, em vez de um
+		// SetWriteDeadline + um write() no socket POR envelope — abrir uma
+		// conversa longa custava milhares de syscalls para entregar o mesmo
+		// fluxo de bytes. Os frames no fio são idênticos; muda só a fronteira.
+		// O envelope que não serializa é PULADO como o WriteJSON antigo nunca
+		// fazia? Fazia sim — retornava erro e derrubava a conexão; aqui o
+		// marshal de um envelope já gravado no log não falha (ele nasceu de um
+		// marshal), então o erro é tratado como o de escrita: encerra.
+		payloads := make([][]byte, 0, len(batch))
 		for _, envelope := range batch {
-			_ = connection.SetWriteDeadline(time.Now().Add(writeDeadline))
-			if err := connection.WriteJSON(envelope); err != nil {
+			data, err := json.Marshal(envelope)
+			if err != nil {
 				return delivered, err
 			}
-			delivered = envelope.Seq
+			payloads = append(payloads, data)
 		}
+		_ = connection.SetWriteDeadline(time.Now().Add(writeDeadline))
+		if err := connection.WriteTextBurst(payloads); err != nil {
+			return delivered, err
+		}
+		delivered = batch[len(batch)-1].Seq
 		if len(batch) < store.MaxEventBatch {
 			return delivered, nil
 		}

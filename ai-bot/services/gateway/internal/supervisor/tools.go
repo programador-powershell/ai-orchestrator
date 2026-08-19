@@ -21,6 +21,7 @@
 package supervisor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -220,7 +221,7 @@ func errHostDisconnected(tool string) error {
 
 // Toolbox junta as dependências e instala as ferramentas locais.
 type Toolbox struct {
-	Memory    *memory.Store
+	Memory *memory.Store
 	// Artifacts lê as saídas integrais guardadas pelo Tool Output Gateway. Por
 	// interface porque a ferramenta só LÊ fatias — gravar é do supervisor.
 	Artifacts ArtifactReader
@@ -448,24 +449,47 @@ func (t *Toolbox) fsRead(ctx context.Context, sessionID string, raw json.RawMess
 	}
 
 	if args.Offset > 0 || args.Limit > 0 {
-		lines := strings.Split(string(content), "\n")
+		// A faixa é recortada nos BYTES, sem converter o arquivo para string nem
+		// fatiá-lo linha a linha: pedir 60 linhas de um arquivo grande custava
+		// uma segunda cópia inteira mais um cabeçalho de slice POR LINHA — a
+		// maior parte da memória transitória da ferramenta. bytes.Count dá o
+		// total numa passada sem alocação, e os dois laços abaixo só andam até
+		// as bordas da faixa pedida.
 		start := args.Offset
 		if start <= 0 {
 			start = 1
 		}
-		if start > len(lines) {
-			return fmt.Sprintf("(o arquivo tem %d linha(s); a faixa pedida começa depois do fim)", len(lines)), nil
+		total := bytes.Count(content, []byte{'\n'}) + 1
+		if start > total {
+			return fmt.Sprintf("(o arquivo tem %d linha(s); a faixa pedida começa depois do fim)", total), nil
 		}
 		count := args.Limit
 		if count <= 0 {
-			count = len(lines)
+			count = total
 		}
 		end := start - 1 + count
-		if end > len(lines) {
-			end = len(lines)
+		if end > total {
+			end = total
 		}
-		slice := strings.Join(lines[start-1:end], "\n")
-		return fmt.Sprintf("(linhas %d-%d de %d)\n%s", start, end, len(lines), slice), nil
+
+		sliceStart := 0
+		for line := 1; line < start; line++ {
+			sliceStart += bytes.IndexByte(content[sliceStart:], '\n') + 1
+		}
+		sliceEnd := sliceStart
+		for line := start; line <= end; line++ {
+			next := bytes.IndexByte(content[sliceEnd:], '\n')
+			if next < 0 {
+				sliceEnd = len(content)
+				break
+			}
+			if line == end {
+				sliceEnd += next
+			} else {
+				sliceEnd += next + 1
+			}
+		}
+		return fmt.Sprintf("(linhas %d-%d de %d)\n%s", start, end, total, content[sliceStart:sliceEnd]), nil
 	}
 
 	if len(content) > maxReadBytes {
@@ -612,6 +636,14 @@ func (t *Toolbox) fsSearch(ctx context.Context, sessionID string, raw json.RawMe
 			return nil
 		}
 		scanned++
+		// DEPOIS do scanned++ de propósito: o teto de arquivos varridos conta o
+		// arquivo lido, com ou sem ocorrência — antes do contador, uma query
+		// sem resultado tornaria o passeio ilimitado em I/O. O pré-filtro em
+		// bytes evita converter e fatiar em linhas um arquivo que nem contém a
+		// query — que é a maioria dos arquivos em qualquer busca real.
+		if !bytes.Contains(content, []byte(args.Query)) {
+			return nil
+		}
 		relative, _ := filepath.Rel(base, path)
 		for number, line := range strings.Split(string(content), "\n") {
 			if !strings.Contains(line, args.Query) {

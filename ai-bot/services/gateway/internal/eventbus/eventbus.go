@@ -140,22 +140,26 @@ func (b *Bus) Broadcast(build func(sessionID string) (protocol.Envelope, bool)) 
 }
 
 func (b *Bus) fanout(sessionID string, envelope protocol.Envelope) {
+	// O envio acontece SOB a trava de leitura, sem cópia da lista — e isso é
+	// CORREÇÃO, não economia: quem fecha um canal (drop) só roda depois de
+	// remover o assinante sob a trava de ESCRITA, então enquanto a leitura está
+	// na mão nenhum canal presente no mapa pode ser fechado. A versão anterior
+	// soltava a trava antes de enviar, e um Close() concorrente (troca de
+	// sessão, aba fechada) fechava o canal no meio do envio — send em canal
+	// fechado é pânico, e o processo INTEIRO caía por causa de um clique.
+	// Segurar a trava aqui não prende ninguém: o envio é não-bloqueante.
+	// De carona, o snapshot por evento (uma alocação por delta) desaparece.
 	b.mu.RLock()
-	topic := b.topics[sessionID]
-	targets := make([]*subscriber, 0, len(topic))
-	for _, each := range topic {
-		targets = append(targets, each)
-	}
-	b.mu.RUnlock()
-
 	var slow []*subscriber
-	for _, target := range targets {
+	for _, target := range b.topics[sessionID] {
 		select {
 		case target.events <- envelope:
 		default:
 			slow = append(slow, target)
 		}
 	}
+	b.mu.RUnlock()
+
 	if len(slow) == 0 {
 		return
 	}
@@ -164,7 +168,7 @@ func (b *Bus) fanout(sessionID string, envelope protocol.Envelope) {
 	// trava de leitura segurada deixaria outro fanout escrevendo em canal
 	// fechado — pânico, e o processo inteiro cai por causa de um cliente lento.
 	b.mu.Lock()
-	topic = b.topics[sessionID]
+	topic := b.topics[sessionID]
 	for _, target := range slow {
 		for id, candidate := range topic {
 			if candidate == target {
@@ -222,6 +226,11 @@ func (b *Bus) unsubscribe(sessionID string, id uint64) {
 	b.mu.Unlock()
 
 	if ok {
+		// O drop DEPOIS da remoção sob a trava de escrita é o invariante que o
+		// fanout inteiro apoia: ele envia segurando a trava de leitura, contando
+		// que nenhum canal ainda presente no mapa possa ser fechado. Fechar aqui
+		// dentro da trava (ou antes da remoção) reabriria o pânico de send em
+		// canal fechado.
 		entry.drop()
 	}
 }

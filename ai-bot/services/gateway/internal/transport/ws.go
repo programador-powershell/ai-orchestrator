@@ -452,8 +452,22 @@ func (c *Conn) WriteMessage(opcode byte, payload []byte) error {
 	return c.writeFrameLocked(opcode, payload)
 }
 
-// writeFrameLocked monta e despacha um frame. Exige writeMu já travado.
+// writeFrameLocked monta, despacha e DESCARREGA um frame. Exige writeMu já
+// travado. A rajada do replay usa a variante sem flush.
 func (c *Conn) writeFrameLocked(opcode byte, payload []byte) error {
+	if err := c.stageFrameLocked(opcode, payload); err != nil {
+		return err
+	}
+	// Sem Flush o frame fica no buffer do bufio e o cliente espera para sempre
+	// por uma resposta que já foi "escrita".
+	if err := c.rw.Flush(); err != nil {
+		return fmt.Errorf("descarregando frame: %w", err)
+	}
+	return nil
+}
+
+// stageFrameLocked monta o frame no buffer SEM descarregar. Exige writeMu.
+func (c *Conn) stageFrameLocked(opcode byte, payload []byte) error {
 	var header [10]byte
 	header[0] = 0x80 | opcode // FIN=1, RSV zerados: nunca fragmentamos na saída
 	size := 2
@@ -478,11 +492,6 @@ func (c *Conn) writeFrameLocked(opcode byte, payload []byte) error {
 			return fmt.Errorf("escrevendo payload do frame: %w", err)
 		}
 	}
-	// Sem Flush o frame fica no buffer do bufio e o cliente espera para sempre
-	// por uma resposta que já foi "escrita".
-	if err := c.rw.Flush(); err != nil {
-		return fmt.Errorf("descarregando frame: %w", err)
-	}
 	return nil
 }
 
@@ -498,6 +507,31 @@ func (c *Conn) WriteJSON(value any) error {
 		return fmt.Errorf("serializando mensagem para json: %w", err)
 	}
 	return c.WriteMessage(OpText, data)
+}
+
+// WriteTextBurst escreve VÁRIOS frames de texto sob uma única aquisição da
+// trava e um único descarregamento final.
+//
+// Existe para o replay: escrever envelope a envelope custava um write() no
+// socket por frame — três mil syscalls para abrir uma conversa longa. Na
+// rajada, o bufio junta os frames e o Flush único (mais os automáticos quando
+// o buffer enche) reduz isso a um punhado de writes. Os bytes no fio são
+// IDÊNTICOS, frame a frame — só a fronteira das syscalls muda.
+func (c *Conn) WriteTextBurst(payloads [][]byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.isClosed() {
+		return ErrClosed
+	}
+	for _, payload := range payloads {
+		if err := c.stageFrameLocked(OpText, payload); err != nil {
+			return err
+		}
+	}
+	if err := c.rw.Flush(); err != nil {
+		return fmt.Errorf("descarregando rajada: %w", err)
+	}
+	return nil
 }
 
 // Ping envia um ping sem corpo. Serve para descobrir conexão morta em NAT que

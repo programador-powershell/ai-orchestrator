@@ -79,14 +79,24 @@ func (s *Store) ReadArtifact(sessionID, ref string, offset, limit int) (string, 
 		return "", 0, fmt.Errorf("referência inválida: %q", ref)
 	}
 	path := filepath.Join(s.sessionDir(sessionID), "artifacts", kind+"-"+hash+".txt")
-	data, err := os.ReadFile(path)
+	// Abre e LÊ SÓ A FATIA — nunca o arquivo inteiro. A primeira versão fazia
+	// os.ReadFile e cortava em memória: um artefato de 60 MB custava 60 MB de
+	// heap por fetch de 16 KiB. O Stat dá o total (e resolve o offset negativo)
+	// sem ler um byte; o artefato é imutável depois do rename, então não há
+	// corrida com escritor.
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", 0, fmt.Errorf("artefato %s não existe nesta conversa", ref)
 		}
 		return "", 0, err
 	}
-	total := len(data)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", 0, err
+	}
+	total := int(info.Size())
 	if offset < 0 {
 		// Offset negativo lê do FIM — o jeito natural de pedir "as últimas N
 		// linhas do log" sem saber o tamanho.
@@ -105,7 +115,11 @@ func (s *Store) ReadArtifact(sessionID, ref string, offset, limit int) (string, 
 	if end > total {
 		end = total
 	}
-	return string(data[offset:end]), total, nil
+	chunk := make([]byte, end-offset)
+	if _, err := file.ReadAt(chunk, int64(offset)); err != nil {
+		return "", total, err
+	}
+	return string(chunk), total, nil
 }
 
 /* ------------------------------ blobs da sessão --------------------------- */
