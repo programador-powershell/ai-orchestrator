@@ -28,11 +28,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"aibot/gateway/internal/protocol"
@@ -178,31 +176,12 @@ func stale(lockPath string) bool {
 	if _, err := fmt.Sscanf(strings.TrimSpace(string(raw)), "%d", &pid); err != nil || pid <= 0 {
 		return true
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return true
-	}
-
-	// Windows: os.FindProcess abre um handle de verdade (OpenProcess), então ele
-	// JÁ falhou acima se o pid não existe mais. Chegar aqui significa processo
-	// vivo — e é obrigatório parar aqui, porque (*Process).signal no Windows
-	// devolve erro para tudo o que não seja Kill. Perguntar por sinal ali daria
-	// "sempre morto", o gateway roubaria a trava de um processo vivo e dois
-	// donos escreveriam `seq` sobre a mesma sessão — exatamente a corrupção que
-	// esta trava existe para impedir.
-	if runtime.GOOS == "windows" {
-		return false
-	}
-
-	// Unix: os.FindProcess NUNCA falha (só embrulha o número), então quem
-	// responde de verdade é o sinal 0 — o idioma do kill(2): o núcleo faz a
-	// checagem de existência e de permissão e não entrega sinal nenhum ao alvo.
-	// Erro aqui é ESRCH (pid morto) e a trava é órfã; nil é processo vivo.
-	//
-	// O sinal precisa ser syscall.Signal: os.Process.Signal faz uma asserção de
-	// tipo para ela, e qualquer outro os.Signal — inclusive nil — sai como
-	// "unsupported signal type", que é erro e seria lido como pid morto.
-	return process.Signal(syscall.Signal(0)) != nil
+	// Quem responde "esse pid ainda roda?" depende do sistema, e a resposta
+	// errada tem dois preços opostos: dizer VIVO para um pid morto trava a pasta
+	// para sempre (foi o que aconteceu no Windows, ver lock_windows.go); dizer
+	// MORTO para um pid vivo faz dois donos numerarem `seq` sobre a mesma
+	// sessão, que é a corrupção que esta trava existe para impedir.
+	return !processAlive(pid)
 }
 
 /* --------------------------- cabeçalho pendente -------------------------- */

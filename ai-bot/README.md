@@ -155,6 +155,17 @@
 
 ### :pushpin: Fixes
 
+- **Gateway que morre sem encerrar limpo travava a pasta de dados PARA SEMPRE.**
+  A trava guarda o pid do dono e era considerada órfã quando `os.FindProcess`
+  falhava — só que no Windows ele chama `OpenProcess`, e o objeto do processo
+  sobrevive à morte enquanto alguém segurar um handle. Quem segura é o próprio
+  aplicativo: ele é o pai do gateway e guarda o `Child` para colher no
+  encerramento. Resultado: queda, `taskkill` ou atualização mal sucedida
+  deixavam um pid morto que "existe", nenhum gateway subia mais naquela pasta
+  enquanto a janela estivesse aberta, e a tela dizia "gateway fora do ar" sem
+  saída. Agora quem responde é o handle como objeto sincronizável
+  (`WaitForSingleObject` com espera zero), que distingue rodando de terminado.
+
 - **O `dev:desktop` da raiz subia o aplicativo ERRADO.** O rename de escopo tinha
   deixado dois apps diferentes com o mesmo nome de pacote (`@ai-bot/desktop`: o
   orquestrador na raiz e este aqui), então o `--filter` casava com o primeiro e a
