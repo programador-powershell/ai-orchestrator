@@ -15,6 +15,7 @@
 import {
   ArrowUpCircle,
   Bot,
+  Gauge,
   Minus,
   Moon,
   Plus,
@@ -28,7 +29,9 @@ import {
 } from "lucide-react";
 import type { UpdateTrack } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { contextUsage, describeContextUsage } from "../lib/contextMeter";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
+import { SearchOverlay } from "./SearchOverlay";
 import { TopbarSlot } from "./TopbarActions";
 
 /* ----------------------------- a atualização ----------------------------- */
@@ -134,6 +137,9 @@ export function Topbar() {
   const session = useApp((state) => state.session);
   const theme = useApp((state) => state.theme);
   const status = useApp((state) => state.status);
+  const lines = useApp((state) => state.lines);
+  const models = useApp((state) => state.models);
+  const activeModel = useApp((state) => state.activeModel);
   const updateAvailable = useApp((state) => state.updateAvailable);
   const updateVersion = useApp((state) => state.updateVersion);
   const updateTracks = useApp((state) => state.updateTracks);
@@ -172,6 +178,11 @@ export function Topbar() {
   // conversa" ao lado — repetir a frase como título lia como eco.
   const title = sessions.find((item) => item.id === session)?.title ?? "";
 
+  // O medidor de contexto: estimativa (4 chars/token — ver contextMeter.ts) de
+  // quanto da janela do modelo ativo a conversa já ocupa. `null` quando não há
+  // modelo com janela conhecida — o chip some em vez de inventar percentual.
+  const contexto = contextUsage(lines, models, activeModel);
+
   return (
     <header className="topbar" data-status={status}>
       <div className="topbar-left">
@@ -209,6 +220,22 @@ export function Topbar() {
           <span className="topbar-status" data-status={status} role="status">
             {status === "connecting" ? <Wifi size={13} aria-hidden /> : <WifiOff size={13} aria-hidden />}
             <span>{status === "connecting" ? "conectando…" : "offline"}</span>
+          </span>
+        ) : null}
+
+        {/* O MEDIDOR DE CONTEXTO — discreto como o chip de atualização, e pelo
+            mesmo motivo: informa, não pede nada. O `title` carrega a conta e a
+            heurística inteiras; o chip só o percentual. `data-nivel` deixa o
+            CSS subir a cor quando a janela está de fato enchendo. */}
+        {contexto !== null ? (
+          <span
+            className="context-meter"
+            data-nivel={contexto.percent >= 90 ? "cheio" : contexto.percent >= 70 ? "alto" : "ok"}
+            role="status"
+            title={describeContextUsage(contexto)}
+          >
+            <Gauge size={13} aria-hidden />
+            <span>{contexto.percent}%</span>
           </span>
         ) : null}
 
@@ -321,6 +348,11 @@ export function Topbar() {
           </div>
         ) : null}
       </div>
+
+      {/* A busca das conversas (Ctrl+K). Mora na barra porque é daqui que se
+          navega entre conversas; o overlay em si é fixed e auto-suficiente —
+          atalho, estado e busca vivem dentro dele (ver SearchOverlay.tsx). */}
+      <SearchOverlay />
     </header>
   );
 }

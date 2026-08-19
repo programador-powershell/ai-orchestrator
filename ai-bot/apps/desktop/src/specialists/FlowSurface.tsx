@@ -1,20 +1,39 @@
 /**
  * Superfície do especialista de FLUXO — o editor do pipeline.
  *
- * O grafo é SVG escrito à mão, com arestas ORTOGONAIS: cotovelo em ângulo reto
- * em vez de curva. Não é preferência estética — num fluxo o que se lê é "de que
- * porta sai, em que porta entra", e a linha reta com uma dobra deixa isso óbvio
- * mesmo com vinte nós na tela. A curva fica para o DAG da equipe, onde o que
- * importa é a hierarquia e não o roteamento.
+ * O grafo é desenhado pelo @xyflow/react (homologado): pan, zoom e arestas
+ * `smoothstep` — cotovelo em ângulo reto em vez de curva. Não é preferência
+ * estética: num fluxo o que se lê é "de que porta sai, em que porta entra", e a
+ * linha reta com uma dobra deixa isso óbvio mesmo com vinte nós na tela. A
+ * curva fica para o DAG da equipe, onde o que importa é a hierarquia.
  *
- * Os nós vêm do `tool.result` de `flow.validate`. A tela NÃO monta o fluxo: ela
- * mostra o que a conversa montou e o que a validação disse sobre ele.
+ * Arrastar nó continua DESLIGADO de propósito: o fluxo chega por `tool.result`,
+ * não é documento nosso — não existe onde guardar a posição, e arrasto que
+ * volta sozinho no próximo resultado ensina que a tela esquece (a mesma decisão
+ * do ERD em SchemaSurface).
+ *
+ * Os nós vêm do bloco JSON demarcado no `tool.result` de `flow.validate`
+ * (lib/toolJson). A tela NÃO monta o fluxo: ela mostra o que a conversa montou
+ * e o que a validação disse sobre ele.
  */
 
 import { useMemo, useState } from "react";
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { AlertCircle, CheckCircle2, Download, Play, Workflow } from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { structuredJson } from "../lib/toolJson";
 import { TopbarActions } from "../shell/TopbarActions";
 
 /* -------------------------------- modelo -------------------------------- */
@@ -115,14 +134,6 @@ function pairs(value: unknown): [string, string][] {
   return list;
 }
 
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 function listOf(value: unknown, keys: string[]): unknown[] {
   if (Array.isArray(value)) return value;
   if (!isRecord(value)) return [];
@@ -198,7 +209,9 @@ function latestResult(lines: ConversationLine[], tool: string): ToolResult | nul
 
 function buildModel(result: ToolResult | null): FlowModel {
   if (!result?.output) return EMPTY_MODEL;
-  const parsed = parseJson(result.output);
+  // O gateway devolve o relatório legível + bloco ```json no fim; resultado
+  // antigo, só texto, cai em null e a tela fica no vazio digno.
+  const parsed = structuredJson(result.output);
   if (parsed === null) return EMPTY_MODEL;
 
   const nodes = listOf(parsed, ["nodes", "steps", "tasks"])
@@ -209,7 +222,7 @@ function buildModel(result: ToolResult | null): FlowModel {
     .map((item, index) => toEdge(item, index))
     .filter((edge): edge is FlowEdge => edge !== null);
 
-  const issues = listOf(parsed, ["issues", "errors", "problems", "warnings"])
+  const issues = listOf(parsed, ["problems", "issues", "errors", "warnings"])
     .map((item) => toIssue(item))
     .filter((issue): issue is FlowIssue => issue !== null);
 
@@ -243,7 +256,7 @@ interface Placed extends FlowNode {
  * traz x/y: fluxo que já veio posicionado tem posição por um motivo, e recalcular
  * seria desfazer o arranjo que alguém escolheu.
  */
-function place(nodes: FlowNode[], edges: FlowEdge[]): { placed: Placed[]; width: number; height: number } {
+function place(nodes: FlowNode[], edges: FlowEdge[]): Placed[] {
   const index = new Map(nodes.map((node) => [node.id, node]));
   const incoming = new Map<string, string[]>();
   for (const edge of edges) {
@@ -280,21 +293,46 @@ function place(nodes: FlowNode[], edges: FlowEdge[]): { placed: Placed[]; width:
       });
     });
   }
-
-  const width = Math.max(NODE_W + PAD * 2, ...placed.map((node) => node.px + NODE_W + PAD));
-  const height = Math.max(NODE_H + PAD * 2, ...placed.map((node) => node.py + NODE_H + PAD));
-  return { placed, width, height };
+  return placed;
 }
 
-/** Cotovelo ortogonal. Quando o destino está atrás, a linha contorna por baixo. */
-function orthogonal(x1: number, y1: number, x2: number, y2: number): string {
-  if (x2 - x1 > GAP_X / 2) {
-    const middle = (x1 + x2) / 2;
-    return `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`;
-  }
-  const detour = Math.max(y1, y2) + NODE_H / 2 + GAP_Y / 2;
-  return `M ${x1} ${y1} h 18 V ${detour} H ${x2 - 18} V ${y2} H ${x2}`;
+/* --------------------------- nó do @xyflow ------------------------------- */
+
+interface EtapaData extends Record<string, unknown> {
+  kind: string;
+  label: string;
+  description: string;
+  /** Alvo do caminho de erro; vazio acende o ponto de aviso no canto. */
+  onError: string;
+  /** Reaproveita os estados do CSS: falha = failed, selecionado = running. */
+  state?: "failed" | "running";
 }
+
+type EtapaFlowNode = Node<EtapaData, "etapa">;
+
+/**
+ * Nó custom em vez do default do @xyflow: o default é uma caixa com um rótulo
+ * só, e o fluxo precisa mostrar kind, rótulo e a FALTA do caminho de erro — o
+ * defeito mais comum do fluxo, que funciona no exemplo e para na primeira
+ * falha real.
+ */
+function EtapaNodeView({ data }: NodeProps<EtapaFlowNode>) {
+  return (
+    <div className="flow-xy-node" data-state={data.state} title={data.description || data.label}>
+      {/* Porta de ENTRADA à esquerda, de SAÍDA à direita — sempre nos mesmos
+          lugares, para a leitura não depender do rótulo. */}
+      <Handle type="target" position={Position.Left} isConnectable={false} />
+      <span className="flow-xy-kind">{data.kind.toUpperCase().slice(0, 16)}</span>
+      <span className="flow-xy-label">{data.label}</span>
+      {data.onError ? null : <span className="flow-xy-warn" title="sem caminho de erro" />}
+      <Handle type="source" position={Position.Right} isConnectable={false} />
+    </div>
+  );
+}
+
+/** Registrado fora do componente: recriar o mapa por render faz o @xyflow
+ *  desmontar e remontar todos os nós a cada delta do streaming. */
+const NODE_TYPES = { etapa: EtapaNodeView };
 
 /* --------------------------- barra do especialista ----------------------- */
 
@@ -344,7 +382,7 @@ function FlowActions() {
         className="btn"
         disabled={flow.raw === null}
         onClick={exportJson}
-        title="Grava o JSON do último flow.validate"
+        title="Grava o grafo estruturado do último flow.validate"
       >
         <Download size={13} aria-hidden />
         Exportar JSON
@@ -359,10 +397,47 @@ export function FlowSurface() {
   const flow = useFlowModel();
   const [selected, setSelected] = useState("");
 
-  const layout = useMemo(() => place(flow.nodes, flow.edges), [flow]);
-  const active = layout.placed.find((node) => node.id === selected) ?? layout.placed[0] ?? null;
+  const placed = useMemo(() => place(flow.nodes, flow.edges), [flow]);
+  const active = placed.find((node) => node.id === selected) ?? placed[0] ?? null;
   const activeIssues = active ? flow.issues.filter((issue) => issue.nodeId === active.id) : [];
-  const byId = useMemo(() => new Map(layout.placed.map((node) => [node.id, node])), [layout]);
+
+  // Os nós/arestas no vocabulário do @xyflow, derivados por memo — o grafo só
+  // é reconstruído quando o modelo ou a seleção mudam.
+  const graphNodes = useMemo<EtapaFlowNode[]>(() => {
+    return placed.map((node) => {
+      const broken = flow.issues.some((issue) => issue.nodeId === node.id && issue.level === "error");
+      return {
+        id: node.id,
+        type: "etapa" as const,
+        position: { x: node.px, y: node.py },
+        // Sem arrastar: não há onde guardar posição (ver comentário do topo).
+        draggable: false,
+        connectable: false,
+        data: {
+          kind: node.kind,
+          label: node.label,
+          description: node.description,
+          onError: node.onError,
+          state: broken ? ("failed" as const) : active?.id === node.id ? ("running" as const) : undefined
+        }
+      };
+    });
+  }, [placed, flow.issues, active?.id]);
+
+  const graphEdges = useMemo<Edge[]>(() => {
+    const known = new Set(placed.map((node) => node.id));
+    return flow.edges
+      .filter((edge) => known.has(edge.from) && known.has(edge.to))
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.from,
+        target: edge.to,
+        label: edge.label || undefined,
+        // Cotovelo ortogonal, como o desenho antigo — ver comentário do topo.
+        type: "smoothstep" as const,
+        className: edge.label === "erro" ? "flow-xy-edge-erro" : undefined
+      }));
+  }, [placed, flow.edges]);
 
   return (
     <section className="surface flow-surface">
@@ -418,119 +493,27 @@ export function FlowSurface() {
             ) : null}
 
             <div className="grid-2 flow-split">
-              <div className="flow-canvas">
-                <svg
-                  className="flow"
-                  height={layout.height}
-                  viewBox={`0 0 ${layout.width} ${layout.height}`}
-                  aria-label="Grafo do fluxo"
+              <div className="flow-canvas flow-canvas-xy" aria-label="Grafo do fluxo">
+                <ReactFlow
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  nodeTypes={NODE_TYPES}
+                  onNodeClick={(_, node) => setSelected(node.id)}
+                  fitView
+                  fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+                  nodesDraggable={false}
+                  nodesConnectable={false}
+                  // Delete/backspace apagaria o nó SÓ na tela: o fluxo mora na
+                  // conversa, e a tela que mente volta a mostrar a verdade no
+                  // próximo resultado.
+                  deleteKeyCode={null}
+                  minZoom={0.3}
                 >
-                  {flow.edges.map((edge) => {
-                    const from = byId.get(edge.from);
-                    const to = byId.get(edge.to);
-                    if (!from || !to) return null;
-                    const x1 = from.px + NODE_W;
-                    const y1 = from.py + NODE_H / 2;
-                    const x2 = to.px;
-                    const y2 = to.py + NODE_H / 2;
-                    const lit = active?.id === edge.from || active?.id === edge.to;
-                    return (
-                      <g key={edge.id}>
-                        <path
-                          className="flow-edge"
-                          data-state={lit ? "active" : undefined}
-                          d={orthogonal(x1, y1, x2, y2)}
-                        />
-                        {/* A ponta da seta é desenhada à mão, na porta de entrada. */}
-                        <path
-                          className="flow-edge"
-                          data-state={lit ? "active" : undefined}
-                          d={`M ${x2 - 7} ${y2 - 4} L ${x2} ${y2} L ${x2 - 7} ${y2 + 4}`}
-                        />
-                        {edge.label ? (
-                          <text
-                            className="flow-label"
-                            x={(x1 + x2) / 2}
-                            y={(y1 + y2) / 2 - 6}
-                            textAnchor="middle"
-                          >
-                            {edge.label}
-                          </text>
-                        ) : null}
-                      </g>
-                    );
-                  })}
-
-                  {layout.placed.map((node) => {
-                    const isActive = active?.id === node.id;
-                    const broken = flow.issues.some(
-                      (issue) => issue.nodeId === node.id && issue.level === "error"
-                    );
-                    // O nó reaproveita os estados do CSS: falha = failed (danger),
-                    // selecionado = running (accent), o resto fica no traço neutro.
-                    const state = broken ? "failed" : isActive ? "running" : undefined;
-                    return (
-                      <g
-                        key={node.id}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`${node.label} — ${node.kind}`}
-                        onClick={() => setSelected(node.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setSelected(node.id);
-                          }
-                        }}
-                      >
-                        <title>{node.description || node.label}</title>
-                        <rect
-                          className="flow-node"
-                          data-state={state}
-                          x={node.px}
-                          y={node.py}
-                          width={NODE_W}
-                          height={NODE_H}
-                          rx={12}
-                        />
-                        {/* Porta de ENTRADA à esquerda, de SAÍDA à direita — sempre
-                            nos mesmos lugares, para a leitura não depender do rótulo. */}
-                        <circle
-                          cx={node.px}
-                          cy={node.py + NODE_H / 2}
-                          r={4}
-                          fill="var(--panel)"
-                          stroke="var(--line-strong)"
-                          strokeWidth={1.5}
-                        />
-                        <circle
-                          cx={node.px + NODE_W}
-                          cy={node.py + NODE_H / 2}
-                          r={4}
-                          fill="var(--line-strong)"
-                        />
-                        <text className="flow-label" x={node.px + 14} y={node.py + 22}>
-                          {node.kind.toUpperCase().slice(0, 16)}
-                        </text>
-                        <text x={node.px + 14} y={node.py + 43}>
-                          {node.label.length > 19 ? `${node.label.slice(0, 18)}…` : node.label}
-                        </text>
-                        {node.onError ? null : (
-                          // Nó sem caminho de erro é o defeito mais comum do fluxo:
-                          // funciona no exemplo e para na primeira falha real.
-                          <circle
-                            cx={node.px + NODE_W - 13}
-                            cy={node.py + 13}
-                            r={4}
-                            fill="var(--warn)"
-                          >
-                            <title>sem caminho de erro</title>
-                          </circle>
-                        )}
-                      </g>
-                    );
-                  })}
-                </svg>
+                  {/* A grade de pontos vem do próprio @xyflow — a do CSS ficaria
+                      parada atrás do pan e denunciaria dois planos diferentes. */}
+                  <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+                  <Controls showInteractive={false} position="bottom-right" />
+                </ReactFlow>
               </div>
 
               <aside className="card flow-props" aria-label="Propriedades do nó">

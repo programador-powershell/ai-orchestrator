@@ -444,12 +444,113 @@ func describeFlowNode(node FlowNode) string {
 	return fmt.Sprintf("%q (%s)", id, label)
 }
 
+/* ------------------------ export estruturado do fluxo ---------------------- */
+
+// Os tipos do bloco JSON que a FlowSurface desenha. As chaves são as que o
+// parser da TELA lê (from/to/label, level/message/nodeId) — o contrato é com a
+// tela, não com o documento de entrada, pela mesma razão do exportDoc de
+// tools_data.go: a entrada espelha quem monta o fluxo, a saída espelha quem o
+// desenha.
+type flowExportNode struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Label   string `json:"label"`
+	OnError string `json:"onError,omitempty"`
+}
+
+type flowExportEdge struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Label string `json:"label,omitempty"`
+}
+
+type flowExportProblem struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
+	NodeID  string `json:"nodeId,omitempty"`
+}
+
+// flowExport é o grafo inteiro + o veredito. Slices não-nil para o JSON emitir
+// [] e não null — a mesma convenção do FlowReport, pelo mesmo motivo.
+type flowExport struct {
+	Name     string              `json:"name"`
+	OK       bool                `json:"ok"`
+	Nodes    []flowExportNode    `json:"nodes"`
+	Edges    []flowExportEdge    `json:"edges"`
+	Problems []flowExportProblem `json:"problems"`
+}
+
+// flowStructured monta o grafo para a tela: nós e arestas COMO DECLARADOS,
+// inclusive os problemáticos — é justamente o fluxo torto que a pessoa precisa
+// ver desenhado (a aresta para nó inexistente a tela descarta sozinha, porque
+// não tem onde ancorá-la). O caminho de erro sai como aresta ROTULADA "erro"
+// para o desenho distingui-lo do caminho feliz.
+func flowStructured(doc FlowDoc, report FlowReport) flowExport {
+	nodes := make([]flowExportNode, 0, len(doc.Nodes))
+	edges := make([]flowExportEdge, 0, len(doc.Nodes))
+	for _, node := range doc.Nodes {
+		id := strings.TrimSpace(node.ID)
+		nodes = append(nodes, flowExportNode{
+			ID:      id,
+			Kind:    strings.ToLower(strings.TrimSpace(node.Kind)),
+			Label:   orDefault(strings.TrimSpace(node.Label), id),
+			OnError: strings.TrimSpace(node.OnError),
+		})
+		for _, next := range node.Next {
+			if target := strings.TrimSpace(next); target != "" {
+				edges = append(edges, flowExportEdge{From: id, To: target})
+			}
+		}
+		if target := strings.TrimSpace(node.OnError); target != "" {
+			edges = append(edges, flowExportEdge{From: id, To: target, Label: "erro"})
+		}
+	}
+
+	problems := make([]flowExportProblem, 0, len(report.Errors)+len(report.Warnings))
+	for _, message := range report.Errors {
+		problems = append(problems, flowExportProblem{
+			Level: "error", Message: message, NodeID: flowProblemNode(message, doc.Nodes),
+		})
+	}
+	for _, message := range report.Warnings {
+		problems = append(problems, flowExportProblem{
+			Level: "warn", Message: message, NodeID: flowProblemNode(message, doc.Nodes),
+		})
+	}
+	return flowExport{Name: report.Name, OK: report.Valid, Nodes: nodes, Edges: edges, Problems: problems}
+}
+
+// flowProblemNode atribui a mensagem ao nó citado NELA. O relatório carimba o
+// id entre aspas (describeFlowNode usa %q), e o dono do problema é o primeiro
+// id citado — as frases começam pelo nó ofensor. Mensagem sem id citado (falta
+// de input, ciclo) fica sem nó, que é o honesto: apontar um nó qualquer faria a
+// tela acender a caixa errada.
+func flowProblemNode(message string, nodes []FlowNode) string {
+	best, bestPos := "", -1
+	for _, node := range nodes {
+		id := strings.TrimSpace(node.ID)
+		if id == "" {
+			continue
+		}
+		pos := strings.Index(message, fmt.Sprintf("%q", id))
+		if pos >= 0 && (bestPos < 0 || pos < bestPos) {
+			best, bestPos = id, pos
+		}
+	}
+	return best
+}
+
 /* ------------------------------- ferramentas ------------------------------ */
 
 // InstallFlowTools registra o validador de fluxo e a agenda.
 func (t *Toolbox) InstallFlowTools(registry *Registry) {
+	// A descrição soletra o retorno porque ela é o único contrato que o modelo
+	// vê — é do bloco JSON do fim que a tela de Fluxo desenha o grafo.
 	registry.Register("flow.validate",
-		"valida o fluxo montado na tela. args: {flow}", t.flowValidate)
+		"valida o fluxo montado na tela e devolve o relatório legível + um bloco ```json "+
+			"{name, ok, nodes: [{id, kind, label, onError?}], edges: [{from, to, label?}], "+
+			"problems: [{level, message, nodeId?}]} que a tela de Fluxo desenha. "+
+			"args: {flow: {name?, nodes: [{id, kind, label?, next?, onError?}]}}", t.flowValidate)
 	registry.Register("schedule.create",
 		`agenda um prompt nesta sessão. args: {prompt, every?, at?, note?}`, t.scheduleCreate)
 	registry.Register("schedule.list",
@@ -470,7 +571,10 @@ func (t *Toolbox) flowValidate(_ context.Context, _ string, raw json.RawMessage)
 	if len(args.Flow.Nodes) == 0 {
 		return "", errors.New(`informe o fluxo em "flow" com a lista de nós (id, kind, next, onError)`)
 	}
-	return ValidateFlow(args.Flow).String(), nil
+	report := ValidateFlow(args.Flow)
+	// O relatório em texto continua na frente (é ele que o modelo lê); o bloco
+	// JSON no fim é o que a FlowSurface desenha e o que "Exportar JSON" grava.
+	return appendStructuredJSON(report.String(), flowStructured(args.Flow, report)), nil
 }
 
 // scheduleStore devolve a agenda ou a recusa acionável. Sucesso vazio aqui seria

@@ -484,6 +484,12 @@ type Message struct {
 type Thinking struct {
 	Label string `json:"label"`
 	Done  bool   `json:"done,omitempty"`
+	// Reasoning marca que `Label` é TEXTO DE RACIOCÍNIO do modelo, não rótulo
+	// de etapa. Os dois sempre viajaram pelo mesmo verbo e o cliente não tinha
+	// como separá-los — o raciocínio piscava no orbe e era descartado. O campo
+	// é opcional dos dois lados de propósito: payload antigo decodifica com
+	// `false` (rótulo, como era) e cliente antigo ignora o campo extra.
+	Reasoning bool `json:"reasoning,omitempty"`
 }
 
 // ToolCall é o pedido de execução de ferramenta.

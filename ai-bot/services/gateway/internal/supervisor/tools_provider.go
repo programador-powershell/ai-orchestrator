@@ -41,8 +41,12 @@ func (t *Toolbox) providerToolsInstall(registry *Registry) {
 		"gera imagem pelo provedor e grava em "+imageDir+". args: {prompt, size?, count?}", t.imageGenerate)
 	registry.Register("finetune.submit",
 		"envia um treino ao provedor. args: {model, trainingFile, suffix?, hyperparameters?}", t.finetuneSubmit)
+	// A descrição soletra o bloco ```json do fim: é dele que a tela de Tuning
+	// lista as execuções.
 	registry.Register("finetune.status",
-		"estado dos treinos no provedor. args: {jobId?}", t.finetuneStatus)
+		"estado dos treinos no provedor; devolve o relatório + bloco ```json "+
+			"{provider, runs: [{id, state, model?, fineTunedModel?, createdAt?, error?}]}. "+
+			"args: {jobId?}", t.finetuneStatus)
 }
 
 /* --------------------------------- imagem --------------------------------- */
@@ -288,7 +292,7 @@ func (t *Toolbox) finetuneStatus(ctx context.Context, _ string, raw json.RawMess
 		if err := json.Unmarshal(response, &job); err != nil {
 			return "", fmt.Errorf("resposta inesperada de %s: %w", provider.ID, err)
 		}
-		return job.describe(), nil
+		return finetuneStatusReport(provider.ID, []finetuneJob{job}), nil
 	}
 
 	var listing struct {
@@ -297,16 +301,65 @@ func (t *Toolbox) finetuneStatus(ctx context.Context, _ string, raw json.RawMess
 	if err := json.Unmarshal(response, &listing); err != nil {
 		return "", fmt.Errorf("resposta inesperada de %s: %w", provider.ID, err)
 	}
-	if len(listing.Data) == 0 {
-		return "nenhum treino registrado em " + provider.ID, nil
+	return finetuneStatusReport(provider.ID, listing.Data), nil
+}
+
+// finetuneRunExport é uma execução como a tela de Tuning a lê. `state` sai CRU
+// do provedor (running, succeeded, validating_files…): quem traduz para o
+// vocabulário da tela é a tela — traduzir aqui apagaria o estado que ela ainda
+// não conhece. `step` e `loss` não existem no objeto de job do dialeto da
+// OpenAI; quando um provedor compatível os mandar, entram aqui — o contrato da
+// tela já os lê.
+type finetuneRunExport struct {
+	ID             string `json:"id"`
+	State          string `json:"state"`
+	Model          string `json:"model,omitempty"`
+	FineTunedModel string `json:"fineTunedModel,omitempty"`
+	CreatedAt      string `json:"createdAt,omitempty"`
+	Error          string `json:"error,omitempty"`
+}
+
+// finetuneStatusDoc é o bloco JSON de finetune.status.
+type finetuneStatusDoc struct {
+	Provider string              `json:"provider"`
+	Runs     []finetuneRunExport `json:"runs"`
+}
+
+// finetuneStatusReport monta o texto + bloco JSON a partir dos jobs já
+// decodificados. Função pura: o cliente HTTP fica em finetuneStatus e isto se
+// testa sem provedor.
+func finetuneStatusReport(providerID string, jobs []finetuneJob) string {
+	doc := finetuneStatusDoc{Provider: providerID, Runs: make([]finetuneRunExport, 0, len(jobs))}
+	for _, job := range jobs {
+		run := finetuneRunExport{
+			ID:             job.ID,
+			State:          orDefault(strings.TrimSpace(job.Status), "unknown"),
+			Model:          job.Model,
+			FineTunedModel: job.FineTunedModel,
+		}
+		if job.CreatedAt > 0 {
+			run.CreatedAt = time.Unix(job.CreatedAt, 0).UTC().Format(time.RFC3339)
+		}
+		if job.Error != nil && strings.TrimSpace(job.Error.Message) != "" {
+			// Mesmo filtro do describe(): o erro do provedor pode ecoar a chave
+			// parcial, e o JSON viaja para o mesmo histórico que o texto.
+			run.Error = redactProviderEcho(strings.TrimSpace(job.Error.Message))
+		}
+		doc.Runs = append(doc.Runs, run)
+	}
+
+	if len(jobs) == 0 {
+		return appendStructuredJSON("nenhum treino registrado em "+providerID, doc)
 	}
 	var report strings.Builder
-	fmt.Fprintf(&report, "%d treino(s) em %s:\n", len(listing.Data), provider.ID)
-	for _, job := range listing.Data {
+	if len(jobs) > 1 {
+		fmt.Fprintf(&report, "%d treino(s) em %s:\n", len(jobs), providerID)
+	}
+	for _, job := range jobs {
 		report.WriteString(job.describe())
 		report.WriteString("\n")
 	}
-	return strings.TrimRight(report.String(), "\n"), nil
+	return appendStructuredJSON(strings.TrimRight(report.String(), "\n"), doc)
 }
 
 // finetuneProvider acha quem recebe o treino e recusa com endereço quando não

@@ -355,6 +355,14 @@ export interface Message {
 export interface Thinking {
   label: string;
   done?: boolean;
+  /**
+   * `true` quando o `label` é TEXTO DE RACIOCÍNIO do modelo, não rótulo de
+   * etapa. O gateway sempre transmitiu os dois pelo mesmo verbo e a tela não
+   * tinha como distinguir — o raciocínio piscava no orbe e se perdia. Com a
+   * marca, o cliente acumula o texto num bloco recolhível da linha; ausente
+   * (gateway antigo), tudo continua sendo rótulo de orbe, como era.
+   */
+  reasoning?: boolean;
 }
 
 export type Risk = "read" | "write" | "execute" | "network" | "secret";
@@ -645,5 +653,19 @@ export interface ConversationLine {
   toolResults?: ToolResult[];
   route?: Route;
   error?: ProtocolError;
+  /**
+   * O raciocínio que o modelo emitiu ANTES da resposta (Thinking com
+   * `reasoning`). Acumulado por linha, e não por turno, porque numa equipe
+   * dois falantes raciocinam no mesmo turno — e o bloco recolhível pertence à
+   * bolha de quem pensou.
+   */
+  reasoning?: string;
+  /**
+   * Métricas do turno, carimbadas pelo `done` na ÚLTIMA linha do assistente.
+   * Derivadas dos timestamps dos envelopes (não do relógio da tela), então
+   * sobrevivem ao replay: reabrir a conversa mostra os mesmos números.
+   */
+  durationMs?: number;
+  outputTokens?: number;
   ts: string;
 }

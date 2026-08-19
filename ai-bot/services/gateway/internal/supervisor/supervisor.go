@@ -529,6 +529,9 @@ func (s *streamSink) Delta(text string) error {
 }
 
 func (s *streamSink) Reasoning(text string) error {
+	// `Reasoning: true` é o que separa este texto do rótulo de etapa que sai
+	// por `thinking()`: sem a marca, o cliente só podia piscar cada pedaço no
+	// orbe e jogar o texto fora — agora ele acumula num bloco recolhível.
 	s.supervisor.deps.Bus.PublishEphemeral(s.session, protocol.Envelope{
 		V:       protocol.Version,
 		TS:      time.Now().UTC(),
@@ -536,7 +539,7 @@ func (s *streamSink) Reasoning(text string) error {
 		Turn:    s.turn,
 		Kind:    protocol.KindThinking,
 		From:    s.actor,
-		Payload: mustPayload(protocol.Thinking{Label: text}),
+		Payload: mustPayload(protocol.Thinking{Label: text, Reasoning: true}),
 	})
 	return nil
 }

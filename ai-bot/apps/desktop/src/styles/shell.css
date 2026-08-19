@@ -3500,3 +3500,304 @@ select {
   font-size: var(--fs-small);
   font-weight: 560;
 }
+
+/* ------------------------- conversa completa (Frente A) ------------------ */
+
+/* O medidor de contexto: peso de rótulo, como o chip de atualização — informa,
+   não pede nada. A cor só sobe quando a janela está de fato enchendo. */
+.context-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* O conteúdo real (a conta e a heurística) está no title. */
+  cursor: help;
+}
+
+.context-meter[data-nivel="alto"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.context-meter[data-nivel="cheio"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* O rodapé da bolha: métricas do turno + ações por mensagem. As MÉTRICAS ficam
+   sempre visíveis (são informação); as AÇÕES só aparecem no hover/foco da
+   linha — um botão permanente por mensagem viraria uma coluna de ruído. */
+.line-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--faint);
+}
+
+.line-foot-item {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.line-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--swift), background-color var(--t-fast) var(--swift),
+    color var(--t-fast) var(--swift);
+}
+
+.line:hover .line-action,
+.line-action:focus-visible {
+  opacity: 1;
+}
+
+.line-action:hover {
+  background: var(--hover);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+/* O raciocínio recolhível: fechado por padrão, é bastidor. O texto abre em
+   monoespaçada apagada — é rascunho do modelo, não resposta. */
+.line-reasoning {
+  margin-bottom: 6px;
+}
+
+.line-reasoning-text {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  background: var(--panel-2);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+/* Markdown novo: link, tabela GFM, citação e régua. */
+.md-link {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-link:hover {
+  color: var(--accent);
+}
+
+/* A tabela rola na horizontal dentro da bolha em vez de estourá-la: resposta
+   de modelo adora uma tabela de oito colunas. */
+.md-table-wrap {
+  margin: 0 0 0.8em;
+  overflow-x: auto;
+}
+
+.md-table {
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+
+.md-table th,
+.md-table td {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-table th {
+  background: var(--panel-2);
+  font-weight: 640;
+}
+
+.md-quote {
+  margin: 0 0 0.8em;
+  padding: 2px 12px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.md-quote > :last-child {
+  margin-bottom: 0;
+}
+
+.md-hr {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* As ações novas da linha (exportar, apagar) têm classe própria — o
+   .rail-item-fork continua significando SÓ o ramificar (a filha não o tem, e
+   há teste que lê a classe como identidade). O desenho é o mesmo do fork. */
+.rail-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--swift), background-color var(--t-fast) var(--swift),
+    color var(--t-fast) var(--swift);
+}
+
+.rail-item-row:hover .rail-item-action,
+.rail-item-action:focus-visible {
+  opacity: 1;
+}
+
+.rail-item-action:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* A lixeira da barra lateral: herda o comportamento do fork (só no hover da
+   linha) e ARMADA fica vermelha — é o aviso de que o próximo clique apaga. */
+.rail-item-delete:hover {
+  color: var(--danger);
+}
+
+.rail-item-delete[data-armed="true"] {
+  opacity: 1;
+  color: var(--danger);
+  border-color: var(--danger);
+  background: transparent;
+}
+
+/* A busca das conversas (Ctrl+K). */
+.search-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.search-panel {
+  width: min(560px, calc(100vw - 48px));
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.search-field input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-body);
+}
+
+.search-field kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+  font-family: var(--font-mono);
+}
+
+.search-failure,
+.search-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.search-failure {
+  color: var(--danger);
+}
+
+.search-results {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.search-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-hit[data-selected="true"] {
+  background: var(--hover);
+}
+
+.search-hit-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-hit-snippet {
+  font-size: var(--fs-small);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

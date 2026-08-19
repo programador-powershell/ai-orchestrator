@@ -10,6 +10,7 @@
  * vai aparecer ali. Nada de arquivo de exemplo, tabela fictícia ou execução
  * inventada só para a coluna não ficar vazia.
  */
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -17,6 +18,8 @@ import {
   Check,
   ChevronsLeft,
   ChevronsRight,
+  FileDown,
+  FileJson,
   FileText,
   GitBranch,
   Hand,
@@ -25,6 +28,7 @@ import {
   MessagesSquare,
   Plus,
   ShieldCheck,
+  Trash2,
   Workflow,
   type LucideIcon
 } from "lucide-react";
@@ -136,7 +140,35 @@ function ConversationsRail() {
   const session = useApp((state) => state.session);
   const openSession = useApp((state) => state.openSession);
   const forkSession = useApp((state) => state.forkSession);
+  const deleteSession = useApp((state) => state.deleteSession);
+  const exportSession = useApp((state) => state.exportSession);
   const atividade = useApp((state) => state.atividadeDasConversas);
+
+  /**
+   * O apagar é em DOIS cliques na mesma lixeira, não em modal: o primeiro arma
+   * (o botão muda de cor e de title), o segundo confirma. Modal para uma linha
+   * de lista é interrupção demais — e `window.confirm` nem existe direito na
+   * WebView. O desarme sozinho (~3,5 s) cobre quem armou sem querer e foi
+   * embora: uma lixeira armada esquecida viraria uma mina na lista.
+   */
+  const [armado, setArmado] = useState<string | null>(null);
+  const desarme = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (desarme.current !== null) window.clearTimeout(desarme.current);
+    };
+  }, []);
+  const apagar = (id: string) => {
+    if (desarme.current !== null) window.clearTimeout(desarme.current);
+    if (armado === id) {
+      setArmado(null);
+      desarme.current = null;
+      deleteSession(id);
+      return;
+    }
+    setArmado(id);
+    desarme.current = window.setTimeout(() => setArmado(null), 3500);
+  };
 
   const sessions = conversasVisiveis(todas, session);
 
@@ -217,6 +249,45 @@ function ConversationsRail() {
             <GitBranch size={13} aria-hidden />
           </button>
         )}
+        {/* Exportar e apagar valem para TODA linha (a conversa de um bot também
+            é histórico). Irmãos do botão principal pelo mesmo motivo do fork:
+            botão dentro de botão é HTML inválido. */}
+        <button
+          type="button"
+          className="rail-item-action"
+          onClick={() => exportSession(item.id, "md")}
+          title="Exportar como Markdown (.md) — só as falas, legível"
+          aria-label={`Exportar a conversa ${item.title} como Markdown`}
+        >
+          <FileDown size={13} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="rail-item-action"
+          onClick={() => exportSession(item.id, "json")}
+          title="Exportar como JSON — os envelopes crus do log"
+          aria-label={`Exportar a conversa ${item.title} como JSON`}
+        >
+          <FileJson size={13} aria-hidden />
+        </button>
+        <button
+          type="button"
+          className="rail-item-action rail-item-delete"
+          data-armed={armado === item.id ? "true" : undefined}
+          onClick={() => apagar(item.id)}
+          title={
+            armado === item.id
+              ? "Clique de novo para apagar DE VEZ — não tem volta"
+              : "Apagar esta conversa (pede um segundo clique)"
+          }
+          aria-label={
+            armado === item.id
+              ? `Confirmar a exclusão da conversa ${item.title}`
+              : `Apagar a conversa ${item.title}`
+          }
+        >
+          <Trash2 size={13} aria-hidden />
+        </button>
       </li>
     );
   };

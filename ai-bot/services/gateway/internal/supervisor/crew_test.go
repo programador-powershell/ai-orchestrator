@@ -82,6 +82,65 @@ func TestEscalationDetectsThePrefix(t *testing.T) {
 	}
 }
 
+// A recusa NÃO pode sair como sucesso — "Não posso ajudar" com ✓ entra em
+// `results` e vira o upstream das tarefas dependentes, que constroem em cima do
+// nada. E a detecção tem que ser conservadora no outro sentido também: resposta
+// técnica diz "não" o tempo todo e continua sendo trabalho entregue; reprová-la
+// joga fora trabalho feito, que é pior e não avisa.
+func TestRefusalReprovaARecusaPuraEDeixaPassarOTrabalho(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{name: "recusa seca", answer: "Não posso ajudar com isso.", want: true},
+		{name: "recusa com desculpa", answer: "Desculpe, mas não posso ajudar com esse pedido.", want: true},
+		{name: "recusa com dois preâmbulos", answer: "Sinto muito, eu não posso fazer isso.", want: true},
+		{name: "recusa de assistente", answer: "Como modelo de linguagem, não posso atender a esse pedido.", want: true},
+		{name: "recusa em caixa alta", answer: "NÃO POSSO AJUDAR", want: true},
+		{name: "recusa sem acento", answer: "Nao posso ajudar com essa tarefa.", want: true},
+		{name: "recusa explícita", answer: "Me recuso a realizar essa tarefa.", want: true},
+		{name: "recusa em inglês", answer: "I can't help with that request.", want: true},
+		{
+			name:   "resposta técnica com 'não' passa",
+			answer: "A rota /pagamentos não aceitava POST; ajustei o handler e os testes passam.",
+			want:   false,
+		},
+		{
+			name:   "constatação negativa não é recusa",
+			answer: "Não há ocorrências de contratante no documento — o texto já usa cliente.",
+			want:   false,
+		},
+		{
+			// Começa igual à recusa, mas o verbo é técnico e a frase termina em
+			// trabalho feito. É exatamente o falso positivo que o marcador
+			// estreito existe para não cometer.
+			name:   "impedimento técnico seguido de solução passa",
+			answer: "Não posso alterar o arquivo de config sem aprovação, então apliquei a mudança no exemplo e documentei.",
+			want:   false,
+		},
+		{
+			// Longa demais para ser recusa pura: quem recusa e segue explicando
+			// alternativas entregou conteúdo que o orquestrador sabe ler.
+			name: "recusa longa com alternativa passa",
+			answer: "Não posso ajudar com a assinatura do contrato em si, mas mapeei o que falta: " +
+				"o anexo B está sem a cláusula de rescisão, o prazo do item 4 conflita com o item 9 " +
+				"e a testemunha indicada não consta no cadastro. Sugiro corrigir os três pontos e " +
+				"repassar o documento pelo jurídico antes de qualquer assinatura, com registro em ata.",
+			want: false,
+		},
+		{name: "resposta vazia não é recusa", answer: "   ", want: false},
+	}
+
+	for _, each := range cases {
+		t.Run(each.name, func(t *testing.T) {
+			if got := refusal(each.answer); got != each.want {
+				t.Errorf("refusal(%q) = %v, esperava %v", each.answer, got, each.want)
+			}
+		})
+	}
+}
+
 // O portão pergunta "seguir, refazer ou abortar?", e quem responde precisa saber
 // sobre o quê. Escalação não pode entrar no texto como falha: o que resolve uma
 // pergunta é responder, não refazer.

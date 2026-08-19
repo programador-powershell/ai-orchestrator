@@ -103,55 +103,66 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.1
+### :up: V.2.2
 ### :warning: Latest Changes
 
-- **A tela de Código virou uma IDE de verdade — Onda 4 da paridade.** Antes ela
-  era uma casca: um editor sem árvore, sem abrir arquivo, sem terminal. Agora:
-  - **Árvore do projeto na barra lateral** (`FilesRail`), montada por `fs.list`
-    de verdade — expandir pasta lista na hora, com ícone por extensão. E um
-    **quick open** com busca difusa (Ctrl+P) sobre os caminhos já vistos.
-  - **Abrir e salvar passam pelo MESMO funil do modelo.** A interface não ganhou
-    porta dos fundos: cada `fs.read`/`fs.write` da IDE entra pela rota
-    `POST /v1/tools/call`, que reaproveita o `executeTool` inteiro — mesmo
-    portão de permissão, mesmo cartão de aprovação, mesmos envelopes no log da
-    conversa. Salvar um arquivo mostra o chip de aprovação como se o bot tivesse
-    pedido. A whitelist é fechada (`fs.*` de leitura e escrita, `git.status`,
-    `git.diff`, `flow.validate`, `context.fetch`) e é checada ANTES de qualquer
-    coisa — recusa nem deixa envelope, senão a interface teria como encher o log
-    sem passar por portão nenhum.
-  - **Terminal da pessoa no pé da tela** (xterm.js + pty nativo no Rust). É o
-    caminho do TECLADO, não do modelo: `pty_write` continua fora do registro de
-    ferramentas — o modelo não tem como digitar nele. O painel de "saída" do
-    editor segue sendo o espelho do `proc.run`, com aprovação.
-  - **Autocompletar curto por conta da casa**: `POST /v1/model/complete` com
-    teto DURO de 512 tokens e resposta efêmera — não entra no log, não vira
-    contexto, é sugestão de trecho e nada mais.
+- **A Conversa — a tela padrão — ficou completa (Onda 5, a última da paridade).**
+  - **Medidor de contexto na topbar**: percentual estimado da janela do modelo em
+    uso, derivado das falas e saídas de ferramenta (~4 caracteres por token,
+    heurística declarada no próprio title). É um PISO honesto: prompts de
+    sistema e memórias que o cliente não vê não entram na conta — e isso está
+    dito ali mesmo.
+  - **Métricas por mensagem**: duração do turno (pelos timestamps dos envelopes,
+    então sobrevive ao replay) e tokens de saída no rodapé de cada resposta, com
+    botão copiar e feedback "copiado".
+  - **Markdown completo sem dependência nova**: links clicáveis (allowlist
+    https/mailto — `javascript:` vira texto), tabelas GFM com alinhamento,
+    blockquote aninhável e hr, no parser incremental da casa.
+  - **Raciocínio recolhível**: o gateway distinguiu raciocínio de rótulo de
+    etapa (campo novo no payload Thinking, decode tolerante ao antigo) e o texto
+    que antes era DESCARTADO agora chega num bloco fechado por padrão.
+  - **Regenerar a última resposta / editar a última pergunta**: rota nova de
+    truncar o log de forma durável (temp+rename, recusa turno em execução) —
+    sem ela, reenviar duplicava a pergunta para sempre.
+  - **Busca Ctrl+K por conteúdo** em todas as conversas (varredura
+    case-insensitive no gateway, snippet seguro para acentos) com navegação por
+    teclado.
+  - **Excluir conversa** pela lixeira em dois cliques (arma e desarma sozinha —
+    modal para linha de lista é interrupção demais) e **exportar .md/.json**.
+  - **/review, /explain e /testgen expandem no cliente** antes do envio — deixam
+    de ir literais ao modelo.
+- **As três telas-casca finalmente FUNCIONAM.** `flow.validate`, `secrets.scan`,
+  `osv.query` e `finetune.status` devolvem, além do relatório legível, um bloco
+  JSON demarcado que as superfícies detectam: o Fluxo desenha o grafo real
+  (@xyflow/react, homologado — e o "Exportar JSON" deixou de estar eternamente
+  desabilitado), Segurança vira cartões com chips "N críticos/altos" e link para
+  o advisory no osv.dev, e o Tuning sai do empty-state perpétuo. Bloco picotado
+  vira estado vazio digno, nunca cartão inventado.
+- **Botões superiores que faltavam**: ações de topbar no Trabalho (Board) e no
+  Tuning (Train) — tudo pelo composer, nada executa por fora do funil.
+- **Equipe no rodapé**: objetivo em curso fixado e estado "orquestrando…"
+  derivados no StatusBar — o único elemento que sobrevive à troca de tela,
+  porque a equipe continua rodando enquanto a pessoa olha outra superfície.
 
 ### :pushpin: Fixes
 
-- **GRAVE: arquivo entre 12 KiB e 512 KiB abria CORROMPIDO no editor — e dava
-  para salvar o corrompido por cima do real.** O Tool Output Gateway projeta
-  saída grande para a janela do modelo (início + fim + referência de artefato),
-  e a rota da interface recebia essa projeção como se fosse o arquivo. Um
-  `fs.read` de 200 KB abria picotado com um "[… omitidos …]" no meio; Ctrl+S
-  gravaria o picote. Agora a rota devolve o INTEGRAL — reconstruído do Artifact
-  Store, onde o gateway já tinha guardado o inteiro ao projetar — e o log
-  continua com a projeção: a janela do modelo não paga o dump. O mesmo conserto
-  vale para `fs.list` (a árvore não inventa mais entradas falsas ao parsear
-  listagem cortada) e `fs.search` (resultados do meio não somem mais).
-- **O terminal abria na pasta errada.** Sem `cwd`, o shell nascia no diretório
-  do processo — no dev, a pasta do bootstrapper — e o `ls` mostrava outra coisa
-  que a árvore ao lado. Agora o `pty_spawn` cai para a MESMA raiz de projeto das
-  ferramentas `fs.*`, acompanhando inclusive a troca via `set_project_root`.
+- **Recusa do modelo contada como sucesso na Equipe.** "Não posso ajudar" saía
+  com ✓ e contaminava as tarefas dependentes. Agora recusa é FALHA do
+  trabalhador, com heurística conservadora (teto de 280 caracteres, prefixo com
+  verbo de recusa, nunca verbo técnico — resposta técnica contendo "não" passa)
+  e casos de mesa provando os dois lados.
+- **Documento trocado pelo relatório da edição.** O coletor aceitava qualquer
+  `office.*` e o relatório do `office.edit` ("N ocorrências trocadas…")
+  substituía o TEXTO do documento na tela. Agora só a saída do leitor real
+  (`office.open`) alimenta o corpo; edição bem-sucedida dispara releitura
+  automática, o histórico de trocas deriva das edições REAIS (não só do
+  formulário) e o cabeçalho ganhou chips de formato e somente-leitura.
 
 ### :construction_worker: Refactors
 
-- A entrada `editor` do Stage aponta para a variante `EditorSurface.terminal` —
-  a superfície original inteira MAIS o dock do terminal, composição sem tocar no
-  arquivo que as outras ondas editavam em paralelo.
-- O placeholder do `FilesRail` no `Rail.tsx` morreu; o de verdade mora em
-  `shell/rails/FilesRail.tsx`, no mesmo padrão dos rails de Dados e Design.
+- O bloco JSON demarcado das ferramentas ganhou helper único no gateway
+  (`tools_structured.go`) e extrator único no cliente (`lib/toolJson.ts`) — o
+  padrão anti-casca da Onda 1 virou peça reutilizável em vez de quatro cópias.
 
 ## :wrench: Instalação
 

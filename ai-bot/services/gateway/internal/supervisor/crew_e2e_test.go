@@ -536,6 +536,51 @@ func TestOrcamentoDeTrabalhadoresValeParaOTurnoInteiro(t *testing.T) {
 	}
 }
 
+// A recusa do modelo é FALHA do trabalhador, não sucesso.
+//
+// Antes daqui "Não posso ajudar com isso." saía do `runWorker` com ok=true:
+// entrava em `results`, ganhava ✓ no relatório e virava o bloco de upstream das
+// tarefas dependentes — que liam a recusa como se fosse o trabalho feito. Este
+// teste fixa o caminho inteiro: worker.done reprovado, motivo dizendo que foi
+// recusa e o ✗ no relatório que volta ao orquestrador.
+func TestRecusaDoTrabalhadorNaoSaiComoSucesso(t *testing.T) {
+	plano := `{"tasks":[` +
+		`{"id":"t1","title":"tarefa recusada","specialist":"chat","goal":"faça o proibido"}` +
+		`],"maxConcurrency":1}`
+
+	fixture := newCrewFixture(t, "agent", []route{
+		{trigger: "Tarefa t1", answer: "Não posso ajudar com isso."},
+		{trigger: "Resultado das ferramentas", answer: "relatório recebido"},
+		{trigger: "peça o proibido", answer: dispatchFence(plano)},
+	}, "sem rota")
+
+	if err := fixture.supervisor.Prompt(motorContext(t), fixture.session,
+		protocol.Prompt{Text: "peça o proibido"}); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+
+	dones := workerDones(t, fixture)
+	if len(dones) != 1 {
+		t.Fatalf("esperava 1 `worker.done`, obtive %d", len(dones))
+	}
+	done := dones[0]
+	if done.OK {
+		t.Errorf("a recusa saiu como sucesso: %q — as dependentes construiriam em cima dela",
+			done.Result)
+	}
+	if done.Escalated {
+		t.Errorf("recusa não é escalação: escalar é perguntar, recusar é não fazer")
+	}
+	if !strings.Contains(done.Error, "recusou") {
+		t.Errorf("o motivo precisa dizer que foi recusa, para quem decide no portão: %q", done.Error)
+	}
+	// O relatório que o orquestrador lê carrega o ✗, não o ✓ — é dele que o
+	// modelo decide replanejar em vez de somar a recusa ao resultado.
+	if !fixture.provider.sawRequestContaining("✗ t1") {
+		t.Error("o relatório não marcou t1 como falha — o orquestrador leria a recusa como entrega")
+	}
+}
+
 // O bloco de delegação de um trabalhador não pode vazar como texto.
 //
 // `runWorker` só entende `aibot:tool`; se o trabalhador emitir `aibot:delegate`

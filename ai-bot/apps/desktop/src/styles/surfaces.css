@@ -716,6 +716,20 @@ button.chip {
   color: var(--faint);
 }
 
+/* O link do advisory: cor de link do app e o ícone de "sai daqui" colado —
+   avisar que o clique deixa o app é parte do link, não enfeite. */
+.finding-advisory {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.finding-advisory:hover {
+  text-decoration: underline;
+}
+
 .finding-patch {
   margin: 0;
   padding: 8px 10px;
@@ -862,6 +876,119 @@ button.chip {
 .flow-issue[data-severity="high"] {
   border-color: var(--danger);
   color: var(--danger);
+}
+
+/*
+ * O palco do @xyflow. A biblioteca MEDE o contêiner para montar o viewport, e
+ * altura por conteúdo aqui seria zero — o grafo existiria e não apareceria.
+ * A grade de pontos do CSS sai (padding 0, sem background-image): quem desenha
+ * a grade é o <Background> do próprio @xyflow, que acompanha o pan; a do CSS
+ * ficaria parada atrás e denunciaria dois planos.
+ */
+.flow-canvas-xy {
+  height: min(58vh, 620px);
+  padding: 0;
+  overflow: hidden;
+  background-image: none;
+}
+
+.flow-canvas-xy .react-flow__background {
+  color: var(--line);
+}
+
+/* Nó custom do fluxo: kind em cima, rótulo embaixo, aviso no canto. Os estados
+   reaproveitam o vocabulário do resto do app: failed = danger, running (o
+   selecionado) = accent. */
+.flow-xy-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 172px;
+  min-height: 52px;
+  padding: 9px 14px;
+  border: 1.25px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  font-size: var(--fs-small);
+  color: var(--ink);
+}
+
+.flow-xy-node[data-state="running"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 10%, var(--panel));
+}
+
+.flow-xy-node[data-state="failed"] {
+  border-color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 10%, var(--panel));
+}
+
+.flow-xy-kind {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.flow-xy-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Nó sem caminho de erro é o defeito mais comum do fluxo: funciona no exemplo
+   e para na primeira falha real. O ponto de aviso fica no nó, não só na lista. */
+.flow-xy-warn {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* As portas seguem a linguagem do desenho antigo: entrada vazada, saída cheia. */
+.flow-xy-node .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--line-strong);
+  background: var(--panel);
+}
+
+.flow-xy-node .react-flow__handle-right {
+  background: var(--line-strong);
+}
+
+.flow-canvas-xy .react-flow__edge-path {
+  stroke: var(--line-strong);
+}
+
+/* O caminho de erro sai tracejado e na cor de aviso — é rota de verdade, mas
+   não é o caminho feliz. */
+.flow-xy-edge-erro .react-flow__edge-path {
+  stroke: var(--warn);
+  stroke-dasharray: 5 4;
+}
+
+.flow-canvas-xy .react-flow__edge-textbg {
+  fill: var(--canvas);
+}
+
+.flow-canvas-xy .react-flow__edge-text {
+  fill: var(--muted);
+  font-size: var(--fs-micro);
+}
+
+/* Os controles de zoom no tema do app, não no branco default da biblioteca. */
+.flow-canvas-xy .react-flow__controls {
+  box-shadow: var(--shadow-soft);
+}
+
+.flow-canvas-xy .react-flow__controls-button {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  fill: var(--ink);
 }
 
 /* -------------------------------- treino -------------------------------- */

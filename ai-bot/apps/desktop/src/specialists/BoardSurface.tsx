@@ -27,6 +27,7 @@ import type { Escalate, Task, TaskProgress, WorkerDone } from "@aibot/contracts"
 import { outcomeOf } from "../lib/crew";
 import { SPECIALIST_ICON } from "../lib/specialists";
 import { useApp } from "../lib/store";
+import { BoardTopbarActions, TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface, hueStyle, resolveSpecialist } from "./ConversationSurface";
 
 /* --------------------------------- colunas ------------------------------ */
@@ -249,6 +250,13 @@ export function BoardSurface(): ReactNode {
 
   return (
     <div className="surface board-surface">
+      {/* Os botões desta superfície entram na barra do app por portal — o palco
+          não desenha barra própria (ver shell/TopbarActions, que também define
+          as ações). */}
+      <TopbarActions>
+        <BoardTopbarActions />
+      </TopbarActions>
+
       <div className="surface-toolbar">
         <span className="surface-title">Quadro</span>
         <span className="chip">

@@ -587,6 +587,17 @@ func (s *Supervisor) runWorker(
 				done.Error = "o trabalhador terminou sem produzir resultado"
 				return done
 			}
+			// RECUSA não é resultado. "Não posso ajudar com isso" saía daqui com
+			// ✓, entrava em `results` e virava o bloco de upstream das tarefas
+			// dependentes — que liam a recusa como se fosse o trabalho feito e
+			// construíam em cima. Reprovar aqui devolve a tarefa ao caminho de
+			// falha que o resto do arquivo já trata: sem `results`, com ✗ no
+			// relatório e com o portão da onda abrindo como abre para qualquer
+			// falha.
+			if refusal(result) {
+				done.Error = "o trabalhador recusou a tarefa: " + truncate(strings.TrimSpace(result), 200)
+				return done
+			}
 			// A CERCA, na hora de aceitar: o resultado só vira verdade se o
 			// worker AINDA detém o lease na época em que o plano foi congelado.
 			// Na v1 local isso sempre passa — mas é aqui que o PC-02 que perdeu
@@ -636,6 +647,82 @@ func (s *Supervisor) runWorker(
 // atinge só tarefas que pediram isolamento.
 func crewWorktreeID(turn, taskID string) string {
 	return turn + "-" + taskID
+}
+
+// refusalMaxLen é o teto acima do qual NENHUMA resposta é tratada como recusa.
+// A recusa pura é curta; uma resposta longa que começa recusando costuma seguir
+// com alternativa ou trabalho parcial, e reprová-la jogaria fora conteúdo que o
+// orquestrador sabe ler.
+const refusalMaxLen = 280
+
+// refusalPreambles são os enfeites que os modelos põem ANTES da recusa. São
+// descascados em laço porque eles se empilham ("Desculpe, mas eu não posso…").
+var refusalPreambles = []string{
+	// "desculpas" antes de "desculpa": o CutPrefix é ganancioso na ordem da
+	// lista, e cortar o singular primeiro deixaria um "s" órfão na frente.
+	"desculpe", "desculpas", "desculpa", "peco desculpas", "sinto muito", "lamento",
+	"infelizmente", "como modelo de linguagem", "como uma ia", "como ia",
+	"eu ", "mas ", "porem ",
+}
+
+// refusalMarkers são os começos que contam como recusa DEPOIS de descascar o
+// preâmbulo. A lista é deliberadamente estreita — verbos de recusar o PEDIDO
+// (ajudar, atender a esse/este, fazer isso), nunca verbos técnicos: "não posso
+// alterar o arquivo sem X, então fiz Y" é resposta de trabalho e começa igual.
+// O texto já chega sem acento em "não" (ver refusal), por isso só há "nao".
+var refusalMarkers = []string{
+	"nao posso ajudar", "nao posso te ajudar", "nao poderei ajudar",
+	"nao vou poder ajudar", "nao consigo ajudar", "nao vou ajudar",
+	"nao irei ajudar", "nao posso auxiliar",
+	"nao posso fazer isso", "nao posso fazer ess",
+	"nao posso realizar ess", "nao posso realizar est",
+	"nao posso completar ess", "nao posso completar est",
+	"nao posso atender a ess", "nao posso atender ess",
+	"nao posso atender a est", "nao posso atender est",
+	"me recuso", "recuso-me",
+	"i can't help", "i cannot help", "i can't assist", "i cannot assist",
+	"i won't help", "i can't comply", "i cannot comply",
+	"i'm unable to help", "i am unable to help",
+}
+
+// refusal detecta a resposta que é SÓ recusa.
+//
+// A pergunta que ela responde não é "o modelo disse não?" — respostas técnicas
+// dizem "não" o tempo todo e continuam sendo trabalho entregue. É "o trabalhador
+// devolveu ALGUMA COISA além da recusa?". Por isso a detecção é conservadora de
+// propósito: curta (o teto de tamanho), começando pela recusa (prefixo, não
+// substring) e com verbos de recusar o pedido, não de descrever o problema. O
+// falso negativo aqui custa uma recusa com ✓ — ruim, mas visível no relatório;
+// o falso positivo reprova trabalho feito, que é pior e não avisa.
+func refusal(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" || len(trimmed) > refusalMaxLen {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	// Normaliza as duas grafias que os modelos alternam: com e sem acento, e o
+	// apóstrofo tipográfico do inglês.
+	lower = strings.ReplaceAll(lower, "não", "nao")
+	lower = strings.ReplaceAll(lower, "ç", "c")
+	lower = strings.ReplaceAll(lower, "’", "'")
+
+	for changed := true; changed; {
+		changed = false
+		lower = strings.TrimLeft(lower, " \t.,!;:—–-")
+		for _, preamble := range refusalPreambles {
+			if rest, found := strings.CutPrefix(lower, preamble); found {
+				lower = rest
+				changed = true
+			}
+		}
+	}
+
+	for _, marker := range refusalMarkers {
+		if strings.HasPrefix(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // escalation detecta o pedido de escalação na resposta.

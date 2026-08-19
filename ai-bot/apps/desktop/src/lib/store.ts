@@ -58,6 +58,14 @@ import {
 } from "@aibot/contracts";
 import { DEFAULT_ENVIRONMENT, FALLBACK_ENVIRONMENTS } from "./environments";
 import { preferenceStorage } from "./persistStorage";
+import {
+  baixarArquivo,
+  coletarEventos,
+  eventosParaJson,
+  eventosParaMarkdown,
+  nomeDoArquivo
+} from "./sessionExport";
+import { expandSlashCommand } from "./slashCommands";
 import { FALLBACK_SPECIALISTS, specialistById } from "./specialists";
 import { createTransport, type Transport } from "./transport";
 
@@ -198,6 +206,23 @@ export interface AppActions {
   newSession(botId?: string): void;
   openSession(id: string): void;
   forkSession(id: string): void;
+  /** Apaga a conversa no gateway (DELETE) e tira a linha da barra na hora. */
+  deleteSession(id: string): void;
+  /**
+   * Baixa a conversa como arquivo: `.md` legível (só as falas) ou `.json` com
+   * os envelopes crus. Serialização em lib/sessionExport; a rota de eventos é
+   * a mesma do replay (GET /events), paginada até o fim.
+   */
+  exportSession(id: string, format: "md" | "json"): void;
+  /**
+   * Regenera a última resposta: trunca o log até ANTES da última pergunta
+   * (rota /truncate) e reenvia o mesmo texto. Sem o corte durável, o reenvio
+   * só acrescentaria — e a pergunta duplicaria para sempre no histórico que o
+   * modelo lê.
+   */
+  regenerateLastTurn(): void;
+  /** Mesmo corte do regenerar, mas devolve o texto ao composer para editar. */
+  editLastTurn(): void;
   setTheme(theme: "light" | "dark"): void;
   toggleRail(): void;
   setAvatarLabOpen(open: boolean): void;
@@ -706,6 +731,44 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "thinking": {
       const thinking = payloadOf<Thinking>(envelope);
       if (!thinking) return state;
+      /*
+       * RACIOCÍNIO ≠ rótulo de etapa. O gateway sempre mandou os dois pelo
+       * mesmo verbo; sem a marca `reasoning`, cada pedaço do raciocínio
+       * piscava no orbe (substituindo o anterior) e o texto morria ali. Com a
+       * marca, o texto ACUMULA na linha do falante — é o bloco recolhível que
+       * a superfície desenha — e o orbe ganha um rótulo fixo. Gateway antigo
+       * não manda o campo e cai no comportamento de sempre, logo abaixo.
+       */
+      if (thinking.reasoning === true && thinking.done !== true) {
+        if (thinking.label === "") return state;
+        const index = openLineIndex(state.lines, envelope.turn, envelope.from.id);
+        if (index < 0) {
+          // O raciocínio chega ANTES do primeiro delta: é ele que abre a linha
+          // do falante — e é nela que os deltas seguintes vão se pendurar.
+          return {
+            ...state,
+            thinking: "raciocinando",
+            lines: [
+              ...state.lines,
+              newLine(envelope, {
+                specialist: speakerOf(envelope, state.activeSpecialist),
+                model: state.activeModel,
+                reasoning: thinking.label,
+                streaming: true
+              })
+            ]
+          };
+        }
+        const line = state.lines[index];
+        if (!line) return state;
+        return {
+          ...state,
+          thinking: "raciocinando",
+          lines: patchLine(state.lines, index, {
+            reasoning: (line.reasoning ?? "") + thinking.label
+          })
+        };
+      }
       return { ...state, thinking: thinking.done === true ? "" : thinking.label };
     }
 
@@ -922,6 +985,31 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     }
 
     case "done": {
+      const done = payloadOf<Done>(envelope);
+      let lines = closeTurn(state.lines, envelope.turn);
+      /*
+       * AS MÉTRICAS DO TURNO ficam na última linha do assistente: o `done` já
+       * traz os tokens de saída, e a duração sai dos TIMESTAMPS dos envelopes
+       * (primeiro do turno → este), não do relógio da tela — o redutor é puro,
+       * e é isso que faz os números sobreviverem ao replay: reabrir a conversa
+       * mostra a mesma duração de quando ela aconteceu.
+       */
+      const index = lastAssistantIndex(lines, envelope.turn);
+      if (index >= 0) {
+        const primeira = lines.find((line) => line.turn === envelope.turn);
+        const fim = Date.parse(envelope.ts);
+        const inicio = primeira ? Date.parse(primeira.ts) : Number.NaN;
+        const patch: Partial<ConversationLine> = {};
+        if (Number.isFinite(fim) && Number.isFinite(inicio) && fim >= inicio) {
+          patch.durationMs = fim - inicio;
+        }
+        if (typeof done?.outputTokens === "number" && done.outputTokens > 0) {
+          patch.outputTokens = done.outputTokens;
+        }
+        if (Object.keys(patch).length > 0) {
+          lines = patchLine(lines, index, patch);
+        }
+      }
       return {
         ...state,
         busy: false,
@@ -932,7 +1020,7 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
           ...meta,
           turns: meta.turns + 1
         })),
-        lines: closeTurn(state.lines, envelope.turn)
+        lines
       };
     }
 
@@ -1044,6 +1132,31 @@ function currentTurn(lines: ConversationLine[]): string {
   return "";
 }
 
+/** O alvo do regenerar/editar: a última pergunta que está DE VERDADE no log. */
+export interface UltimoTurno {
+  /** O id da linha do usuário — é nela que o botão "editar" se pendura. */
+  lineId: string;
+  /** O seq da pergunta: o ponto de corte do /truncate (inclusive). */
+  seq: number;
+  turn: string;
+  text: string;
+}
+
+/**
+ * A última fala do usuário com `seq` real. Linhas sem seq (efêmeras, eco local)
+ * não servem de âncora: o corte é no LOG, e cortar por um número que o log não
+ * tem apagaria a conversa no lugar errado.
+ */
+export function ultimoTurnoDoUsuario(lines: ConversationLine[]): UltimoTurno | null {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line || line.role !== "user") continue;
+    if (line.seq <= 0 || !line.turn) return null;
+    return { lineId: line.id, seq: line.seq, turn: line.turn, text: line.text };
+  }
+  return null;
+}
+
 /** Limpa o que pertence a UMA conversa, preservando preferências e catálogo. */
 function conversationReset(): Partial<AppData> {
   return {
@@ -1067,6 +1180,54 @@ function conversationReset(): Partial<AppData> {
     attachments: [],
     error: ""
   };
+}
+
+/**
+ * O miolo do regenerar/editar — um só, porque os dois gestos são o MESMO corte
+ * com destinos diferentes para o texto (reenviar × devolver ao composer).
+ *
+ * A ordem importa e é esta: truncar no gateway (POST /truncate), REABRIR a
+ * sessão pelo transporte (re-hello: o replay reconstrói as linhas do log já
+ * cortado) e só então dispor do texto. Reenviar sem truncar era o defeito que
+ * a rota existe para impedir — a pergunta duplicava para sempre no histórico.
+ */
+function cortarUltimoTurno(
+  modo: "regenerar" | "editar",
+  get: () => AppState,
+  set: (partial: Partial<AppState>) => void
+): void {
+  const state = get();
+  const gesto = modo === "regenerar" ? "regenerar a resposta" : "editar a pergunta";
+  if (state.busy) {
+    // O gateway recusa truncar turno em execução (409); recusar aqui poupa a
+    // ida e diz o motivo com a palavra certa.
+    set({ error: `há uma resposta em andamento — interrompa antes de ${gesto}` });
+    return;
+  }
+  const alvo = ultimoTurnoDoUsuario(state.lines);
+  if (!alvo) return;
+  const sessao = state.session;
+  if (transport === null || sessao === null || sessao === "" || state.status !== "ready") {
+    set({ error: `sem conexão com o gateway — não deu para ${gesto}` });
+    return;
+  }
+  void transport
+    .post(`/v1/sessions/${encodeURIComponent(sessao)}/truncate`, { beforeSeq: alvo.seq })
+    .then(() => {
+      // Corte confirmado: a conversa reabre NA MESMA conexão e o replay traz o
+      // log já sem o último turno — as linhas locais não são fonte de nada.
+      transport?.switchSession(sessao);
+      if (modo === "editar") {
+        set({ ...conversationReset(), session: sessao, input: alvo.text });
+        return;
+      }
+      set({ ...conversationReset(), session: sessao });
+      get().send(alvo.text);
+    })
+    .catch((cause: unknown) => {
+      const reason = cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+      set({ error: `não deu para ${gesto}: ${reason}` });
+    });
 }
 
 export const useApp = create<AppState>()(
@@ -1173,7 +1334,11 @@ export const useApp = create<AppState>()(
 
       send: (text) => {
         const state = get();
-        const value = (text ?? state.input).trim();
+        // Comando de barra vira prompt completo AQUI, antes do transporte:
+        // `/review` literal deixava o modelo adivinhar o que fazer com uma
+        // linha de comando solta. O `/mode` NÃO é expandido — ele é verbo do
+        // gateway (ver slashCommands.ts).
+        const value = expandSlashCommand((text ?? state.input).trim());
         // Anexo sem texto vale como envio: "abre isso aqui" está implícito no
         // gesto de anexar — exigir uma frase junto seria cerimônia.
         if (value === "" && state.attachments.length === 0) return;
@@ -1366,6 +1531,55 @@ export const useApp = create<AppState>()(
             set({ error: `não deu para ramificar a conversa: ${reason}` });
           });
       },
+
+      deleteSession: (id) => {
+        if (transport === null) {
+          set({ error: "sem conexão com o gateway — não deu para apagar a conversa" });
+          return;
+        }
+        void transport
+          .del(`/v1/sessions/${encodeURIComponent(id)}`)
+          .then(() => {
+            const state = get();
+            // A linha sai da barra na hora; o próximo `ready` confirma a lista
+            // canônica (que já não tem a sessão — o gateway a apagou primeiro).
+            set({ sessions: state.sessions.filter((item) => item.id !== id) });
+            // Apagar a conversa ABERTA não pode deixar a tela escrevendo num
+            // log que não existe: volta ao começo, como a conversa nova.
+            if (state.session === id) get().newSession();
+          })
+          .catch((cause: unknown) => {
+            const reason = cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+            set({ error: `não deu para apagar a conversa: ${reason}` });
+          });
+      },
+
+      exportSession: (id, format) => {
+        // Capturado na entrada: o transporte pode virar null no meio da
+        // paginação (stop/reconexão), e o fio da exportação precisa ser UM só.
+        const wire = transport;
+        if (wire === null) {
+          set({ error: "sem conexão com o gateway — não deu para exportar a conversa" });
+          return;
+        }
+        const titulo = get().sessions.find((item) => item.id === id)?.title ?? "";
+        void coletarEventos((path) => wire.get(path), id)
+          .then((events) => {
+            if (format === "json") {
+              baixarArquivo(nomeDoArquivo(titulo, id, "json"), "application/json", eventosParaJson(events));
+              return;
+            }
+            baixarArquivo(nomeDoArquivo(titulo, id, "md"), "text/markdown", eventosParaMarkdown(events, titulo));
+          })
+          .catch((cause: unknown) => {
+            const reason = cause instanceof Error ? cause.message : "falha ao falar com o gateway";
+            set({ error: `não deu para exportar a conversa: ${reason}` });
+          });
+      },
+
+      regenerateLastTurn: () => cortarUltimoTurno("regenerar", get, set),
+
+      editLastTurn: () => cortarUltimoTurno("editar", get, set),
 
       setTheme: (theme) => set({ theme }),
 

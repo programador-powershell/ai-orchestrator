@@ -3,10 +3,11 @@
  *
  * A tela não roda scanner nenhum. Ela LÊ o que as ferramentas devolveram
  * (`secrets.scan`, `osv.query`) nas linhas da conversa: o achado nasce no
- * gateway, viaja como `tool.result` com JSON dentro de `output` e aqui vira
- * cartão. Por isso o parsing é deliberadamente tolerante — o formato exato é do
- * host, e um campo com outro nome não pode derrubar a superfície inteira; no
- * pior caso o achado aparece com menos detalhe.
+ * gateway, viaja como `tool.result` — relatório legível + bloco ```json
+ * demarcado no fim (lib/toolJson) — e aqui vira cartão. Por isso o parsing é
+ * deliberadamente tolerante — o formato exato é do host, e um campo com outro
+ * nome não pode derrubar a superfície inteira; no pior caso o achado aparece
+ * com menos detalhe.
  *
  * REGRA DE OURO desta tela: o valor do segredo NUNCA é lido nem renderizado.
  * Campos como `secret`, `match` e `value` são ignorados de propósito — a tela de
@@ -15,9 +16,11 @@
  */
 
 import { useMemo, useState } from "react";
-import { ArrowRight, ShieldCheck, Wand2 } from "lucide-react";
+import { ArrowRight, ExternalLink, ShieldCheck, Wand2 } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { structuredJson } from "../lib/toolJson";
 import { SurfaceStatus } from "../shell/StatusBar";
 
 /* ------------------------------ severidade ------------------------------ */
@@ -86,9 +89,23 @@ const SEVERITY_ALIAS: Record<string, Severity> = {
 /** As duas ferramentas que alimentam esta tela. */
 const SOURCE_TOOLS = ["secrets.scan", "osv.query"] as const;
 
+/**
+ * A CATEGORIA é derivada da ferramenta de origem, não de um campo do payload:
+ * um achado de secrets.scan é sempre um segredo, um de osv.query é sempre uma
+ * dependência — pedir isso ao payload seria uma segunda fonte para o mesmo
+ * dado, que um dia discordaria da primeira.
+ */
+const CATEGORIES = ["segredos", "dependências"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+function categoryOf(tool: string): Category {
+  return tool === "osv.query" ? "dependências" : "segredos";
+}
+
 interface Finding {
   key: string;
   tool: string;
+  category: Category;
   severity: Severity;
   title: string;
   /** Arquivo ou pacote — o "onde". */
@@ -100,6 +117,8 @@ interface Finding {
   patch: string;
   /** CVE/GHSA/regra — o identificador estável, quando existe. */
   reference: string;
+  /** Link do advisory (osv.dev) — só quando a origem o tem. */
+  url: string;
 }
 
 /* ------------------------------ parsing cru ----------------------------- */
@@ -129,14 +148,6 @@ function integer(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
-}
-
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -249,6 +260,19 @@ function patchOf(raw: Record<string, unknown>, fallbackTarget: string): string {
   return target ? `${target} → ${fixed}` : `atualizar para ${fixed}`;
 }
 
+/** O link do advisory: o que a origem mandou pronto, ou o do osv.dev montado
+ *  a partir do id — a convenção pública de https://osv.dev/vulnerability/{id}. */
+function advisoryUrl(raw: Record<string, unknown>, tool: string, reference: string): string {
+  const direct = firstText(raw, ["url", "link", "advisoryUrl"]);
+  // Só http(s) atravessa: um payload torto com javascript: aqui viraria um
+  // clique que roda script — a tela de segurança não pode ser o vetor.
+  if (/^https?:\/\//i.test(direct)) return direct;
+  if (tool === "osv.query" && reference !== "") {
+    return `https://osv.dev/vulnerability/${encodeURIComponent(reference)}`;
+  }
+  return "";
+}
+
 function toFinding(raw: unknown, tool: string, fallbackTarget: string, index: number): Finding | null {
   if (!isRecord(raw)) return null;
 
@@ -271,6 +295,7 @@ function toFinding(raw: unknown, tool: string, fallbackTarget: string, index: nu
   return {
     key: `${tool}:${reference || file || "achado"}:${index}`,
     tool,
+    category: categoryOf(tool),
     severity: severityOf(raw),
     title,
     file,
@@ -280,7 +305,8 @@ function toFinding(raw: unknown, tool: string, fallbackTarget: string, index: nu
     detail: detail === title ? "" : detail,
     path: traceOf(raw),
     patch: patchOf(raw, fallbackTarget),
-    reference: reference === title ? "" : reference
+    reference: reference === title ? "" : reference,
+    url: advisoryUrl(raw, tool, reference)
   };
 }
 
@@ -305,7 +331,9 @@ function collectFindings(results: ReadonlyArray<ToolResult | null>): Finding[] {
   const findings: Finding[] = [];
   for (const result of results) {
     if (!result?.output) continue;
-    const parsed = parseJson(result.output);
+    // O gateway devolve o relatório legível + bloco ```json no fim; resultado
+    // antigo, só texto, cai em null e a tela fica no vazio digno.
+    const parsed = structuredJson(result.output);
     if (parsed === null) continue;
     const fallbackTarget = isRecord(parsed) ? packageLabel(parsed) : "";
     const items = listOf(parsed, [
@@ -341,10 +369,24 @@ function applyRequest(finding: Finding): string {
 
 /* ------------------------------ componente ------------------------------ */
 
+/**
+ * O advisory abre no NAVEGADOR da pessoa, nunca navega a janela do app: a
+ * janela carrega a ponte nativa do Tauri, e apontá-la para um site de terceiro
+ * entregaria a ponte junto (a mesma razão do sandbox vazio do CanvasSurface).
+ * O plugin-opener já está na capability `default`; fora do Tauri (dev no
+ * navegador) o fallback é a aba nova de sempre.
+ */
+function openAdvisory(url: string): void {
+  openUrl(url).catch(() => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  });
+}
+
 export function FindingsSurface() {
   const lines = useApp((state) => state.lines);
   const setInput = useApp((state) => state.setInput);
   const [filter, setFilter] = useState<Severity | "all">("all");
+  const [category, setCategory] = useState<Category | "all">("all");
 
   // MEMO EM DUAS ETAPAS: a varredura por fonte é barata e roda por delta; o
   // PARSE dos achados só roda quando algum resultado troca de identidade — a
@@ -361,13 +403,31 @@ export function FindingsSurface() {
     return tally;
   }, [findings]);
 
+  const categoryCounts = useMemo(() => {
+    const tally: Record<Category, number> = { segredos: 0, dependências: 0 };
+    for (const finding of findings) tally[finding.category] += 1;
+    return tally;
+  }, [findings]);
+
+  // "N pacotes vulneráveis" conta PACOTES, não achados: o mesmo lodash com
+  // quatro CVEs é UM pacote para atualizar — e é esse número que dimensiona o
+  // trabalho.
+  const vulnerablePackages = useMemo(() => {
+    const packages = new Set<string>();
+    for (const finding of findings) {
+      if (finding.category === "dependências" && finding.file !== "") packages.add(finding.file);
+    }
+    return packages.size;
+  }, [findings]);
+
   const groups = useMemo(() => {
-    const visible = filter === "all" ? findings : findings.filter((item) => item.severity === filter);
+    const bySeverity = filter === "all" ? findings : findings.filter((item) => item.severity === filter);
+    const visible = category === "all" ? bySeverity : bySeverity.filter((item) => item.category === category);
     return SEVERITIES.map((severity) => ({
       severity,
       items: visible.filter((item) => item.severity === severity)
     })).filter((group) => group.items.length > 0);
-  }, [findings, filter]);
+  }, [findings, filter, category]);
 
   return (
     <section className="surface findings-surface">
@@ -395,9 +455,46 @@ export function FindingsSurface() {
 
       <div className="surface-toolbar">
         <span className="surface-title">Achados</span>
+
+        {/* Os dois números que resumem a mesa: o que queima (críticos/altos) e
+            o tamanho do trabalho de dependência (pacotes, não CVEs). Só
+            aparecem quando existem — zero aqui pareceria "está limpo", e o que
+            a tela sabe é outra coisa. */}
+        {counts.critical + counts.high > 0 ? (
+          <span className="chip" data-active="true" title="achados de severidade crítica ou alta">
+            {counts.critical + counts.high} críticos/altos
+          </span>
+        ) : null}
+        {vulnerablePackages > 0 ? (
+          <span className="chip" title="pacotes distintos com vulnerabilidade conhecida">
+            {vulnerablePackages} {vulnerablePackages === 1 ? "pacote vulnerável" : "pacotes vulneráveis"}
+          </span>
+        ) : null}
+
         <span className="surface-toolbar-spacer" />
 
-        {/* Filtro por severidade: o contador vive no .badge-risk de cada chip. */}
+        {/* Filtro por CATEGORIA (a origem do achado)… */}
+        {CATEGORIES.map((item) => (
+          <button
+            key={item}
+            type="button"
+            className="chip"
+            data-active={category === item ? "true" : "false"}
+            aria-pressed={category === item}
+            disabled={categoryCounts[item] === 0}
+            onClick={() => setCategory(category === item ? "all" : item)}
+            title={
+              item === "segredos"
+                ? `${categoryCounts[item]} de secrets.scan`
+                : `${categoryCounts[item]} de osv.query`
+            }
+          >
+            {item}
+            <span className="badge-risk">{categoryCounts[item]}</span>
+          </button>
+        ))}
+
+        {/* …e por severidade: o contador vive no .badge-risk de cada chip. */}
         <button
           type="button"
           className="chip"
@@ -466,7 +563,30 @@ export function FindingsSurface() {
                           {finding.line !== undefined ? `:${finding.line}` : ""}
                         </span>
                       ) : null}
-                      {finding.reference ? <span> · {finding.reference}</span> : null}
+                      {finding.url ? (
+                        // O href fica no <a> para hover/copiar; o clique é
+                        // interceptado para abrir no navegador de fora (ver
+                        // openAdvisory) em vez de navegar a janela do app.
+                        <span>
+                          {" · "}
+                          <a
+                            className="finding-advisory"
+                            href={finding.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={`abrir ${finding.url} no navegador`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              openAdvisory(finding.url);
+                            }}
+                          >
+                            {finding.reference || "advisory"}
+                            <ExternalLink size={11} aria-hidden />
+                          </a>
+                        </span>
+                      ) : finding.reference ? (
+                        <span> · {finding.reference}</span>
+                      ) : null}
                       <span> · {finding.tool}</span>
                     </p>
 

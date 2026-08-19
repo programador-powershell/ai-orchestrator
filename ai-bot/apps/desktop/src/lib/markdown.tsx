@@ -4,7 +4,9 @@
  * Por que não uma biblioteca: a política de TI/SI da casa fixa a lista de
  * dependências permitidas, e nenhum renderizador de markdown está nela. O
  * subconjunto que o modelo realmente usa em respostas de chat é pequeno —
- * parágrafo, ênfase, código, lista e título — e cabe em um arquivo auditável.
+ * parágrafo, ênfase, código, lista, título, link, tabela GFM, citação e régua
+ * — e cabe em um arquivo auditável. O que fica FORA, de propósito: HTML cru
+ * (nunca), imagem, nota de rodapé e escape de `\|` dentro de tabela.
  *
  * Por que NUNCA `dangerouslySetInnerHTML`: o texto vem de um modelo de
  * linguagem e pode conter markup (inclusive `<script>` vindo de um arquivo que
@@ -19,10 +21,15 @@ import { Check, Copy } from "lucide-react";
 
 /**
  * A ordem da alternação é a precedência: crase primeiro, para que
- * `**isto**` dentro de código continue literal; depois `**forte**`; por último
- * `*ênfase*`, que é o padrão mais frouxo.
+ * `**isto**` dentro de código continue literal; depois o link; depois
+ * `**forte**`; por último `*ênfase*`, que é o padrão mais frouxo.
+ *
+ * O ESQUEMA do link mora NA REGEX de propósito: só `https?://` e `mailto:`
+ * viram `<a>`. Um `[x](javascript:...)` simplesmente não casa e fica como
+ * texto — esta é a sanitização, e ela não depende de nenhuma checagem depois.
  */
-const INLINE_SOURCE = "`([^`]+)`|\\*\\*([\\s\\S]+?)\\*\\*|\\*([^*\\n]+)\\*";
+const INLINE_SOURCE =
+  "`([^`]+)`|\\[([^\\]\\n]+)\\]\\((https?://[^\\s)]+|mailto:[^\\s)]+)\\)|\\*\\*([\\s\\S]+?)\\*\\*|\\*([^*\\n]+)\\*";
 
 /**
  * A regex é criada a cada chamada de propósito. Uma constante com a flag `g`
@@ -40,14 +47,30 @@ function renderInline(text: string, key: string): ReactNode[] {
     if (match.index > last) out.push(text.slice(last, match.index));
 
     const code = match[1];
-    const strong = match[2];
-    const emphasis = match[3];
+    const linkLabel = match[2];
+    const linkHref = match[3];
+    const strong = match[4];
+    const emphasis = match[5];
 
     if (code !== undefined) {
       out.push(
         <code className="md-code" key={`${key}-c${n}`}>
           {code}
         </code>
+      );
+    } else if (linkLabel !== undefined && linkHref !== undefined) {
+      // target _blank + noopener: o app é uma WebView — navegar a própria
+      // janela para um site trocaria o AI-BOT inteiro pela página do link.
+      out.push(
+        <a
+          className="md-link"
+          key={`${key}-a${n}`}
+          href={linkHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {renderInline(linkLabel, `${key}-a${n}`)}
+        </a>
       );
     } else if (strong !== undefined) {
       out.push(<strong key={`${key}-s${n}`}>{renderInline(strong, `${key}-s${n}`)}</strong>);
@@ -132,9 +155,64 @@ const RE_FENCE_END = /^\s*`{3,}\s*$/;
 const RE_HEADING = /^(#{1,3})\s+(.+)$/;
 const RE_BULLET = /^\s*[-*]\s+(.+)$/;
 const RE_ORDERED = /^\s*(\d{1,9})[.)]\s+(.+)$/;
+/** Régua horizontal. Não colide com a lista: `- item` exige espaço e conteúdo. */
+const RE_HR = /^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/;
+const RE_QUOTE = /^\s*>\s?(.*)$/;
+/**
+ * Linha que PODE ser de tabela: exige o pipe de abertura de propósito. O GFM
+ * aceita tabela sem ele, mas aí qualquer frase com `|` no meio viraria
+ * candidata — e o custo de exigir é zero, porque modelo escreve tabela com as
+ * bordas.
+ */
+const RE_TABLE_LINE = /^\s*\|/;
 
-function startsBlock(line: string): boolean {
-  return RE_FENCE.test(line) || RE_HEADING.test(line) || RE_BULLET.test(line) || RE_ORDERED.test(line);
+/** Fatia uma linha de tabela em células. Sem escape de `\|` — subconjunto declarado. */
+function splitRow(line: string): string[] {
+  let body = line.trim();
+  if (body.startsWith("|")) body = body.slice(1);
+  if (body.endsWith("|")) body = body.slice(0, -1);
+  return body.split("|").map((cell) => cell.trim());
+}
+
+/** A linha separadora do cabeçalho: `| --- | :---: |`. É ela que faz tabela ser tabela. */
+function isTableDelim(line: string): boolean {
+  if (!RE_TABLE_LINE.test(line)) return false;
+  const cells = splitRow(line);
+  return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
+/** Uma tabela começa quando a linha é de tabela E a seguinte é o separador. */
+function isTableStart(lines: string[], index: number): boolean {
+  return RE_TABLE_LINE.test(lines[index] ?? "") && isTableDelim(lines[index + 1] ?? "");
+}
+
+/** O alinhamento que o separador pediu; `undefined` é a esquerda do CSS. */
+function alignOf(cell: string): "center" | "right" | undefined {
+  const left = cell.startsWith(":");
+  const right = cell.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  return undefined;
+}
+
+/**
+ * O que interrompe um parágrafo. Espelha EXATAMENTE os desvios do laço de
+ * blocos — se os dois divergirem, uma linha que o laço trata como bloco entra
+ * no parágrafo anterior (ou o contrário) e o laço trava sem consumir nada. A
+ * tabela precisa da linha SEGUINTE (só o separador a torna tabela), por isso a
+ * assinatura recebe o índice e não a linha.
+ */
+function startsBlock(lines: string[], index: number): boolean {
+  const line = lines[index] ?? "";
+  return (
+    RE_FENCE.test(line) ||
+    RE_HEADING.test(line) ||
+    RE_HR.test(line) ||
+    RE_QUOTE.test(line) ||
+    RE_BULLET.test(line) ||
+    RE_ORDERED.test(line) ||
+    isTableStart(lines, index)
+  );
 }
 
 /** Título com nível variável sem `any`: o mapa fecha o tipo do elemento. */
@@ -217,6 +295,85 @@ function parseBlocks(lines: string[], firstKey: number): ReactNode[] {
       continue;
     }
 
+    if (RE_HR.test(raw)) {
+      blocks.push(<hr className="md-hr" key={`b${k}`} />);
+      k += 1;
+      i += 1;
+      continue;
+    }
+
+    if (RE_QUOTE.test(raw)) {
+      // Junta as linhas contíguas de `>` e reparseia o MIOLO: citação carrega
+      // parágrafos, listas e até outra citação. As chaves internas recomeçam
+      // do zero de propósito — elas são filhas do blockquote, um espaço de
+      // irmãos próprio, e o contador de fora anda UMA vez (a invariante do
+      // parse incremental é por nó empurrado aqui fora).
+      const inner: string[] = [];
+      while (i < lines.length) {
+        const quoted = RE_QUOTE.exec(lines[i] ?? "");
+        if (!quoted) break;
+        inner.push(quoted[1] ?? "");
+        i += 1;
+      }
+      blocks.push(
+        <blockquote className="md-quote" key={`b${k}`}>
+          {parseBlocks(inner, 0)}
+        </blockquote>
+      );
+      k += 1;
+      continue;
+    }
+
+    if (isTableStart(lines, i)) {
+      const header = splitRow(raw);
+      const aligns = splitRow(lines[i + 1] ?? "").map(alignOf);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && RE_TABLE_LINE.test(lines[i] ?? "") && !isTableDelim(lines[i] ?? "")) {
+        rows.push(splitRow(lines[i] ?? ""));
+        i += 1;
+      }
+      // As linhas do corpo são NORMALIZADAS à largura do cabeçalho (célula a
+      // mais cai, a menos vira vazia), como no GFM: uma linha torta do modelo
+      // não pode desalinhar as colunas da tabela inteira.
+      blocks.push(
+        <div className="md-table-wrap" key={`b${k}`}>
+          <table className="md-table">
+            <thead>
+              <tr>
+                {header.map((cell, column) => (
+                  <th
+                    key={`b${k}-h${column}`}
+                    style={aligns[column] ? { textAlign: aligns[column] } : undefined}
+                  >
+                    {renderInline(cell, `b${k}-h${column}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            {rows.length > 0 ? (
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={`b${k}-r${index}`}>
+                    {header.map((_, column) => (
+                      <td
+                        key={`b${k}-r${index}c${column}`}
+                        style={aligns[column] ? { textAlign: aligns[column] } : undefined}
+                      >
+                        {renderInline(row[column] ?? "", `b${k}-r${index}c${column}`)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            ) : null}
+          </table>
+        </div>
+      );
+      k += 1;
+      continue;
+    }
+
     if (RE_BULLET.test(raw)) {
       const items: string[] = [];
       while (i < lines.length) {
@@ -260,7 +417,7 @@ function parseBlocks(lines: string[], firstKey: number): ReactNode[] {
     const paragraph: string[] = [];
     while (i < lines.length) {
       const current = lines[i] ?? "";
-      if (current.trim() === "" || startsBlock(current)) break;
+      if (current.trim() === "" || startsBlock(lines, i)) break;
       paragraph.push(current);
       i += 1;
     }

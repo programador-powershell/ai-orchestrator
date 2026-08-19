@@ -129,6 +129,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /v1/sessions", s.auth(s.listSessions))
 	mux.Handle("POST /v1/sessions", s.auth(s.createSession))
+	// Busca por conteúdo (Ctrl+K). Registrada como literal: no ServeMux o
+	// segmento fixo "search" vence o coringa {id} da rota abaixo.
+	mux.Handle("GET /v1/sessions/search", s.auth(s.searchSessions))
 	mux.Handle("GET /v1/sessions/{id}", s.auth(s.getSession))
 	mux.Handle("DELETE /v1/sessions/{id}", s.auth(s.deleteSession))
 	mux.Handle("GET /v1/sessions/{id}/events", s.auth(s.sessionEvents))
@@ -137,6 +140,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/sessions/{id}/environment", s.auth(s.postEnvironment))
 	// Ramifica a conversa: copia o prefixo do log para uma sessão nova (fork.go).
 	mux.Handle("POST /v1/sessions/{id}/fork", s.auth(s.postFork))
+	// Corta o fim do log — o "regenerar"/"editar" do cliente (truncate.go).
+	mux.Handle("POST /v1/sessions/{id}/truncate", s.auth(s.postTruncate))
 	mux.Handle("GET /v1/sessions/{id}/sse", s.auth(s.sessionSSE))
 
 	mux.Handle("POST /v1/approvals", s.auth(s.postApproval))

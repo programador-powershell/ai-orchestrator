@@ -7,7 +7,8 @@
  * afinando um treino sobre dados que ninguém olhou, e nenhuma taxa de
  * aprendizado conserta isso.
  *
- * Os dados vêm do `tool.result` de `finetune.status`.
+ * Os dados vêm do `tool.result` de `finetune.status` — relatório legível +
+ * bloco ```json demarcado no fim (lib/toolJson).
  */
 
 import { useMemo } from "react";
@@ -26,6 +27,8 @@ import {
 } from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
+import { structuredJson } from "../lib/toolJson";
+import { TopbarActions, TrainTopbarActions } from "../shell/TopbarActions";
 
 /* -------------------------------- modelo -------------------------------- */
 
@@ -131,14 +134,6 @@ function firstNumber(source: Record<string, unknown>, keys: string[]): number | 
   return undefined;
 }
 
-function parseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 function recordAt(source: Record<string, unknown>, keys: string[]): Record<string, unknown> | null {
   for (const key of keys) {
     const candidate = source[key];
@@ -168,7 +163,10 @@ function pairs(source: Record<string, unknown> | null): [string, string][] {
 function runStateOf(raw: string): RunState {
   const value = raw.toLowerCase();
   if (!value) return "unknown";
-  if (value.startsWith("queu") || value.startsWith("pend") || value.startsWith("fila")) return "queued";
+  // "validating_files" é a antessala da fila no dialeto da OpenAI: o treino já
+  // foi aceito e ainda não roda — para quem olha a tela, é fila.
+  if (value.startsWith("queu") || value.startsWith("pend") || value.startsWith("fila") || value.startsWith("valid"))
+    return "queued";
   if (value.startsWith("run") || value.startsWith("train") || value.startsWith("rod")) return "running";
   if (
     value.startsWith("succ") ||
@@ -273,7 +271,9 @@ function latestResult(lines: ConversationLine[], tool: string): ToolResult | nul
 
 function buildModel(result: ToolResult | null): TrainModel {
   if (!result?.output) return EMPTY_MODEL;
-  const parsed = parseJson(result.output);
+  // O gateway devolve o relatório legível + bloco ```json no fim; resultado
+  // antigo, só texto, cai em null e a tela fica no vazio digno.
+  const parsed = structuredJson(result.output);
   if (!isRecord(parsed)) return EMPTY_MODEL;
 
   const datasetRecord = recordAt(parsed, ["dataset", "data", "corpus"]) ?? parsed;
@@ -331,6 +331,13 @@ export function TrainSurface() {
 
   return (
     <section className="surface train-surface">
+      {/* Os botões desta superfície entram na barra do app por portal — o palco
+          não desenha barra própria (ver shell/TopbarActions, que também define
+          as ações). */}
+      <TopbarActions>
+        <TrainTopbarActions />
+      </TopbarActions>
+
       <div className="surface-toolbar">
         <span className="surface-title">Tuning</span>
         {train.local ? <span className="chip">local</span> : null}

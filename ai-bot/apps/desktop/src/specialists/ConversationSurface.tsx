@@ -25,7 +25,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { Bot, Check, ChevronRight, MessagesSquare, Wrench, X } from "lucide-react";
+import { Bot, Brain, Check, ChevronRight, Copy, MessagesSquare, Pencil, RotateCcw, Wrench, X } from "lucide-react";
 import { MASTER_ID } from "@aibot/contracts";
 import type {
   Avatar,
@@ -39,7 +39,7 @@ import type {
 } from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { MASTER, SPECIALIST_ICON, hueStyle, specialistById } from "../lib/specialists";
-import { useApp } from "../lib/store";
+import { ultimoTurnoDoUsuario, useApp } from "../lib/store";
 import { createMarkdownStream, renderMarkdown, type MarkdownStream } from "../lib/markdown";
 import { SurfaceStatus } from "../shell/StatusBar";
 
@@ -99,6 +99,20 @@ function handoffTitle(route: Route): string {
 
 function clamp(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+/**
+ * A duração do turno em gente: "870 ms", "12,4 s", "2min 05s". A vírgula é de
+ * propósito — a UI inteira fala pt-BR, e "12.4 s" leria como milhar.
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1).replace(".", ",")} s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${minutes}min ${String(rest).padStart(2, "0")}s`;
 }
 
 function scalarOf(value: unknown): string {
@@ -218,6 +232,67 @@ function ErrorNote({ error }: { error: ProtocolError }): ReactNode {
 }
 
 /**
+ * O raciocínio do modelo, RECOLHIDO por padrão. Fechado porque é bastidor: quem
+ * quer a resposta lê a resposta; quem quer entender COMO o modelo chegou nela
+ * abre. Mesmo padrão de chip do ToolStrip — inventar um terceiro jeito de
+ * recolher coisas nesta tela seria ruído.
+ */
+function ReasoningStrip({ text }: { text: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  if (text === "") return null;
+  return (
+    <div className="line-reasoning">
+      <button
+        type="button"
+        className="chip"
+        data-active={open ? "true" : "false"}
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        title="O raciocínio que o modelo emitiu antes de responder"
+      >
+        <ChevronRight aria-hidden="true" />
+        <Brain aria-hidden="true" />
+        raciocínio
+      </button>
+      {open ? <pre className="line-reasoning-text">{text}</pre> : null}
+    </div>
+  );
+}
+
+/** Copiar UMA mensagem, com o mesmo feedback do botão do bloco de código. */
+function CopyLineButton({ text }: { text: string }): ReactNode {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  function copy(): void {
+    // Em contexto não seguro o clipboard não existe; o botão só não confirma,
+    // em vez de estourar dentro do render da conversa.
+    void navigator.clipboard?.writeText(text).then(
+      () => setCopied(true),
+      () => setCopied(false)
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="line-action"
+      onClick={copy}
+      title={copied ? "copiado" : "copiar a mensagem"}
+      aria-label={copied ? "copiado" : "copiar a mensagem"}
+    >
+      {copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
+      <span>{copied ? "copiado" : "copiar"}</span>
+    </button>
+  );
+}
+
+/**
  * O corpo em markdown de UMA linha — o caminho quente do app inteiro.
  *
  * Isolado e memoizado porque um delta re-renderiza o fio todo: sem isto, cada
@@ -272,12 +347,22 @@ const LineMarkdown = memo(function LineMarkdown({
 const Row = memo(function Row({
   line,
   spec,
-  avatar
+  avatar,
+  podeRegenerar = false,
+  podeEditar = false
 }: {
   line: ConversationLine;
   spec: SpecialistDefinition;
   avatar: Avatar;
+  /** Última resposta do turno mais recente, com a conversa parada: pode refazer. */
+  podeRegenerar?: boolean;
+  /** Última pergunta, idem: pode voltar ao composer para editar. */
+  podeEditar?: boolean;
 }): ReactNode {
+  // As ações vêm do store DENTRO da linha (referências estáveis do zustand):
+  // passá-las como closures do pai quebraria o memo em todo render do fio.
+  const regenerate = useApp((state) => state.regenerateLastTurn);
+  const edit = useApp((state) => state.editLastTurn);
   const isAssistant = line.role === "assistant";
   return (
     <div
@@ -302,9 +387,53 @@ const Row = memo(function Row({
             `::after` do corpo, e com o nome no fim ele piscaria embaixo da
             assinatura em vez de no fim da fala. */}
         {isAssistant ? <div className="line-who line-meta">{spec.name}</div> : null}
+        {isAssistant ? <ReasoningStrip text={line.reasoning ?? ""} /> : null}
         <LineMarkdown id={line.id} text={line.text} streaming={line.streaming === true} />
         <ToolStrip calls={line.toolCalls} results={line.toolResults} />
         {line.error ? <ErrorNote error={line.error} /> : null}
+        {/* O rodapé da bolha: métricas do turno + ações por mensagem. Só de
+            resposta FECHADA — número parcial de resposta em curso é chute. */}
+        {isAssistant && line.streaming !== true ? (
+          <div className="line-foot line-meta">
+            {typeof line.durationMs === "number" ? (
+              <span className="line-foot-item" title="Duração do turno, do pedido ao fim da resposta">
+                {formatDuration(line.durationMs)}
+              </span>
+            ) : null}
+            {typeof line.outputTokens === "number" ? (
+              <span className="line-foot-item" title="Tokens de saída informados pelo gateway">
+                {line.outputTokens.toLocaleString("pt-BR")} tokens
+              </span>
+            ) : null}
+            <CopyLineButton text={line.text} />
+            {podeRegenerar ? (
+              <button
+                type="button"
+                className="line-action"
+                onClick={regenerate}
+                title="Regenerar — apaga esta resposta do histórico e reenvia a mesma pergunta"
+                aria-label="Regenerar a última resposta"
+              >
+                <RotateCcw size={12} aria-hidden />
+                <span>regenerar</span>
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {!isAssistant && podeEditar ? (
+          <div className="line-foot line-meta">
+            <button
+              type="button"
+              className="line-action"
+              onClick={edit}
+              title="Editar — apaga este turno do histórico e devolve o texto ao campo para corrigir"
+              aria-label="Editar a última pergunta"
+            >
+              <Pencil size={12} aria-hidden />
+              <span>editar</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -412,6 +541,8 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   const specialists = useApp((state) => state.specialists);
   const avatars = useApp((state) => state.avatars);
   const activeSpecialist = useApp((state) => state.activeSpecialist);
+  const busy = useApp((state) => state.busy);
+  const status = useApp((state) => state.status);
 
   const scroller = useRef<HTMLDivElement | null>(null);
   /**
@@ -429,6 +560,25 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   }, []);
 
   const items = useMemo(() => {
+    /*
+     * O regenerar/editar só existe para o ÚLTIMO turno, com a conversa parada:
+     * o corte no gateway é a partir da última pergunta, então oferecer o botão
+     * numa resposta antiga prometeria apagar só ela — e apagaria tudo dali para
+     * baixo. `ultimaResposta` é a última linha de assistente daquele turno, que
+     * é onde o botão de refazer mora.
+     */
+    const ultimo = !busy && status === "ready" ? ultimoTurnoDoUsuario(lines) : null;
+    let ultimaResposta = "";
+    if (ultimo) {
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index];
+        if (line && line.role === "assistant" && line.turn === ultimo.turn) {
+          ultimaResposta = line.id;
+          break;
+        }
+      }
+    }
+
     let previous = "";
     return lines.map((line) => {
       const id = line.specialist ?? "";
@@ -438,9 +588,14 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
       const changed = Boolean(line.route) && id !== "" && id !== previous;
       const handoff = changed && line.route ? { route: line.route, spec: resolveSpecialist(specialists, id) } : null;
       if (id !== "") previous = id;
-      return { line, handoff };
+      return {
+        line,
+        handoff,
+        podeRegenerar: ultimaResposta !== "" && line.id === ultimaResposta,
+        podeEditar: ultimo !== null && line.id === ultimo.lineId
+      };
     });
-  }, [lines, specialists]);
+  }, [lines, specialists, busy, status]);
 
   const tail = lines.length > 0 ? lines[lines.length - 1] : undefined;
   const tailLength = tail ? tail.text.length : 0;
@@ -493,12 +648,18 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
           {items.length === 0 ? (
             <Hero compact={compact} />
           ) : (
-            items.map(({ line, handoff }) => {
+            items.map(({ line, handoff, podeRegenerar, podeEditar }) => {
               const spec = resolveSpecialist(specialists, line.specialist ?? "");
               return (
                 <div className="line-group" key={line.id}>
                   {handoff ? <Handoff route={handoff.route} spec={handoff.spec} /> : null}
-                  <Row line={line} spec={spec} avatar={avatarOf(avatars, spec)} />
+                  <Row
+                    line={line}
+                    spec={spec}
+                    avatar={avatarOf(avatars, spec)}
+                    podeRegenerar={podeRegenerar}
+                    podeEditar={podeEditar}
+                  />
                 </div>
               );
             })

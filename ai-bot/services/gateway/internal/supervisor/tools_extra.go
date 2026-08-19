@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,8 +33,13 @@ type SecretUser interface {
 
 // InstallExtraTools registra as ferramentas resolvidas no gateway.
 func (t *Toolbox) InstallExtraTools(registry *Registry) {
+	// secrets.scan e osv.query soletram o bloco ```json do fim: é dele que a
+	// tela de Achados monta os cartões — o relatório em texto continua na
+	// frente para o modelo e para a pessoa.
 	registry.Register("secrets.scan",
-		"procura segredo exposto nos arquivos do projeto. args: {path?}", t.secretsScan)
+		"procura segredo exposto nos arquivos do projeto e devolve o relatório + bloco ```json "+
+			"{scanned, findings: [{severity, rule, file, line, evidence}]} (evidence sempre mascarada). "+
+			"args: {path?}", t.secretsScan)
 	// As duas ferramentas de dados devolvem JSON, não texto: a tela de Dados
 	// (SchemaSurface) desenha o diagrama a partir do tool.result, e texto plano
 	// deixava o painel vazio para sempre. A descrição soletra o formato porque
@@ -50,7 +56,9 @@ func (t *Toolbox) InstallExtraTools(registry *Registry) {
 			"Dados transforma em diagrama ERD. args: os mesmos de sql.render, mais {format?: \"erd\"} para incluir também "+
 			"o diagrama textual no campo \"erd\"", t.schemaExport)
 	registry.Register("osv.query",
-		"consulta vulnerabilidade conhecida de uma dependência. args: {ecosystem, name, version}", t.osvQuery)
+		"consulta vulnerabilidade conhecida de uma dependência e devolve o relatório + bloco ```json "+
+			"{package, version, vulns: [{id, aliases, severity?, summary, url}]}. "+
+			"args: {ecosystem, name, version}", t.osvQuery)
 	registry.Register("webhook.post",
 		"dispara um webhook pela REFERÊNCIA no cofre. args: {secretRef, body}", t.webhookPost)
 
@@ -78,22 +86,29 @@ func (t *Toolbox) InstallExtraTools(registry *Registry) {
 // encontrado NUNCA é ecoado inteiro — mostrar o segredo dentro do relatório de
 // "achamos um segredo exposto" é expor o segredo de novo, agora no histórico da
 // conversa e no log do gateway.
+//
+// A severidade é do PADRÃO, não do arquivo: chave de provedor e chave privada
+// são "critical" porque valem sozinhas e não expiram por conta própria; JWT,
+// senha em atribuição e credencial em URL são "high" porque dependem de
+// contexto (o alvo, a validade) para virar acesso. É esta severidade que a
+// tela de Achados usa para ordenar e contar.
 type secretPattern struct {
-	name    string
-	pattern *regexp.Regexp
+	name     string
+	severity string
+	pattern  *regexp.Regexp
 }
 
 var secretPatterns = []secretPattern{
-	{"chave da AWS", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},
-	{"token do GitHub", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
-	{"chave da OpenAI", regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}\b`)},
-	{"chave da Anthropic", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)},
-	{"chave do Google", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
-	{"token do Slack", regexp.MustCompile(`\bxox[baprs]-[0-9A-Za-z-]{10,}\b`)},
-	{"chave privada", regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`)},
-	{"JWT", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)},
-	{"senha em atribuição", regexp.MustCompile(`(?i)\b(?:password|senha|passwd|secret|api[_-]?key)\s*[:=]\s*["'][^"'\s]{8,}["']`)},
-	{"credencial em URL", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s:@]+@`)},
+	{"chave da AWS", "critical", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},
+	{"token do GitHub", "critical", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"chave da OpenAI", "critical", regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}\b`)},
+	{"chave da Anthropic", "critical", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)},
+	{"chave do Google", "critical", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`)},
+	{"token do Slack", "critical", regexp.MustCompile(`\bxox[baprs]-[0-9A-Za-z-]{10,}\b`)},
+	{"chave privada", "critical", regexp.MustCompile(`-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----`)},
+	{"JWT", "high", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)},
+	{"senha em atribuição", "high", regexp.MustCompile(`(?i)\b(?:password|senha|passwd|secret|api[_-]?key)\s*[:=]\s*["'][^"'\s]{8,}["']`)},
+	{"credencial em URL", "high", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s:@]+@`)},
 }
 
 // scanSkip evita o falso positivo mais comum: a pasta de dependências, cheia de
@@ -122,13 +137,7 @@ func (t *Toolbox) secretsScan(ctx context.Context, sessionID string, raw json.Ra
 		return "", err
 	}
 
-	type finding struct {
-		file string
-		line int
-		kind string
-		hint string
-	}
-	var findings []finding
+	var findings []secretFinding
 	scanned := 0
 
 	walkErr := filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
@@ -160,11 +169,12 @@ func (t *Toolbox) secretsScan(ctx context.Context, sessionID string, raw json.Ra
 				if match == "" {
 					continue
 				}
-				findings = append(findings, finding{
-					file: filepath.ToSlash(relative),
-					line: number + 1,
-					kind: candidate.name,
-					hint: mask(match),
+				findings = append(findings, secretFinding{
+					Severity: candidate.severity,
+					Rule:     candidate.name,
+					File:     filepath.ToSlash(relative),
+					Line:     number + 1,
+					Evidence: mask(match),
 				})
 				break // um achado por linha basta para a pessoa ir olhar
 			}
@@ -175,17 +185,42 @@ func (t *Toolbox) secretsScan(ctx context.Context, sessionID string, raw json.Ra
 		return "", fmt.Errorf("varrer: %w", walkErr)
 	}
 
+	// O bloco JSON sai SEMPRE, inclusive com zero achados: é ele que deixa a
+	// tela de Achados distinguir "a varredura veio limpa" de "ninguém varreu" —
+	// as duas frases parecem iguais e só uma delas é verdade.
+	structured := secretScanDoc{Scanned: scanned, Findings: findings}
+	if structured.Findings == nil {
+		structured.Findings = make([]secretFinding, 0)
+	}
 	if len(findings) == 0 {
-		return fmt.Sprintf("nenhum segredo aparente em %d arquivos", scanned), nil
+		return appendStructuredJSON(
+			fmt.Sprintf("nenhum segredo aparente em %d arquivos", scanned), structured), nil
 	}
 	var report strings.Builder
 	fmt.Fprintf(&report, "%d achado(s) em %d arquivos:\n", len(findings), scanned)
 	for _, item := range findings {
-		fmt.Fprintf(&report, "%s:%d — %s (%s)\n", item.file, item.line, item.kind, item.hint)
+		fmt.Fprintf(&report, "%s:%d — %s (%s)\n", item.File, item.Line, item.Rule, item.Evidence)
 	}
 	report.WriteString("\nO valor foi MASCARADO de propósito. Abra o arquivo para conferir; " +
 		"e trate como vazado qualquer segredo que já esteve no histórico do git.")
-	return report.String(), nil
+	return appendStructuredJSON(report.String(), structured), nil
+}
+
+// secretFinding é um achado como a tela de Achados o lê: severidade, regra,
+// onde. `Evidence` carrega só a versão MASCARADA (mask) — a regra de ouro da
+// tela vale aqui também: o valor inteiro nunca viaja no resultado.
+type secretFinding struct {
+	Severity string `json:"severity"`
+	Rule     string `json:"rule"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Evidence string `json:"evidence"`
+}
+
+// secretScanDoc é o bloco JSON de secrets.scan.
+type secretScanDoc struct {
+	Scanned  int             `json:"scanned"`
+	Findings []secretFinding `json:"findings"`
 }
 
 // mask mostra o suficiente para a pessoa reconhecer o segredo sem republicá-lo.
@@ -242,40 +277,96 @@ func (t *Toolbox) osvQuery(ctx context.Context, _ string, raw json.RawMessage) (
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("a consulta respondeu %d", response.StatusCode)
 	}
+	return osvReport(args.Name, args.Version, args.Ecosystem, payload)
+}
 
+// osvVuln é a resposta da OSV no que interessa. `database_specific.severity` é
+// de onde sai a faixa legível (CRITICAL/HIGH/MODERATE/LOW): o campo `severity`
+// de cima traz o VETOR CVSS, e calcular a nota a partir do vetor é uma
+// aritmética inteira que não vale reimplementar aqui — quando a faixa não vem,
+// o achado sai sem severidade em vez de sair com uma inventada.
+type osvVuln struct {
+	ID       string   `json:"id"`
+	Summary  string   `json:"summary"`
+	Aliases  []string `json:"aliases"`
+	Severity []struct {
+		Type  string `json:"type"`
+		Score string `json:"score"`
+	} `json:"severity"`
+	DatabaseSpecific struct {
+		Severity string `json:"severity"`
+	} `json:"database_specific"`
+}
+
+// osvFinding é uma vulnerabilidade como a tela de Achados a lê. A URL do
+// advisory vai PRONTA porque é o gateway quem conhece a convenção do osv.dev —
+// a tela só abre o que recebeu.
+type osvFinding struct {
+	ID       string   `json:"id"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Severity string   `json:"severity,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	URL      string   `json:"url"`
+}
+
+// osvDoc é o bloco JSON de osv.query. O pacote consultado fica na raiz — cada
+// vulnerabilidade da lista só traz o id e a nota, e sem o alvo a tela mostraria
+// "GHSA-…" sem dizer de quê.
+type osvDoc struct {
+	Package struct {
+		Name      string `json:"name"`
+		Ecosystem string `json:"ecosystem,omitempty"`
+	} `json:"package"`
+	Version string       `json:"version,omitempty"`
+	Vulns   []osvFinding `json:"vulns"`
+}
+
+// osvReport transforma a resposta crua da OSV no relatório + bloco JSON.
+// Função pura de propósito: o cliente HTTP fica em osvQuery e ISTO se testa
+// sem rede.
+func osvReport(name, version, ecosystem string, payload []byte) (string, error) {
 	var parsed struct {
-		Vulns []struct {
-			ID       string   `json:"id"`
-			Summary  string   `json:"summary"`
-			Aliases  []string `json:"aliases"`
-			Severity []struct {
-				Type  string `json:"type"`
-				Score string `json:"score"`
-			} `json:"severity"`
-		} `json:"vulns"`
+		Vulns []osvVuln `json:"vulns"`
 	}
 	if err := json.Unmarshal(payload, &parsed); err != nil {
 		return "", fmt.Errorf("resposta inesperada: %w", err)
 	}
+
+	doc := osvDoc{Version: version, Vulns: make([]osvFinding, 0, len(parsed.Vulns))}
+	doc.Package.Name = name
+	doc.Package.Ecosystem = ecosystem
+	for _, vulnerability := range parsed.Vulns {
+		doc.Vulns = append(doc.Vulns, osvFinding{
+			ID:       vulnerability.ID,
+			Aliases:  vulnerability.Aliases,
+			Severity: strings.ToLower(strings.TrimSpace(vulnerability.DatabaseSpecific.Severity)),
+			Summary:  strings.TrimSpace(vulnerability.Summary),
+			URL:      "https://osv.dev/vulnerability/" + url.PathEscape(vulnerability.ID),
+		})
+	}
+
 	if len(parsed.Vulns) == 0 {
-		return fmt.Sprintf("%s %s (%s): nenhuma vulnerabilidade conhecida",
-			args.Name, args.Version, args.Ecosystem), nil
+		return appendStructuredJSON(fmt.Sprintf("%s %s (%s): nenhuma vulnerabilidade conhecida",
+			name, version, ecosystem), doc), nil
 	}
 
 	var report strings.Builder
 	fmt.Fprintf(&report, "%s %s (%s): %d vulnerabilidade(s)\n",
-		args.Name, args.Version, args.Ecosystem, len(parsed.Vulns))
+		name, version, ecosystem, len(parsed.Vulns))
 	for _, vulnerability := range parsed.Vulns {
 		fmt.Fprintf(&report, "- %s", vulnerability.ID)
 		if len(vulnerability.Aliases) > 0 {
 			fmt.Fprintf(&report, " (%s)", strings.Join(vulnerability.Aliases, ", "))
+		}
+		if faixa := strings.TrimSpace(vulnerability.DatabaseSpecific.Severity); faixa != "" {
+			fmt.Fprintf(&report, " [%s]", faixa)
 		}
 		for _, severity := range vulnerability.Severity {
 			fmt.Fprintf(&report, " [%s %s]", severity.Type, severity.Score)
 		}
 		fmt.Fprintf(&report, ": %s\n", strings.TrimSpace(vulnerability.Summary))
 	}
-	return report.String(), nil
+	return appendStructuredJSON(report.String(), doc), nil
 }
 
 /* --------------------------------- webhook -------------------------------- */
