@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"aibot/gateway/internal/protocol"
+	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
 )
 
@@ -80,7 +81,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID, meta, err := s.resolveSession(hello.SessionHint)
+	sessionID, meta, err := s.resolveSession(hello.SessionHint, hello.Specialist)
 	if err != nil {
 		_ = connection.Close(1011, "não foi possível abrir a sessão")
 		s.log.Error("abrir sessão", "erro", err)
@@ -150,7 +151,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				_ = connection.Close(1008, "não autorizado")
 				return
 			}
-			next, nextMeta, err := s.resolveSession(hello.SessionHint)
+			next, nextMeta, err := s.resolveSession(hello.SessionHint, hello.Specialist)
 			if err != nil {
 				_ = connection.Close(1011, "não foi possível abrir a sessão")
 				s.log.Error("abrir sessão na troca", "erro", err)
@@ -468,15 +469,23 @@ func (s *Server) sessionSummaries() []protocol.SessionSummary {
 }
 
 // resolveSession abre a sessão pedida ou cria uma nova.
-func (s *Server) resolveSession(hint string) (string, store.SessionMeta, error) {
+func (s *Server) resolveSession(hint, owner string) (string, store.SessionMeta, error) {
 	if hint != "" {
 		if meta, err := s.store.GetSession(hint); err == nil {
+			// Sessão existente IGNORA o dono pedido: o modo gravado é dela, e
+			// deixar um hello trocá-lo reescreveria com quem a pessoa conversa.
 			return meta.ID, meta, nil
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return "", store.SessionMeta{}, err
 		}
 	}
-	meta, err := s.store.CreateSession(store.SessionMeta{ID: s.newID("s")})
+	// O dono só vale na CRIAÇÃO, e só se for um especialista de verdade: é o
+	// "novo schema" da tela de Dados — a conversa nasce do bot, a pessoa fica
+	// na tela, e o primeiro pedido vai direto a ele em vez de descer a cascata.
+	if !specialist.Exists(owner) {
+		owner = ""
+	}
+	meta, err := s.store.CreateSession(store.SessionMeta{ID: s.newID("s"), Specialist: owner})
 	if err != nil {
 		return "", store.SessionMeta{}, err
 	}

@@ -44,7 +44,7 @@ export interface Transport {
    * o gateway responde — adotar a dica antes da resposta faria uma troca
    * recusada deixar cliente e servidor cada um numa conversa.
    */
-  switchSession(hint: string | null): void;
+  switchSession(hint: string | null, specialist?: string): void;
   /**
    * Um POST autenticado no MESMO gateway.
    *
@@ -419,7 +419,7 @@ export function createTransport(options: TransportOptions): Transport {
       lastSeq = Number.isFinite(seq) && seq > 0 ? Math.floor(seq) : 0;
     },
 
-    switchSession(hint: string | null): void {
+    switchSession(hint: string | null, specialist?: string): void {
       if (socket === null || socket.readyState !== WebSocket.OPEN) return;
       // O marco de replay é POR SESSÃO; a nova começa do zero.
       lastSeq = 0;
@@ -430,6 +430,9 @@ export function createTransport(options: TransportOptions): Transport {
         resumeFrom: 0
       };
       if (hint !== null && hint !== "") hello.sessionHint = hint;
+      // O dono da conversa nova ("novo schema" abre já com o bot de Dados).
+      // Só sem dica: numa sessão existente o modo gravado é dela.
+      if ((hint === null || hint === "") && specialist) hello.specialist = specialist;
       writeEnvelope(socket, "hello", hello);
     },
 

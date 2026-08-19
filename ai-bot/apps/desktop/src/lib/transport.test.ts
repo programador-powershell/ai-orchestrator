@@ -322,7 +322,7 @@ describe("troca de sessão", () => {
     return { transport, socket };
   }
 
-  function helloDe(raw: string | undefined): Hello & { token?: string } {
+  function helloDe(raw: string | undefined): Hello & { token?: string; specialist?: string } {
     if (raw === undefined) throw new Error("nenhum frame nesse índice");
     const envelope = JSON.parse(raw) as Envelope;
     if (envelope.kind !== "hello") throw new Error(`esperava hello, veio ${envelope.kind}`);
@@ -362,6 +362,30 @@ describe("troca de sessão", () => {
     // replay a partir de um ponto que a sessão nova nem alcançou, e o início
     // da conversa nunca chegaria.
     expect(helloDe(socket.sent[1]).resumeFrom).toBe(0);
+  });
+
+  it("conversa nova COM DONO: o especialista viaja no hello", () => {
+    // "Novo schema" na tela de Dados: a conversa nasce do bot de Dados e a
+    // pessoa fica na tela — o dono vai no hello para o gateway gravar na
+    // criação.
+    const { transport, socket } = abrir();
+
+    transport.switchSession(null, "data");
+
+    const hello = helloDe(socket.sent[1]);
+    expect(hello.token).toBe("segredo");
+    expect(hello.specialist).toBe("data");
+    expect(hello.sessionHint).toBeUndefined();
+  });
+
+  it("abrir conversa EXISTENTE ignora o dono pedido: o modo gravado é dela", () => {
+    const { transport, socket } = abrir();
+
+    transport.switchSession("s-outra", "design");
+
+    const hello = helloDe(socket.sent[1]);
+    expect(hello.sessionHint).toBe("s-outra");
+    expect(hello.specialist).toBeUndefined();
   });
 
   it("sem socket aberto, a troca é silenciosa — o offline já aparece na tela", () => {

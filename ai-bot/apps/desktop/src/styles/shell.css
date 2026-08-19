@@ -483,6 +483,37 @@ select {
   padding: 0;
 }
 
+/* O gesto do ofício ("Novo schema", "Novo quadro"): abaixo do "Nova conversa",
+   com presença SECUNDÁRIA — contorno sem preenchimento. Os dois criam
+   conversa; o de cima volta ao chat, este fica na tela do bot, e a hierarquia
+   visual é o que conta essa diferença antes do clique. */
+.rail-new-bot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  /* Anula o `flex: 1` herdado de .rail-new: fora do .rail-top, crescer
+     significaria crescer na VERTICAL e engolir a coluna inteira. */
+  flex: none;
+  height: 26px;
+  margin: 0 0 2px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift),
+    border-color var(--t-fast) var(--swift);
+}
+
+.rail-new-bot:hover {
+  border-color: var(--accent-glow);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .rail-collapse {
   flex: none;
 }

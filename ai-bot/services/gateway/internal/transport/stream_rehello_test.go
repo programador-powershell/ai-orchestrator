@@ -258,27 +258,26 @@ func TestSegundoHelloTrocaASessao(t *testing.T) {
 		"seq": 0, "session": sessaoB, "kind": "prompt", "from": map[string]any{"kind": "user"},
 		"payload": map[string]any{"text": "crie uma aplicação simples"},
 	})
-	// Espera o turno TERMINAR (ask, erro ou done no log), não só começar: o
-	// turno roda num goroutine desacoplado da conexão, e sair do teste com ele
-	// vivo deixa o último append disputando o arquivo com a limpeza do TempDir
-	// — no Windows isso é falha de verdade, não detalhe.
+	// Espera o log da sessão nova ESTABILIZAR, não só começar: o turno roda num
+	// goroutine desacoplado da conexão e ainda escreve depois do primeiro erro
+	// (o ReportTurnFailure emite um segundo). Sair do teste com ele vivo deixa
+	// o último append disputando o arquivo com a limpeza do TempDir — no
+	// Windows isso é falha de verdade, não detalhe. Estável = mesmo seq em duas
+	// leituras separadas por uma janela de silêncio.
 	prazo := time.Now().Add(5 * time.Second)
 	for {
-		envelopes, _ := dataStore.Since(sessaoB, 0, 1000)
-		terminou := false
-		for _, envelope := range envelopes {
-			if envelope.Kind == protocol.KindAsk || envelope.Kind == protocol.KindError ||
-				envelope.Kind == protocol.KindDone {
-				terminou = true
+		antes, _ := dataStore.LastSeq(sessaoB)
+		if antes > 0 {
+			time.Sleep(200 * time.Millisecond)
+			if depois, _ := dataStore.LastSeq(sessaoB); depois == antes {
+				break
 			}
-		}
-		if terminou {
-			break
+		} else {
+			time.Sleep(20 * time.Millisecond)
 		}
 		if time.Now().After(prazo) {
 			t.Fatal("o prompt enviado depois da troca nunca chegou à sessão nova")
 		}
-		time.Sleep(20 * time.Millisecond)
 	}
 	if seqA, _ := dataStore.LastSeq(sessaoA); seqA != 0 {
 		t.Fatalf("a sessão antiga recebeu %d envelope(s) de um prompt que não era dela", seqA)
@@ -307,6 +306,61 @@ func TestSegundoHelloTrocaASessao(t *testing.T) {
 	}
 	if !achouPrompt {
 		t.Fatal("o replay da sessão reaberta não trouxe o pedido gravado nela")
+	}
+}
+
+// "Novo schema" na tela de Dados: a conversa nova nasce DO BOT — hello com
+// `specialist` cria a sessão já com o dono, a pessoa fica na tela em que está
+// e o primeiro pedido vai direto a ele, sem descer a cascata.
+func TestHelloComEspecialistaCriaConversaComDono(t *testing.T) {
+	web, dataStore := newStreamHarness(t)
+	client := dialStream(t, web.URL)
+
+	client.writeJSON(map[string]any{
+		"v": 1, "id": "c-hello", "ts": time.Now().UTC().Format(time.RFC3339),
+		"seq": 0, "session": "", "kind": "hello", "from": map[string]any{"kind": "user"},
+		"payload": map[string]any{
+			"client": "teste", "version": "0", "token": streamTestToken,
+			"specialist": "data",
+		},
+	})
+	ready := client.waitReady()
+	if ready.ActiveSpecialist != "data" {
+		t.Fatalf("a conversa devia nascer do bot de dados, veio %q", ready.ActiveSpecialist)
+	}
+	meta, err := dataStore.GetSession(ready.Session)
+	if err != nil {
+		t.Fatalf("ler a sessão criada: %v", err)
+	}
+	if meta.Specialist != "data" {
+		t.Fatalf("o dono não foi gravado: %q", meta.Specialist)
+	}
+
+	// Dono que não existe não passa: a conversa nasce comum, sem modo — chute
+	// de cliente velho ou id digitado errado não pode fixar um bot fantasma.
+	client.writeJSON(map[string]any{
+		"v": 1, "id": "c-hello-2", "ts": time.Now().UTC().Format(time.RFC3339),
+		"seq": 0, "session": "", "kind": "hello", "from": map[string]any{"kind": "user"},
+		"payload": map[string]any{
+			"client": "teste", "version": "0", "token": streamTestToken,
+			"specialist": "bot-fantasma",
+		},
+	})
+	if segunda := client.waitReady(); segunda.ActiveSpecialist != "" {
+		t.Fatalf("especialista inexistente virou dono: %q", segunda.ActiveSpecialist)
+	}
+
+	// E numa sessão EXISTENTE o pedido de dono é ignorado: o modo gravado é dela.
+	client.writeJSON(map[string]any{
+		"v": 1, "id": "c-hello-3", "ts": time.Now().UTC().Format(time.RFC3339),
+		"seq": 0, "session": "", "kind": "hello", "from": map[string]any{"kind": "user"},
+		"payload": map[string]any{
+			"client": "teste", "version": "0", "token": streamTestToken,
+			"sessionHint": ready.Session, "specialist": "design",
+		},
+	})
+	if reaberta := client.waitReady(); reaberta.ActiveSpecialist != "data" {
+		t.Fatalf("reabrir com outro dono reescreveu o modo: %q", reaberta.ActiveSpecialist)
 	}
 }
 

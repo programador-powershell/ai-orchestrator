@@ -250,6 +250,12 @@ type Hello struct {
 	// aberta na estação conversa com o gateway.
 	Token       string `json:"token,omitempty"`
 	SessionHint string `json:"sessionHint,omitempty"`
+	// Specialist é o DONO da conversa nova: "novo schema" na tela de Dados abre
+	// uma conversa que já nasce do bot de Dados — a pessoa fica na tela em que
+	// está, e o primeiro pedido vai direto ao bot, sem descer a cascata.
+	// Ignorado quando a sessão já existe (o modo gravado é dela) e quando o id
+	// não é de nenhum especialista.
+	Specialist string `json:"specialist,omitempty"`
 	// ResumeFrom pede replay a partir deste Seq (exclusivo). Zero = do começo.
 	ResumeFrom uint64 `json:"resumeFrom,omitempty"`
 	// LiveOnly pede SÓ os eventos novos: o servidor pula o replay inteiro e o

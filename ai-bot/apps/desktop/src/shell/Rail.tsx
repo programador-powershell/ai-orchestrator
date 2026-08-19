@@ -484,15 +484,19 @@ export function Rail() {
   return (
     <aside className="rail" data-collapsed={!railOpen} data-rail={active.rail} aria-label="Barra lateral">
       <div className="rail-top">
+        {/* SEMPRE "Nova conversa": este botão volta ao começo, com o master
+            decidindo quem atende. Ele chegou a assumir o rótulo do ofício
+            ("Novo schema") e isso escondeu a única saída da tela — "não tem
+            botão nova conversa para eu voltar a falar com o chat". */}
         <button
           type="button"
           className="rail-new"
           onClick={() => newSession()}
-          title={`${active.newLabel} (Ctrl+N)`}
-          aria-label={active.newLabel}
+          title="Nova conversa (Ctrl+N)"
+          aria-label="Nova conversa"
         >
           <Plus size={16} aria-hidden />
-          {railOpen ? <span>{active.newLabel}</span> : null}
+          {railOpen ? <span>Nova conversa</span> : null}
         </button>
 
         <button
@@ -506,6 +510,22 @@ export function Rail() {
           {railOpen ? <ChevronsLeft size={16} aria-hidden /> : <ChevronsRight size={16} aria-hidden />}
         </button>
       </div>
+
+      {/* O gesto do OFÍCIO: "Novo schema" abre uma conversa nova que já nasce
+          do bot ativo e PERMANECE nesta tela — mudar para o chat no meio do
+          gesto confundia quem só queria recomeçar o trabalho ali. */}
+      {railOpen && active.rail !== "conversations" ? (
+        <button
+          type="button"
+          className="rail-new rail-new-bot"
+          onClick={() => newSession(active.id)}
+          title={`${active.newLabel} — conversa nova com ${active.name}, nesta tela`}
+          aria-label={`${active.newLabel} — conversa nova com ${active.name}`}
+        >
+          <Plus size={14} aria-hidden />
+          <span>{active.newLabel}</span>
+        </button>
+      ) : null}
 
       {railOpen ? (
         <div className="rail-body">

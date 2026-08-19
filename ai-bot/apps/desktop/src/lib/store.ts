@@ -184,7 +184,13 @@ export interface AppActions {
   setModel(id: string): void;
   setEnvironment(id: Environment): void;
   setSpecialistOverride(id: string): void;
-  newSession(): void;
+  /**
+   * Conversa nova. Sem argumento é a volta ao começo (o master decide quem
+   * atende). Com `botId` é o "novo schema" da tela de Dados: a conversa nasce
+   * DAQUELE bot e a pessoa FICA na tela dele — mudar para o chat no meio do
+   * gesto confunde quem só queria recomeçar o trabalho ali.
+   */
+  newSession(botId?: string): void;
   openSession(id: string): void;
   forkSession(id: string): void;
   setTheme(theme: "light" | "dark"): void;
@@ -364,6 +370,40 @@ function sessionMetaOf(summary: SessionSummary): SessionMeta {
 }
 
 /**
+ * A lista de conversas com a entrada de `id` transformada.
+ *
+ * É o que mantém a BARRA viva durante a conversa: o resumo que veio no `ready`
+ * é uma fotografia (título vazio, zero turnos), e sem estes retoques a linha da
+ * conversa ativa ficava "Conversa sem título · 0" até a próxima reconexão —
+ * mesmo com a pessoa já três pedidos adentro. O gateway continua sendo a fonte:
+ * o próximo `ready` reescreve tudo isto com o valor canônico.
+ */
+function comMetaDaSessao(
+  sessions: SessionMeta[],
+  id: string,
+  muda: (meta: SessionMeta) => SessionMeta
+): SessionMeta[] {
+  const index = sessions.findIndex((item) => item.id === id);
+  const atual = index >= 0 ? sessions[index] : undefined;
+  if (!atual) return sessions;
+  const next = sessions.slice();
+  next[index] = muda(atual);
+  return next;
+}
+
+/**
+ * O título provisório — o espelho do `titleFrom` do gateway (60 caracteres,
+ * espaços colapsados). Provisório de verdade: o gateway grava o dele no meta da
+ * sessão e o próximo `ready` traz o canônico; este só existe para a linha da
+ * barra não dizer "sem título" durante a própria conversa que o batizou.
+ */
+function tituloDe(texto: string): string {
+  const limpo = texto.split(/\s+/).filter(Boolean).join(" ");
+  if (limpo.length <= 60) return limpo;
+  return `${[...limpo].slice(0, 60).join("").trimEnd()}…`;
+}
+
+/**
  * A lista de conversas com a conversa DAQUELE bot dentro dela.
  *
  * Busca-ou-cria, e do lado de cá pelo mesmo motivo do gateway: um bot chamado
@@ -532,6 +572,14 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       });
       return {
         ...state,
+        // A rota também assina a LINHA DA BARRA: é ela que troca o retrato da
+        // conversa para o do especialista que assumiu — sem isto, a barra
+        // mostrava o orbe genérico até a próxima reconexão ("não abriu bot de
+        // dados, apenas alterou tela").
+        sessions: comMetaDaSessao(state.sessions, envelope.session, (meta) => ({
+          ...meta,
+          specialist: route.specialist
+        })),
         activeSpecialist: route.specialist,
         activeSurface: isSurface(route.surface) ? route.surface : definition.surface,
         activeModel: route.model !== "" ? route.model : state.activeModel,
@@ -576,6 +624,15 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
         // sobreviva a uma falha de roteamento). Criar dos dois lados duplicaria.
         return {
           ...state,
+          // A primeira fala BATIZA a linha da barra: o gateway grava o título
+          // no meta da sessão mas não o transmite no meio da conversa, e sem
+          // este provisório a conversa ativa ficava "sem título" até a próxima
+          // reconexão.
+          sessions: comMetaDaSessao(state.sessions, envelope.session, (meta) =>
+            meta.title === "" && message.text.trim() !== ""
+              ? { ...meta, title: tituloDe(message.text) }
+              : meta
+          ),
           lines: [
             ...state.lines,
             newLine(envelope, { role: "user", text: message.text, streaming: false })
@@ -834,7 +891,18 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     }
 
     case "done": {
-      return { ...state, busy: false, thinking: "", lines: closeTurn(state.lines, envelope.turn) };
+      return {
+        ...state,
+        busy: false,
+        thinking: "",
+        // O contador da linha anda JUNTO com a conversa. É provisório como o
+        // título: o próximo `ready` traz o valor canônico do gateway.
+        sessions: comMetaDaSessao(state.sessions, envelope.session, (meta) => ({
+          ...meta,
+          turns: meta.turns + 1
+        })),
+        lines: closeTurn(state.lines, envelope.turn)
+      };
     }
 
     case "error": {
@@ -1114,7 +1182,7 @@ export const useApp = create<AppState>()(
 
       setSpecialistOverride: (id) => set({ specialistOverride: id }),
 
-      newSession: () => {
+      newSession: (botId) => {
         // Sessão nova é um `hello` novo na MESMA conexão, e ele é do TRANSPORTE
         // (`switchSession`), não montado aqui: o hello de troca reapresenta o
         // token, e o token vive só na closure do transporte. A versão anterior
@@ -1122,8 +1190,22 @@ export const useApp = create<AppState>()(
         // silêncio: "nova conversa" limpava a tela, mas todo pedido seguinte
         // caía na sessão antiga, cujo modo gravado respondia sempre com o
         // mesmo especialista.
-        transport?.switchSession(null);
-        set({ ...conversationReset(), session: null });
+        const bot = (botId ?? "").trim();
+        transport?.switchSession(null, bot === "" ? undefined : bot);
+        if (bot === "") {
+          set({ ...conversationReset(), session: null });
+          return;
+        }
+        // "Novo schema" na tela de Dados: a conversa nasce DO BOT e a pessoa
+        // FICA na tela dele — o gateway grava o dono na criação e o `ready`
+        // volta confirmando estes mesmos valores, então não há piscada nem
+        // desvio pelo chat no meio do gesto.
+        set({
+          ...conversationReset(),
+          session: null,
+          activeSpecialist: bot,
+          activeSurface: specialistById(get().specialists, bot).surface
+        });
       },
 
       openSession: (id) => {

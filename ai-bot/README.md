@@ -273,6 +273,23 @@
 - **"vercel" entrou nos gatilhos do Código** — pedido de app para deploy é
   vocabulário inequívoco de código, e a régua da lista (o radical torna ESTE
   especialista mais provável que os outros) segura.
+- **A linha da barra acompanha a PRÓPRIA conversa.** O resumo do `ready` é uma
+  fotografia (título vazio, zero turnos, sem dono), e a conversa ativa ficava
+  "Conversa sem título · 0" com o orbe genérico mesmo três pedidos adentro. A
+  primeira fala agora batiza o título (espelho do corte de 60 caracteres do
+  gateway), a rota assina o dono (o retrato vira o do bot que assumiu — era o
+  "identificou dados mas não abriu bot de dados") e o `done` conta o turno.
+  Tudo provisório de verdade: o próximo `ready` reescreve com o canônico.
+- **Os DOIS gestos de conversa nova, com destinos distintos.** O botão do topo
+  voltou a ser sempre **"Nova conversa"** (volta ao chat, o master decide) — ele
+  tinha assumido o rótulo do ofício ("Novo schema") e escondia a única saída da
+  tela. E o gesto do ofício ganhou botão próprio, secundário, logo abaixo:
+  **"Novo schema"** na tela de Dados abre uma conversa que já NASCE do bot e
+  PERMANECE naquela tela — mudar para o chat no meio do gesto confundia quem só
+  queria recomeçar o trabalho ali. Por baixo, o `hello` ganhou o campo
+  `specialist`: o dono é gravado na criação da sessão (validado contra o
+  catálogo; ignorado em sessão existente), o `ready` volta confirmando e o
+  primeiro pedido vai direto ao bot, sem descer a cascata.
 
 - **A barra lateral enchia de conversas que ninguém começou.** A sessão nasce no
   aperto de mão do WebSocket, então abrir a janela, recarregar a página ou

@@ -173,6 +173,13 @@ export interface Hello {
    */
   token?: string;
   sessionHint?: string;
+  /**
+   * O dono da conversa NOVA: "novo schema" na tela de Dados abre uma conversa
+   * que já nasce do bot de Dados — a pessoa fica na tela, e o primeiro pedido
+   * vai direto a ele. Ignorado quando a sessão já existe e quando o id não é
+   * de nenhum especialista.
+   */
+  specialist?: string;
   resumeFrom?: number;
   /**
    * Pede ao gateway que PULE o replay e mande só o que acontecer daqui em

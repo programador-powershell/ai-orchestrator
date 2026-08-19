@@ -198,4 +198,31 @@ describe("a barra numa tela que não é de conversa", () => {
     );
     expect(titulos).toEqual(["Conversas"]);
   });
+
+  it("tem os DOIS gestos de conversa nova: a do chat e a do ofício", () => {
+    // "aparece 'novo schema' mas não tem botão 'nova conversa' para eu voltar
+    // a falar com o chat" — e o "novo schema" deve PERMANECER nesta tela.
+    useApp.setState({ activeSpecialist: "design", activeSurface: "canvas" });
+    monta();
+
+    const principal = container.querySelector<HTMLButtonElement>(".rail-new:not(.rail-new-bot)");
+    expect(principal?.textContent).toContain("Nova conversa");
+
+    const doOficio = container.querySelector<HTMLButtonElement>(".rail-new-bot");
+    expect(doOficio).not.toBeNull();
+
+    // O gesto do ofício abre a conversa já com o bot e FICA na tela dele.
+    act(() => {
+      doOficio?.click();
+    });
+    expect(useApp.getState().activeSpecialist).toBe("design");
+    expect(useApp.getState().activeSurface).toBe("canvas");
+    expect(useApp.getState().session).toBeNull();
+  });
+
+  it("na tela de conversa não há gesto do ofício — seria o mesmo botão duas vezes", () => {
+    monta();
+
+    expect(container.querySelector(".rail-new-bot")).toBeNull();
+  });
 });
