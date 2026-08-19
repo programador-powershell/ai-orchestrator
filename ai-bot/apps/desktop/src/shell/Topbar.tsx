@@ -12,7 +12,7 @@
  * Tudo isso é responsabilidade daqui: sem os botões abaixo o aplicativo abre e
  * não fecha, e sem `data-tauri-drag-region` ele não sai do lugar da tela.
  */
-import { ArrowUpCircle, Bot, Minus, Moon, Settings, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
+import { ArrowUpCircle, Bot, Minus, Moon, Settings, Sparkles, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
 import type { UpdateTrack } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
@@ -117,8 +117,6 @@ function isTauri(): boolean {
 export function Topbar() {
   const specialists = useApp((state) => state.specialists);
   const activeSpecialist = useApp((state) => state.activeSpecialist);
-  const models = useApp((state) => state.models);
-  const activeModel = useApp((state) => state.activeModel);
   const sessions = useApp((state) => state.sessions);
   const session = useApp((state) => state.session);
   const theme = useApp((state) => state.theme);
@@ -126,7 +124,27 @@ export function Topbar() {
   const updateAvailable = useApp((state) => state.updateAvailable);
   const updateVersion = useApp((state) => state.updateVersion);
   const updateTracks = useApp((state) => state.updateTracks);
-  const setModel = useApp((state) => state.setModel);
+  const setAvatarLabOpen = useApp((state) => state.setAvatarLabOpen);
+
+  /**
+   * Abre o laboratório de avatares — mudou do trilho para cá.
+   *
+   * O `catch` é silencioso de propósito: se o comando nativo falhar, o modal
+   * ainda abre. Um erro no console é melhor que um botão que não faz nada.
+   */
+  async function abrirLaboratorio() {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      setAvatarLabOpen(true);
+      return;
+    }
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_avatar_lab");
+    } catch (error) {
+      console.error("não foi possível abrir a janela do laboratório", error);
+      setAvatarLabOpen(true);
+    }
+  }
   const setTheme = useApp((state) => state.setTheme);
   const setSettingsOpen = useApp((state) => state.setSettingsOpen);
 
@@ -137,10 +155,6 @@ export function Topbar() {
   const Icon = SPECIALIST_ICON[active.id] ?? Bot;
 
   const title = sessions.find((item) => item.id === session)?.title ?? "Nova conversa";
-
-  // O `value` do select precisa existir entre as options, senão o React reclama e
-  // o campo mostra o primeiro modelo como se fosse o escolhido — mentira visual.
-  const modelIsKnown = models.some((model) => model.id === activeModel);
 
   return (
     <header className="topbar" data-status={status}>
@@ -209,26 +223,24 @@ export function Topbar() {
       <div className="topbar-drag" data-tauri-drag-region aria-hidden="true" />
 
       <div className="topbar-right">
-        <label className="topbar-model">
-          <span className="visually-hidden">Modelo</span>
-          <select
-            value={activeModel}
-            disabled={models.length === 0}
-            onChange={(event) => setModel(event.target.value)}
-            title="Modelo usado no próximo envio"
-          >
-            {models.length === 0 ? <option value="">sem modelos disponíveis</option> : null}
-            {activeModel !== "" && !modelIsKnown ? (
-              <option value={activeModel}>{activeModel} (fora da lista)</option>
-            ) : null}
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-                {model.local ? " · local" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/*
+          O seletor de MODELO saiu daqui.
+
+          Quem decide o modelo é o especialista, e a escolha vive em
+          Configurações → Motores & Fusion, no gateway. Um seletor global na
+          barra dizia o contrário: sugeria que a conversa inteira roda num
+          modelo só, quando cada especialista — e cada tarefa delegada — pode
+          rodar no seu.
+        */}
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => void abrirLaboratorio()}
+          title="Personalizar os bots"
+          aria-label="Personalizar os bots"
+        >
+          <Sparkles size={16} aria-hidden />
+        </button>
 
         <button
           type="button"

@@ -106,6 +106,16 @@
 ### :up: V.2
 ### :warning: Latest Changes
 
+- **O bot foi para o CENTRO da tela**, que é onde ele é o assunto: a tela de
+  "escreva o que você quer" abre com o slime animando, e não com um retrato de
+  canto. O cartão de presença saiu da barra lateral, e o botão de **personalizar
+  os bots** subiu para a barra superior, junto de tema e configurações.
+- **O seletor de modelo saiu da barra superior.** Quem decide o modelo é o
+  especialista, e a escolha vive em Configurações → Motores & Fusion. Um seletor
+  global dizia o contrário: sugeria que a conversa inteira roda num modelo só,
+  quando cada especialista — e cada tarefa que a equipe delega — pode rodar no
+  seu.
+
 - **Modelo por especialista, em Configurações → Motores & Fusion.** É a mesma
   ideia do "motor por aba" do orquestrador, traduzida para o vocabulário daqui:
   lá se escolhia por ABA, e aqui não há abas — o que existe é especialista. Uma

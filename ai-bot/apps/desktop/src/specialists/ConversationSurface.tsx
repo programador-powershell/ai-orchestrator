@@ -15,6 +15,7 @@
  * arquivo só decide o que entra nela.
  */
 
+import { GrokAvatar } from "../avatar/GrokAvatar";
 import {
   memo,
   useCallback,
@@ -343,8 +344,15 @@ function Hero({ compact }: { compact: boolean }): ReactNode {
 
   return (
     <div className="hero" style={hueStyle(MASTER.hue)}>
+      {/*
+        O BOT fica AQUI, no centro, e não na barra lateral.
+        É a tela de "escreva o que você quer" — o bot é o assunto dela, não um
+        enfeite de canto. O retrato usado é o slime, que se move; o procedural do
+        laboratório (olhos em X girando) continua servindo à personalização e às
+        listas, onde ele precisa ser desenhável em qualquer tamanho.
+      */}
       <div className="hero-avatar">
-        <BotAvatar avatar={masterAvatar} size={96} />
+        <GrokAvatar specialist="chat" state="active" size={148} title={MASTER.name} />
       </div>
       <h1 className="hero-title">Escreva o que você quer fazer. Eu escolho o especialista.</h1>
       <p className="hero-sub">Um campo de texto só — o master lê o pedido e chama quem atende.</p>

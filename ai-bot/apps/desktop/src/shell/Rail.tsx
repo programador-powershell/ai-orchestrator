@@ -31,18 +31,11 @@ import {
   Workflow,
   type LucideIcon
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 import type { RailKind, Task } from "@aibot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { useApp } from "../lib/store";
 import { MASTER, specialistById } from "../lib/specialists";
-import { BotAvatar } from "../avatar/BotAvatar";
-import {
-  GROK_STATE_LABELS,
-  GrokAvatar,
-  grokSpecialistOf,
-  type GrokSpecialistState
-} from "../avatar/GrokAvatar";
+import { GrokAvatar, grokSpecialistOf, type GrokSpecialistState } from "../avatar/GrokAvatar";
 
 /** O recorte do store que os componentes do crew leem. Deriva do próprio store
  *  para não virar uma segunda declaração do contrato, que envelheceria sozinha. */
@@ -69,47 +62,6 @@ function RailEmpty({ icon: Icon, hint }: { icon: LucideIcon; hint: string }) {
       <Icon size={18} aria-hidden />
       <p className="rail-empty-title">Nada aqui ainda.</p>
       <p className="rail-empty-hint">{hint}</p>
-    </div>
-  );
-}
-
-/* --------------------------- presença do bot ------------------------------ */
-
-/** Quanto tempo o bot comemora depois que a resposta chega. */
-const CELEBRACAO_MS = 4000;
-
-/**
- * O CARTÃO DE PRESENÇA: o bot da vez, grande o bastante para o campo do ofício
- * ser legível, fazendo a animação do estado. É a resposta direta ao pedido
- * "quando fizer a chamada, o especialista aparece na barra lateral animando":
- * dono da conversa em repouso (roteamento sticky), trabalhando durante o turno,
- * concluído por alguns segundos quando a resposta chega — e o master quando a
- * conversa ainda não tem dono.
- */
-function PresenceCard() {
-  const specialists = useApp((state) => state.specialists);
-  const activeSpecialist = useApp((state) => state.activeSpecialist);
-  const busy = useApp((state) => state.busy);
-
-  const [celebrando, setCelebrando] = useState(false);
-  const antes = useRef(busy);
-  useEffect(() => {
-    const estava = antes.current;
-    antes.current = busy;
-    if (!estava || busy) return;
-    setCelebrando(true);
-    const timer = setTimeout(() => setCelebrando(false), CELEBRACAO_MS);
-    return () => clearTimeout(timer);
-  }, [busy]);
-
-  const state: GrokSpecialistState = busy ? "working" : celebrando ? "completed" : activeSpecialist ? "owner" : "active";
-  const quem = activeSpecialist ? specialistById(specialists, activeSpecialist) : MASTER;
-
-  return (
-    <div className="rail-presence" data-state={state}>
-      <GrokAvatar specialist={grokSpecialistOf(quem.id)} state={state} size={124} title={`${quem.name} — ${GROK_STATE_LABELS[state]}`} />
-      <p className="rail-presence-name">{quem.name}</p>
-      <p className="rail-presence-state">{GROK_STATE_LABELS[state]}</p>
     </div>
   );
 }
@@ -459,53 +411,14 @@ export function Rail() {
   const specialists = useApp((state) => state.specialists);
   const activeSpecialist = useApp((state) => state.activeSpecialist);
   const railOpen = useApp((state) => state.railOpen);
-  const avatars = useApp((state) => state.avatars);
   const toggleRail = useApp((state) => state.toggleRail);
   const newSession = useApp((state) => state.newSession);
-  const setAvatarLabOpen = useApp((state) => state.setAvatarLabOpen);
 
   const active = activeSpecialist ? specialistById(specialists, activeSpecialist) : MASTER;
-  // A personalização ganha do catálogo: se a pessoa mexeu no retrato do master no
-  // laboratório, é o retrato dela que fica no topo da barra.
-  const masterAvatar = avatars[MASTER.id] ?? MASTER.avatar;
-
-  /**
-   * No aplicativo nativo o laboratório abre em JANELA PRÓPRIA — dá para
-   * comparar os bots lado a lado com a conversa ainda visível, que é o ponto de
-   * personalizar o retrato de cada um. No navegador (dev, ou o app aberto pelo
-   * Vite) não existe janela para abrir, e aí ele cai no modal dentro da tela.
-   *
-   * O `catch` é silencioso de propósito: se o comando nativo falhar, o modal
-   * ainda abre. Um erro no console é melhor que um botão que não faz nada.
-   */
-  async function openAvatarLab() {
-    if (!("__TAURI_INTERNALS__" in window)) {
-      setAvatarLabOpen(true);
-      return;
-    }
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("open_avatar_lab");
-    } catch (error) {
-      console.error("não foi possível abrir a janela do laboratório", error);
-      setAvatarLabOpen(true);
-    }
-  }
 
   return (
     <aside className="rail" data-collapsed={!railOpen} data-rail={active.rail} aria-label="Barra lateral">
       <div className="rail-top">
-        <button
-          type="button"
-          className="rail-bot"
-          onClick={() => void openAvatarLab()}
-          title="Personalizar os bots"
-          aria-label="Personalizar os bots"
-        >
-          <BotAvatar avatar={masterAvatar} size={railOpen ? 34 : 30} />
-          {railOpen ? <span className="rail-bot-name">{MASTER.name}</span> : null}
-        </button>
-
         <button
           type="button"
           className="rail-new"
@@ -531,7 +444,6 @@ export function Rail() {
 
       {railOpen ? (
         <div className="rail-body">
-          <PresenceCard />
           <p className="rail-kind">{RAIL_TITLE[active.rail] ?? active.rail}</p>
           {renderRail(active.rail)}
         </div>
