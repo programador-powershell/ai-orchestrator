@@ -92,8 +92,6 @@ export interface AppData {
   /** "conversation" enquanto não houver rota. */
   activeSurface: Surface;
   activeModel: string;
-  /** "" = deixar o master decidir (padrão). */
-  specialistOverride: string;
   busy: boolean;
   /** Rótulo do orbe; "" quando parado. */
   thinking: string;
@@ -191,7 +189,6 @@ export interface AppActions {
   detach(name: string): void;
   setModel(id: string): void;
   setEnvironment(id: Environment): void;
-  setSpecialistOverride(id: string): void;
   /**
    * Conversa nova. Sem argumento é a volta ao começo (o master decide quem
    * atende). Com `botId` é o "novo schema" da tela de Dados: a conversa nasce
@@ -230,7 +227,6 @@ export function initialAppData(): AppData {
     activeSpecialist: "",
     activeSurface: "conversation",
     activeModel: "",
-    specialistOverride: "",
     busy: false,
     thinking: "",
     pendingApprovals: [],
@@ -1183,7 +1179,6 @@ export const useApp = create<AppState>()(
         if ((value === "" && state.attachments.length === 0) || transport === null) return;
         const prompt: Prompt = { text: value };
         // Vazio = o master decide, que é o caminho normal.
-        if (state.specialistOverride !== "") prompt.specialist = state.specialistOverride;
         if (state.activeModel !== "") prompt.model = state.activeModel;
         if (state.attachments.length > 0) {
           // O anexo é REFERÊNCIA, não upload: o app é desktop e o arquivo já
@@ -1287,7 +1282,6 @@ export const useApp = create<AppState>()(
           });
       },
 
-      setSpecialistOverride: (id) => set({ specialistOverride: id }),
 
       newSession: (botId) => {
         // Sessão nova é um `hello` novo na MESMA conexão, e ele é do TRANSPORTE

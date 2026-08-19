@@ -168,7 +168,9 @@ export function Topbar() {
   const newSession = useApp((state) => state.newSession);
   const Icon = SPECIALIST_ICON[active.id] ?? Bot;
 
-  const title = sessions.find((item) => item.id === session)?.title ?? "Nova conversa";
+  // Sem assunto, sem título: a conversa recém-nascida já tem o botão "Nova
+  // conversa" ao lado — repetir a frase como título lia como eco.
+  const title = sessions.find((item) => item.id === session)?.title ?? "";
 
   return (
     <header className="topbar" data-status={status}>
@@ -186,9 +188,11 @@ export function Topbar() {
           <span>Nova conversa</span>
         </button>
 
-        <h1 className="topbar-title" title={title}>
-          {title}
-        </h1>
+        {title !== "" ? (
+          <h1 className="topbar-title" title={title}>
+            {title}
+          </h1>
+        ) : null}
 
         {/* O chip só aparece quando a conversa TEM dono: o do master dizia
             "AI-BOT" ao lado do título do app inteiro — crachá do dono da casa

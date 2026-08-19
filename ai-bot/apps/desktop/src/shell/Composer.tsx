@@ -6,12 +6,12 @@
  * lê é o master; depois, o especialista ativo; e, se a pessoa fixou um, é ele.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { AlertTriangle, ArrowUp, Bot, Check, ChevronDown, Paperclip, RotateCcw, Square, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import type { SpecialistAction, SpecialistDefinition } from "@aibot/contracts";
 import { useApp } from "../lib/store";
-import { FALLBACK_SPECIALISTS, MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
+import { FALLBACK_SPECIALISTS, MASTER, specialistById } from "../lib/specialists";
 import { ThinkingOrb } from "./ThinkingOrb";
 
 /** Cresce até aqui; daqui em diante o campo rola em vez de empurrar a conversa. */
@@ -40,11 +40,6 @@ const SR_ONLY: CSSProperties = {
   border: 0
 };
 
-function SpecialistGlyph({ id, size = 14 }: { id: string; size?: number }) {
-  const Icon = SPECIALIST_ICON[id] ?? Bot;
-  return <Icon size={size} strokeWidth={1.75} aria-hidden="true" />;
-}
-
 export function Composer() {
   const input = useApp((s) => s.input);
   const busy = useApp((s) => s.busy);
@@ -53,9 +48,7 @@ export function Composer() {
   const status = useApp((s) => s.status);
   const specialists = useApp((s) => s.specialists);
   const activeSpecialist = useApp((s) => s.activeSpecialist);
-  const specialistOverride = useApp((s) => s.specialistOverride);
   const setInput = useApp((s) => s.setInput);
-  const setSpecialistOverride = useApp((s) => s.setSpecialistOverride);
   const send = useApp((s) => s.send);
   const attachments = useApp((s) => s.attachments);
   const attach = useApp((s) => s.attach);
@@ -78,27 +71,24 @@ export function Composer() {
 
   const fieldRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
   /** Posição de cursor a aplicar depois que o React repintar o valor do campo. */
   const caretRef = useRef<number | null>(null);
   /** Composição de IME em curso (acento morto, teclado japonês): Enter confirma, não envia. */
   const composingRef = useRef(false);
 
-  const [pickerOpen, setPickerOpen] = useState(false);
-
   const catalog = specialists.length > 0 ? specialists : FALLBACK_SPECIALISTS;
-  const pinned = specialistOverride !== "";
 
   /**
-   * Quem vai ler a PRÓXIMA linha — e não quem atendeu a última. Enquanto não houve
-   * rota, é o master: é ele quem recebe o texto, e o placeholder tem que ser a
-   * pergunta dele. Um especialista fixado passa na frente porque a pessoa já decidiu.
+   * Quem vai ler a PRÓXIMA linha — e não quem atendeu a última. Enquanto não
+   * houve rota, é o master: a PRIMEIRA mensagem da conversa é quem determina o
+   * especialista, sempre. O seletor "auto" que fixava um especialista à mão
+   * saiu de propósito: ele duplicava o /mode com outra cara e convidava a
+   * pessoa a fazer o trabalho que o roteador existe para fazer.
    */
   const target = useMemo<SpecialistDefinition>(() => {
-    if (specialistOverride) return specialistById(catalog, specialistOverride);
     if (activeSpecialist) return specialistById(catalog, activeSpecialist);
     return MASTER;
-  }, [catalog, specialistOverride, activeSpecialist]);
+  }, [catalog, activeSpecialist]);
 
   const actions: SpecialistAction[] = target.actions ?? [];
 
@@ -196,40 +186,10 @@ export function Composer() {
     [input, setInput, focusField]
   );
 
-  /* ------------------------------- seletor --------------------------------- */
-
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const root = pickerRef.current;
-      if (root && event.target instanceof Node && !root.contains(event.target)) setPickerOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setPickerOpen(false);
-        fieldRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [pickerOpen]);
-
-  const choose = useCallback(
-    (id: string) => {
-      setSpecialistOverride(id);
-      setPickerOpen(false);
-      focusField();
-    },
-    [setSpecialistOverride, focusField]
-  );
-
-  const sendTitle = pinned
-    ? `Enviar para ${target.name} — Enter`
-    : "Enviar — o master escolhe o especialista (Enter)";
+  const sendTitle =
+    target.id === MASTER.id
+      ? "Enviar — o primeiro pedido escolhe o especialista (Enter)"
+      : `Enviar para ${target.name} — Enter`;
 
   return (
     <div className="composer-wrap">
@@ -269,16 +229,6 @@ export function Composer() {
         </div>
       ) : null}
 
-      {pinned ? (
-        <p className="composer-pinned-note">
-          Fixado em <strong>{target.name}</strong> — o master não vai rotear a próxima linha.
-          <button type="button" className="composer-unpin" onClick={() => choose("")}>
-            <X size={12} aria-hidden="true" />
-            Soltar
-          </button>
-        </p>
-      ) : null}
-
       {attachments.length > 0 ? (
         <ul className="composer-attachments" aria-label="Arquivos anexados">
           {attachments.map((item) => (
@@ -300,7 +250,9 @@ export function Composer() {
 
       <form className="composer" onSubmit={onSubmit} aria-busy={busy}>
         <label htmlFor={FIELD_ID} style={SR_ONLY}>
-          {pinned ? `Mensagem para ${target.name}` : "Mensagem — o master escolhe o especialista"}
+          {target.id === MASTER.id
+            ? "Mensagem — o primeiro pedido escolhe o especialista"
+            : `Mensagem para ${target.name}`}
         </label>
 
         <textarea
@@ -362,64 +314,6 @@ export function Composer() {
           >
             <Paperclip size={14} aria-hidden="true" />
           </button>
-
-          <div className="composer-picker" ref={pickerRef}>
-            <button
-              type="button"
-              className="composer-picker-button"
-              data-pinned={pinned ? "true" : "false"}
-              aria-haspopup="menu"
-              aria-expanded={pickerOpen}
-              onClick={() => setPickerOpen((open) => !open)}
-              title={
-                pinned
-                  ? `A conversa passa para ${target.name} — equivale a /mode ${target.id}`
-                  : "auto — o master escolhe o modo no primeiro input da conversa"
-              }
-            >
-              <SpecialistGlyph id={pinned ? target.id : MASTER.id} size={13} />
-              <span className="composer-picker-label">{pinned ? target.name : "auto"}</span>
-              <ChevronDown size={12} aria-hidden="true" />
-            </button>
-
-            {pickerOpen ? (
-              <div className="composer-picker-menu" role="menu" aria-label="Fixar especialista">
-                <button
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={!pinned}
-                  className="composer-picker-item"
-                  data-active={!pinned ? "true" : "false"}
-                  onClick={() => choose("")}
-                >
-                  <SpecialistGlyph id={MASTER.id} />
-                  <span className="composer-picker-name">auto</span>
-                  <span className="composer-picker-tag">o master decide no 1º input</span>
-                  {!pinned ? <Check size={13} aria-hidden="true" /> : null}
-                </button>
-
-                {catalog.map((specialist) => {
-                  const active = specialist.id === specialistOverride;
-                  return (
-                    <button
-                      key={specialist.id}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={active}
-                      className="composer-picker-item"
-                      data-active={active ? "true" : "false"}
-                      onClick={() => choose(specialist.id)}
-                    >
-                      <SpecialistGlyph id={specialist.id} />
-                      <span className="composer-picker-name">{specialist.name}</span>
-                      <span className="composer-picker-tag">{specialist.tagline}</span>
-                      {active ? <Check size={13} aria-hidden="true" /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
 
           <div className="composer-bar-right">
             {input.length > COUNTER_AT ? (

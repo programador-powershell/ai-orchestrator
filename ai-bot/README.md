@@ -389,6 +389,16 @@
 
 ### :pushpin: Fixes
 
+- **A barra superior ficou limpa e a conversa nova ficou VIVA.** Só o botão
+  "Nova conversa" (o título fantasma que ecoava a mesma frase saiu; o título
+  real aparece quando a LLM batiza o assunto). Ao clicar, a linha nasce na
+  barra lateral como "Nova conversa" com o avatar do master — e quando o
+  roteador decide o especialista, o avatar troca e o assunto renomeia AO VIVO
+  (a rota assina a linha; a primeira fala batiza o título). E o seletor
+  "auto" do composer SAIU: a primeira mensagem determina o especialista,
+  sempre — o seletor duplicava o /mode com outra cara e convidava a pessoa a
+  fazer o trabalho do roteador.
+
 - **"Nova conversa" subiu para a barra superior** — na lateral ele sumia com
   o colapso e disputava lugar com o gesto do ofício; agora fica sempre
   visível, à esquerda do título. O gesto do ofício ("Novo schema") continua

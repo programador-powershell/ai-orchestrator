@@ -187,7 +187,7 @@ function ConversationsRail() {
           <GrokAvatar specialist={especialista} state={estado} size={filha ? 18 : 22} />
           <span className="rail-item-text">
             <span className="rail-item-label">
-              {item.title === "" ? "Conversa sem título" : item.title}
+              {item.title === "" ? "Nova conversa" : item.title}
             </span>
             {/* O subtítulo é O QUE o bot está fazendo — o título já diz de
                 quem a conversa é. Sem ele, duas filhas do mesmo bot em
