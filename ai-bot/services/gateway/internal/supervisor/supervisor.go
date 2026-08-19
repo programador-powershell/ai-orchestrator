@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"aibot/gateway/internal/contextrt"
 	"aibot/gateway/internal/eventbus"
 	"aibot/gateway/internal/fusion"
 	"aibot/gateway/internal/memory"
@@ -121,6 +122,8 @@ type Supervisor struct {
 	// pergunta → resposta → continuação.
 	asks    map[string]pendingAsk
 	counter uint64
+	// capsuleLocks serializa a dobra da cápsula por sessão (ver foldCapsule).
+	capsuleLocks sync.Map
 }
 
 // New monta o supervisor.
@@ -206,6 +209,9 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// até as sub-equipes. Criá-lo dentro de `task.dispatch` daria cota nova a cada
 	// nível da árvore, que é exatamente o que o teto existe para impedir.
 	ctx = withCrewBudget(ctx)
+	// A CÁPSULA dobra no fim do turno, aconteça o que acontecer com ele —
+	// falha também é estado que o próximo turno precisa saber.
+	defer s.foldCapsule(sessionID)
 	// O WORKSPACE do turno também nasce aqui, congelado UMA vez: fs.read,
 	// git.diff e proc.run deste turno enxergam o mesmo root porque leem a mesma
 	// execução do contexto — nenhuma ferramenta resolve diretório sozinha.
@@ -689,6 +695,15 @@ func (s *Supervisor) buildMessages(
 		}
 	}
 
+	// A CÁPSULA DE ESTADO (Context Runtime): o destilado de tudo o que a janela
+	// recente já não alcança. Antes dela, uma conversa de 200 turnos chegava ao
+	// modelo como as últimas 40 mensagens e NADA mais — objetivo, decisões e
+	// erros antigos simplesmente sumiam. A cápsula entra ANTES da cauda: é
+	// estado, e a cauda verbatim é a recência.
+	if rendered := s.capsuleMessage(sessionID); rendered != "" {
+		messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: rendered})
+	}
+
 	history, err := s.history(sessionID)
 	if err != nil {
 		return nil, err
@@ -745,16 +760,11 @@ func (s *Supervisor) history(sessionID string) ([]modelrouter.ChatMessage, error
 		// nem de que houve leitura. Ou relia (custo, e aprovação de novo), ou seguia
 		// em cima da própria alegação, que é como resposta plausível vira invenção.
 		// Pior justamente no especialista de código, onde a evidência é o arquivo.
-		case protocol.KindToolCall:
-			var call protocol.ToolCall
-			if err := envelope.Decode(&call); err != nil || call.Tool == "" {
-				continue
-			}
-			out = append(out, modelrouter.ChatMessage{
-				Role:    "assistant",
-				Content: "Chamei a ferramenta " + call.Tool + ".",
-			})
-
+		//
+		// UMA mensagem por par, e não duas: o "Chamei a ferramenta X." separado
+		// podia ser cortado do resultado pelo orçamento (ou o contrário), e uma
+		// unidade lógica nunca deve ser partida ao caber a janela. A evidência é
+		// autodescritiva — o nome da ferramenta está nela.
 		case protocol.KindToolResult:
 			var result protocol.ToolResult
 			if err := envelope.Decode(&result); err != nil || result.Tool == "" {
@@ -987,8 +997,23 @@ func (s *Supervisor) executeTool(
 		s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", err.Error(), elapsed)
 		return fmt.Sprintf("ERRO em %s: %s", call.Tool, err.Error())
 	}
-	s.toolResult(sessionID, turn, actor, callID, call.Tool, true, output, "", elapsed)
-	return fmt.Sprintf("%s =>\n%s", call.Tool, truncate(output, 20000))
+
+	// O TOOL OUTPUT GATEWAY (ver tool_gateway.go): a saída grande vira artefato
+	// integral + projeção início/fim. É a projeção que entra no LOG e volta ao
+	// modelo — a janela nunca carrega o dump, e o integral fica recuperável em
+	// fatias por context.fetch.
+	projected, artifactRef, rawBytes, wasTruncated := s.projectToolOutput(sessionID, call.Tool, output)
+	_ = s.emit(sessionID, turn, protocol.KindToolResult, actor, protocol.ToolResult{
+		CallID:      callID,
+		Tool:        call.Tool,
+		OK:          true,
+		Output:      truncate(projected, 20000),
+		Elapsed:     elapsed,
+		Truncated:   wasTruncated,
+		ArtifactRef: artifactRef,
+		RawBytes:    rawBytes,
+	})
+	return fmt.Sprintf("%s =>\n%s", call.Tool, truncate(projected, 20000))
 }
 
 // askApproval publica o pedido e espera a decisão humana.
@@ -1176,6 +1201,73 @@ func (s *Supervisor) ReportTurnFailure(sessionID string, err error) {
 }
 
 /* -------------------------------- apoio --------------------------------- */
+
+/* --------------------------- cápsula de estado ---------------------------- */
+
+// capsuleBlobName é o blob da sessão onde a cápsula vive.
+const capsuleBlobName = "capsule"
+
+// capsuleMessage devolve a cápsula renderizada para o prompt — vazia quando a
+// sessão ainda não dobrou nada (conversa nova não paga por estado que não tem).
+func (s *Supervisor) capsuleMessage(sessionID string) string {
+	if s.deps.Store == nil {
+		return ""
+	}
+	data, err := s.deps.Store.LoadSessionBlob(sessionID, capsuleBlobName)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	return contextrt.Load(data).Render()
+}
+
+// foldCapsule dobra os envelopes novos da sessão para dentro da cápsula.
+//
+// Roda no FIM de cada turno (o `done` é o fim de fase natural da conversa —
+// a compactação por fase da especificação), fora do caminho da resposta: a
+// pessoa nunca espera a dobra. Incremental por cursor: só os envelopes que a
+// cápsula ainda não viu são lidos.
+//
+// A trava é POR SESSÃO: um turno substituído pode terminar a dobra dele
+// enquanto o substituto termina a própria, e duas dobras lendo o mesmo cursor
+// dobrariam os mesmos eventos duas vezes.
+func (s *Supervisor) foldCapsule(sessionID string) {
+	if s.deps.Store == nil {
+		return
+	}
+	lock, _ := s.capsuleLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	mutex := lock.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	data, err := s.deps.Store.LoadSessionBlob(sessionID, capsuleBlobName)
+	if err != nil {
+		return
+	}
+	capsule := contextrt.Load(data)
+
+	// Se a sessão não tem cabeçalho de objetivo ainda, o título serve de
+	// semente — validação da compactação: cápsula sem objetivo não presta.
+	if capsule.Goal == "" {
+		if meta, err := s.deps.Store.GetSession(sessionID); err == nil {
+			capsule.Goal = meta.Title
+		}
+	}
+
+	for {
+		batch, err := s.deps.Store.Since(sessionID, capsule.Cursor, store.MaxEventBatch)
+		if err != nil || len(batch) == 0 {
+			break
+		}
+		capsule.Fold(batch)
+		if len(batch) < store.MaxEventBatch {
+			break
+		}
+	}
+
+	if serialized, err := capsule.Marshal(); err == nil {
+		_ = s.deps.Store.SaveSessionBlob(sessionID, capsuleBlobName, serialized)
+	}
+}
 
 // comWorkspace congela o plano de workspace e pendura a execução no contexto.
 //

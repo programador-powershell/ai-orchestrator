@@ -407,6 +407,7 @@ func serve() error {
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{
 		Memory:    recall,
+		Artifacts: durable,
 		Net:       guard,
 		MCP:       hub,
 		Worktrees: worktrees,

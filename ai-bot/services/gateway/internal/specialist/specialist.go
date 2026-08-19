@@ -598,7 +598,17 @@ func Exists(id string) bool {
 }
 
 // AllowsTool diz se o especialista pode pedir aquela ferramenta.
+// universalTools valem para TODO especialista, sem constar no catálogo de
+// cada um: são leitura do que a PRÓPRIA conversa já produziu — recuperar a
+// fatia de um artefato não é capacidade nova, é acesso ao que já aconteceu.
+var universalTools = map[string]bool{
+	"context.fetch": true,
+}
+
 func (d Definition) AllowsTool(tool string) bool {
+	if universalTools[tool] {
+		return true
+	}
 	for _, allowed := range d.Tools {
 		if allowed == tool {
 			return true

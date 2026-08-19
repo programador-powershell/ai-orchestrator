@@ -168,6 +168,31 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **O CONTEXT RUNTIME entrou: janela do modelo ≠ memória do agente.** A
+  especificação (docs/context-runtime.md) foi implantada INTEGRADA ao que já
+  existia — o log de envelopes JÁ ERA o Event Store, o modelrouter JÁ ERA o
+  Model Adapter, a delegação JÁ ERA o isolamento de subagente; nada disso foi
+  duplicado. O que nasceu:
+  - **Cápsula de estado** (`internal/contextrt`): dobra determinística e
+    incremental do log — no fim de cada turno, sem chamada de modelo — que
+    transforma história em estado ("rodou, deu erro, corrigiu" vira um erro
+    RESOLVIDO, não quatro mensagens). Antes, além da janela recente TUDO sumia
+    do contexto; agora o destilado (objetivo, decisões, arquivos, erros
+    abertos, pendências) entra como system message antes da cauda verbatim.
+  - **Tool Output Gateway**: acima de 12 KiB a saída da ferramenta vira
+    artefato integral + projeção início/fim (compilador/log pesa o fim;
+    listagem, o começo). O prompt nunca carrega o dump.
+  - **Artifact Store** no store: endereçado por conteúdo, fatias obrigatórias.
+  - **`context.fetch`** (universal, risco de leitura): o modelo pede a fatia
+    que precisa — recuperação sob demanda, nunca a conversa antiga de volta.
+  - **`fs.read` por faixa** ({path, offset, limit}): sessenta linhas certas em
+    vez do arquivo inteiro ocupando a janela.
+  - **Grupos atômicos**: o par chamada+resultado virou UMA mensagem no
+    histórico — o orçamento não parte mais a unidade lógica.
+  - Telemetria separa CUMULATIVO (a cápsula conta o que dobrou) de ATIVO (o
+    budget estima por chamada) — as três contagens que a spec manda nunca
+    confundir.
+
 - **O WORKSPACE virou plano congelado — o primeiro passo do cluster
   (`internal/workspace`).** A regra nova do gateway: nenhuma ferramenta de
   projeto recebe ou calcula um diretório — ela recebe uma EXECUÇÃO cujo

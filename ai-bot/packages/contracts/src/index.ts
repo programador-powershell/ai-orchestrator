@@ -373,6 +373,14 @@ export interface ToolResult {
   output?: string;
   error?: string;
   elapsedMs?: number;
+  /**
+   * A saída passou do teto inline: `output` é uma PROJEÇÃO (início + fim) e o
+   * integral vive no Artifact Store do gateway, recuperável em fatias pela
+   * ferramenta context.fetch.
+   */
+  truncated?: boolean;
+  artifactRef?: string;
+  rawBytes?: number;
 }
 
 export interface ApprovalRequest {

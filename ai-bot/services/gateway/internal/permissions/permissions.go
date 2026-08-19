@@ -460,6 +460,7 @@ var riskByTool = map[string]protocol.Risk{
 	// Lê e não altera nada. web.fetch entra aqui porque não toca no projeto;
 	// o que ele tem de perigoso é o destino, e quem cuida disso é HostBlocked.
 	"fs.read":         protocol.RiskRead,
+	"context.fetch":   protocol.RiskRead,
 	"fs.list":         protocol.RiskRead,
 	"fs.search":       protocol.RiskRead,
 	"git.status":      protocol.RiskRead,

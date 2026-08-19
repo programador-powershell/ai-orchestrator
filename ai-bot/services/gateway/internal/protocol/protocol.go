@@ -505,6 +505,12 @@ type ToolResult struct {
 	Error  string `json:"error,omitempty"`
 	// Elapsed em milissegundos.
 	Elapsed int64 `json:"elapsedMs,omitempty"`
+	// A saída passou do teto inline: `Output` é uma PROJEÇÃO (início + fim) e o
+	// integral vive no Artifact Store, recuperável em fatias por context.fetch.
+	// Nenhuma ferramenta despeja saída ilimitada na janela do modelo.
+	Truncated   bool   `json:"truncated,omitempty"`
+	ArtifactRef string `json:"artifactRef,omitempty"`
+	RawBytes    int    `json:"rawBytes,omitempty"`
 }
 
 // Risk classifica o estrago possível de uma ferramenta.

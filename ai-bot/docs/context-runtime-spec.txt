@@ -1,0 +1,1522 @@
+CONTEXT RUNTIME
+Especificação de Implantação para Claude, BitGlimmer e Outros Agentes/LLMs
+Versão: 1.0
+Data: 2026-08-19
+
+======================================================================
+1. OBJETIVO
+======================================================================
+
+Criar uma camada independente do modelo para gerenciamento de contexto em
+agentes de longa duração.
+
+A ideia central é simples:
+
+    JANELA DO MODELO != MEMÓRIA DO AGENTE
+
+A janela de contexto deve ser tratada como memória de trabalho temporária.
+A memória real da sessão deve existir fora do modelo, em estruturas persistentes
+que possam crescer sem aumentar proporcionalmente o prompt.
+
+O Context Runtime deve funcionar com:
+
+- Claude / Claude Code
+- BitGlimmer
+- BitNet / BitNet 1.58
+- Grok
+- OpenAI / Codex
+- Gemini
+- modelos locais
+- modelos futuros
+
+O gerenciamento de contexto NÃO pode ficar acoplado ao modelo.
+
+======================================================================
+2. PRINCÍPIO CENTRAL
+======================================================================
+
+Modelo ingênuo:
+
+    history.push(tudo)
+    model(history)
+    history.push(tudo)
+    model(history)
+    history.push(tudo)
+    model(history)
+
+Problema:
+
+- contexto cresce sem parar
+- outputs de ferramentas poluem a janela
+- logs antigos permanecem para sempre
+- arquivos já lidos continuam ocupando tokens
+- raciocínios concluídos continuam no prompt
+- tarefas longas degradam progressivamente
+
+Context Runtime:
+
+    persist(tudo)
+
+    working_context =
+        system
+      + state_capsule
+      + recent_tail
+      + retrieved_context
+      + projected_tool_outputs
+
+    model(working_context)
+
+O histórico completo continua armazenado, mas não permanece dentro do prompt.
+
+======================================================================
+3. ARQUITETURA GERAL
+======================================================================
+
+                           +-----------------+
+                           |      USER       |
+                           +--------+--------+
+                                    |
+                                    v
+                        +-----------------------+
+                        |     ORCHESTRATOR      |
+                        +-----------+-----------+
+                                    |
+              +---------------------+---------------------+
+              |                     |                     |
+              v                     v                     v
+     +----------------+    +-----------------+    +-----------------+
+     | CONTEXT RUNTIME|    |  AGENT BROKER   |    |  TOOL GATEWAY   |
+     +-------+--------+    +-------+---------+    +-------+---------+
+             |                     |                      |
+      +------+---------+           |                      |
+      |      |         |           v                      v
+      v      v         v       subagents             filesystem
+   Budget Compactor Retriever  independentes          shell
+      |      |         |                               MCP
+      |      |         |                               git
+      |      v         |
+      |  State Capsule |
+      |                |
+      v                v
+ Working Set      Artifact Store
+      |                |
+      +--------+-------+
+               v
+        +-------------+
+        |MODEL ADAPTER|
+        +-------------+
+        | Claude      |
+        | BitGlimmer  |
+        | Grok        |
+        | OpenAI      |
+        | Local LLM   |
+        +-------------+
+
+======================================================================
+4. NÍVEIS DE MEMÓRIA
+======================================================================
+
+L0 - PERMANENT INSTRUCTIONS
+
+Contém:
+- system prompt
+- regras de segurança
+- identidade do agente
+- instruções essenciais
+- ferramentas principais
+
+L1 - STATE CAPSULE
+
+Resumo estruturado do estado atual da tarefa.
+Deve ser pequeno, objetivo e suficiente para um agente sucessor continuar.
+
+L2 - RECENT TAIL
+
+Últimos eventos relevantes:
+- últimas mensagens
+- último erro
+- última execução
+- arquivos em edição
+- passos imediatamente anteriores
+
+L3 - RETRIEVED CONTEXT
+
+Conteúdo recuperado sob demanda:
+- trechos de arquivos
+- funções
+- classes
+- logs específicos
+- documentação
+- decisões antigas
+- outputs completos de ferramentas
+
+L4 - EXTERNAL HISTORY
+
+Memória persistente completa:
+- transcript integral
+- todos os tool calls
+- todos os tool results
+- logs integrais
+- arquivos
+- diffs
+- checkpoints
+- contexto de subagentes
+
+Somente L0, L1, L2 e L3 entram no modelo.
+L4 não entra automaticamente no prompt.
+
+======================================================================
+5. STATE CAPSULE
+======================================================================
+
+O State Capsule deve substituir o resumo livre de conversa como principal
+estado persistente enviado ao modelo.
+
+Estrutura recomendada:
+
+interface SessionCapsule {
+  version: number;
+
+  goal: string;
+
+  constraints: string[];
+
+  decisions: {
+    decision: string;
+    reason?: string;
+  }[];
+
+  files: {
+    path: string;
+    status: "read" | "created" | "modified" | "deleted";
+    purpose: string;
+    hash?: string;
+  }[];
+
+  errors: {
+    symptom: string;
+    rootCause?: string;
+    fix?: string;
+    status: "open" | "resolved";
+  }[];
+
+  processes: {
+    id: string;
+    command: string;
+    status: string;
+  }[];
+
+  artifacts: {
+    id: string;
+    uri: string;
+    description: string;
+  }[];
+
+  pending: string[];
+
+  currentWork: string;
+
+  nextAction: string;
+}
+
+O Capsule NÃO deve preservar toda a conversa.
+Ele deve preservar apenas o estado útil.
+
+Exemplo:
+
+NÃO guardar:
+
+    "rodei npm build"
+    "deu erro"
+    "li o arquivo"
+    "tentei instalar pacote"
+    "deu outro erro"
+    "mudei linha 50"
+    "agora funcionou"
+
+Guardar:
+
+{
+  "errors": [
+    {
+      "symptom": "build failed because package X was missing",
+      "rootCause": "dependency absent",
+      "fix": "package X installed",
+      "status": "resolved"
+    }
+  ]
+}
+
+======================================================================
+6. EVENT STORE
+======================================================================
+
+Nada deve ser realmente perdido.
+
+Estrutura recomendada:
+
+.context/
+|
++-- session.json
+|
++-- events/
+|   +-- 000001.json
+|   +-- 000002.json
+|   +-- 000003.json
+|   +-- ...
+|
++-- capsules/
+|   +-- capsule-001.json
+|   +-- capsule-002.json
+|   +-- capsule-current.json
+|
++-- artifacts/
+|   +-- shell/
+|   +-- tools/
+|   +-- files/
+|   +-- diffs/
+|   +-- agents/
+|
++-- index/
+
+Cada evento deve possuir pelo menos:
+
+{
+  "id": "evt_xxx",
+  "timestamp": "...",
+  "type": "user|assistant|tool_call|tool_result|error|decision|checkpoint",
+  "sessionId": "...",
+  "agentId": "...",
+  "content": "...",
+  "artifactRefs": [],
+  "tokenEstimate": 0,
+  "metadata": {}
+}
+
+O Event Store é a fonte autoritativa.
+O contexto do modelo é descartável.
+
+======================================================================
+7. CONTEXT BUDGET MANAGER
+======================================================================
+
+Não usar toda a janela apenas porque ela existe.
+
+Definir budgets artificiais menores.
+
+Sugestão:
+
+targetAfterCompact = clamp(contextWindow * 0.10, 24_000, 64_000)
+softLimit          = clamp(contextWindow * 0.18, 48_000, 96_000)
+hardLimit          = clamp(contextWindow * 0.25, 64_000, 128_000)
+
+Exemplo para contexto de 500k:
+
+    janela real:           500k
+    hard limit:            125k
+    soft limit:             90k
+    target pós-compact:     50k
+
+Fluxo desejado:
+
+    50k -> 70k -> 80k -> 90k
+                         |
+                      compact
+                         |
+                         v
+                        50k
+
+Não esperar chegar perto de 500k.
+
+======================================================================
+8. COMPACTAÇÃO
+======================================================================
+
+A compactação deve transformar histórico em estado operacional.
+
+Entrada:
+
+- capsule anterior
+- histórico antigo relevante
+- recent tail
+- decisões
+- erros
+- arquivos
+- subagent summaries
+
+Saída:
+
+- novo State Capsule
+- handoff textual pequeno opcional
+
+Nunca compactar apenas quando ocorre overflow.
+
+Triggers possíveis:
+
+1. token threshold
+2. final de fase
+3. troca de especialista
+4. conclusão de subagente
+5. build finalizado
+6. testes finalizados
+7. review finalizado
+8. mudança significativa no objetivo
+
+======================================================================
+9. TWO-PASS HIERARCHICAL COMPACTION
+======================================================================
+
+Implementar compactação hierárquica em dois passes.
+
+Fluxo:
+
+                    CONTEXTO GRANDE
+                           |
+                           v
+                    PREFIRE PASS 1
+                           |
+             +-------------+--------------+
+             |                            |
+        prefix 90-95%                tail 5-10%
+             |                            |
+             v                            |
+       State Capsule A                    |
+             |                            |
+             +--------------+-------------+
+                            v
+                         PASS 2
+                            |
+                  Capsule A + tail
+                            |
+                            v
+                   State Capsule B
+                            |
+                            v
+                 atomic context replace
+
+O Pass 1 pode iniciar antes do soft limit para esconder latência.
+
+Exemplo:
+
+- compact threshold = 85%
+- prefire = 75%
+
+Não é obrigatório usar exatamente 75/85.
+O runtime deve permitir configuração.
+
+======================================================================
+10. ATOMIC CONTEXT GROUPS
+======================================================================
+
+Nunca cortar uma unidade lógica ao compactar.
+
+Exemplos de grupos atômicos:
+
+- tool_call + tool_result
+- command + stdout/stderr + exitcode
+- patch + patch_result
+- user request + clarification
+- subagent spawn + subagent result
+- build start + build final status
+
+Exemplo inválido:
+
+assistant:
+    tool_call(id=123)
+
+    <<< CORTE >>>
+
+tool:
+    result(id=123)
+
+O algoritmo de split deve ajustar a fronteira para preservar a unidade inteira.
+
+======================================================================
+11. FIT LADDER
+======================================================================
+
+Se o contexto ainda for grande demais para o compactador, reduzir nesta ordem:
+
+0. Verbatim
+   usar tudo se couber
+
+1. Drop Old History
+   remover primeiro histórico mais antigo
+
+2. Truncate Tool Outputs
+   reduzir tool results grandes
+
+3. Drop Old Steps
+   remover steps antigos já representados no capsule
+
+4. Emergency
+   reduzir até o item mais recente, mantendo a informação mínima necessária
+
+Nunca pular diretamente para truncamento destrutivo se uma etapa anterior resolver.
+
+======================================================================
+12. TOOL OUTPUT GATEWAY
+======================================================================
+
+Nenhuma ferramenta deve poder despejar saída ilimitada diretamente no modelo.
+
+Estrutura:
+
+interface ToolProjection {
+  status: "success" | "error" | "running";
+
+  summary: string;
+
+  head?: string;
+  tail?: string;
+
+  rawBytes: number;
+
+  truncated: boolean;
+
+  artifactRef?: string;
+}
+
+Recomendação inicial:
+
+- tool result genérico: <= 40 KB
+- shell/terminal inline: <= 20k caracteres
+- para respostas muito grandes: usar head + tail
+- conteúdo completo deve ir para Artifact Store
+
+Exemplo:
+
+Comando produz 4 MB.
+
+Modelo recebe:
+
+status: failed
+
+Head:
+[first 1500 chars]
+
+Tail:
+[last 3000 chars containing final error]
+
+Full output:
+artifact://shell/9381.log
+
+Raw size:
+4193721 bytes
+
+O modelo pode pedir o artifact completo ou uma região específica depois.
+
+======================================================================
+13. SMART FILE READ
+======================================================================
+
+Nunca carregar arquivo completo sem necessidade.
+
+Prioridade:
+
+1. symbol index / AST / LSP
+2. grep/search
+3. localizar arquivo
+4. localizar intervalo relevante
+5. ler somente aquele intervalo
+
+Exemplo:
+
+Pergunta:
+    "onde authenticateUser é definido?"
+
+Fluxo:
+
+    index
+      -> src/auth/service.ts
+      -> lines 82-143
+      -> ~1500 tokens
+
+Não enviar o arquivo inteiro se 60 linhas forem suficientes.
+
+Parâmetros recomendados:
+
+read_file(path, offset, limit)
+
+Também suportar:
+
+read_symbol(name)
+read_range(path, start, end)
+search_code(query)
+
+======================================================================
+14. RETRIEVER
+======================================================================
+
+O Retriever recupera contexto do L4 quando necessário.
+
+Fontes:
+
+- Event Store
+- Artifact Store
+- File index
+- Git diff index
+- Agent results
+- Previous capsules
+
+Cada item deve ter metadata:
+
+- tipo
+- timestamp
+- path
+- symbol
+- task
+- agent
+- importance
+- token estimate
+
+O retriever deve retornar pequenos blocos relevantes, nunca dumps integrais por padrão.
+
+======================================================================
+15. SUBAGENT ISOLATION
+======================================================================
+
+Cada subagente deve possuir contexto próprio.
+
+O agente pai NÃO deve copiar sua conversa inteira para o filho.
+
+Contrato recomendado:
+
+interface AgentTask {
+  task: string;
+  constraints: string[];
+  relevantFiles: string[];
+  artifactRefs: string[];
+  acceptanceCriteria: string[];
+}
+
+interface AgentResult {
+  status: "done" | "blocked" | "failed";
+  summary: string;
+  findings: string[];
+  changedFiles: string[];
+  tests: string[];
+  artifacts: string[];
+  blockers: string[];
+}
+
+O filho recebe:
+
+    task packet
+    + arquivos necessários
+    + restrições
+
+O pai recebe:
+
+    result packet
+
+Exemplo:
+
+                       MAIN
+                       28k
+                        |
+       +----------------+----------------+
+       |                |                |
+       v                v                v
+    EXPLORE          CODER             TEST
+     70k              80k              45k
+       |                |                |
+       v                v                v
+    1.2k              1.5k             0.8k
+       +----------------+----------------+
+                        |
+                        v
+                       MAIN
+                       ~32k
+
+Centenas de milhares de tokens podem ser processados sem entrar na janela do pai.
+
+======================================================================
+16. MODEL ADAPTER
+======================================================================
+
+O Context Runtime deve ser independente do provider.
+
+Contrato mínimo:
+
+export interface ModelAdapter {
+  id: string;
+
+  contextWindow: number;
+
+  countTokens(
+    messages: ContextMessage[]
+  ): Promise<number>;
+
+  generate(
+    request: ModelRequest
+  ): Promise<ModelResponse>;
+}
+
+O adapter pode também expor:
+
+interface ModelCapabilities {
+  toolCalling: boolean;
+  streaming: boolean;
+  jsonMode: boolean;
+  structuredOutput: boolean;
+  reasoning: boolean;
+  vision: boolean;
+}
+
+Nenhuma regra de memória deve ficar dentro do adapter.
+
+======================================================================
+17. CLAUDE ADAPTER
+======================================================================
+
+Para Claude:
+
+Responsabilidades do adapter:
+
+- converter ContextMessage para formato Anthropic
+- contar/estimar tokens
+- converter tool_use/tool_result
+- preservar system prompt
+- mapear stop reasons
+- mapear streaming
+
+O Context Runtime continua decidindo:
+
+- o que entra no prompt
+- quando compactar
+- quando recuperar arquivos
+- quando truncar tool output
+- quando criar subagente
+
+IMPORTANTE:
+
+Não depender do mecanismo interno de contexto do Claude Code.
+O Context Runtime deve funcionar como camada acima do provider.
+
+======================================================================
+18. BITGLIMMER ADAPTER
+======================================================================
+
+Para BitGlimmer:
+
+O adapter deve ser mínimo e eficiente.
+
+Responsabilidades:
+
+- tokenizer oficial do BitGlimmer/Glimmer
+- chat template oficial
+- geração
+- parsing de tool call, se suportado
+- contextWindow real do runtime
+
+Se o BitGlimmer não possuir tool calling nativo:
+
+usar envelope estruturado, por exemplo:
+
+<tool_call>
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "src/main.ts",
+    "offset": 1,
+    "limit": 120
+  }
+}
+</tool_call>
+
+O parser externo transforma isso em execução real.
+
+Resposta da ferramenta:
+
+<tool_result id="tool_123">
+...
+</tool_result>
+
+O Context Runtime não precisa mudar.
+
+======================================================================
+19. BITNET / MODELOS PEQUENOS
+======================================================================
+
+Para modelos menores, o mesmo runtime pode funcionar com budgets ainda menores.
+
+Exemplo:
+
+contextWindow = 128k
+
+targetAfterCompact = 24k
+softLimit = 48k
+hardLimit = 64k
+
+Subagentes especializados ajudam a impedir que o modelo principal precise conhecer tudo.
+
+É possível ter:
+
+- BitGlimmer como orquestrador
+- vários BitNet como especialistas
+
+ou:
+
+- BitGlimmer como especialista
+- modelo maior como orquestrador
+
+O protocolo de Task Packet / Result Packet permanece igual.
+
+======================================================================
+20. CONTEXT ASSEMBLER
+======================================================================
+
+Cada chamada deve reconstruir o prompt.
+
+Pseudo fluxo:
+
+context = []
+
+context += permanentInstructions
+context += currentCapsule
+context += recentTail
+context += retrieveRelevant(currentTask)
+context += activeToolResults
+context += currentUserRequest
+
+if estimatedTokens(context) > currentBudget:
+    shrinkRetrievedContext()
+    shrinkToolProjections()
+    trimRecentTail()
+
+return context
+
+O assembler deve possuir budgets por categoria.
+
+Exemplo:
+
+System                         4k
+State Capsule                  5k
+Recent Tail                   10k
+Retrieved Source Code         12k
+Tool Definitions               6k
+Current Task                   1k
+---------------------------------
+TOTAL                          38k
+
+======================================================================
+21. RELEVANCE POLICY
+======================================================================
+
+Conteúdo deve ser classificado por relevância.
+
+Categorias sugeridas:
+
+PINNED
+- nunca remover automaticamente
+
+ACTIVE
+- essencial para etapa atual
+
+RECENT
+- importante temporariamente
+
+RETRIEVABLE
+- armazenado fora da janela
+
+DISCARDABLE
+- pode sair da working memory sem resumo detalhado
+
+Exemplos:
+
+PINNED:
+- objetivo principal
+- restrições explícitas do usuário
+- arquitetura aprovada
+
+ACTIVE:
+- arquivo atual
+- erro atual
+- processo atual
+
+RECENT:
+- últimos tool results
+
+RETRIEVABLE:
+- logs antigos
+- código já analisado
+- outputs completos
+
+DISCARDABLE:
+- mensagens intermediárias redundantes
+- raciocínios concluídos
+- comandos bem-sucedidos sem impacto futuro
+
+======================================================================
+22. PHASE COMPACTION
+======================================================================
+
+Além do threshold por token, compactar quando uma fase termina.
+
+Exemplos:
+
+Exploração concluída
+    -> compact
+
+Implementação concluída
+    -> compact
+
+Testes concluídos
+    -> compact
+
+Security review concluído
+    -> compact
+
+Deploy concluído
+    -> compact
+
+Isso remove raciocínios que já cumpriram sua função.
+
+======================================================================
+23. COMPACTION VALIDATION
+======================================================================
+
+Nunca aplicar cegamente um resumo ruim.
+
+Validar:
+
+- goal existe
+- constraints preservadas
+- pending existe
+- currentWork existe
+- nextAction existe
+- arquivos importantes continuam presentes
+- erros ainda abertos continuam presentes
+- artifact refs continuam válidos
+
+Rejeitar compactação se redução for insuficiente.
+
+Exemplo:
+
+antes = 50k
+depois = 30k
+
+Pode ser pouco útil.
+
+Alvo ideal para capsule textual/estruturado:
+
+50k -> 4k-8k
+
+A redução exata depende da tarefa.
+
+======================================================================
+24. CHECKPOINTS
+======================================================================
+
+Criar checkpoint após eventos importantes:
+
+- arquitetura aprovada
+- build funcionando
+- teste passando
+- commit
+- fase concluída
+- antes de compactação destrutiva
+
+Checkpoint deve conter:
+
+{
+  "capsule": "...",
+  "eventCursor": 1234,
+  "gitCommit": "...",
+  "activeProcesses": [],
+  "activeAgents": [],
+  "artifacts": []
+}
+
+Isso permite rewind sem depender do contexto do modelo.
+
+======================================================================
+25. CONTEXT TELEMETRY
+======================================================================
+
+Registrar por chamada:
+
+- model
+- contextWindow
+- promptTokens
+- capsuleTokens
+- recentTailTokens
+- retrievedTokens
+- toolTokens
+- systemTokens
+- freeTokens
+- totalEvents
+- cumulativeSessionTokens
+- compactionCount
+- tokensBeforeCompact
+- tokensAfterCompact
+- reductionRatio
+- retrievedItems
+- activeSubagents
+
+IMPORTANTE:
+
+Distinguir:
+
+1. ACTIVE CONTEXT TOKENS
+   tokens atualmente enviados ao modelo
+
+2. CUMULATIVE TOKENS
+   tokens processados ao longo da sessão
+
+3. EXTERNAL MEMORY SIZE
+   quantidade total armazenada fora da janela
+
+Isso evita confundir "23k ativos" com "23k totais processados".
+
+======================================================================
+26. DIRETÓRIOS RECOMENDADOS
+======================================================================
+
+context-runtime/
+|
++-- src/
+    |
+    +-- runtime/
+    |   +-- context-controller.ts
+    |   +-- context-assembler.ts
+    |   +-- session-runtime.ts
+    |
+    +-- budget/
+    |   +-- controller.ts
+    |   +-- estimator.ts
+    |   +-- policy.ts
+    |
+    +-- compaction/
+    |   +-- state-replace.ts
+    |   +-- two-pass.ts
+    |   +-- fit.ts
+    |   +-- validator.ts
+    |   +-- capsule.ts
+    |
+    +-- store/
+    |   +-- event-store.ts
+    |   +-- artifact-store.ts
+    |   +-- checkpoint-store.ts
+    |
+    +-- retrieval/
+    |   +-- index.ts
+    |   +-- search.ts
+    |   +-- hydrate.ts
+    |
+    +-- tools/
+    |   +-- gateway.ts
+    |   +-- output-gate.ts
+    |   +-- smart-read.ts
+    |   +-- projection.ts
+    |
+    +-- agents/
+    |   +-- broker.ts
+    |   +-- task-packet.ts
+    |   +-- result-packet.ts
+    |
+    +-- providers/
+    |   +-- adapter.ts
+    |   +-- anthropic.ts
+    |   +-- bitglimmer.ts
+    |   +-- openai.ts
+    |   +-- xai.ts
+    |   +-- local.ts
+    |
+    +-- telemetry/
+        +-- metrics.ts
+        +-- context-trace.ts
+
+======================================================================
+27. LOOP PRINCIPAL
+======================================================================
+
+Pseudo implementação:
+
+while (!session.finished) {
+  const budget = await contextRuntime.measure(session);
+
+  if (budget.shouldPrefire) {
+    contextRuntime.prefire(session);
+  }
+
+  if (budget.shouldCompact) {
+    await contextRuntime.compact(session);
+  }
+
+  const context = await contextRuntime.assemble({
+    capsule: session.capsule,
+    recentTail: true,
+    retrieveRelevant: true,
+  });
+
+  const response = await model.generate(context);
+
+  await eventStore.append(response);
+
+  for (const call of response.toolCalls) {
+    const raw = await tools.execute(call);
+
+    const artifact = await artifactStore.persist(raw);
+
+    const projected = outputGate.project(raw, artifact);
+
+    await eventStore.append(projected);
+  }
+}
+
+======================================================================
+28. CONTEXT CONTROLLER
+======================================================================
+
+Responsabilidades:
+
+- medir working set
+- decidir prefire
+- decidir compactação
+- disparar compaction
+- trocar contexto atomicamente
+- preservar tail recente
+- preservar grupos atômicos
+- atualizar capsule
+- criar checkpoint
+
+Pseudo código:
+
+class ContextController {
+  async beforeModelCall(session) {
+    let state = await this.measure(session);
+
+    if (state.tokens >= state.prefireLimit) {
+      this.ensurePrefire(session);
+    }
+
+    if (state.tokens >= state.softLimit) {
+      await this.compact(session);
+    }
+
+    return this.assembler.build(session);
+  }
+}
+
+======================================================================
+29. TOOL GATEWAY
+======================================================================
+
+Todas as ferramentas passam obrigatoriamente pelo gateway.
+
+Fluxo:
+
+model
+  -> tool_call
+  -> Tool Gateway
+  -> execute
+  -> persist raw output
+  -> project bounded output
+  -> return projection to model
+
+Nunca:
+
+model
+  -> shell
+  -> 4MB stdout diretamente no contexto
+
+======================================================================
+30. SUBAGENT BROKER
+======================================================================
+
+O broker deve:
+
+- criar contexto independente
+- enviar task packet
+- limitar contexto inicial do filho
+- manter event store próprio ou namespace próprio
+- receber result packet
+- persistir resultado completo
+- inserir apenas resumo no contexto do pai
+
+Opcional:
+
+subagentes podem usar modelos diferentes.
+
+Exemplo:
+
+Orquestrador: BitGlimmer
+Code worker: BitNet
+Research worker: Claude
+Security worker: modelo especializado
+
+Todos usam o mesmo protocolo.
+
+======================================================================
+31. REGRAS PARA CLAUDE
+======================================================================
+
+Ao integrar com Claude:
+
+1. Não enviar transcript completo por padrão.
+2. Gerar prompt a partir do Context Assembler.
+3. Persistir todos os tool results externamente.
+4. Projetar tool outputs antes de devolver ao modelo.
+5. Usar subagentes com contexto independente.
+6. Compactar por threshold e por fase.
+7. Sempre preservar State Capsule.
+8. Usar Retriever para fatos antigos.
+9. Tratar contexto máximo como teto, não alvo.
+
+======================================================================
+32. REGRAS PARA BITGLIMMER
+======================================================================
+
+Ao integrar com BitGlimmer:
+
+1. Usar tokenizer oficial.
+2. Usar chat template oficial.
+3. Não depender de tool calling nativo.
+4. Se necessário, usar tags estruturadas externas.
+5. Manter tool parser no runtime.
+6. Manter contexto pequeno.
+7. Priorizar task/result packets entre agentes.
+8. Preservar apenas capsule + recent tail + retrieved context.
+9. Usar especialistas BitNet para subtarefas repetitivas.
+10. BitGlimmer pode funcionar como orquestrador/planejador.
+
+======================================================================
+33. PROTOCOLO DE TOOL CALL PARA MODELOS SEM TOOL CALLING NATIVO
+======================================================================
+
+Formato sugerido:
+
+<tool_call id="tool_123">
+{
+  "name": "read_file",
+  "arguments": {
+    "path": "src/main.ts",
+    "offset": 1,
+    "limit": 120
+  }
+}
+</tool_call>
+
+Runtime executa.
+
+Retorno:
+
+<tool_result id="tool_123" status="success">
+{
+  "summary": "...",
+  "truncated": false,
+  "artifactRef": null,
+  "content": "..."
+}
+</tool_result>
+
+======================================================================
+34. PROMPT DO COMPACTADOR
+======================================================================
+
+O compactador deve ser instruído a produzir estado para um agente sucessor,
+mas preferencialmente com structured output.
+
+Prompt conceitual:
+
+"Você está criando o estado operacional mínimo necessário para outro agente
+continuar exatamente de onde esta sessão parou. Não reconte a conversa.
+Materialize o estado atual. Preserve objetivos, restrições, decisões,
+arquivos, erros ainda relevantes, artefatos, trabalho atual e próximo passo.
+Remova raciocínios transitórios, logs redundantes, tentativas já superadas e
+conteúdo recuperável do Event Store. Não invente fatos."
+
+Saída esperada:
+
+SessionCapsule JSON válido.
+
+======================================================================
+35. RECONSTRUÇÃO DE CONTEXTO
+======================================================================
+
+Para cada nova chamada:
+
+1. carregar permanent instructions
+2. carregar capsule atual
+3. selecionar recent tail
+4. identificar task atual
+5. recuperar arquivos/eventos relevantes
+6. adicionar tool projections ativas
+7. contar tokens
+8. reduzir retrieved context se necessário
+9. reduzir recent tail se necessário
+10. enviar ao modelo
+
+O transcript integral nunca deve ser requisito para continuar a sessão.
+
+======================================================================
+36. RECUPERAÇÃO SOB DEMANDA
+======================================================================
+
+Se o modelo perguntar:
+
+"qual foi aquele erro de compilação de 40 minutos atrás?"
+
+O runtime deve:
+
+1. buscar no Event Store
+2. encontrar eventos relacionados
+3. recuperar pequeno bloco relevante
+4. inserir temporariamente no contexto
+
+Não trazer toda a conversa antiga de volta.
+
+======================================================================
+37. POLÍTICA DE TRUNCAMENTO
+======================================================================
+
+Prioridade para tool outputs grandes:
+
+1. resumo estruturado
+2. final da saída / tail
+3. início da saída / head
+4. artifactRef para conteúdo integral
+
+Para compiladores, logs e testes, tail normalmente é mais importante que o meio.
+
+Para tabelas/listagens, head pode ser mais importante.
+
+O Tool Gateway pode usar política por tipo de ferramenta.
+
+======================================================================
+38. CONTEXTO DE CÓDIGO
+======================================================================
+
+Para coding agents, usar working set de código.
+
+Nunca manter todos os arquivos lidos no prompt.
+
+Manter apenas:
+
+- arquivo atualmente editado
+- dependências diretas
+- símbolos relacionados
+- interfaces necessárias
+- testes relacionados
+- erro atual
+
+O restante fica indexado e recuperável.
+
+======================================================================
+39. DIFF-FIRST MEMORY
+======================================================================
+
+Para arquivos modificados, em muitos casos é melhor manter:
+
+- path
+- hash/base commit
+- diff atual
+- símbolos tocados
+
+em vez de reter cópia integral antiga e nova.
+
+O modelo pode reler o arquivo do workspace quando necessário.
+
+======================================================================
+40. RESUMO DE SUBAGENTES
+======================================================================
+
+Limitar AgentResult.summary a aproximadamente 500-1500 tokens quando possível.
+
+Informações detalhadas devem ir para artifacts.
+
+Exemplo:
+
+AgentResult:
+
+status: done
+summary: pequeno
+findings: lista curta
+changedFiles: paths
+artifacts:
+  - artifact://agents/code-worker-42/full-report.md
+
+======================================================================
+41. MÉTRICA PRINCIPAL
+======================================================================
+
+O objetivo não é maximizar utilização da janela.
+
+O objetivo é minimizar:
+
+    tokens ativos por decisão útil
+
+Métrica recomendada:
+
+Context Efficiency = useful_active_tokens / total_active_tokens
+
+Também monitorar:
+
+Session Compression Ratio =
+    cumulative_session_tokens / active_context_tokens
+
+Exemplo:
+
+2.000.000 tokens processados na sessão
+40.000 tokens ativos
+
+Compression Ratio = 50x
+
+======================================================================
+42. RESULTADO ESPERADO
+======================================================================
+
+Sem Context Runtime:
+
+turn 1       30k
+turn 2       60k
+turn 3      100k
+turn 4      180k
+turn 5      300k
+turn 6      500k
+
+Com Context Runtime:
+
+turn 1       30k
+turn 2       42k
+turn 3       61k
+compact      24k
+
+turn 4       38k
+turn 5       55k
+compact      27k
+
+turn 6       39k
+
+Enquanto a memória externa pode atingir:
+
+100k
+500k
+2M
+10M
+100M
+
+sem aumentar proporcionalmente o prompt.
+
+======================================================================
+43. ORDEM DE IMPLEMENTAÇÃO
+======================================================================
+
+FASE 1 - MVP
+
+1. Event Store
+2. Artifact Store
+3. Tool Output Gateway
+4. State Capsule
+5. Context Assembler
+6. Budget Manager
+7. Full Replace Compaction
+8. Provider Adapter
+
+FASE 2 - LONG TASKS
+
+9. Retriever
+10. Smart File Read
+11. Checkpoints
+12. Phase Compaction
+13. Structured Compaction Validation
+
+FASE 3 - MULTI-AGENT
+
+14. Agent Broker
+15. Task Packet
+16. Result Packet
+17. independent subagent context
+18. model routing por especialista
+
+FASE 4 - ADVANCED
+
+19. two-pass compaction
+20. background prefire
+21. atomic context groups
+22. adaptive budgets
+23. semantic retrieval
+24. context telemetry dashboard
+
+======================================================================
+44. CRITÉRIOS DE ACEITAÇÃO
+======================================================================
+
+A implantação pode ser considerada correta quando:
+
+1. Uma sessão pode processar > 1M tokens cumulativos sem manter > 100k ativos.
+2. Tool output de vários MB nunca entra integralmente no prompt automaticamente.
+3. O agente consegue recuperar informações antigas sob demanda.
+4. Após compactação, o agente continua sem perder objetivo ou próximo passo.
+5. Arquivos antigos saem da janela e podem ser relidos.
+6. Subagentes usam contextos independentes.
+7. O pai recebe somente resumos/result packets dos filhos.
+8. A troca entre Claude, BitGlimmer ou outro provider não exige mudar o Context Runtime.
+9. Active Context Tokens e Cumulative Tokens são medidos separadamente.
+10. O sistema consegue manter working set típico entre ~20k e ~90k em tarefas longas.
+
+======================================================================
+45. REGRA DE OURO
+======================================================================
+
+O modelo não deve possuir a memória.
+
+O runtime possui a memória.
+
+O modelo recebe apenas o working set necessário para a próxima decisão.
+
+Em forma compacta:
+
+       MODELO
+         ^
+         |
+     20-90k úteis
+         |
+ +-------+--------+
+ | Context Runtime|
+ +-------+--------+
+         |
+ +-------+----------------------+------------------+
+ |                              |                  |
+ v                              v                  v
+Events                       Artifacts          Retrieval
+ilimitado                    ilimitado         sob demanda
+                                                    |
+                                                    v
+                                                Subagents
+                                             contextos próprios
+
+======================================================================
+46. CONCLUSÃO
+======================================================================
+
+Uma janela de contexto maior não resolve sozinha tarefas longas.
+
+A solução é separar:
+
+- memória persistente
+- working memory
+- recuperação
+- outputs de ferramentas
+- contexto de subagentes
+
+A combinação recomendada é:
+
+State Capsule
++ Event Store
++ Artifact Store
++ Bounded Tool Outputs
++ Smart Retrieval
++ Two-Pass Compaction
++ Phase Compaction
++ Independent Subagents
++ Provider-Agnostic Model Adapter
+
+Com essa arquitetura, um modelo de 128k bem gerenciado pode executar tarefas
+mais longas e estáveis do que um modelo de 1M que carrega o histórico inteiro.
+
+O Context Runtime deve ser tratado como infraestrutura central do agente,
+e não como uma funcionalidade opcional do provider.
+

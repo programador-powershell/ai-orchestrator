@@ -221,6 +221,9 @@ func errHostDisconnected(tool string) error {
 // Toolbox junta as dependências e instala as ferramentas locais.
 type Toolbox struct {
 	Memory    *memory.Store
+	// Artifacts lê as saídas integrais guardadas pelo Tool Output Gateway. Por
+	// interface porque a ferramenta só LÊ fatias — gravar é do supervisor.
+	Artifacts ArtifactReader
 	Net       *netguard.Guard
 	MCP       *mcphub.Hub
 	Worktrees *worktree.Manager
@@ -254,12 +257,17 @@ type Toolbox struct {
 	Specialist func(sessionID string) string
 }
 
+// ArtifactReader é o que o context.fetch precisa do store.
+type ArtifactReader interface {
+	ReadArtifact(sessionID, ref string, offset, limit int) (string, int, error)
+}
+
 // gitTimeout limita cada chamada ao git.
 const gitTimeout = 120 * time.Second
 
 // Install registra tudo o que roda dentro do gateway.
 func (t *Toolbox) Install(registry *Registry) {
-	registry.Register("fs.read", "lê um arquivo do projeto. args: {path}", t.fsRead)
+	registry.Register("fs.read", "lê um arquivo do projeto, inteiro ou por faixa. args: {path, offset?, limit?}", t.fsRead)
 	registry.Register("fs.write", "grava um arquivo do projeto. args: {path, content}", t.fsWrite)
 	registry.Register("fs.list", "lista uma pasta do projeto. args: {path}", t.fsList)
 	registry.Register("fs.search", "procura texto literal nos arquivos. args: {query, path?}", t.fsSearch)
@@ -268,6 +276,10 @@ func (t *Toolbox) Install(registry *Registry) {
 	registry.Register("git.status", "estado do repositório. args: {}", t.gitStatus)
 	registry.Register("git.diff", "diff do que mudou. args: {staged?}", t.gitDiff)
 	registry.Register("git.commit", "registra o que mudou. args: {message}", t.gitCommit)
+
+	// Recuperação sob demanda do Context Runtime — universal (ver specialist.AllowsTool).
+	registry.Register("context.fetch",
+		"lê uma fatia de um artefato desta conversa. args: {ref, offset?, maxBytes?}", t.contextFetch)
 
 	registry.Register("memory.read", "procura na memória do usuário. args: {query, limit?}", t.memoryRead)
 	registry.Register("memory.write", "guarda um fato na memória. args: {kind, title, content, tags?}", t.memoryWrite)
@@ -416,6 +428,12 @@ const maxReadBytes = 512 << 10
 func (t *Toolbox) fsRead(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
+		// A LEITURA POR FAIXA do Context Runtime: `offset` é a primeira linha
+		// (1-based) e `limit` quantas linhas. Sessenta linhas certas valem mais
+		// que o arquivo inteiro ocupando a janela — quem sabe onde procurar
+		// (fs.search primeiro) lê só o intervalo.
+		Offset int `json:"offset"`
+		Limit  int `json:"limit"`
 	}
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
@@ -428,11 +446,68 @@ func (t *Toolbox) fsRead(ctx context.Context, sessionID string, raw json.RawMess
 	if err != nil {
 		return "", fmt.Errorf("ler %s: %w", args.Path, err)
 	}
+
+	if args.Offset > 0 || args.Limit > 0 {
+		lines := strings.Split(string(content), "\n")
+		start := args.Offset
+		if start <= 0 {
+			start = 1
+		}
+		if start > len(lines) {
+			return fmt.Sprintf("(o arquivo tem %d linha(s); a faixa pedida começa depois do fim)", len(lines)), nil
+		}
+		count := args.Limit
+		if count <= 0 {
+			count = len(lines)
+		}
+		end := start - 1 + count
+		if end > len(lines) {
+			end = len(lines)
+		}
+		slice := strings.Join(lines[start-1:end], "\n")
+		return fmt.Sprintf("(linhas %d-%d de %d)\n%s", start, end, len(lines), slice), nil
+	}
+
 	if len(content) > maxReadBytes {
 		return string(content[:maxReadBytes]) +
-			fmt.Sprintf("\n… (arquivo cortado: %d de %d bytes)", maxReadBytes, len(content)), nil
+			fmt.Sprintf("\n… (arquivo cortado: %d de %d bytes — peça por faixa: {path, offset, limit})",
+				maxReadBytes, len(content)), nil
 	}
 	return string(content), nil
+}
+
+// contextFetch é a RECUPERAÇÃO SOB DEMANDA do Context Runtime: lê uma fatia de
+// um artefato desta conversa (a saída integral que o gateway projetou). O
+// modelo pede o trecho que precisa em vez de reter o dump na janela — e a
+// fatia é obrigatória: o teto por chamada impede o dump de voltar inteiro.
+func (t *Toolbox) contextFetch(_ context.Context, sessionID string, raw json.RawMessage) (string, error) {
+	if t.Artifacts == nil {
+		return "", errors.New("este gateway subiu sem armazenamento de artefatos")
+	}
+	var args struct {
+		Ref      string `json:"ref"`
+		Offset   int    `json:"offset"`
+		MaxBytes int    `json:"maxBytes"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(args.Ref) == "" {
+		return "", errors.New("faltou a referência — ex.: {\"ref\":\"artifact://proc_run/ab12cd34\"}")
+	}
+	limit := args.MaxBytes
+	if limit <= 0 || limit > 16<<10 {
+		limit = 16 << 10
+	}
+	chunk, total, err := t.Artifacts.ReadArtifact(sessionID, args.Ref, args.Offset, limit)
+	if err != nil {
+		return "", err
+	}
+	if chunk == "" {
+		return fmt.Sprintf("(o artefato tem %d bytes; o offset pedido está depois do fim)", total), nil
+	}
+	return fmt.Sprintf("(bytes %d-%d de %d — offset negativo lê do fim)\n%s",
+		args.Offset, args.Offset+len(chunk), total, chunk), nil
 }
 
 func (t *Toolbox) fsWrite(ctx context.Context, sessionID string, raw json.RawMessage) (string, error) {
