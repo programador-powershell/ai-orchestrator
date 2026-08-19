@@ -190,6 +190,30 @@ select {
   min-width: 0;
 }
 
+/* A conversa nova na barra superior: presença de ação primária (acento), mas
+   compacta — a barra também carrega título, chips e controles de janela. */
+.topbar-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--accent-glow);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--swift), color var(--t-fast) var(--swift);
+}
+
+.topbar-new:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 .topbar-title {
   margin: 0;
   max-width: 34ch;

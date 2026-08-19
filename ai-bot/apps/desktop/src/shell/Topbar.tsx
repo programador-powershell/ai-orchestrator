@@ -12,7 +12,20 @@
  * Tudo isso é responsabilidade daqui: sem os botões abaixo o aplicativo abre e
  * não fecha, e sem `data-tauri-drag-region` ele não sai do lugar da tela.
  */
-import { ArrowUpCircle, Bot, Minus, Moon, Settings, Sparkles, Square, Sun, Wifi, WifiOff, X } from "lucide-react";
+import {
+  ArrowUpCircle,
+  Bot,
+  Minus,
+  Moon,
+  Plus,
+  Settings,
+  Sparkles,
+  Square,
+  Sun,
+  Wifi,
+  WifiOff,
+  X
+} from "lucide-react";
 import type { UpdateTrack } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
@@ -152,6 +165,7 @@ export function Topbar() {
   // "Conversa" antes da primeira rota faria a barra prometer um especialista que
   // ainda não atendeu ninguém.
   const active = activeSpecialist ? specialistById(specialists, activeSpecialist) : MASTER;
+  const newSession = useApp((state) => state.newSession);
   const Icon = SPECIALIST_ICON[active.id] ?? Bot;
 
   const title = sessions.find((item) => item.id === session)?.title ?? "Nova conversa";
@@ -159,14 +173,33 @@ export function Topbar() {
   return (
     <header className="topbar" data-status={status}>
       <div className="topbar-left">
+        {/* A conversa nova mora AQUI, sempre visível — na barra lateral ela
+            sumia com o colapso e disputava lugar com o gesto do ofício. */}
+        <button
+          type="button"
+          className="topbar-new"
+          onClick={() => newSession()}
+          title="Nova conversa (Ctrl+N)"
+          aria-label="Nova conversa"
+        >
+          <Plus size={14} aria-hidden />
+          <span>Nova conversa</span>
+        </button>
+
         <h1 className="topbar-title" title={title}>
           {title}
         </h1>
 
-        <span className="specialist-chip" data-specialist={active.id} title={active.tagline}>
-          <Icon size={14} aria-hidden />
-          <span>{active.name}</span>
-        </span>
+        {/* O chip só aparece quando a conversa TEM dono: o do master dizia
+            "AI-BOT" ao lado do título do app inteiro — crachá do dono da casa
+            dentro da própria casa. O do especialista fica: ele diz com quem a
+            conversa está. */}
+        {active.id !== MASTER.id ? (
+          <span className="specialist-chip" data-specialist={active.id} title={active.tagline}>
+            <Icon size={14} aria-hidden />
+            <span>{active.name}</span>
+          </span>
+        ) : null}
 
         {status !== "ready" ? (
           <span className="topbar-status" data-status={status} role="status">

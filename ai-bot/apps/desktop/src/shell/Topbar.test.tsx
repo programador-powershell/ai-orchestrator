@@ -194,3 +194,54 @@ describe("faixa de arrasto", () => {
     }
   });
 });
+
+/**
+ * A conversa nova mora na BARRA SUPERIOR (pedido do dono do produto): na
+ * lateral ela sumia com o colapso. E o chip do master saiu — "AI-BOT" ao lado
+ * do título do app era crachá do dono da casa dentro da própria casa; o chip
+ * do ESPECIALISTA fica, porque diz com quem a conversa está.
+ */
+describe("nova conversa e o chip do dono", () => {
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    act(() => {
+      root = createRoot(container);
+    });
+    pretendeSerTauri(false);
+    useApp.setState({ ...initialAppData(), session: "s-antiga" });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    globalThis.IS_REACT_ACT_ENVIRONMENT = undefined;
+  });
+
+  it("o botão está na barra e recomeça a conversa", () => {
+    monta();
+
+    const botao = container.querySelector<HTMLButtonElement>(".topbar-new");
+    expect(botao?.textContent).toContain("Nova conversa");
+
+    act(() => {
+      botao?.click();
+    });
+    // Sem transporte o gesto ainda zera a tela — a sessão nova chega no ready.
+    expect(useApp.getState().session).toBeNull();
+  });
+
+  it("sem dono, nenhum chip; com dono, o chip é do especialista", () => {
+    monta();
+    expect(container.querySelector(".specialist-chip")).toBeNull();
+
+    act(() => {
+      useApp.setState({ activeSpecialist: "data" });
+    });
+    const chip = container.querySelector(".specialist-chip");
+    expect(chip?.textContent).toContain("Dados");
+  });
+});

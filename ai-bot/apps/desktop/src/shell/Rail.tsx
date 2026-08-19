@@ -497,21 +497,9 @@ export function Rail() {
   return (
     <aside className="rail" data-collapsed={!railOpen} data-rail={active.rail} aria-label="Barra lateral">
       <div className="rail-top">
-        {/* SEMPRE "Nova conversa": este botão volta ao começo, com o master
-            decidindo quem atende. Ele chegou a assumir o rótulo do ofício
-            ("Novo schema") e isso escondeu a única saída da tela — "não tem
-            botão nova conversa para eu voltar a falar com o chat". */}
-        <button
-          type="button"
-          className="rail-new"
-          onClick={() => newSession()}
-          title="Nova conversa (Ctrl+N)"
-          aria-label="Nova conversa"
-        >
-          <Plus size={16} aria-hidden />
-          {railOpen ? <span>Nova conversa</span> : null}
-        </button>
-
+        {/* "Nova conversa" SUBIU para a barra superior (sempre visível, até com
+            a barra lateral colapsada). Aqui ficam o colapso e, abaixo, o gesto
+            do ofício — que é da tela, não do app. */}
         <button
           type="button"
           className="rail-collapse icon-button"

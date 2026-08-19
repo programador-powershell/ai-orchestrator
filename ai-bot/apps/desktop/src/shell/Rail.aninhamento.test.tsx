@@ -233,14 +233,13 @@ describe("a barra numa tela que não é de conversa", () => {
     expect(titulos).toEqual(["Conversas"]);
   });
 
-  it("tem os DOIS gestos de conversa nova: a do chat e a do ofício", () => {
-    // "aparece 'novo schema' mas não tem botão 'nova conversa' para eu voltar
-    // a falar com o chat" — e o "novo schema" deve PERMANECER nesta tela.
+  it("tem o gesto do ofício — o do chat subiu para a barra superior", () => {
+    // O "Nova conversa" mora na TOPBAR (sempre visível, pedido do dono do
+    // produto); aqui fica só o gesto do ofício, que é da tela e permanece nela.
     useApp.setState({ activeSpecialist: "design", activeSurface: "canvas" });
     monta();
 
-    const principal = container.querySelector<HTMLButtonElement>(".rail-new:not(.rail-new-bot)");
-    expect(principal?.textContent).toContain("Nova conversa");
+    expect(container.querySelector(".rail-new:not(.rail-new-bot)")).toBeNull();
 
     const doOficio = container.querySelector<HTMLButtonElement>(".rail-new-bot");
     expect(doOficio).not.toBeNull();

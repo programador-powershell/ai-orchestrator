@@ -389,6 +389,13 @@
 
 ### :pushpin: Fixes
 
+- **"Nova conversa" subiu para a barra superior** — na lateral ele sumia com
+  o colapso e disputava lugar com o gesto do ofício; agora fica sempre
+  visível, à esquerda do título. O gesto do ofício ("Novo schema") continua
+  na lateral, que é da tela. E o **chip "AI-BOT" saiu**: era o crachá do
+  master ao lado do título do próprio app; o chip do ESPECIALISTA fica,
+  porque diz com quem a conversa está.
+
 - **Caça de desempenho no GATEWAY — 13 achados por revisão adversarial: 3
   confirmados como saudáveis ("não mexer"), 10 corrigidos.** O mais grave era
   de CORREÇÃO, não velocidade: o fanout do barramento enviava por uma cópia
