@@ -22,7 +22,6 @@ import {
   GitBranch,
   Hand,
   KanbanSquare,
-  Layers,
   Loader2,
   MessagesSquare,
   Plus,
@@ -36,6 +35,7 @@ import { useApp } from "../lib/store";
 import { MASTER, specialistById } from "../lib/specialists";
 import { GrokAvatar, grokSpecialistOf, type GrokSpecialistState } from "../avatar/GrokAvatar";
 import { TablesRail } from "./rails/TablesRail";
+import { LayersRail } from "./rails/LayersRail";
 
 /** O recorte do store que os componentes do crew leem. Deriva do próprio store
  *  para não virar uma segunda declaração do contrato, que envelheceria sozinha. */
@@ -437,11 +437,8 @@ function DocumentRail() {
   );
 }
 
-function LayersRail() {
-  return (
-    <RailEmpty icon={Layers} hint="As camadas do desenho aparecem aqui quando houver algo na tela do Design." />
-  );
-}
+// O LayersRail de verdade mora em ./rails/LayersRail (camadas, seleção e
+// stencils) — o placeholder daqui morreu com a Onda 2 da paridade.
 
 // O TablesRail de verdade mora em ./rails/TablesRail (abas, busca e foco no
 // diagrama) — o placeholder daqui morreu com a Onda 1 da paridade.

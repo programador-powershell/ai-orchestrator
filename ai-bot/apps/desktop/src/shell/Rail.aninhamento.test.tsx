@@ -218,8 +218,10 @@ describe("a barra numa tela que não é de conversa", () => {
       (titulo) => titulo.textContent
     );
     expect(titulos).toEqual(["Conversas", "Camadas"]);
-    // E a lista é a de verdade, com as três conversas clicáveis.
-    expect(container.querySelectorAll(".rail-item-row")).toHaveLength(3);
+    // E a lista é a de verdade, com as três conversas clicáveis. O seletor é
+    // ESCOPADO ao grupo de conversas: o LayersRail real (Onda 2) também desenha
+    // linhas, e são camadas do desenho, não conversas.
+    expect(container.querySelectorAll(".rail-group .rail-item-row")).toHaveLength(3);
   });
 
   it("na tela de conversa, a lista aparece UMA vez", () => {

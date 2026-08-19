@@ -168,6 +168,31 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **ONDA 2 da paridade: o Design saiu de prévia estática para ESTÚDIO
+  editável.** Quase tudo cliente puro, portado do orquestrador:
+  - **Módulos puros** (`lib/canvas`, 80 testes): documento tipado com
+    operações imutáveis e hit-test, undo/redo como estrutura pura (teto de 50,
+    coalescência de 800ms com relógio injetável — e a janela só é armada por
+    edição digitada: um arrasto não engole a primeira tecla do Inspect),
+    presets de dispositivo, 10 stencils com conectores por id, extração LOCAL
+    de tokens de HTML/CSS colado, export SVG com escape.
+  - **Superfície editável**: criar frame/retângulo/elipse/texto por arrasto,
+    mover e redimensionar por alças, pan e zoom 25–200%, atalhos V/F/R/O/T,
+    Delete/Esc, undo/redo com botões, painel Inspect (posição, raio, fill com
+    color picker, fonte, ordem z), export SVG e PNG@2x, tokens aplicáveis como
+    fill, \"Analisar layout com o agente\", abas de estúdio Canvas/Vídeo/Site
+    (Vídeo/Site chegam na Onda 3). A prévia do design.replicate importa como
+    nós editáveis.
+  - **LayersRail funcional**: camadas com seleção, subir/descer/excluir e os
+    stencils inseríveis — o placeholder morreu.
+  - Da conferência cruzada, quatro consertos na integração: o documento é POR
+    SESSÃO no localStorage (a chave global fazia conversas dividirem e
+    sobrescreverem o mesmo desenho em silêncio); o histórico registra no
+    PRIMEIRO movimento real, não no pointerdown (clique de seleção empilhava
+    estado no-op e consumia o teto de 50); a janela de coalescência não
+    atravessa tipos de edição; e o rail de verdade foi ligado no lugar do
+    placeholder homônimo.
+
 - **O CICLO DO CLUSTER FECHOU: a tarefa executa exatamente o plano que foi
   despachado.** O `runWorker` congelava um SEGUNDO plano por conta própria —
   idêntico na v1, mas duas decisões: no dia em que o lease andasse entre o

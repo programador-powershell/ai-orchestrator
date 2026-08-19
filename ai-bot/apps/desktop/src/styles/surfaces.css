@@ -1468,3 +1468,476 @@ button.chip {
   cursor: default;
   opacity: 0.75;
 }
+
+/* --------------------- estúdio de Design: canvas editável ---------------- */
+
+/*
+ * Regras do estúdio (Onda 2 da paridade com o orquestrador). Tudo aqui é
+ * APPEND: as classes antigas (.canvas-frame, .token-*) continuam valendo para
+ * a prévia replicada. Nenhuma transition de cor de propósito — a armadilha
+ * conhecida do projeto: transition sobre custom property que troca por tema
+ * encalha no valor antigo; o que anima aqui é NADA, e o fill dos nós é cor
+ * concreta inline, nunca token de tema.
+ */
+
+/* As abas de estúdio no topo da SUPERFÍCIE (não no Topbar do app): elas trocam
+   o conteúdo desta tela, e a barra de cima pertence ao app inteiro. */
+.studio-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 14px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.studio-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.studio-tab[data-active="true"] {
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Desabilitada mas LEGÍVEL: a aba diz o que vai existir e quando (title),
+   em vez de sumir e deixar a pergunta "cadê o vídeo?" sem resposta. */
+.studio-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.studio-tab-hint {
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* A barra de ferramentas do estúdio quebra linha em vez de estourar: ela
+   carrega ferramentas + presets + undo + export, e janela estreita é o normal
+   com o rail aberto. */
+.canvas-toolbar {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.tool-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.tool-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* O estado ativo tem PREENCHIMENTO, não só cor de ícone: a ferramenta corrente
+   é a informação que decide o que o próximo clique faz. */
+.tool-btn[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.tool-btn-text {
+  font-size: var(--fs-micro);
+}
+
+/* Grade do estúdio: tokens | palco | inspect+conversa. Mesmas larguras
+   laterais das outras superfícies partidas, para a conversa ficar onde sempre
+   fica. */
+.canvas-studio {
+  display: grid;
+  grid-template-columns: minmax(200px, 236px) minmax(0, 1fr) minmax(260px, 320px);
+  gap: 12px;
+  align-items: start;
+}
+
+.canvas-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Em janela estreita as laterais sairiam do ar de qualquer forma (regra das
+   superfícies partidas); aqui o palco vira coluna única. */
+@media (max-width: 1100px) {
+  .canvas-studio {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.canvas-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* O editor: a mesma grade de pontos da prévia (dá escala), mas com altura de
+   TRABALHO — o canvas é o palco principal, não uma vinheta. */
+.cnv-editor {
+  position: relative;
+  height: max(420px, calc(100vh - 330px));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--canvas);
+  background-image: radial-gradient(var(--line) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -1px -1px;
+  overflow: hidden;
+  cursor: default;
+  /* Sem isto o arrasto vira seleção de texto e scroll de toque no WebView. */
+  touch-action: none;
+  user-select: none;
+}
+
+.cnv-editor[data-tool="frame"],
+.cnv-editor[data-tool="rect"],
+.cnv-editor[data-tool="ellipse"],
+.cnv-editor[data-tool="text"] {
+  cursor: crosshair;
+}
+
+.cnv-editor[data-panning="true"] {
+  cursor: grabbing;
+}
+
+/* O pan/zoom é UM transform no invólucro: os nós ficam em coordenadas de
+   documento e o navegador compõe — mexer em left/top de cada nó por zoom
+   custaria um relayout por frame. */
+.cnv-pan {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+/* O mundo é um ponto de origem sem tamanho: os nós (absolutos) ancoram nele e
+   o overflow visível deixa o documento crescer para qualquer lado. É o rect
+   DELE que o toWorld lê — ele carrega o pan de graça. */
+.cnv-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+.cnv-node {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+/* O frame é o único nó com borda própria: fundo branco sobre canvas claro
+   desapareceria sem ela — e frame invisível é frame que parece não ter sido
+   criado. */
+.cnv-node-frame {
+  border: 1px solid var(--line-strong);
+}
+
+.cnv-node-text {
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+/* Seleção por OUTLINE, não border: border entraria na conta do tamanho e um
+   nó de 8px selecionado mudaria de medida só por estar selecionado. */
+.cnv-sel {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 0;
+}
+
+.cnv-node-tag {
+  position: absolute;
+  left: 0;
+  top: -18px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.cnv-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--panel);
+}
+
+.cnv-h-nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.cnv-h-ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.cnv-h-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.cnv-h-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+
+/* Controles flutuantes DENTRO do editor: zoom perto de onde o olho está, e o
+   pointerdown do canvas os ignora (closest de button). */
+.cnv-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.cnv-zoom {
+  min-width: 38px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.cnv-ask {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  box-shadow: var(--shadow-soft);
+}
+
+/* ------------------------------- Inspect --------------------------------- */
+
+.inspect-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.inspect-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.inspect-field input {
+  height: 24px;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.inspect-span2 {
+  grid-column: span 2;
+}
+
+.inspect-fill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inspect-fill input[type="color"] {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+}
+
+.inspect-fill input:not([type="color"]) {
+  flex: 1;
+}
+
+.inspect-swatch {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
+
+.inspect-order {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* ----------------------- tokens colados e aplicáveis --------------------- */
+
+.paste-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.paste-tokens textarea {
+  min-height: 88px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.paste-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.swatch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.paste-font {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.paste-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* A amostra de cor da réplica virou BOTÃO (aplica como fill): o reset tira o
+   padding/cursor de UA sem tocar na regra antiga, que a prévia ainda usa. */
+button.token-swatch {
+  padding: 0;
+  cursor: pointer;
+}
+
+/* ---------------------- rail de camadas do Design ------------------------ */
+
+.rail-stencil-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 6px;
+}
+
+.rail-stencil-group > small {
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.rail-stencils {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rail-stencil {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.rail-stencil:hover {
+  background: var(--hover);
+}
+
+.rail-layer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rail-layer .rail-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.rail-layer-actions {
+  display: flex;
+  flex: none;
+  gap: 1px;
+}
+
+.rail-layer-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.rail-layer-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rail-layer-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
