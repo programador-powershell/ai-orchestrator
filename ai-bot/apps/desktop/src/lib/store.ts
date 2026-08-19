@@ -1176,7 +1176,21 @@ export const useApp = create<AppState>()(
         const value = (text ?? state.input).trim();
         // Anexo sem texto vale como envio: "abre isso aqui" está implícito no
         // gesto de anexar — exigir uma frase junto seria cerimônia.
-        if ((value === "" && state.attachments.length === 0) || transport === null) return;
+        if (value === "" && state.attachments.length === 0) return;
+        // Sem conexão, a falha é DITA — não engolida. O transporte descarta
+        // envio com socket fechado em silêncio (decisão certa lá: fila de
+        // saída reenviaria pergunta abandonada), então quem tem de avisar é
+        // aqui: a pessoa apertou Enter e nada aconteceu, sem uma palavra —
+        // "não estou conseguindo testar" foi exatamente este silêncio.
+        if (transport === null || state.status !== "ready") {
+          set({
+            error:
+              state.status === "connecting"
+                ? "ainda conectando ao gateway — o pedido não foi enviado; tente de novo em instantes"
+                : "sem conexão com o gateway — o pedido não foi enviado"
+          });
+          return;
+        }
         const prompt: Prompt = { text: value };
         // Vazio = o master decide, que é o caminho normal.
         if (state.activeModel !== "") prompt.model = state.activeModel;
