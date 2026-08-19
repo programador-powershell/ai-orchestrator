@@ -448,7 +448,12 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   useEffect(() => {
     const element = scroller.current;
     if (!element || !stick.current) return;
-    element.scrollTop = element.scrollHeight;
+    // behavior instant DE PROPÓSITO: o .stage-scroll tem scroll-behavior:
+    // smooth no CSS (para os saltos de âncora dos achados), e a atribuição
+    // simples herdava a suavidade — cada delta do streaming REINICIAVA uma
+    // animação de rolagem, mantendo o compositor ocupado durante a resposta
+    // inteira. O salto seco por delta é invisível (a distância é de pixels).
+    element.scrollTo({ top: element.scrollHeight, behavior: "instant" });
     // O tamanho da última linha entra nas dependências para o streaming
     // continuar rolando: o array não troca de identidade a cada delta.
   }, [lines.length, tailLength]);

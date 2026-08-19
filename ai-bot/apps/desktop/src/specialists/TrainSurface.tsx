@@ -271,8 +271,7 @@ function latestResult(lines: ConversationLine[], tool: string): ToolResult | nul
   return latest;
 }
 
-function buildModel(lines: ConversationLine[]): TrainModel {
-  const result = latestResult(lines, "finetune.status");
+function buildModel(result: ToolResult | null): TrainModel {
   if (!result?.output) return EMPTY_MODEL;
   const parsed = parseJson(result.output);
   if (!isRecord(parsed)) return EMPTY_MODEL;
@@ -323,7 +322,12 @@ function buildModel(lines: ConversationLine[]): TrainModel {
 
 export function TrainSurface() {
   const lines = useApp((state) => state.lines);
-  const train = useMemo(() => buildModel(lines), [lines]);
+  // MEMO EM DUAS ETAPAS: o array de linhas troca de identidade a cada delta do
+  // streaming, e o memo único reparseava o JSON do resultado por token. A
+  // identidade do ToolResult sobrevive aos deltas, então a etapa cara (parse)
+  // só roda quando chega resultado novo. Mesmo padrão do FlowSurface.
+  const resultado = useMemo(() => latestResult(lines, "finetune.status"), [lines]);
+  const train = useMemo(() => buildModel(resultado), [resultado]);
 
   return (
     <section className="surface train-surface">

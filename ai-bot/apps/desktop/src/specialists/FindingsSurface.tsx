@@ -301,10 +301,9 @@ function latestResult(lines: ConversationLine[], tool: string): ToolResult | nul
   return latest;
 }
 
-function collectFindings(lines: ConversationLine[]): Finding[] {
+function collectFindings(results: ReadonlyArray<ToolResult | null>): Finding[] {
   const findings: Finding[] = [];
-  for (const tool of SOURCE_TOOLS) {
-    const result = latestResult(lines, tool);
+  for (const result of results) {
     if (!result?.output) continue;
     const parsed = parseJson(result.output);
     if (parsed === null) continue;
@@ -321,7 +320,7 @@ function collectFindings(lines: ConversationLine[]): Finding[] {
       "items"
     ]);
     items.forEach((item, index) => {
-      const finding = toFinding(item, tool, fallbackTarget, index);
+      const finding = toFinding(item, result.tool, fallbackTarget, index);
       if (finding) findings.push(finding);
     });
   }
@@ -347,7 +346,14 @@ export function FindingsSurface() {
   const setInput = useApp((state) => state.setInput);
   const [filter, setFilter] = useState<Severity | "all">("all");
 
-  const findings = useMemo(() => collectFindings(lines), [lines]);
+  // MEMO EM DUAS ETAPAS: a varredura por fonte é barata e roda por delta; o
+  // PARSE dos achados só roda quando algum resultado troca de identidade — a
+  // chave composta pelos callIds é o que detecta a troca sem depender da
+  // identidade do array intermediário. Mesmo padrão do FlowSurface.
+  const resultados = useMemo(() => SOURCE_TOOLS.map((tool) => latestResult(lines, tool)), [lines]);
+  const chave = resultados.map((result) => result?.callId ?? "").join("|");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- a chave cobre os resultados
+  const findings = useMemo(() => collectFindings(resultados), [chave]);
 
   const counts = useMemo(() => {
     const tally: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };

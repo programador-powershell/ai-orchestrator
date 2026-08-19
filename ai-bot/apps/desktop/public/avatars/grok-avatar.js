@@ -180,15 +180,32 @@ export function createAvatar(target, options = {}) {
     }
   }
 
+  // Os olhos piscam e olham — 30 quadros por segundo mostram exatamente o
+  // mesmo movimento pela metade do custo, e este módulo roda UMA instância por
+  // linha da barra. O último carimbo segura o freio.
+  let ultimoQuadro = 0;
   function laco(now) {
     if (!vivo) return;
-    if (!pausado) quadro(now);
+    if (pausado) {
+      // Pausa DE VERDADE: o laço para de se agendar. Antes, um avatar pausado
+      // continuava acordando 60x por segundo para não fazer nada.
+      raf = 0;
+      return;
+    }
+    if (now - ultimoQuadro >= 33) {
+      ultimoQuadro = now;
+      quadro(now);
+    }
     raf = requestAnimationFrame(laco);
   }
 
   const reduzido =
     typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const semRaf = typeof requestAnimationFrame !== "function";
+  function agendar() {
+    if (!vivo || pausado || reduzido || semRaf) return;
+    if (!raf) raf = requestAnimationFrame(laco);
+  }
   if (reduzido || semRaf) {
     quadro(inicio + 800);
   } else {
@@ -200,16 +217,26 @@ export function createAvatar(target, options = {}) {
       if (nome && POSES[nome]) atual = nome;
       pausado = false;
       if (reduzido || semRaf) quadro(inicio + 800);
+      // O play despausa — e precisa REAGENDAR, porque a pausa cancela o laço.
+      agendar();
       if (options.onAnimationEnd && (atual === "celebrate" || atual === "excited")) {
         setTimeout(() => options.onAnimationEnd && options.onAnimationEnd(), 2600);
       }
     },
     pause() {
       pausado = true;
+      if (raf && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
     },
     stop() {
       pausado = true;
       atual = "idle";
+      if (raf && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
     },
     destroy() {
       vivo = false;

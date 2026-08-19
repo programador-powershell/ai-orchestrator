@@ -196,8 +196,7 @@ function latestResult(lines: ConversationLine[], tool: string): ToolResult | nul
   return latest;
 }
 
-function buildModel(lines: ConversationLine[]): FlowModel {
-  const result = latestResult(lines, "flow.validate");
+function buildModel(result: ToolResult | null): FlowModel {
   if (!result?.output) return EMPTY_MODEL;
   const parsed = parseJson(result.output);
   if (parsed === null) return EMPTY_MODEL;
@@ -222,7 +221,14 @@ function buildModel(lines: ConversationLine[]): FlowModel {
 /** As duas partes desta superfície (palco e barra) leem o MESMO fluxo. */
 function useFlowModel(): FlowModel {
   const lines = useApp((state) => state.lines);
-  return useMemo(() => buildModel(lines), [lines]);
+  // MEMO EM DUAS ETAPAS, e não um só sobre `lines`: o array de linhas troca de
+  // identidade A CADA delta do streaming, e o memo único reparseava o JSON
+  // inteiro do resultado por token — para produzir um modelo idêntico, porque
+  // o tool result não tinha mudado. A identidade do ToolResult sobrevive aos
+  // deltas (patchLine preserva as linhas não tocadas), então a etapa cara só
+  // roda quando chega resultado NOVO.
+  const result = useMemo(() => latestResult(lines, "flow.validate"), [lines]);
+  return useMemo(() => buildModel(result), [result]);
 }
 
 /* ------------------------------- layout --------------------------------- */

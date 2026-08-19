@@ -319,6 +319,41 @@
 
 ### :pushpin: Fixes
 
+- **Caça de desempenho no cliente — 9 gargalos confirmados por revisão
+  adversarial, 7 corrigidos.** O pior: cada linha da barra montava um avatar
+  com DOIS laços de animação a 60fps que nunca pausavam — 30 conversas ≈ 60
+  laços permanentes de física de slime, com o app parado. Correções:
+  - **Fora da tela, parado**: IntersectionObserver pausa o avatar que saiu da
+    viewport e retoma o que voltou; `pause()` agora CANCELA o rAF (antes o
+    laço pausado acordava 60×/s em noop) e `play()`/`resume()` reagendam.
+  - **Freio de 24fps no corpo pequeno** (≤26px, o retrato da barra): o quadro
+    pulado não avança o relógio — o corpo é reamostrado, não desacelerado. Os
+    olhos do módulo passaram a 30fps pelo mesmo motivo.
+  - **prefers-reduced-motion assenta e PARA**: o modo de acessibilidade pagava
+    60fps para redesenhar um quadro estático; agora as molas assentam em ~24
+    quadros e o laço para de agendar.
+  - **Replay em LOTE**: abrir conversa longa disparava um render do React por
+    envelope (O(N) renders para um estado só). A REDUÇÃO continua síncrona por
+    envelope — o marco de replay só anda quando a aplicação deu certo — mas o
+    `set()` é coalescido por quadro durante a rajada; o vivo continua imediato.
+    Trocar de conversa no meio do replay descarta o lote da abandonada.
+  - **Memo em duas etapas nas superfícies**: Flow/Schema/Train/Findings/Canvas
+    reparseavam o JSON do último tool result A CADA delta de streaming (o memo
+    era keyed no array de linhas, que troca de identidade por token). A etapa
+    cara agora só roda quando chega resultado novo. Document/Editor ficaram de
+    fora DE PROPÓSITO: as derivações deles dependem do texto que streama.
+  - **Autoscroll instantâneo no streaming**: o `scroll-behavior: smooth` do CSS
+    fazia cada delta REINICIAR uma animação de rolagem; o salto seco por delta
+    é invisível e o smooth continua nos saltos de âncora.
+  - **Backdrops sem blur**: `backdrop-filter: blur(2px)` re-executava sobre o
+    viewport inteiro a cada quadro com os avatares animando atrás do cartão; o
+    scrim um pouco mais forte é visualmente quase idêntico. A regra morta
+    `.modal-backdrop` saiu.
+  - Dois achados confirmados ficaram registrados SEM correção, por relação
+    risco/ganho: o ticker compartilhado (1 rAF para todas as instâncias) e a
+    reutilização de nós da cena do herói (uma instância só, a 24fps, ~5 nós
+    por tick no caso comum).
+
 - **O gateway IGNORAVA o segundo `hello` — e cinco sintomas saíam dessa causa
   só.** O cliente sempre trocou de sessão mandando um novo `hello` na mesma
   conexão ("nova conversa" e clicar numa conversa da barra são isso), mas o

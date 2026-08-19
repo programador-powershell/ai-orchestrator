@@ -195,17 +195,21 @@ function parse(result: ToolResult): DesignSnapshot {
 }
 
 /** O último resultado vence: replicar de novo troca a tela inteira. */
-function readDesign(lines: ConversationLine[]): DesignSnapshot {
+function latestReplicate(lines: ConversationLine[]): ToolResult | null {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const results = lines[index]?.toolResults;
     if (results === undefined) continue;
     for (let inner = results.length - 1; inner >= 0; inner -= 1) {
       const result = results[inner];
       if (result === undefined) continue;
-      if (result.tool === "design.replicate" && result.ok) return parse(result);
+      if (result.tool === "design.replicate" && result.ok) return result;
     }
   }
-  return EMPTY;
+  return null;
+}
+
+function readDesign(result: ToolResult | null): DesignSnapshot {
+  return result === null ? EMPTY : parse(result);
 }
 
 function countTokens(snapshot: DesignSnapshot): number {
@@ -363,7 +367,12 @@ function ExportTokensAction({ snapshot }: { snapshot: DesignSnapshot }): ReactNo
 export function CanvasSurface(): ReactNode {
   const lines = useApp((state) => state.lines);
   const setInput = useApp((state) => state.setInput);
-  const snapshot = useMemo(() => readDesign(lines), [lines]);
+  // MEMO EM DUAS ETAPAS: o array de linhas troca de identidade a cada delta do
+  // streaming, e o memo único reparseava o JSON do resultado por token. A
+  // identidade do ToolResult sobrevive aos deltas, então a etapa cara (parse)
+  // só roda quando chega resultado novo. Mesmo padrão do FlowSurface.
+  const resultado = useMemo(() => latestReplicate(lines), [lines]);
+  const snapshot = useMemo(() => readDesign(resultado), [resultado]);
   const total = countTokens(snapshot);
 
   return (

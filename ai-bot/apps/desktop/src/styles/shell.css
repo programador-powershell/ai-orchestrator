@@ -1404,8 +1404,10 @@ select {
   display: grid;
   place-items: center;
   padding: 6vh 6vw;
-  background: rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(2px);
+  /* Sem blur DE PROPÓSITO: backdrop-filter re-executa sobre o viewport
+     inteiro a cada quadro enquanto os avatares animam atrás do cartão, e o
+     scrim mais forte sobre conteúdo escurecido é visualmente quase idêntico. */
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .approval-card,
@@ -2568,8 +2570,10 @@ select {
   display: grid;
   place-items: center;
   padding: 4vh 4vw;
-  background: rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(2px);
+  /* Sem blur DE PROPÓSITO: backdrop-filter re-executa sobre o viewport
+     inteiro a cada quadro enquanto os avatares animam atrás do cartão, e o
+     scrim mais forte sobre conteúdo escurecido é visualmente quase idêntico. */
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .alab {
@@ -3350,8 +3354,10 @@ select {
   display: grid;
   place-items: center;
   padding: 4vh 4vw;
-  background: rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(2px);
+  /* Sem blur DE PROPÓSITO: backdrop-filter re-executa sobre o viewport
+     inteiro a cada quadro enquanto os avatares animam atrás do cartão, e o
+     scrim mais forte sobre conteúdo escurecido é visualmente quase idêntico. */
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .modal-card {

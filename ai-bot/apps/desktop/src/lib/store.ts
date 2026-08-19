@@ -1089,10 +1089,82 @@ export const useApp = create<AppState>()(
             if (transport !== null) return;
             // Só a URL. O token fica na closure do transporte — ver `gatewayUrl`.
             set({ gatewayUrl: info.url });
+            /*
+             * O REPLAY entra em LOTE, o vivo entra na hora.
+             *
+             * Abrir uma conversa longa entrega centenas de envelopes em
+             * rajada, e um set() do zustand por envelope é um render do React
+             * por envelope — O(N) renders para desenhar um estado só. O
+             * remédio NÃO pode ser adiar a REDUÇÃO: o transporte só avança o
+             * marco de replay quando a aplicação deu certo ("aplica PRIMEIRO,
+             * avança o marco DEPOIS"), então cada envelope é reduzido
+             * SINCRONAMENTE aqui — uma exceção ainda sobe e segura o marco. O
+             * que o lote adia é só o set(): os subscribers veem o acumulado
+             * uma vez por quadro.
+             *
+             * O lote só arma DURANTE a rajada de replay (do `ready` até o seq
+             * anunciado nele). No vivo, cada envelope vira set() imediato —
+             * atrasar um delta de streaming em 16ms seria trocar abertura mais
+             * rápida por digitação mais lenta.
+             */
+            let acumulado: AppData | null = null;
+            let acumuladoSessao: string | null = null;
+            let replayAte = 0;
+            let flushAgendado = 0;
+            const descartar = () => {
+              if (flushAgendado !== 0) cancelAnimationFrame(flushAgendado);
+              flushAgendado = 0;
+              acumulado = null;
+              acumuladoSessao = null;
+            };
+            const flush = () => {
+              flushAgendado = 0;
+              if (acumulado === null) return;
+              // A pessoa trocou de conversa NO MEIO do replay: o acumulado é da
+              // conversa que ela abandonou, e entregá-lo agora ressuscitaria as
+              // linhas velhas por cima da tela recém-zerada. Descarta — a
+              // conversa nova replaya do zero de qualquer jeito.
+              if (get().session !== acumuladoSessao) {
+                descartar();
+                return;
+              }
+              const pronto = acumulado;
+              acumulado = null;
+              acumuladoSessao = null;
+              set(pronto);
+            };
             transport = createTransport({
               url: info.url,
               token: info.token,
-              onEnvelope: (envelope) => set((state) => applyEnvelope(state, envelope)),
+              onEnvelope: (envelope) => {
+                if (envelope.kind === "ready") {
+                  // Um ready novo é OUTRA sessão (ou reconexão): o lote da
+                  // anterior morreu com ela.
+                  descartar();
+                  const seq = (envelope.payload as Ready | undefined)?.seq;
+                  replayAte = typeof seq === "number" ? seq : 0;
+                  set((state) => applyEnvelope(state, envelope));
+                  return;
+                }
+                const emReplay =
+                  envelope.seq !== 0 && replayAte !== 0 && envelope.seq <= replayAte;
+                if (!emReplay) {
+                  flush();
+                  set((state) => applyEnvelope(state, envelope));
+                  return;
+                }
+                // Reduz JÁ (a exceção sobe e o marco não anda); só o set espera.
+                if (acumulado === null) acumuladoSessao = get().session;
+                acumulado = applyEnvelope(acumulado ?? get(), envelope);
+                if (envelope.seq >= replayAte) {
+                  // Última peça do replay: entrega tudo de uma vez.
+                  flush();
+                  return;
+                }
+                if (flushAgendado === 0) {
+                  flushAgendado = requestAnimationFrame(flush);
+                }
+              },
               onStatus: (status) => set({ status })
             });
             transport.start();

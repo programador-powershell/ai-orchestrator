@@ -1368,6 +1368,11 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
    */
   private readonly scene: boolean;
   private lastScene = 0;
+  // lastBody é o carimbo do freio de 24fps do avatar pequeno (ver loop()).
+  private lastBody = 0;
+  // settleFrames é a janela de assentamento do prefers-reduced-motion: quando
+  // zera, o loop para de agendar — o quadro exibido já é o final.
+  private settleFrames = 24;
 
   private specialist: GrokSpecialist;
   private state: GrokSpecialistState;
@@ -1446,6 +1451,8 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
     this.accent = SPECIALIST_ACCENT[specialist];
     this.applyIdentity();
     this.playEmotion();
+    this.settleFrames = 24;
+    this.schedule();
   }
 
   setState(state: GrokSpecialistState): void {
@@ -1454,6 +1461,8 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
     this.state = state;
     this.applyIdentity();
     this.playEmotion();
+    this.settleFrames = 24;
+    this.schedule();
   }
 
   setAccent(color: string): void {
@@ -1467,16 +1476,26 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
 
   replay(): void {
     this.playEmotion();
+    this.settleFrames = 24;
+    this.schedule();
   }
 
   pause(): void {
     this.paused = true;
+    // Pausa DE VERDADE: cancela o agendamento em vez de acordar 60x/s em noop.
+    if (this.raf !== 0) {
+      cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    }
     this.avatar.pause();
   }
 
   resume(): void {
     this.paused = false;
     this.lastFrame = performance.now();
+    this.lastBody = 0;
+    this.settleFrames = 24;
+    this.schedule();
     this.playEmotion();
   }
 
@@ -1510,12 +1529,27 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
     else this.avatar.stop();
   }
 
-  private loop(now: number): void {
-    if (this.destroyed) return;
+  /** Agenda o próximo quadro — no-op quando já há um agendado, pausado ou morto. */
+  private schedule(): void {
+    if (this.destroyed || this.paused || this.raf !== 0) return;
+    this.raf = requestAnimationFrame(this.loop);
+  }
 
-    if (!this.paused) {
+  private loop(now: number): void {
+    this.raf = 0;
+    if (this.destroyed || this.paused) return;
+
+    // O FREIO do avatar pequeno. `!this.scene` já significa "menos de 96px" —
+    // é o retrato da barra (18–26px), que existe em QUANTIDADE (um por
+    // conversa, um por tarefa). Nesse tamanho o solver a 60fps é sub-pixel por
+    // quadro; 24fps mostram o mesmo movimento pela metade do custo. O quadro
+    // pulado NÃO avança lastFrame: o dt acumula (o clamp de 0.08 comporta os
+    // 42ms) e o corpo é reamostrado, não desacelerado.
+    const throttled = !this.scene && now - this.lastBody < SCENE_FRAME_MS;
+    if (!throttled) {
       const dt = clamp((now - this.lastFrame) / 1000, 0, 0.08);
       this.lastFrame = now;
+      this.lastBody = now;
 
       const elapsed = this.reduceMotion
         ? 0.7
@@ -1546,9 +1580,18 @@ class GrokAvatarController implements GrokSpecialistAvatarController {
           this.bodyColor,
         );
       }
+
+      // Com prefers-reduced-motion o alvo é um quadro ESTÁTICO (elapsed fixo):
+      // as molas assentam em ~duas dúzias de quadros e o loop PARA — antes, o
+      // modo de acessibilidade pagava 60fps para redesenhar a mesma imagem.
+      // setState/setSpecialist/resume/replay reabrem a janela de assentamento.
+      if (this.reduceMotion) {
+        this.settleFrames -= 1;
+        if (this.settleFrames <= 0) return;
+      }
     }
 
-    this.raf = requestAnimationFrame(this.loop);
+    this.schedule();
   }
 }
 

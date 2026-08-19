@@ -105,6 +105,26 @@ export function GrokAvatar({
       state: propsRef.current.state,
       size: tamanhoInicialRef.current
     });
+    // FORA DA TELA, PARADO. Cada avatar carrega dois laços de animação (corpo
+    // + olhos); numa barra com trinta conversas, as linhas roladas para fora
+    // continuavam pagando física de slime a 60fps. O observador pausa quem
+    // saiu da viewport e retoma quem voltou — o estado visual é o mesmo,
+    // porque ninguém vê o quadro de um elemento invisível.
+    let visivel = true;
+    const observer =
+      typeof IntersectionObserver !== "undefined"
+        ? new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              visivel = entry.isIntersecting;
+              const controller = controllerRef.current;
+              if (!controller) continue;
+              if (visivel) controller.resume();
+              else controller.pause();
+            }
+          })
+        : null;
+    observer?.observe(host);
+
     montagem.then(
       (controller) => {
         if (!vivo) {
@@ -114,6 +134,9 @@ export function GrokAvatar({
         controllerRef.current = controller;
         controller.setSpecialist(propsRef.current.specialist);
         controller.setState(propsRef.current.state);
+        // A montagem é assíncrona: se o host já nasceu fora da tela, o
+        // observador disparou antes de existir controller — pausa agora.
+        if (!visivel) controller.pause();
       },
       (erro: unknown) => {
         // Sem módulo não há avatar — o erro fica visível para quem depura e o
@@ -123,6 +146,7 @@ export function GrokAvatar({
     );
     return () => {
       vivo = false;
+      observer?.disconnect();
       controllerRef.current?.destroy();
       controllerRef.current = null;
     };

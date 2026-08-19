@@ -190,11 +190,9 @@ function parse(result: ToolResult): SchemaSnapshot {
  * o texto. O mais recente de cada um vence — e o SQL segue o resultado que
  * chegou por último, que é o que a pessoa acabou de pedir.
  */
-function readSchema(lines: ConversationLine[]): SchemaSnapshot {
-  let structure: SchemaSnapshot | null = null;
-  let sql = "";
-  let dialect = "";
-
+/** Os resultados relevantes, do mais novo ao mais velho — varredura barata por delta. */
+function schemaResults(lines: ConversationLine[]): ToolResult[] {
+  const out: ToolResult[] = [];
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const results = lines[index]?.toolResults;
     if (results === undefined) continue;
@@ -202,13 +200,24 @@ function readSchema(lines: ConversationLine[]): SchemaSnapshot {
       const result = results[inner];
       if (result === undefined || !result.ok) continue;
       if (result.tool !== "schema.export" && result.tool !== "sql.render") continue;
-      const parsed = parse(result);
-      if (sql === "" && parsed.sql !== "") {
-        sql = parsed.sql;
-        dialect = parsed.dialect;
-      }
-      if (structure === null && parsed.tables.length > 0) structure = parsed;
+      out.push(result);
     }
+  }
+  return out;
+}
+
+function readSchema(recent: ReadonlyArray<ToolResult>): SchemaSnapshot {
+  let structure: SchemaSnapshot | null = null;
+  let sql = "";
+  let dialect = "";
+
+  for (const result of recent) {
+    const parsed = parse(result);
+    if (sql === "" && parsed.sql !== "") {
+      sql = parsed.sql;
+      dialect = parsed.dialect;
+    }
+    if (structure === null && parsed.tables.length > 0) structure = parsed;
     if (structure !== null && sql !== "") break;
   }
 
@@ -479,7 +488,12 @@ export function SchemaSurface(): ReactNode {
   const send = useApp((state) => state.send);
   const busy = useApp((state) => state.busy);
   const setInput = useApp((state) => state.setInput);
-  const snapshot = useMemo(() => readSchema(lines), [lines]);
+  // MEMO EM DUAS ETAPAS (padrão do FlowSurface): a varredura é barata e roda
+  // por delta; o PARSE só roda quando os resultados relevantes trocam.
+  const resultados = useMemo(() => schemaResults(lines), [lines]);
+  const chave = resultados.map((result) => result.callId).join("|");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- a chave cobre os resultados
+  const snapshot = useMemo(() => readSchema(resultados), [chave]);
 
   // O dialeto é preferência da tela, não do gateway: escolher aqui não reescreve
   // sozinho o SQL que já está na mão — quem regera é um botão explícito, porque
