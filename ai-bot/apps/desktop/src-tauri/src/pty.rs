@@ -387,10 +387,16 @@ fn valid_cwd(cwd: Option<String>) -> Result<PathBuf, String> {
     let raw = cwd.filter(|value| !value.trim().is_empty());
     let candidato = match raw {
         Some(value) => PathBuf::from(value),
-        None => std::env::current_dir().map_err(|erro| {
+        // Sem cwd, o shell abre na RAIZ DO PROJETO — a mesma que as ferramentas
+        // fs.* usam —, não no diretório do processo. O diretório do processo é
+        // onde o .exe foi lançado (no dev, a pasta do bootstrapper), e um
+        // terminal que abre lá parece quebrado: `ls` mostra outra coisa que a
+        // árvore de arquivos ao lado. `project_root()` acompanha inclusive a
+        // troca de raiz via `set_project_root`, sem o front encanar nada.
+        None => crate::tools::project_root().map_err(|erro| {
             err(
                 "CWD_MISSING",
-                format!("não foi possível obter o diretório atual: {erro}"),
+                format!("sem raiz de projeto para abrir o shell: {erro}"),
             )
         })?,
     };

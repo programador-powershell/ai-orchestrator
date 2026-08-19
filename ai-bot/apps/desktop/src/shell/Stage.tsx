@@ -39,7 +39,9 @@ function lazySurface(
 // para gerar o chunk, e um caminho montado em variável não vira chunk nenhum.
 const SURFACE_COMPONENTS: Record<Surface, LazyExoticComponent<ComponentType>> = {
   conversation: lazySurface("ConversationSurface", () => import("../specialists/ConversationSurface")),
-  editor: lazySurface("EditorSurface", () => import("../specialists/EditorSurface")),
+  // A variante `.terminal` é a superfície inteira MAIS o TerminalDock da
+  // pessoa no pé — o caminho sem portão do teclado, ver EditorSurface.terminal.
+  editor: lazySurface("EditorSurface", () => import("../specialists/EditorSurface.terminal")),
   document: lazySurface("DocumentSurface", () => import("../specialists/DocumentSurface")),
   canvas: lazySurface("CanvasSurface", () => import("../specialists/CanvasSurface")),
   schema: lazySurface("SchemaSurface", () => import("../specialists/SchemaSurface")),

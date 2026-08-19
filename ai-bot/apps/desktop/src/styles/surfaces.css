@@ -2569,3 +2569,433 @@ button.token-swatch {
   font-size: var(--fs-micro);
   color: var(--danger, #b4552d);
 }
+
+/* ==========================================================================
+   Terminal da PESSOA (shell/TerminalPanel.tsx) — dock + painel xterm.js
+
+   A MOLDURA (barra, botões, faixa de erro) usa os tokens do app; as 16 cores
+   ANSI de dentro do emulador NÃO — quem escreve `\e[31m` está pedindo a cor 1
+   do ANSI, não o vermelho de erro do produto, e essas cores o componente
+   injeta direto no xterm (ver `temaXterm`). O substrato (fundo, texto,
+   cursor, seleção) é lido dos tokens em tempo de execução, então o emulador
+   acompanha o tema sem regra extra aqui.
+   ========================================================================== */
+
+/* O dock é irmão da `.surface` dentro do `.stage` (coluna flex): a superfície
+   tem `flex: 1` e encolhe; o dock é `flex: none` e ocupa o pé da tela. */
+.term-dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.term-dock-bar {
+  display: flex;
+  align-items: center;
+}
+
+.term-dock-alternar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+.term-dock-alternar:hover { color: var(--ink); }
+.term-dock-alternar svg { width: 13px; height: 13px; }
+.term-dock-alternar kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+
+/* Altura do painel aberto: fixa o suficiente para o `fit()` ter de onde tirar
+   o número de linhas (o emulador se mede — com `height: auto` ele nasce com
+   uma linha), curta o bastante para o editor continuar respirando. */
+.term-dock-corpo {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: min(320px, 42vh);
+}
+
+/* Reafirmado de propósito: o atributo `hidden` é só folha de estilo de agente
+   do navegador, e qualquer `display` declarado depois (como o flex logo acima)
+   o vence em silêncio — sem esta linha o painel "fechado" continuaria na tela. */
+.term-dock-corpo[hidden] { display: none; }
+
+/* ------------------------------- painel --------------------------------- */
+
+.term-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+}
+
+.term-panel-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* O estado da sessão vem primeiro e ocupa o espaço: um terminal que não diz
+   se o shell está vivo convida a digitar no vazio. */
+.term-panel-status {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+}
+.term-panel-status svg { width: 12px; height: 12px; flex: none; }
+/* Sessão morta: o rótulo esmaece, porque ele não vale mais. */
+.term-panel[data-vivo="0"] .term-panel-status { opacity: 0.55; }
+
+.term-panel-shells {
+  display: inline-flex;
+  gap: 2px;
+}
+.term-panel-shells button {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-size: var(--fs-eyebrow);
+  cursor: pointer;
+}
+.term-panel-shells button:hover { color: var(--ink); }
+.term-panel-shells button[data-ativo="1"] {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+.term-panel-acao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.term-panel-acao:hover { background: var(--hover); color: var(--ink); }
+.term-panel-acao svg { width: 13px; height: 13px; }
+
+.term-panel-erro {
+  flex: none;
+  margin: 0;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+
+/* O emulador se mede: precisa de altura DEFINIDA (vem da coluna flex) para o
+   fit addon calcular a grade. */
+.term-panel-tela {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 4px 4px 10px;
+}
+.term-panel-tela .xterm { height: 100%; }
+.term-panel-tela .xterm-viewport {
+  /* A barra de rolagem do xterm é do app, não a do sistema. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.term-panel-tela .xterm-viewport::-webkit-scrollbar { width: 9px; }
+.term-panel-tela .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: var(--line-strong);
+}
+/* Foco: o terminal avisa que a tecla vai para ELE, não para o editor. */
+.term-panel-tela:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent-glow);
+}
+
+/* O fallback honesto do navegador: não há processo para abrir fora do app. */
+.term-panel--fora {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.term-panel--fora svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.term-panel--fora strong { color: var(--ink); }
+.term-panel--fora p { margin: 4px 0 0; }
+
+/* ----------------------- IDE do especialista Código ---------------------- */
+/* A árvore do FilesRail, as abas com fechar, os chips de salvamento e os
+   overlays de Quick Open/busca. Só tokens do tema — e nenhuma transição sobre
+   cor que troca por tema/modo (armadilha conhecida do matiz por aba). */
+
+.files-rail-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.files-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* O recuo vem de --depth (setado inline pela profundidade): uma regra só para
+   qualquer nível, em vez de uma classe por profundidade. */
+.files-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  padding-left: calc(6px + var(--depth, 0) * 12px);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-tree-row:hover {
+  background: var(--panel-2);
+}
+
+.files-tree-row[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.files-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-tree-row small {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* O ponto de sujeira: mesmo sinal nas abas e na árvore. */
+.files-dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.files-tree-note {
+  padding: 4px 6px;
+  padding-left: calc(6px + var(--depth, 0) * 12px);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}
+
+.files-tree-erro {
+  color: var(--danger);
+}
+
+/* Chips de desfecho do salvar na barra superior. */
+.editor-chip[data-tone="ok"] {
+  color: var(--ok);
+}
+
+.editor-chip[data-tone="erro"] {
+  color: var(--danger);
+}
+
+.editor-chip[data-tone="espera"] {
+  color: var(--muted);
+}
+
+/* A aba com fechar: div[role=tab] com um botão DENTRO (botão dentro de botão
+   é HTML inválido — a mesma lição do rail-item-fork). */
+.editor-tab {
+  cursor: pointer;
+}
+
+.editor-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.editor-tab-close:hover {
+  color: var(--danger);
+}
+
+.editor-tab-close svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* Buffer não confiável (leitura falhou / arquivo cortado): o motivo mora em
+   cima do editor, no lugar onde a pessoa ia digitar. */
+.editor-erro {
+  margin: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--danger);
+  font-size: var(--fs-micro);
+}
+
+/* Overlays do Quick Open (Ctrl+P) e da busca (Ctrl+Shift+F): fixos como o
+   schema-overlay, mas ancorados no TOPO — paleta de comando abre no alto. */
+.ide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 64px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.ide-quick {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(60vh, 480px);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.ide-quick header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-quick header svg {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+}
+
+.ide-quick header input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.ide-quick-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.ide-quick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ide-quick-item:hover,
+.ide-quick-item[data-active="true"] {
+  background: var(--panel-2);
+}
+
+.ide-quick-item svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+}
+
+.ide-quick-item strong {
+  flex: none;
+  font-weight: 600;
+}
+
+.ide-quick-item small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-quick-note {
+  padding: 12px;
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}
+
+.ide-quick footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: var(--fs-micro);
+}

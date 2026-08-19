@@ -1,0 +1,330 @@
+/**
+ * O estado compartilhado da tela de Código: o rail (árvore) e a superfície
+ * (abas, editor, salvar) leem os DOIS lados do mesmo store de módulo — o mesmo
+ * desenho do useCode do orquestrador, porque o problema é o mesmo: clicar num
+ * arquivo do rail tem de abrir a aba do centro, e props não atravessam o shell.
+ *
+ * Regras que este arquivo protege:
+ *
+ * - A ÁRVORE É REAL OU NÃO É. Tudo vem de fs.list/fs.read pela rota
+ *   /v1/tools/call; falha vira mensagem (`erro`) no lugar exato onde a pasta
+ *   apareceria. Nunca uma árvore inventada — a regra da casa dos rails.
+ *
+ * - TUDO É POR SESSÃO. O projeto é o workspace da sessão do gateway; trocar de
+ *   conversa troca de projeto, então árvore, abas e índice morrem juntos
+ *   (`sincronizarSessao`). Resposta que chega DEPOIS da troca é descartada —
+ *   sem isso, a listagem em voo da conversa antiga pintava a árvore da nova.
+ *
+ * - SALVAR É GRAVAÇÃO DE VERDADE (fs.write), com o portão de aprovação do
+ *   gateway no meio: o POST fica pendurado enquanto o cartão espera decisão, e
+ *   a recusa volta como motivo em português — nunca como exceção.
+ */
+
+import { create } from "zustand";
+import { chamarFerramenta } from "./ferramentas";
+import {
+  coletarArquivos,
+  nomeBase,
+  parseBusca,
+  parseListagem,
+  type EntradaProjeto,
+  type OcorrenciaBusca
+} from "./projeto";
+
+export interface ArquivoAberto {
+  path: string;
+  name: string;
+  content: string;
+  /** Último conteúdo confirmado em disco — a base contra a qual se mede sujeira. */
+  savedContent: string;
+  dirty: boolean;
+  loading: boolean;
+  /**
+   * Motivo pelo qual este buffer NÃO é confiável (leitura falhou, arquivo
+   * cortado pelo teto do gateway). Com `erro` preenchido a edição e o salvar
+   * ficam bloqueados: gravar um buffer truncado de volta APAGARIA o resto do
+   * arquivo real — o bloqueio é proteção de dado, não frescura de UI.
+   */
+  erro: string;
+}
+
+export interface Pasta {
+  entradas: EntradaProjeto[];
+  /** "" quando a listagem deu certo; senão, o motivo que a árvore mostra. */
+  erro: string;
+}
+
+export type EstadoSalvar = "parado" | "salvando" | "salvo" | "erro";
+
+export interface IdeData {
+  /** Sessão dona da árvore e das abas — o carimbo que invalida resposta velha. */
+  session: string;
+  tree: Record<string, Pasta>;
+  expanded: ReadonlySet<string>;
+  files: ArquivoAberto[];
+  activePath: string;
+  saveState: EstadoSalvar;
+  saveErro: string;
+}
+
+export function estadoInicialIde(): IdeData {
+  return {
+    session: "",
+    tree: {},
+    expanded: new Set<string>(),
+    files: [],
+    activePath: "",
+    saveState: "parado",
+    saveErro: ""
+  };
+}
+
+export const useIde = create<IdeData>()(() => estadoInicialIde());
+
+/** Teto do índice do Quick Open — cada nível de pasta é um POST no gateway. */
+export const TETO_INDICE = { maxEntries: 500, maxDepth: 4 } as const;
+
+/** Cache do índice (Quick Open) — por sessão; morre em refresh e troca de sessão. */
+let indice: EntradaProjeto[] | null = null;
+let indiceEmVoo: Promise<EntradaProjeto[]> | null = null;
+/** Trava da primeira carga da raiz: rail e superfície chamam, só a primeira ganha. */
+let raizEmVoo = false;
+
+/**
+ * Adota a sessão nova zerando o que era da anterior. Idempotente de propósito:
+ * rail e superfície montam em ordens diferentes e os dois chamam — a segunda
+ * chamada com a mesma sessão não pode apagar a árvore que a primeira carregou.
+ */
+export function sincronizarSessao(session: string): void {
+  if (useIde.getState().session === session) return;
+  indice = null;
+  indiceEmVoo = null;
+  raizEmVoo = false;
+  useIde.setState({ ...estadoInicialIde(), session });
+}
+
+/** Zera TUDO, cache de módulo incluso — para os testes partirem limpos. */
+export function zerarIde(): void {
+  indice = null;
+  indiceEmVoo = null;
+  raizEmVoo = false;
+  useIde.setState({ ...estadoInicialIde() });
+}
+
+/** fs.list traduzida: erro do gateway vira exceção com o motivo em português. */
+async function listarPasta(sub: string): Promise<EntradaProjeto[]> {
+  const resultado = await chamarFerramenta("fs.list", { path: sub });
+  if (!resultado.ok) throw new Error(resultado.error);
+  return parseListagem(resultado.output, sub);
+}
+
+export async function carregarPasta(sub: string): Promise<void> {
+  const { session } = useIde.getState();
+  let pasta: Pasta;
+  try {
+    pasta = { entradas: await listarPasta(sub), erro: "" };
+  } catch (causa) {
+    pasta = { entradas: [], erro: causa instanceof Error ? causa.message : String(causa) };
+  }
+  // Descarta se a sessão mudou enquanto a listagem estava em voo.
+  useIde.setState((state) =>
+    state.session === session ? { tree: { ...state.tree, [sub]: pasta } } : {}
+  );
+}
+
+/** Primeira carga da árvore — rail e superfície chamam; só a primeira ganha. */
+export function bootstrapArvore(): void {
+  if (useIde.getState().tree[""] || raizEmVoo) return;
+  raizEmVoo = true;
+  void carregarPasta("").finally(() => {
+    raizEmVoo = false;
+  });
+}
+
+export function recarregarArvore(): void {
+  indice = null;
+  useIde.setState({ tree: {}, expanded: new Set<string>() });
+  bootstrapArvore();
+}
+
+export function alternarPasta(path: string): void {
+  useIde.setState((state) => {
+    const proximo = new Set(state.expanded);
+    if (proximo.has(path)) proximo.delete(path);
+    else proximo.add(path);
+    return { expanded: proximo };
+  });
+  if (!useIde.getState().tree[path]) void carregarPasta(path);
+}
+
+function patchArquivo(path: string, muda: (arquivo: ArquivoAberto) => Partial<ArquivoAberto>): void {
+  useIde.setState((state) => ({
+    files: state.files.map((arquivo) =>
+      arquivo.path === path ? { ...arquivo, ...muda(arquivo) } : arquivo
+    )
+  }));
+}
+
+/** Só troca a aba visível — o chip de salvo é do gesto anterior, morre junto. */
+export function ativarArquivo(path: string): void {
+  useIde.setState({ activePath: path, saveState: "parado", saveErro: "" });
+}
+
+/**
+ * A marca que o fs.read deixa quando o arquivo passou do teto de 512 KiB do
+ * gateway. Buffer cortado NÃO pode ser salvo de volta (apagaria o resto do
+ * arquivo), então a aba abre em modo somente leitura com o motivo à vista.
+ */
+const MARCA_DE_CORTE = "… (arquivo cortado:";
+
+export async function abrirArquivo(entrada: Pick<EntradaProjeto, "name" | "path">): Promise<void> {
+  const { files, session } = useIde.getState();
+  ativarArquivo(entrada.path);
+  if (files.some((arquivo) => arquivo.path === entrada.path)) return;
+  useIde.setState((state) => ({
+    files: [
+      ...state.files,
+      {
+        path: entrada.path,
+        name: entrada.name,
+        content: "",
+        savedContent: "",
+        dirty: false,
+        loading: true,
+        erro: ""
+      }
+    ]
+  }));
+  const resultado = await chamarFerramenta("fs.read", { path: entrada.path });
+  if (useIde.getState().session !== session) return;
+  if (!resultado.ok) {
+    patchArquivo(entrada.path, () => ({ loading: false, erro: resultado.error }));
+    return;
+  }
+  const cortado = resultado.output.includes(MARCA_DE_CORTE);
+  patchArquivo(entrada.path, () => ({
+    content: resultado.output,
+    savedContent: resultado.output,
+    loading: false,
+    erro: cortado
+      ? "arquivo maior que o teto de leitura do gateway — aberto somente para leitura (salvar gravaria um arquivo cortado)"
+      : ""
+  }));
+}
+
+/**
+ * A ponte da CONVERSA para as abas: arquivo que uma ferramenta do especialista
+ * leu vira aba aqui, com o conteúdo que a ferramenta devolveu. É o que a tela
+ * antiga fazia — e continua valendo porque o especialista trabalha em paralelo
+ * com a pessoa. O rascunho local VENCE: se a aba está suja, o conteúdo novo é
+ * ignorado em vez de apagar o que a pessoa digitou e não salvou.
+ */
+export function abrirVindoDaConversa(path: string, content: string): void {
+  useIde.setState((state) => {
+    const atual = state.files.find((arquivo) => arquivo.path === path);
+    if (!atual) {
+      return {
+        files: [
+          ...state.files,
+          { path, name: nomeBase(path), content, savedContent: content, dirty: false, loading: false, erro: "" }
+        ],
+        // Só assume o palco se ele estava vazio — trocar a aba ativa por baixo
+        // de quem está editando outra seria roubo de foco.
+        activePath: state.activePath === "" ? path : state.activePath
+      };
+    }
+    if (atual.dirty || atual.loading || atual.content === content) return {};
+    return {
+      files: state.files.map((arquivo) =>
+        arquivo.path === path ? { ...arquivo, content, savedContent: content, erro: "" } : arquivo
+      )
+    };
+  });
+}
+
+export function editarAtivo(texto: string): void {
+  useIde.setState((state) => ({
+    saveState: "parado",
+    saveErro: "",
+    files: state.files.map((arquivo) =>
+      arquivo.path === state.activePath && arquivo.erro === "" && !arquivo.loading
+        ? { ...arquivo, content: texto, dirty: texto !== arquivo.savedContent }
+        : arquivo
+    )
+  }));
+}
+
+export function fecharArquivo(path: string): void {
+  useIde.setState((state) => {
+    const files = state.files.filter((arquivo) => arquivo.path !== path);
+    return {
+      files,
+      activePath: state.activePath === path ? files[files.length - 1]?.path ?? "" : state.activePath
+    };
+  });
+}
+
+/** Some com o chip "salvo" depois do brilho de confirmação. */
+function agendarLimpezaDoSalvo(): void {
+  window.setTimeout(
+    () => useIde.setState((state) => (state.saveState === "salvo" ? { saveState: "parado" } : {})),
+    2200
+  );
+}
+
+export async function salvarAtivo(): Promise<void> {
+  const state = useIde.getState();
+  const arquivo = state.files.find((item) => item.path === state.activePath);
+  if (!arquivo || arquivo.loading || arquivo.erro !== "" || state.saveState === "salvando") return;
+  const { session } = state;
+  const conteudo = arquivo.content;
+  useIde.setState({ saveState: "salvando", saveErro: "" });
+  const resultado = await chamarFerramenta("fs.write", { path: arquivo.path, content: conteudo });
+  if (useIde.getState().session !== session) return;
+  if (!resultado.ok) {
+    useIde.setState({ saveState: "erro", saveErro: resultado.error });
+    return;
+  }
+  patchArquivo(arquivo.path, (atual) => ({
+    // Editar DURANTE o await é possível (a gravação espera o cartão de
+    // aprovação). Marcar limpo sem conferir apagaria o indicador de sujo com o
+    // texto já diferente do que foi gravado — e a pessoa fecharia a aba
+    // confiando no chip "salvo".
+    dirty: atual.content !== conteudo,
+    savedContent: conteudo
+  }));
+  useIde.setState({ saveState: "salvo" });
+  agendarLimpezaDoSalvo();
+}
+
+/** O índice em cache, se houver — a paleta abre com ele enquanto revalida. */
+export function indiceEmCache(): EntradaProjeto[] | null {
+  return indice;
+}
+
+/**
+ * O índice do Quick Open, coletado por fs.list recursivo com teto e guardado
+ * POR SESSÃO. A promessa em voo é compartilhada: abrir a paleta duas vezes
+ * seguidas não pode disparar duas varreduras inteiras do projeto.
+ */
+export function indiceDeArquivos(): Promise<EntradaProjeto[]> {
+  if (indice) return Promise.resolve(indice);
+  if (indiceEmVoo) return indiceEmVoo;
+  const { session } = useIde.getState();
+  indiceEmVoo = coletarArquivos(listarPasta, TETO_INDICE)
+    .then((arquivos) => {
+      if (useIde.getState().session === session) indice = arquivos;
+      return arquivos;
+    })
+    .finally(() => {
+      indiceEmVoo = null;
+    });
+  return indiceEmVoo;
+}
+
+/** Ctrl+Shift+F: a busca roda no gateway (fs.search) e volta estruturada. */
+export async function buscarNoProjeto(query: string): Promise<OcorrenciaBusca[]> {
+  const resultado = await chamarFerramenta("fs.search", { query });
+  if (!resultado.ok) throw new Error(resultado.error);
+  return parseBusca(resultado.output);
+}

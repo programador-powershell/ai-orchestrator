@@ -18,7 +18,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   FileText,
-  FolderOpen,
   GitBranch,
   Hand,
   KanbanSquare,
@@ -36,6 +35,7 @@ import { MASTER, specialistById } from "../lib/specialists";
 import { GrokAvatar, grokSpecialistOf, type GrokSpecialistState } from "../avatar/GrokAvatar";
 import { TablesRail } from "./rails/TablesRail";
 import { LayersRail } from "./rails/LayersRail";
+import { FilesRail } from "./rails/FilesRail";
 
 /** O recorte do store que os componentes do crew leem. Deriva do próprio store
  *  para não virar uma segunda declaração do contrato, que envelheceria sozinha. */
@@ -419,14 +419,8 @@ function FindingsRail() {
 
 /* ------------------------- rails ainda sem dado -------------------------- */
 
-function FilesRail() {
-  return (
-    <RailEmpty
-      icon={FolderOpen}
-      hint="A árvore do projeto aparece aqui quando o especialista Código abrir um diretório."
-    />
-  );
-}
+// O FilesRail de verdade mora em ./rails/FilesRail (árvore do projeto via
+// fs.list, quick open com fuzzy) — o placeholder daqui morreu com a Onda 4.
 
 function DocumentRail() {
   return (
