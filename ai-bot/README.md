@@ -155,6 +155,22 @@
 
 ### :pushpin: Fixes
 
+- **NENHUM navegador conseguia abrir o WebSocket do gateway: dois caracteres
+  trocados na constante do handshake.** A RFC 6455 fixa
+  `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`; o código tinha
+  `258EAFA5-E914-47DA-95CA-5AB0DC85B11C` — o `C` migrou do começo do último
+  grupo para o fim. Com isso o `Sec-WebSocket-Accept` saía errado, e o navegador
+  (que confere esse campo) recusava **em silêncio**: `close 1006`, sem mensagem,
+  sem erro no servidor, sem sessão criada. O app abria e ficava eternamente em
+  "sem conexão". O defeito ficou escondido porque cliente escrito à mão não
+  confere o campo — o teste de linha de comando conectava normalmente. Agora há
+  o vetor de teste da própria RFC (`dGhlIHNhbXBsZSBub25jZQ==` →
+  `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`) e um teste que compara a constante caractere a
+  caractere.
+- **Recusa de handshake por token passou a aparecer no log do gateway** (origem e
+  comprimento recebido × esperado, nunca o valor). O silêncio custou uma tarde:
+  a tela dizia "gateway fora do ar" e o servidor não registrava nada.
+
 - **Gateway que morre sem encerrar limpo travava a pasta de dados PARA SEMPRE.**
   A trava guarda o pid do dono e era considerada órfã quando `os.FindProcess`
   falhava — só que no Windows ele chama `OpenProcess`, e o objeto do processo

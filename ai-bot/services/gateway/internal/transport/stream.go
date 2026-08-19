@@ -65,8 +65,17 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !constantTimeEqual(hello.Token, s.cfg.Token) {
-		// 1008 = policy violation. Não dizemos QUAL parte falhou: a mensagem de
-		// erro detalhada é ajuda para quem está tentando adivinhar.
+		// Ao CLIENTE não se diz qual parte falhou: mensagem detalhada é ajuda
+		// para quem está adivinhando. Mas ao LOG do servidor se diz, porque o
+		// silêncio aqui já custou uma tarde de diagnóstico — a janela dizia
+		// "gateway fora do ar" e o gateway não registrava nada, então não havia
+		// como saber que a recusa era de token. O comprimento não é o segredo:
+		// ele separa "token vazio" (o cliente não conseguiu lê-lo) de "token
+		// errado" (leu o de outra instalação), que são defeitos diferentes.
+		s.log.Warn("handshake recusado: token não confere",
+			"origem", r.Header.Get("Origin"),
+			"tamanho_recebido", len(hello.Token),
+			"tamanho_esperado", len(s.cfg.Token))
 		_ = connection.Close(1008, "não autorizado")
 		return
 	}

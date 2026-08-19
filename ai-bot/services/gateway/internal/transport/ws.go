@@ -68,7 +68,7 @@ const (
 )
 
 // websocketGUID é a constante mágica do handshake, fixada pela RFC.
-const websocketGUID = "258EAFA5-E914-47DA-95CA-5AB0DC85B11C"
+const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // handshakeTimeout limita o tempo de escrita do 101. Sem prazo, um cliente que
 // abre a conexão e não lê nunca prenderia a goroutine para sempre.
