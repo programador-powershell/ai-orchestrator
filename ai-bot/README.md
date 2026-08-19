@@ -168,6 +168,29 @@
     mostra o Código no centro ("Esta conversa é com Código"), não o master. O
     conceito visual do avatar não mudou — só quem aparece.
 
+- **ONDA 3 da paridade: Dados EDITÁVEL, Design ligado ao gateway e a aba
+  VÍDEO.** Três frentes em paralelo, conferidas de ponta a ponta:
+  - **Schema editável, cliente-puro** (`lib/schema`): renomear tabela/campo
+    PROPAGANDO a FKs e índices, criar/remover, flags PK/NOT NULL, FK por
+    select, tipos nos 5 dialetos; **parser de DDL** (CREATE TABLE / ALTER ADD
+    FK / CREATE INDEX) para importar colando; **migração por snapshot** com
+    diff `up.sql`/`down.sql` por dialeto (a limitação herdada — só mudança de
+    TIPO gera ALTER — está declarada no código); undo/redo com teto de 50; o
+    resultado do gateway é importado para o modelo editável e o EDITADO vira a
+    fonte do diagrama, do rail e do \"Pedir ao agente\".
+  - **Design no gateway**: `design.replicate` devolve JSON estruturado
+    (pages/tokens com spacing/analysis) casando com o parse da tela, e a rota
+    `POST /v1/design/fetch` baixa página SEMPRE pelo netguard (anti-SSRF com
+    IP fixado, teto de 2 MB, recusas com motivo) — ligada na tela como
+    \"Clonar de URL\", alimentando a mesma extração local de tokens. O modo
+    texto antigo virou código morto e foi REMOVIDO.
+  - **Aba Vídeo** (`lib/video` + VideoStudio): timeline com régua/playhead,
+    dividir/aparar/mover clipes, overlays de texto e logo, preview HTML5 — e o
+    export MONTA o comando ffmpeg (xfade com offsets acumulados, drawtext com
+    o escape de dois níveis portado e TESTADO com apóstrofo) e o envia ao
+    composer: a UI não executa nada — quem roda é o agente, num turno com o
+    portão de aprovação.
+
 - **ONDA 2 da paridade: o Design saiu de prévia estática para ESTÚDIO
   editável.** Quase tudo cliente puro, portado do orquestrador:
   - **Módulos puros** (`lib/canvas`, 80 testes): documento tipado com

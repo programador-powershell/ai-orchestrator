@@ -54,12 +54,13 @@ func (t *Toolbox) InstallExtraTools(registry *Registry) {
 	registry.Register("webhook.post",
 		"dispara um webhook pela REFERÊNCIA no cofre. args: {secretRef, body}", t.webhookPost)
 
-	// web.search e design.replicate — ver tools_web.go.
+	// web.search — ver tools_web.go.
 	registry.Register("web.search",
 		"pesquisa na web pelo motor configurado. args: {query, limit?}", t.webSearch)
-	registry.Register("design.replicate",
-		"extrai a linguagem visual (cores, variáveis, fontes, animações, layout) de uma URL. args: {url, maxPages?}",
-		t.designReplicate)
+
+	// design.replicate — ver tools_design.go: devolve o JSON estruturado que a
+	// tela de Design consome (os extratores continuam em tools_web.go).
+	t.designToolsInstall(registry)
 
 	// O inventário dos pacotes corporativos (internal/pack). Registrado AQUI, e
 	// não no main, porque toda ferramenta que um especialista promete tem de

@@ -283,51 +283,10 @@ func TestSameHostPagesCeilingCutsTheList(t *testing.T) {
 	}
 }
 
-/* ------------------------------ relatório ---------------------------------- */
-
-func TestFormatDesignHasEverySection(t *testing.T) {
-	base, err := url.Parse("https://exemplo.com/")
-	if err != nil {
-		t.Fatalf("url de teste inválida: %v", err)
-	}
-	source := `<html><head><title>  Exemplo
-	da Casa </title><link rel="stylesheet" href="a.css">
-<style>:root{--bg:#0b1220}body{background:#0b1220;font-family:Inter,sans-serif;display:flex}
-@keyframes fadeIn{}</style></head><body><a href="/precos">preços</a></body></html>`
-
-	report := formatDesign(base, source, 2)
-	for _, marker := range []string{
-		"Exemplo da Casa",
-		"## Cores", "#0b1220",
-		"## Variáveis CSS", "--bg: #0b1220",
-		"## Fontes", "Inter",
-		"## Animações", "fadeIn",
-		"## Layout", "display:flex", "folhas de estilo ligadas: 1", "blocos <style>: 1",
-		"## Páginas do mesmo host", "https://exemplo.com/precos",
-		"NÃO foram baixadas",
-	} {
-		if !strings.Contains(report, marker) {
-			t.Errorf("o relatório não trouxe %q:\n%s", marker, report)
-		}
-	}
-}
-
-func TestFormatDesignEmptyPageStillReports(t *testing.T) {
-	base, err := url.Parse("https://exemplo.com/")
-	if err != nil {
-		t.Fatalf("url de teste inválida: %v", err)
-	}
-	report := formatDesign(base, "<html><body>oi</body></html>", 1)
-	// Seção vazia diz que está vazia: uma seção ausente o modelo lê como falha da
-	// ferramenta e tenta de novo.
-	for _, marker := range []string{"(nenhuma cor reconhecida)", "(nenhuma declarada)", "nenhum dos observados"} {
-		if !strings.Contains(report, marker) {
-			t.Errorf("o relatório não trouxe %q:\n%s", marker, report)
-		}
-	}
-}
-
 /* ------------------------------- web.search -------------------------------- */
+// (Os testes do relatório em TEXTO do design.replicate morreram junto com o
+// formatDesign: a versão estruturada, que o substituiu, tem cobertura própria
+// em tools_design_test.go.)
 
 func TestWebSearchRefusesWithoutBackend(t *testing.T) {
 	toolbox := &Toolbox{}

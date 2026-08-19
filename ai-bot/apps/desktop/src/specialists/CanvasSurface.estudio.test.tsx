@@ -326,7 +326,7 @@ describe("o canvas editável", () => {
 });
 
 describe("as abas de estúdio", () => {
-  it("Canvas ativa; Vídeo e Site desabilitadas com a dica honesta da Onda 3", () => {
+  it("Canvas ativa; Vídeo abre o estúdio de verdade; Site segue com a dica honesta", () => {
     monta();
     const abas = [...container.querySelectorAll<HTMLButtonElement>(".studio-tab")];
     expect(abas.map((aba) => (aba.textContent ?? "").trim().startsWith("Canvas"))).toContain(true);
@@ -334,11 +334,40 @@ describe("as abas de estúdio", () => {
 
     const [canvas, video, site] = abas;
     expect(canvas?.getAttribute("data-active")).toBe("true");
-    expect(video?.disabled).toBe(true);
+    // A aba Vídeo deixou de fingir: habilitada, e o clique troca o corpo da
+    // superfície pelo VideoStudio — o editor do canvas sai da tela.
+    expect(video?.disabled).toBe(false);
+    act(() => {
+      video?.click();
+    });
+    expect(video?.getAttribute("data-active")).toBe("true");
+    expect(container.querySelector(".video-studio")).not.toBeNull();
+    expect(container.querySelector(".cnv-editor")).toBeNull();
+
+    // Voltar ao Canvas restaura o editor — o documento seguiu vivo no store.
+    act(() => {
+      canvas?.click();
+    });
+    expect(container.querySelector(".cnv-editor")).not.toBeNull();
+    expect(container.querySelector(".video-studio")).toBeNull();
+
+    // Site continua desabilitada, com a dica de QUANDO chega.
     expect(site?.disabled).toBe(true);
-    // A dica diz QUANDO chega, em vez de deixar o botão morto sem explicação.
-    expect(video?.title).toContain("Onda 3");
     expect(site?.title).toContain("Onda 3");
+  });
+
+  it("com o estúdio de Vídeo aberto, Delete NÃO apaga nó do canvas fora da tela", () => {
+    monta();
+    act(() => {
+      useCanvasStudio.getState().selecionar("frame-1");
+    });
+    act(() => {
+      botaoPorTexto("Vídeo").click();
+    });
+    // O atalho pertence ao editor VISÍVEL: apagar um nó que ninguém está
+    // vendo seria perda de trabalho silenciosa.
+    tecla("Delete");
+    expect(useCanvasStudio.getState().doc.nodes).toHaveLength(1);
   });
 });
 

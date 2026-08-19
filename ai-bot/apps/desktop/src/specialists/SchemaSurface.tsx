@@ -14,11 +14,61 @@
  * que o rail de tabelas (TablesRail) navega: o rail pede o foco, esta tela rola
  * até o cartão. Os tipos do snapshot moram no mesmo módulo — importá-los daqui
  * faria o rail depender da superfície, e o rail monta antes dela.
+ *
+ * A tela EDITA: o primeiro tool.result com tabelas é promovido a documento
+ * editável (lib/schema, useSchemaStudio) e daí em diante é o EDITADO que o
+ * diagrama desenha, o rail lista e o "Pedir ao agente" embute — clicar num
+ * cartão abre o painel de edição, e Ctrl+Z desfaz (histórico de 50, como no
+ * orquestrador). O caminho de LEITURA (schemaResults/readSchema) continua
+ * intacto: ele é a porta de entrada do documento, não mais a fonte da tela.
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy, Database, Download, ImageDown, LayoutGrid, Sparkles, TableProperties } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Database,
+  Download,
+  GitCompare,
+  ImageDown,
+  LayoutGrid,
+  Plus,
+  Redo2,
+  Save,
+  Sparkles,
+  Table2,
+  TableProperties,
+  Trash2,
+  Undo2,
+  Upload,
+  X
+} from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
+import {
+  adicionarIndice,
+  alterarCampo,
+  canRedo,
+  canUndo,
+  criarCampo,
+  definirReferencia,
+  deSnapshot,
+  diffEsquemas,
+  diffEsquemasDown,
+  importarDdl,
+  isDialect,
+  nomeDoIndice,
+  paraSnapshot,
+  removerCampo,
+  removerIndice,
+  removerTabela,
+  renomearCampo,
+  renomearTabela,
+  SQL_DIALECTS,
+  tiposPorDialeto,
+  useSchemaStudio,
+  type SqlDialect,
+  type TabelaEdit
+} from "../lib/schema";
 import {
   problemasDoSchema,
   rotuloDaRelacao,
@@ -36,22 +86,16 @@ import { TopbarActions } from "../shell/TopbarActions";
 
 /* -------------------------------- dialeto ------------------------------- */
 
-// Os cinco que o gateway aceita e gera (tools_data.go) — oferecer menos aqui
-// seria esconder capacidade que já existe do outro lado do fio.
-const DIALECTS = ["postgres", "mysql", "sqlite", "mssql", "ansi"] as const;
-type Dialect = (typeof DIALECTS)[number];
-
-const DIALECT_LABEL: Record<Dialect, string> = {
+// Os cinco que o gateway aceita e gera (tools_data.go), vindos de lib/schema —
+// a lista É a mesma da migração e do modelo, de propósito: duplicá-la aqui foi
+// o que deixou gateway e cliente com três dialetos de diferença na 1ª versão.
+const DIALECT_LABEL: Record<SqlDialect, string> = {
   postgres: "PostgreSQL",
   mysql: "MySQL",
   sqlite: "SQLite",
   mssql: "SQL Server",
   ansi: "ANSI"
 };
-
-function isDialect(value: string): value is Dialect {
-  return (DIALECTS as readonly string[]).includes(value);
-}
 
 /* --------------------------- leitura do tool.result --------------------- */
 /* Os tipos do snapshot (Column, Table, Relation, IndexDef, SchemaSnapshot)
@@ -647,6 +691,59 @@ function Erd({
   );
 }
 
+/* --------------------------- construtor de índice ------------------------ */
+
+/**
+ * Escolhe campos NA ORDEM DO CLIQUE + flag UNIQUE — portado do IndexBuilder do
+ * orquestrador (DataView.tsx). A ordem importa: índice (a, b) não é índice
+ * (b, a), e uma lista de checkboxes ordenada alfabeticamente esconderia isso.
+ */
+function IndexBuilder({ tabela, onCreate }: { tabela: TabelaEdit; onCreate: (fields: string[], unique: boolean) => void }) {
+  const [fields, setFields] = useState<string[]>([]);
+  const [unique, setUnique] = useState(false);
+
+  function alternar(nome: string) {
+    setFields((atual) => (atual.includes(nome) ? atual.filter((item) => item !== nome) : [...atual, nome]));
+  }
+
+  return (
+    <div className="schema-indexbuilder">
+      <div className="schema-indexfields">
+        {tabela.columns.map((campo) => (
+          <button
+            key={campo.name}
+            type="button"
+            className="schema-flag"
+            data-on={fields.includes(campo.name)}
+            onClick={() => alternar(campo.name)}
+            title={`Incluir ${campo.name} no índice`}
+          >
+            {campo.name}
+          </button>
+        ))}
+      </div>
+      <div className="schema-indexactions">
+        <button type="button" className="schema-flag" data-on={unique} onClick={() => setUnique((valor) => !valor)} title="Índice único">
+          UNIQUE
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={fields.length === 0}
+          onClick={() => {
+            onCreate(fields, unique);
+            setFields([]);
+            setUnique(false);
+          }}
+        >
+          <Plus size={13} aria-hidden="true" />
+          Criar índice
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------- superfície ---------------------------- */
 
 export function SchemaSurface(): ReactNode {
@@ -664,18 +761,73 @@ export function SchemaSurface(): ReactNode {
   // O dialeto é preferência da tela, não do gateway: escolher aqui não reescreve
   // sozinho o SQL que já está na mão — quem regera é um botão explícito, porque
   // regerar custa uma ida ao modelo.
-  const [dialect, setDialect] = useState<Dialect>("postgres");
+  const [dialect, setDialect] = useState<SqlDialect>("postgres");
   const [copyState, copy] = useCopy();
+  // O modal de migração tem o próprio "Copiado": dividir o estado com o botão
+  // do painel de SQL acenderia os dois feedbacks com um clique só.
+  const [copiaModal, copiarModal] = useCopy();
+  const [modal, setModal] = useState<"importar" | "migrar" | null>(null);
+  const [ddlTexto, setDdlTexto] = useState("");
+  const [ddlErro, setDdlErro] = useState("");
+
+  const doc = useSchemaStudio((state) => state.doc);
+  const historico = useSchemaStudio((state) => state.history);
+  const baseMigracao = useSchemaStudio((state) => state.base);
+  const sessao = useApp((state) => state.session);
 
   const tabelaFocada = useSchemaFoco((state) => state.tabelaFocada);
   const nonce = useSchemaFoco((state) => state.nonce);
   const erdWrapRef = useRef<HTMLDivElement | null>(null);
 
+  // Conversa nova = estúdio zerado. Sem isso o schema EDITADO da conversa
+  // anterior sobreviveria à troca e apareceria numa conversa que nunca o viu.
+  useEffect(() => {
+    useSchemaStudio.getState().aoTrocarSessao(sessao);
+  }, [sessao]);
+
+  // Gateway → modelo editável: o resultado novo é IMPORTADO, com histórico —
+  // ele substitui as edições locais (o gateway acabou de falar), mas um Ctrl+Z
+  // as devolve. A chave impede o replay do mesmo resultado num remount, que
+  // atropelaria as edições sem nenhum dado novo para justificar.
+  useEffect(() => {
+    if (snapshot.tables.length === 0) return;
+    useSchemaStudio.getState().importar(deSnapshot(snapshot, "postgres"), chave);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a chave identifica os resultados
+  }, [chave]);
+
+  // A fonte do diagrama: o EDITADO quando existe; senão o derivado da conversa
+  // (o caminho de leitura da Onda 1, intocado). O SQL exibido continua sendo o
+  // do gateway — o painel mostra o que o modelo escreveu, não uma reconstrução.
+  const esquema = useMemo(
+    () => (doc === null ? snapshot : paraSnapshot(doc, snapshot.sql, snapshot.dialect)),
+    [doc, snapshot]
+  );
+
   // Publica o derivado para o rail. O snapshot vazio TAMBÉM é publicado: trocar
   // de conversa tem que limpar o rail, senão ele lista o schema da anterior.
   useEffect(() => {
-    useSchemaFoco.getState().publicar(snapshot);
-  }, [snapshot]);
+    useSchemaFoco.getState().publicar(esquema);
+  }, [esquema]);
+
+  /** Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — fora de inputs (que têm undo nativo). */
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable=true]")) return;
+      const key = event.key.toLowerCase();
+      if (key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) useSchemaStudio.getState().refazer();
+        else useSchemaStudio.getState().desfazer();
+      } else if (key === "y") {
+        event.preventDefault();
+        useSchemaStudio.getState().refazer();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // O pedido de foco do rail: rola até o cartão. Depende do NONCE, não do nome
   // — re-focar a mesma tabela depois de rolar para longe precisa rolar de novo.
@@ -691,11 +843,96 @@ export function SchemaSurface(): ReactNode {
     }
   }, [nonce]);
 
-  const columns = snapshot.tables.reduce((total, table) => total + table.columns.length, 0);
+  const columns = esquema.tables.reduce((total, table) => total + table.columns.length, 0);
   // Relações órfãs deixaram de sumir caladas: o diagrama continua sem desenhá-las
   // (não há onde ancorar), mas o status conta e nomeia cada uma.
-  const problemas = useMemo(() => problemasDoSchema(snapshot.tables, snapshot.relations), [snapshot]);
-  const mismatch = snapshot.dialect !== dialect;
+  const problemas = useMemo(() => problemasDoSchema(esquema.tables, esquema.relations), [esquema]);
+  const mismatch = esquema.dialect !== dialect;
+
+  /* ------------------------------- edição -------------------------------- */
+
+  // A tabela em EDIÇÃO é a focada (clique no diagrama ou no rail) — clicar
+  // num cartão abre o painel; não existe um segundo gesto para "editar".
+  const selecionada = useMemo(() => {
+    if (tabelaFocada === null || doc === null) return null;
+    return doc.tables.find((table) => table.name.toLowerCase() === tabelaFocada.toLowerCase()) ?? null;
+  }, [doc, tabelaFocada]);
+
+  const indicesDaTabela =
+    selecionada !== null && doc !== null
+      ? doc.indexes.filter((indice) => indice.table.toLowerCase() === selecionada.name.toLowerCase())
+      : [];
+
+  const editar = useSchemaStudio((state) => state.editar);
+
+  /** Renomeia PROPAGANDO (lib/schema) e leva o foco junto para o nome novo —
+   *  sem isso o publicar limparia o foco (tabela "sumiu") e o painel fecharia
+   *  no meio da edição. Devolve false para o input restaurar o valor. */
+  function commitNomeTabela(de: string, bruto: string): boolean {
+    const para = bruto.trim();
+    if (para === "" || para === de) return false;
+    const antes = useSchemaStudio.getState().doc;
+    editar((atual) => renomearTabela(atual, de, para));
+    if (useSchemaStudio.getState().doc === antes) return false;
+    useSchemaFoco.getState().selecionar(para);
+    return true;
+  }
+
+  function commitNomeCampo(tabela: string, de: string, bruto: string): boolean {
+    const para = bruto.trim();
+    if (para === "" || para === de) return false;
+    const antes = useSchemaStudio.getState().doc;
+    editar((atual) => renomearCampo(atual, tabela, de, para));
+    return useSchemaStudio.getState().doc !== antes;
+  }
+
+  /** A FK atual de um campo, no formato "tabela.campo" do select. */
+  function referenciaDe(tabela: string, campo: string): string {
+    const relacao = doc?.relations.find(
+      (r) => r.from.toLowerCase() === tabela.toLowerCase() && r.fromColumn.toLowerCase() === campo.toLowerCase()
+    );
+    return relacao !== undefined && relacao.toColumn !== "" ? `${relacao.to}.${relacao.toColumn}` : "";
+  }
+
+  function novaTabela(): void {
+    const nome = useSchemaStudio.getState().novaTabela();
+    // focar (e não só selecionar): a tabela nova pode nascer fora da viewport
+    // e um painel editando algo invisível desorienta.
+    useSchemaFoco.getState().focar(nome);
+  }
+
+  /** DDL colado → modelo. Substitui o diagrama atual — com histórico, então
+   *  Ctrl+Z desfaz (o aviso no modal diz isso em voz alta). */
+  function executarImport(): void {
+    const novo = importarDdl(ddlTexto);
+    if (novo.tables.length === 0) {
+      setDdlErro("Nenhum CREATE TABLE reconhecido no SQL colado.");
+      return;
+    }
+    editar(() => novo);
+    // O parser detecta o dialeto (crase = MySQL, jsonb = Postgres…) e a tela
+    // acompanha — senão a migração sairia na língua errada sem ninguém pedir.
+    setDialect(novo.dialect);
+    useSchemaFoco.getState().selecionar(null);
+    setDdlTexto("");
+    setDdlErro("");
+    setModal(null);
+  }
+
+  /** Diff real snapshot-base → doc atual; alimenta o modal de migração e o
+   *  status "N mudanças vs snapshot". O down é o mesmo diff, invertido. */
+  const migracao = useMemo(
+    () => (baseMigracao !== null && doc !== null ? diffEsquemas(baseMigracao, doc, dialect) : []),
+    [baseMigracao, doc, dialect]
+  );
+  const migracaoSql = migracao.length > 0 ? `${migracao.join("\n\n")}\n` : "";
+  const reversao = useMemo(
+    () => (baseMigracao !== null && doc !== null ? diffEsquemasDown(baseMigracao, doc, dialect) : []),
+    [baseMigracao, doc, dialect]
+  );
+  const reversaoSql = reversao.length > 0 ? `${reversao.join("\n\n")}\n` : "";
+
+  const typeOptions = tiposPorDialeto[dialect];
 
   function baixarSvg(): void {
     const svg = erdWrapRef.current?.querySelector("svg.erd");
@@ -716,20 +953,43 @@ export function SchemaSurface(): ReactNode {
             if (isDialect(next)) setDialect(next);
           }}
         >
-          {DIALECTS.map((item) => (
+          {SQL_DIALECTS.map((item) => (
             <option key={item} value={item}>
               {DIALECT_LABEL[item]}
             </option>
           ))}
         </select>
+        {/* O caminho de ENTRADA de um schema existente: colar o DDL, sem
+            depender de o modelo reescrevê-lo de memória. */}
+        <button
+          type="button"
+          className="btn"
+          title="cola um DDL (CREATE TABLE…) e vira o diagrama editável"
+          onClick={() => {
+            setDdlErro("");
+            setModal("importar");
+          }}
+        >
+          <Upload size={13} aria-hidden="true" />
+          Importar SQL
+        </button>
+        <button
+          type="button"
+          className="btn"
+          title="salva um snapshot do schema e gera o SQL de migração (up e down) do snapshot até o estado atual"
+          onClick={() => setModal("migrar")}
+        >
+          <GitCompare size={13} aria-hidden="true" />
+          Migração
+        </button>
         {/* Export de VERDADE, em arquivo — copiar já tem botão no painel de
             SQL. O download por Blob + âncora é o mesmo do orquestrador. */}
         <button
           type="button"
           className="btn"
-          disabled={snapshot.tables.length === 0}
+          disabled={esquema.tables.length === 0}
           title={
-            snapshot.tables.length === 0
+            esquema.tables.length === 0
               ? "nenhum diagrama ainda"
               : "baixa o diagrama como schema.svg, com o layout desta tela"
           }
@@ -741,9 +1001,9 @@ export function SchemaSurface(): ReactNode {
         <button
           type="button"
           className="btn"
-          disabled={snapshot.sql === ""}
-          title={snapshot.sql === "" ? "nenhum SQL gerado ainda" : "baixa o SQL gerado como schema.sql"}
-          onClick={() => baixarArquivo("schema.sql", snapshot.sql)}
+          disabled={esquema.sql === ""}
+          title={esquema.sql === "" ? "nenhum SQL gerado ainda" : "baixa o SQL gerado como schema.sql"}
+          onClick={() => baixarArquivo("schema.sql", esquema.sql)}
         >
           <Download size={13} aria-hidden="true" />
           Baixar schema.sql
@@ -753,15 +1013,46 @@ export function SchemaSurface(): ReactNode {
       <div className="surface-toolbar">
         <TableProperties size={13} aria-hidden="true" />
         <span className="surface-title">Diagrama</span>
-        <span className="chip">{snapshot.tables.length} tabelas</span>
-        <span className="chip">{snapshot.relations.length} relações</span>
+        <span className="chip">{esquema.tables.length} tabelas</span>
+        <span className="chip">{esquema.relations.length} relações</span>
+        {/* Undo/redo ao lado do que eles desfazem; desabilitado diz "não há o
+            que desfazer" sem esconder que o recurso existe. */}
+        <button
+          type="button"
+          className="btn icon-btn"
+          disabled={doc === null || !canUndo(historico)}
+          onClick={() => useSchemaStudio.getState().desfazer()}
+          aria-label="Desfazer (Ctrl+Z)"
+          title="Desfazer (Ctrl+Z)"
+        >
+          <Undo2 size={13} />
+        </button>
+        <button
+          type="button"
+          className="btn icon-btn"
+          disabled={doc === null || !canRedo(historico)}
+          onClick={() => useSchemaStudio.getState().refazer()}
+          aria-label="Refazer (Ctrl+Shift+Z)"
+          title="Refazer (Ctrl+Shift+Z)"
+        >
+          <Redo2 size={13} />
+        </button>
+        <button
+          type="button"
+          className="btn icon-btn"
+          onClick={novaTabela}
+          aria-label="Adicionar tabela"
+          title="Adicionar tabela (tabela_N com PK padrão)"
+        >
+          <Plus size={13} />
+        </button>
         <span className="surface-toolbar-spacer" />
-        {snapshot.tables.length > 0 ? (
+        {esquema.tables.length > 0 ? (
           <button
             type="button"
             className="btn"
-            title="preenche o composer com o schema real — tabelas, campos, FKs e índices — e o pedido da próxima migração"
-            onClick={() => setInput(promptComSchema(snapshot, DIALECT_LABEL[dialect]))}
+            title="preenche o composer com o schema real — tabelas, campos, FKs e índices, INCLUINDO as edições desta tela — e o pedido da próxima migração"
+            onClick={() => setInput(promptComSchema(esquema, DIALECT_LABEL[dialect]))}
           >
             <Sparkles size={13} aria-hidden="true" />
             Pedir ao agente
@@ -777,13 +1068,13 @@ export function SchemaSurface(): ReactNode {
       </div>
 
       <div className="surface-body schema-split">
-        {snapshot.tables.length === 0 ? (
+        {esquema.tables.length === 0 ? (
           <div className="surface-empty">
             <Database size={22} aria-hidden="true" />
             <p>Sem schema ainda.</p>
             <p>
-              Peça as tabelas ao especialista. O que voltar de <code>schema.export</code> ou{" "}
-              <code>sql.render</code> vira este diagrama, e o SQL aparece no painel de baixo.
+              Peça as tabelas ao especialista, cole um DDL em Importar SQL ou crie a primeira tabela aqui. O que
+              voltar de <code>schema.export</code> ou <code>sql.render</code> também vira este diagrama.
             </p>
             <button
               type="button"
@@ -793,74 +1084,263 @@ export function SchemaSurface(): ReactNode {
             >
               Preencher /erd
             </button>
+            <button type="button" className="btn" onClick={novaTabela} title="cria tabela_1 com a PK padrão e abre a edição">
+              <Plus size={13} aria-hidden="true" />
+              Criar tabela
+            </button>
           </div>
         ) : (
           /* O invólucro é quem rola (um schema largo estouraria a grade) e é a
              raiz onde o efeito de foco procura o cartão por data-tabela. */
           <div className="erd-wrap" ref={erdWrapRef}>
             <Erd
-              snapshot={snapshot}
+              snapshot={esquema}
               focada={tabelaFocada}
               onSelect={(nome) => useSchemaFoco.getState().selecionar(nome)}
             />
           </div>
         )}
 
-        <section className="card schema-sql">
-          <div className="card-head">
-            <Database size={13} aria-hidden="true" />
-            <span className="card-title">SQL gerado</span>
-            {snapshot.dialect !== "" ? <span className="chip">{snapshot.dialect}</span> : null}
-            <span className="surface-toolbar-spacer" />
-            {mismatch ? (
+        <div className="schema-side">
+          {selecionada !== null ? (
+            <section className="card schema-editor">
+              <div className="card-head">
+                <Table2 size={13} aria-hidden="true" />
+                <span className="card-title">Editar tabela</span>
+                <span className="surface-toolbar-spacer" />
+                <button
+                  type="button"
+                  className="btn icon-btn"
+                  onClick={() => useSchemaFoco.getState().selecionar(null)}
+                  aria-label="Fechar edição"
+                  title="fecha o painel de edição"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="schema-editor-body">
+                <label className="schema-editor-nome">
+                  Nome da tabela
+                  {/* defaultValue + commit no blur/Enter (padrão do orquestrador):
+                      validar por tecla bloquearia estados intermediários legítimos
+                      — todo rename passa por um nome "errado" no meio. A key
+                      remonta o input quando o rename vence. */}
+                  <input
+                    key={selecionada.name}
+                    defaultValue={selecionada.name}
+                    aria-label="Nome da tabela"
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                    onBlur={(event) => {
+                      if (!commitNomeTabela(selecionada.name, event.target.value)) event.target.value = selecionada.name;
+                    }}
+                  />
+                </label>
+
+                <div className="schema-subhead">
+                  <span>Campos · {selecionada.columns.length}</span>
+                  <button
+                    type="button"
+                    className="btn icon-btn"
+                    onClick={() => editar((atual) => criarCampo(atual, selecionada.name))}
+                    aria-label="Adicionar campo"
+                    title="Adicionar campo (campo_N text)"
+                  >
+                    <Plus size={13} />
+                  </button>
+                </div>
+
+                {selecionada.columns.map((campo) => (
+                  <div className="schema-fieldrow" key={campo.name}>
+                    <div className="schema-fieldmain">
+                      <input
+                        key={`${selecionada.name}.${campo.name}`}
+                        defaultValue={campo.name}
+                        aria-label={`Nome do campo ${campo.name}`}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        onBlur={(event) => {
+                          if (!commitNomeCampo(selecionada.name, campo.name, event.target.value)) {
+                            event.target.value = campo.name;
+                          }
+                        }}
+                      />
+                      <select
+                        value={campo.type}
+                        aria-label={`Tipo do campo ${campo.name}`}
+                        onChange={(event) =>
+                          editar((atual) => alterarCampo(atual, selecionada.name, campo.name, { type: event.target.value }))
+                        }
+                      >
+                        {/* Tipo fora da lista do dialeto (ou vazio, do parser
+                            tolerante) entra como primeira opção: o select não
+                            pode "corrigir" o dado sozinho ao montar. */}
+                        {(typeOptions.includes(campo.type) ? typeOptions : [campo.type, ...typeOptions]).map((tipo) => (
+                          <option key={tipo} value={tipo}>
+                            {tipo === "" ? "(sem tipo)" : tipo}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="btn icon-btn"
+                        onClick={() => editar((atual) => removerCampo(atual, selecionada.name, campo.name))}
+                        aria-label={`Remover campo ${campo.name}`}
+                        title="Remover campo (relações e índices que o usam saem junto)"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <div className="schema-flags">
+                      <button
+                        type="button"
+                        className="schema-flag"
+                        data-on={campo.pk}
+                        title="Chave primária"
+                        onClick={() => editar((atual) => alterarCampo(atual, selecionada.name, campo.name, { pk: !campo.pk }))}
+                      >
+                        PK
+                      </button>
+                      <button
+                        type="button"
+                        className="schema-flag"
+                        data-on={campo.required}
+                        title="Obrigatório (NOT NULL)"
+                        onClick={() =>
+                          editar((atual) => alterarCampo(atual, selecionada.name, campo.name, { required: !campo.required }))
+                        }
+                      >
+                        NOT NULL
+                      </button>
+                      {/* O flag FK não é um toggle: ele é DERIVADO da referência
+                          — escolher o alvo aqui cria a relação e acende o flag. */}
+                      <select
+                        className="schema-ref"
+                        value={referenciaDe(selecionada.name, campo.name)}
+                        aria-label={`Referência (FK) de ${campo.name}`}
+                        onChange={(event) =>
+                          editar((atual) => definirReferencia(atual, selecionada.name, campo.name, event.target.value))
+                        }
+                      >
+                        <option value="">sem referência</option>
+                        {doc?.tables
+                          .filter((table) => table.name !== selecionada.name)
+                          .flatMap((table) => table.columns.map((coluna) => `${table.name}.${coluna.name}`))
+                          .map((opcao) => (
+                            <option key={opcao} value={opcao}>
+                              {opcao}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="schema-subhead">
+                  <span>Índices · {indicesDaTabela.length}</span>
+                </div>
+                {indicesDaTabela.map((indice) => (
+                  <div className="schema-indexrow" key={nomeDoIndice(indice)}>
+                    <LayoutGrid size={12} aria-hidden="true" />
+                    <code title={nomeDoIndice(indice)}>{indice.fields.join(", ")}</code>
+                    {indice.unique ? <em>UNIQUE</em> : null}
+                    <button
+                      type="button"
+                      className="btn icon-btn"
+                      onClick={() => editar((atual) => removerIndice(atual, indice.table, indice.fields))}
+                      aria-label={`Remover índice ${nomeDoIndice(indice)}`}
+                      title="Remover índice"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                {/* key remonta o builder ao trocar de tabela — campos marcados
+                    de uma tabela não podem vazar para o índice de outra. */}
+                <IndexBuilder
+                  key={selecionada.name}
+                  tabela={selecionada}
+                  onCreate={(fields, unique) => editar((atual) => adicionarIndice(atual, selecionada.name, fields, unique))}
+                />
+
+                <button
+                  type="button"
+                  className="btn schema-remove"
+                  onClick={() => {
+                    editar((atual) => removerTabela(atual, selecionada.name));
+                    useSchemaFoco.getState().selecionar(null);
+                  }}
+                >
+                  <Trash2 size={13} aria-hidden="true" />
+                  Remover tabela
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="card schema-sql">
+            <div className="card-head">
+              <Database size={13} aria-hidden="true" />
+              <span className="card-title">SQL gerado</span>
+              {esquema.dialect !== "" ? <span className="chip">{esquema.dialect}</span> : null}
+              <span className="surface-toolbar-spacer" />
+              {mismatch ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  title={
+                    esquema.sql === ""
+                      ? `pede o SQL em ${DIALECT_LABEL[dialect]}`
+                      : `o texto abaixo veio em ${esquema.dialect || "dialeto não informado"}; pedir de novo em ${DIALECT_LABEL[dialect]}`
+                  }
+                  onClick={() => send(`/sql ${dialect}`)}
+                >
+                  Gerar em {DIALECT_LABEL[dialect]}
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="btn btn-ghost"
-                disabled={busy}
-                title={
-                  snapshot.sql === ""
-                    ? `pede o SQL em ${DIALECT_LABEL[dialect]}`
-                    : `o texto abaixo veio em ${snapshot.dialect || "dialeto não informado"}; pedir de novo em ${DIALECT_LABEL[dialect]}`
-                }
-                onClick={() => send(`/sql ${dialect}`)}
+                className="btn icon-btn"
+                disabled={esquema.sql === ""}
+                title={copyState === "fail" ? "não deu para copiar" : "copiar o SQL"}
+                onClick={() => copy(esquema.sql)}
               >
-                Gerar em {DIALECT_LABEL[dialect]}
+                {copyState === "done" ? <Check size={13} /> : <Copy size={13} />}
               </button>
-            ) : null}
-            <button
-              type="button"
-              className="btn icon-btn"
-              disabled={snapshot.sql === ""}
-              title={copyState === "fail" ? "não deu para copiar" : "copiar o SQL"}
-              onClick={() => copy(snapshot.sql)}
-            >
-              {copyState === "done" ? <Check size={13} /> : <Copy size={13} />}
-            </button>
-          </div>
-          {snapshot.sql !== "" ? (
-            <pre className="sql-block">
-              <code>{snapshot.sql}</code>
-            </pre>
-          ) : (
-            <div className="card-body">
-              Nenhum SQL ainda. Peça <code>/sql</code> e o DDL do dialeto escolhido aparece aqui.
             </div>
-          )}
-        </section>
+            {esquema.sql !== "" ? (
+              <pre className="sql-block">
+                <code>{esquema.sql}</code>
+              </pre>
+            ) : (
+              <div className="card-body">
+                Nenhum SQL ainda. Peça <code>/sql</code> e o DDL do dialeto escolhido aparece aqui.
+              </div>
+            )}
+          </section>
+        </div>
       </div>
 
       <div className="surface-status">
         <span>
-          tabelas <b>{snapshot.tables.length}</b>
+          tabelas <b>{esquema.tables.length}</b>
         </span>
         <span>
           colunas <b>{columns}</b>
         </span>
         <span>
-          relações <b>{snapshot.relations.length}</b>
+          relações <b>{esquema.relations.length}</b>
         </span>
         <span>
-          índices <b>{snapshot.indexes.length}</b>
+          índices <b>{esquema.indexes.length}</b>
+        </span>
+        {/* O mesmo texto do orquestrador: sem snapshot a barra CONVIDA a salvar
+            um; com snapshot ela conta o diff real — o número do modal. */}
+        <span title="mudanças entre o snapshot salvo (botão Migração) e o schema atual">
+          {baseMigracao === null ? "sem snapshot" : `${migracao.length} mudanças vs snapshot`}
         </span>
         {/* O tooltip NOMEIA cada relação órfã: um número sozinho manda a pessoa
             caçar o problema no diagrama — que é justamente onde ele não aparece. */}
@@ -880,6 +1360,96 @@ export function SchemaSurface(): ReactNode {
           dialeto <b>{DIALECT_LABEL[dialect]}</b>
         </span>
       </div>
+
+      {/* Modais de Importar SQL e Migração — o overlay fecha no clique de fora
+          (stopPropagation no cartão), como o datax-overlay do orquestrador. */}
+      {modal !== null ? (
+        <div className="schema-overlay" onClick={() => setModal(null)}>
+          <div
+            className="schema-modal"
+            role="dialog"
+            aria-label={modal === "importar" ? "Importar SQL" : "Migração por snapshot"}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header>
+              <strong>
+                {modal === "importar" ? "Importar SQL" : `Migração — snapshot → atual (${DIALECT_LABEL[dialect]})`}
+              </strong>
+              <button type="button" className="btn icon-btn" onClick={() => setModal(null)} aria-label="Fechar">
+                <X size={14} />
+              </button>
+            </header>
+            {modal === "importar" ? (
+              <>
+                <textarea
+                  value={ddlTexto}
+                  onChange={(event) => setDdlTexto(event.target.value)}
+                  placeholder={'Cole aqui o DDL — ex.: CREATE TABLE "users" (…);'}
+                  aria-label="SQL para importar"
+                />
+                {ddlErro !== "" ? <small className="schema-modal-erro">{ddlErro}</small> : null}
+                <small className="schema-modal-nota">Importar substitui o diagrama atual — Ctrl+Z desfaz.</small>
+                <footer>
+                  <button type="button" className="btn" onClick={() => setModal(null)}>
+                    Cancelar
+                  </button>
+                  <button type="button" className="btn" disabled={ddlTexto.trim() === ""} onClick={executarImport}>
+                    <Upload size={13} aria-hidden="true" />
+                    Importar
+                  </button>
+                </footer>
+              </>
+            ) : (
+              <>
+                {baseMigracao === null ? (
+                  <div className="schema-modal-vazio">
+                    Nenhum snapshot salvo ainda. Salve o estado atual como base, continue editando o schema e volte
+                    aqui para gerar o SQL de migração (CREATE/DROP/ALTER) do snapshot até a versão nova — e o de
+                    reversão (down).
+                  </div>
+                ) : migracao.length > 0 ? (
+                  <pre>{migracaoSql}</pre>
+                ) : (
+                  <div className="schema-modal-vazio">Nenhuma diferença entre o snapshot salvo e o schema atual.</div>
+                )}
+                <footer>
+                  {migracao.length > 0 ? (
+                    <>
+                      <button type="button" className="btn" onClick={() => copiarModal(migracaoSql)}>
+                        {copiaModal === "done" ? <Check size={13} /> : <Copy size={13} />}
+                        {copiaModal === "done" ? "Copiado" : "Copiar"}
+                      </button>
+                      <button type="button" className="btn" onClick={() => baixarArquivo("migration.up.sql", migracaoSql)}>
+                        <Download size={13} aria-hidden="true" />
+                        Baixar up.sql
+                      </button>
+                      {reversaoSql !== "" ? (
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => baixarArquivo("migration.down.sql", reversaoSql)}
+                        >
+                          <Download size={13} aria-hidden="true" />
+                          Baixar down.sql
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn"
+                    title="o snapshot vira a base do diff: edite o schema e o up/down saem daqui"
+                    onClick={() => useSchemaStudio.getState().salvarBase()}
+                  >
+                    <Save size={13} aria-hidden="true" />
+                    Salvar snapshot
+                  </button>
+                </footer>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

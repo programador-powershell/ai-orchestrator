@@ -26,7 +26,7 @@
  * de DOM: ponteiro, teclado, rasterização de PNG e download.
  */
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { create } from "zustand";
 import {
@@ -96,9 +96,10 @@ import type {
   ExtractedTokens,
   StencilId
 } from "../lib/canvas";
-import { useApp } from "../lib/store";
+import { activeTransport, useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface } from "./ConversationSurface";
+import { VideoStudio } from "./VideoStudio";
 
 /* --------------------------- leitura do tool.result ---------------------- */
 
@@ -764,8 +765,47 @@ export function CanvasSurface(): ReactNode {
   const [panning, setPanning] = useState(false);
   const [nota, setNota] = useState("");
   const [modo, setModo] = useState<"editar" | "previa">("editar");
+  // A aba de ESTÚDIO ativa (Canvas/Vídeo). É estado local, não do store do
+  // canvas: a aba é da tela, não do documento — trocar de sessão não deve
+  // arrastar a pessoa de volta para o Canvas se ela estava no Vídeo.
+  const [estudio, setEstudio] = useState<"canvas" | "video">("canvas");
   const [fonteColada, setFonteColada] = useState("");
   const [extraidos, setExtraidos] = useState<ExtractedTokens | null>(null);
+  const [cloneUrl, setCloneUrl] = useState("");
+  const [clonando, setClonando] = useState(false);
+  const [cloneErro, setCloneErro] = useState("");
+
+  /**
+   * Baixa a página PELO GATEWAY (POST /v1/design/fetch, netguard com anti-SSRF
+   * e IP fixado) e alimenta a mesma extração local de tokens do campo de colar.
+   * A tela nunca busca a rede sozinha — e a recusa do guarda vem com o motivo.
+   */
+  const clonarDeUrl = useCallback(async () => {
+    const url = cloneUrl.trim();
+    const transporte = activeTransport();
+    if (url === "" || transporte === null) {
+      setCloneErro(transporte === null ? "sem conexão com o gateway" : "");
+      return;
+    }
+    setClonando(true);
+    setCloneErro("");
+    try {
+      const resposta = (await transporte.post("/v1/design/fetch", { url })) as
+        | { html?: string; finalUrl?: string }
+        | undefined;
+      const html = resposta?.html ?? "";
+      if (html === "") {
+        setCloneErro("a página veio vazia");
+        return;
+      }
+      setFonteColada(html);
+      setExtraidos(extractTokens(html));
+    } catch (erro) {
+      setCloneErro(erro instanceof Error ? erro.message : "não foi possível baixar a página");
+    } finally {
+      setClonando(false);
+    }
+  }, [cloneUrl]);
 
   const dragRef = useRef<DragState | null>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -965,34 +1005,37 @@ export function CanvasSurface(): ReactNode {
   }
 
   /* Atalhos do canvas: V/F/R/O/T, Delete, Ctrl+Z / Ctrl+Shift+Z, Esc. Só no
-     modo de edição — na prévia não há ferramenta para os atalhos acionarem, e
-     um Delete "invisível" apagando nó fora da tela seria perda de trabalho. */
+     modo de edição E com o estúdio de Canvas visível — na prévia não há
+     ferramenta para os atalhos acionarem, e com o estúdio de Vídeo aberto um
+     Delete "invisível" apagando nó fora da tela seria perda de trabalho. */
   useEffect(() => {
-    if (modo !== "editar") return;
+    if (modo !== "editar" || estudio !== "canvas") return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       // Quem digita num campo está escrevendo texto, não pedindo ferramenta.
       if (target?.closest("input, textarea, select, [contenteditable=true]")) return;
-      const estudio = useCanvasStudio.getState();
+      // Nome próprio para não sombrear o estado de aba `estudio` (string) lá
+      // de cima — o código estava certo, mas a leitura enganava.
+      const acoes = useCanvasStudio.getState();
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
-        if (event.shiftKey) estudio.refazer();
-        else estudio.desfazer();
+        if (event.shiftKey) acoes.refazer();
+        else acoes.desfazer();
         return;
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
         event.preventDefault();
-        estudio.refazer();
+        acoes.refazer();
         return;
       }
-      if ((event.key === "Delete" || event.key === "Backspace") && estudio.selectedId) {
+      if ((event.key === "Delete" || event.key === "Backspace") && acoes.selectedId) {
         event.preventDefault();
-        estudio.excluirNo(estudio.selectedId);
+        acoes.excluirNo(acoes.selectedId);
         return;
       }
       if (event.key === "Escape") {
         setTool("select");
-        estudio.selecionar(null);
+        acoes.selecionar(null);
         return;
       }
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1001,7 +1044,7 @@ export function CanvasSurface(): ReactNode {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [modo]);
+  }, [modo, estudio]);
 
   /* ----------------------------- export SVG/PNG --------------------------- */
 
@@ -1076,24 +1119,32 @@ export function CanvasSurface(): ReactNode {
 
       {/* As abas de ESTÚDIO moram na superfície, não na barra do app: elas
           trocam o conteúdo desta tela, e a barra de cima pertence ao app
-          inteiro. Vídeo e Site nascem desabilitadas com a dica honesta — botão
-          que finge funcionar ensina a não acreditar na tela. */}
+          inteiro. Vídeo agora abre o estúdio DE VERDADE (VideoStudio); Site
+          continua desabilitada com a dica honesta — botão que finge funcionar
+          ensina a não acreditar na tela. */}
       <div className="studio-tabs" role="tablist" aria-label="Estúdios do Design">
-        <button type="button" role="tab" aria-selected="true" data-active="true" className="studio-tab">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={estudio === "canvas"}
+          data-active={estudio === "canvas"}
+          className="studio-tab"
+          onClick={() => setEstudio("canvas")}
+        >
           <Frame size={12} aria-hidden="true" />
           Canvas
         </button>
         <button
           type="button"
           role="tab"
-          aria-selected="false"
+          aria-selected={estudio === "video"}
+          data-active={estudio === "video"}
           className="studio-tab"
-          disabled
-          title="Editor de vídeo — chega na Onda 3"
+          title="Editor de vídeo — corte, transição, texto e export via agente"
+          onClick={() => setEstudio("video")}
         >
           <Clapperboard size={12} aria-hidden="true" />
           Vídeo
-          <span className="studio-tab-hint">Onda 3</span>
         </button>
         <button
           type="button"
@@ -1109,6 +1160,14 @@ export function CanvasSurface(): ReactNode {
         </button>
       </div>
 
+      {estudio === "video" ? (
+        // O estúdio de Vídeo substitui o corpo INTEIRO do canvas — toolbar,
+        // faixas e status são dele. As abas acima e as ações da barra do app
+        // (Replicar/Exportar tokens) continuam: pertencem à superfície, não à
+        // aba. O documento do canvas segue vivo no store; voltar não perde nada.
+        <VideoStudio />
+      ) : (
+        <>
       <div className="surface-toolbar canvas-toolbar">
         <div className="tool-group" role="toolbar" aria-label="Ferramentas do canvas">
           {TOOL_LIST.map((item) => (
@@ -1202,6 +1261,29 @@ export function CanvasSurface(): ReactNode {
               <Wand2 size={13} aria-hidden="true" />
               <span className="card-title">Colar HTML/CSS</span>
             </div>
+            {/* O "Clonar de URL": o gateway baixa a página pelo netguard
+                (anti-SSRF com IP fixado — a tela NUNCA busca a rede sozinha) e
+                o HTML cai na MESMA extração local de tokens do campo abaixo.
+                Rota sem consumidor é o padrão que este projeto odeia. */}
+            <div className="clone-url">
+              <input
+                type="url"
+                value={cloneUrl}
+                onChange={(event) => setCloneUrl(event.target.value)}
+                placeholder="https://exemplo.com — clonar tokens de um site"
+                aria-label="URL para clonar tokens"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={cloneUrl.trim() === "" || clonando}
+                onClick={() => void clonarDeUrl()}
+              >
+                {clonando ? "baixando…" : "Clonar"}
+              </button>
+            </div>
+            {cloneErro !== "" ? <p className="clone-url-erro">{cloneErro}</p> : null}
             <div className="paste-tokens">
               <textarea
                 value={fonteColada}
@@ -1629,6 +1711,8 @@ export function CanvasSurface(): ReactNode {
         </span>
         <span>{emPrevia ? "prévia isolada, sem script" : "doc salvo localmente"}</span>
       </div>
+        </>
+      )}
     </div>
   );
 }

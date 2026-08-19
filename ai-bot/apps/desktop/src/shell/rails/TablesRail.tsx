@@ -9,11 +9,14 @@
  * Clicar numa tabela FOCA o cartão dela no diagrama (a superfície rola e
  * realça); clicar numa relação foca a tabela de ORIGEM — é nela que a FK mora,
  * então é lá que a pessoa vai mexer. Portado do DataRail do orquestrador
- * (DataView.tsx), sem o botão "Add table": esta tela é somente leitura, e um
- * botão que edita mentiria sobre isso.
+ * (DataView.tsx) — agora COM o botão "Adicionar tabela": a superfície passou a
+ * editar (useSchemaStudio), então o botão deixou de mentir. Ele escreve no
+ * estúdio e foca a tabela nova; o doc atualizado volta pelo mesmo caminho de
+ * sempre (a superfície publica, o rail lê).
  */
 import { useState, type ReactNode } from "react";
-import { AlertTriangle, Database, Link2, Search, Table2 } from "lucide-react";
+import { AlertTriangle, Database, Link2, Plus, Search, Table2 } from "lucide-react";
+import { useSchemaStudio } from "../../lib/schema";
 import {
   problemasDoSchema,
   rotuloDaRelacao,
@@ -53,6 +56,13 @@ export function TablesRail(): ReactNode {
   const [aba, setAba] = useState<"tabelas" | "relacoes">("tabelas");
   const [busca, setBusca] = useState("");
 
+  /** Cria `tabela_N` no estúdio e FOCA: quem criou quer editar a tabela nova,
+   *  não caçá-la no diagrama. O foco também abre o painel de edição. */
+  const adicionarTabela = (): void => {
+    const nome = useSchemaStudio.getState().novaTabela();
+    focar(nome);
+  };
+
   if (schema.tables.length === 0) {
     // Mesma marcação do RailEmpty do Rail.tsx (que não é exportado — e este
     // arquivo não pode abri-lo): o vazio continua honesto, e agora ele é
@@ -62,8 +72,13 @@ export function TablesRail(): ReactNode {
         <Database size={18} aria-hidden />
         <p className="rail-empty-title">Nada aqui ainda.</p>
         <p className="rail-empty-hint">
-          As tabelas e relações do schema aparecem aqui quando o especialista Dados exportar um diagrama.
+          As tabelas e relações do schema aparecem aqui quando o especialista Dados exportar um diagrama — ou quando
+          você criar a primeira.
         </p>
+        <button type="button" className="rail-stencil" onClick={adicionarTabela} title="cria tabela_1 com a PK padrão">
+          <Plus size={12} aria-hidden />
+          Adicionar tabela
+        </button>
       </div>
     );
   }
@@ -177,6 +192,11 @@ export function TablesRail(): ReactNode {
           ) : null}
         </ul>
       )}
+
+      <button type="button" className="rail-stencil rail-add-table" onClick={adicionarTabela} title="cria tabela_N com a PK padrão e abre a edição">
+        <Plus size={12} aria-hidden />
+        Adicionar tabela
+      </button>
     </>
   );
 }

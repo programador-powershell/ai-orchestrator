@@ -145,6 +145,8 @@ func (s *Server) Handler() http.Handler {
 	// O aplicativo nativo devolve por aqui o resultado das ferramentas de máquina.
 	mux.Handle("POST /v1/host/tool-result", s.auth(s.postHostResult))
 
+	mux.Handle("POST /v1/design/fetch", s.auth(s.postDesignFetch))
+
 	mux.Handle("PATCH /v1/catalog/specialists", s.auth(s.patchSpecialistModel))
 	mux.Handle("PUT /v1/catalog/fusion", s.auth(s.putFusionPreset))
 	mux.Handle("DELETE /v1/catalog/fusion/{id}", s.auth(s.deleteFusionPreset))

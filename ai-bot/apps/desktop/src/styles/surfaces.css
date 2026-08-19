@@ -1941,3 +1941,631 @@ button.token-swatch {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ------------------------ estúdio de Design: aba Vídeo ------------------- */
+
+/*
+ * Regras do estúdio de Vídeo (porta da aba de vídeo do orquestrador). Tudo
+ * aqui é APPEND, como o bloco do canvas acima. Nenhuma transition de cor de
+ * propósito — a armadilha conhecida do projeto: transition sobre custom
+ * property que troca por tema encalha no valor antigo. O que anima aqui é
+ * NADA; o playhead se move por `left` escrito via rAF, sem transition.
+ */
+
+/* O estúdio substitui toolbar+corpo+status do canvas dentro do `.surface`
+   (flex column): precisa repetir o esqueleto para o corpo ocupar a altura. */
+.video-studio {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* O input de arquivo fica no DOM (o clique programático precisa dele), mas
+   fora da tela — `display:none` quebraria o clique em alguns webviews. */
+.vid-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.vid-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  overflow: auto;
+}
+
+.vid-center {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* O player é o palco do preview POSICIONAL: os overlays são filhos absolutos
+   posicionados em % do quadro nominal — encolher a janela encolhe junto. */
+.vid-player {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #000; /* preto concreto: é a cor de "sem quadro" de qualquer
+                       player, não um token de tema — e nunca anima. */
+  aspect-ratio: 16 / 9;
+}
+
+.vid-player video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.vid-text-preview {
+  position: absolute;
+  max-width: 90%;
+  overflow: hidden;
+  font-weight: 600;
+  font-size: var(--fs-small);
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 70%);
+  pointer-events: none; /* o preview mostra, não intercepta o clique no vídeo */
+}
+
+.vid-logo-preview {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 1px dashed rgb(255 255 255 / 55%);
+  border-radius: var(--radius-xs);
+  color: rgb(255 255 255 / 85%);
+  pointer-events: none;
+}
+
+.vid-logo-preview img {
+  max-width: 96px;
+  max-height: 64px;
+  display: block;
+}
+
+.vid-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-small);
+}
+
+.vid-time {
+  min-width: 108px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.vid-keys {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+}
+
+.vid-scrub {
+  flex: 1;
+  min-width: 80px;
+}
+
+.vid-timeline {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.vid-timeline-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.vid-timeline-head small {
+  color: var(--faint);
+}
+
+/* A área da faixa é o referencial do playhead (position:absolute + left em %
+   escrito por rAF): régua e faixa dividem o MESMO eixo horizontal. */
+.vid-track-area {
+  position: relative;
+  padding: 0 8px 8px;
+}
+
+.vid-ruler {
+  position: relative;
+  height: 20px;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--line);
+}
+
+.vid-tick {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  color: var(--faint);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none; /* o clique é da régua inteira, não do número */
+}
+
+.vid-track {
+  display: flex;
+  gap: 2px;
+  min-height: 44px;
+  padding-top: 6px;
+}
+
+.vid-clip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  min-width: 28px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vid-clip strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vid-clip small {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.vid-clip[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+
+.vid-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.vid-media-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vid-media small {
+  color: var(--faint);
+}
+
+.vid-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 240px;
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  text-align: center;
+}
+
+.vid-empty p {
+  max-width: 420px;
+  margin: 0;
+  font-size: var(--fs-small);
+}
+
+.vid-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.vid-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vid-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vid-field {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 64px;
+  font-size: var(--fs-small);
+}
+
+.vid-field small {
+  color: var(--faint);
+  font-size: var(--fs-micro);
+}
+
+.vid-field input,
+.vid-field select {
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+}
+
+/* O checkbox deita: caixa e rótulo na mesma linha, sem virar coluna. */
+.vid-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.vid-order {
+  flex-wrap: nowrap;
+}
+
+.vid-overlay-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+}
+
+.vid-overlay-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vid-overlay-head strong {
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vid-text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-small);
+}
+
+.vid-logo-add {
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-small);
+}
+
+/* ------------------- tela de Dados: edição, import, migração ------------- */
+
+/* A coluna direita da tela de Dados virou UMA célula da grade (schema-split)
+   com dois cartões empilhados: o editor da tabela selecionada em cima e o SQL
+   gerado embaixo. O wrapper existe para a grade continuar com duas colunas —
+   o editor não pode virar uma terceira e espremer o diagrama. */
+.schema-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* Em janela estreita a regra antiga esconde só o .schema-sql; o editor fica —
+   quem está editando não pode perder o painel porque a janela encolheu. */
+
+.schema-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.schema-editor-nome {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.schema-editor-nome input,
+.schema-fieldmain input {
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.schema-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.schema-fieldrow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.schema-fieldmain {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schema-fieldmain input {
+  flex: 1;
+}
+
+.schema-fieldmain select,
+.schema-ref {
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: var(--fs-micro);
+}
+
+.schema-flags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.schema-flags .schema-ref {
+  flex: 1;
+}
+
+/* O toggle de flag (PK/NOT NULL/UNIQUE e os campos do construtor de índice):
+   estado ligado usa o MESMO par accent-soft/accent-strong dos itens ativos do
+   rail — "selecionado" tem uma cara só no app inteiro. Nada de transição de
+   cor aqui: o acento troca com o tema, e transition sobre custom property
+   encalha (aprendido no matiz por aba). */
+.schema-flag {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.schema-flag:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.schema-flag[data-on="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-glow);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.schema-indexrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.schema-indexrow code {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.schema-indexrow em {
+  font-style: normal;
+  font-size: var(--fs-eyebrow);
+  color: var(--accent-strong);
+}
+
+.schema-indexbuilder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.schema-indexfields,
+.schema-indexactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Remover tabela em vermelho de aviso — é a única ação do painel que apaga
+   um agregado inteiro; as demais destroem no máximo uma linha. */
+.schema-remove {
+  justify-content: center;
+  color: var(--danger, #b4231f);
+}
+
+/* ------------------------ modais de import/migração ---------------------- */
+
+.schema-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--ink) 26%, transparent);
+}
+
+.schema-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(620px, calc(100vw - 48px));
+  max-height: min(70vh, 560px);
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--ink) 22%, transparent);
+}
+
+.schema-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-small);
+}
+
+.schema-modal pre {
+  flex: 1;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: pre;
+}
+
+.schema-modal textarea {
+  flex: 1;
+  min-height: 180px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  resize: vertical;
+}
+
+.schema-modal footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.schema-modal-erro {
+  color: var(--danger, #b4231f);
+  font-size: var(--fs-micro);
+}
+
+.schema-modal-nota,
+.schema-modal-vazio {
+  color: var(--muted);
+  font-size: var(--fs-micro);
+}
+
+.schema-modal-vazio {
+  padding: 16px 8px;
+  text-align: center;
+}
+
+/* O "Adicionar tabela" do rail de Dados reusa a cara dos stencils do Design
+   (mesma família de botão de rail); só ganha o respiro próprio. */
+.rail-add-table {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+/* Clonar de URL: entrada compacta acima do campo de colar — mesma família
+   visual do paste-tokens, sem transição de cor de tema (armadilha conhecida). */
+.clone-url {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.clone-url input {
+  flex: 1;
+  min-width: 0;
+}
+
+.clone-url-erro {
+  margin: 0 0 6px;
+  font-size: var(--fs-micro);
+  color: var(--danger, #b4552d);
+}
