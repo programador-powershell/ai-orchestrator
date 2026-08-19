@@ -25,7 +25,7 @@ import {
   type ReactNode
 } from "react";
 import { Bot, Check, ChevronRight, MessagesSquare, Wrench, X } from "lucide-react";
-import { MASTER_ID } from "@ai-bot/contracts";
+import { MASTER_ID } from "@aibot/contracts";
 import type {
   Avatar,
   ConversationLine,
@@ -35,7 +35,7 @@ import type {
   SpecialistDefinition,
   ToolCall,
   ToolResult
-} from "@ai-bot/contracts";
+} from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { MASTER, SPECIALIST_ICON, hueStyle, specialistById } from "../lib/specialists";
 import { useApp } from "../lib/store";

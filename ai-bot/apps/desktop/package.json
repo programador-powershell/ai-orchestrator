@@ -1,5 +1,5 @@
 {
-  "name": "@ai-bot/desktop",
+  "name": "@aibot/desktop",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@ai-bot/contracts": "workspace:*",
+    "@aibot/contracts": "workspace:*",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
     "lucide-react": "^0.545.0",

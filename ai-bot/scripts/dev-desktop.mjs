@@ -35,6 +35,6 @@ console.log("[dev:desktop] compilando o gateway em dist/…");
 await rodar("go", ["build", "-C", "services/gateway", "-o", "../../dist/", "./cmd/aibotd"]);
 
 console.log("[dev:desktop] subindo o Tauri com dist/ no PATH");
-await rodar("corepack", ["pnpm", "--filter", "@ai-bot/desktop", "tauri", "dev"], {
+await rodar("corepack", ["pnpm", "--filter", "@aibot/desktop", "tauri", "dev"], {
   env: { ...process.env, PATH: `${dist}${delimiter}${process.env.PATH ?? ""}` }
 });

@@ -155,6 +155,13 @@
 
 ### :pushpin: Fixes
 
+- **O `dev:desktop` da raiz subia o aplicativo ERRADO.** O rename de escopo tinha
+  deixado dois apps diferentes com o mesmo nome de pacote (`@ai-bot/desktop`: o
+  orquestrador na raiz e este aqui), então o `--filter` casava com o primeiro e a
+  janela abria com a interface do orquestrador — parecendo build quebrado. O
+  escopo daqui voltou a ser `@aibot/*`, e a raiz ganhou `dev:aibot`, que aponta
+  para este app sem ambiguidade.
+
 - **A tela pedia a chave de API sem ter para onde mandá-la.** Sem gateway, a
   seção de Provedores mostrava o formulário inteiro — com campo de senha — e o
   envio morria em `Failed to fetch`. A guarda testava se o TRANSPORTE existia, e
@@ -207,14 +214,18 @@
 
 ### :construction_worker: Refactors
 
-- **A configuração do ai-bot passou a seguir a do repositório que o hospeda.**
-  O escopo dos pacotes virou `@ai-bot/*` (era `@aibot/*`, enquanto o projeto ao
-  redor já usava `@ai-bot/desktop` e `@ai-bot/contracts`); os scripts da raiz
-  passaram a ter o mesmo vocabulário — `build`, `check` e `test` recursivos com
-  `--if-present`, e `dev:desktop` para a janela do Tauri. O `check` só faz efeito
-  porque os dois pacotes ganharam o script com esse nome: antes o do desktop não
-  existia e o de contratos se chamava `typecheck`, então uma varredura recursiva
-  passaria batido em silêncio.
+- **A configuração do ai-bot passou a seguir a do repositório que o hospeda** no
+  que não colide: os scripts da raiz ganharam o mesmo vocabulário (`build`,
+  `check` e `test` recursivos com `--if-present`, `dev:desktop` para a janela do
+  Tauri) e tudo passou a chamar `corepack pnpm`. O `check` só faz efeito porque
+  os dois pacotes ganharam o script com esse nome: antes o do desktop não existia
+  e o de contratos se chamava `typecheck`, então uma varredura recursiva passaria
+  batido em silêncio.
+  **O escopo dos pacotes NÃO segue, e não pode seguir.** Renomeá-lo para
+  `@ai-bot/*` deixou dois aplicativos diferentes com o mesmo nome — o orquestrador
+  da raiz já era `@ai-bot/desktop` —, e o `--filter` da raiz passou a subir o
+  aplicativo errado. Aqui o escopo é `@aibot/*`, e é essa diferença que faz o
+  filtro apontar para um app só.
 - **`allowBuilds:` saiu do `pnpm-workspace.yaml`.** Não é chave do pnpm 10 — o
   arquivo declarava aprovar o build do esbuild e o instalador seguia avisando que
   o ignorava, ou seja, mais uma configuração declarada que ninguém lê. Sem ela o
@@ -248,10 +259,16 @@ corepack pnpm gateway:build
 ```
 
 Inicia o app desktop em modo desenvolvimento — compila o gateway e sobe a janela
-com ele no caminho de busca.
+com ele no caminho de busca. **De dentro de `ai-bot/`**:
 ```
 corepack pnpm dev:desktop
 ```
+
+> **Este repositório hospeda DOIS aplicativos.** Na raiz mora o orquestrador
+> (Next.js, porta 1420) e aqui mora o AI-BOT (Vite, porta 1421). Rodar
+> `dev:desktop` na RAIZ sobe o orquestrador, não este app — a janela abre com
+> outra interface e é fácil achar que o build deu errado. Da raiz, o comando
+> deste app é `corepack pnpm dev:aibot`.
 
 Gera o build de produção.
 ```

@@ -18,7 +18,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
-import type { Environment } from "@ai-bot/contracts";
+import type { Environment } from "@aibot/contracts";
 import { ENVIRONMENT_ICON, environmentInfo, environmentTitle } from "../lib/environments";
 import { useApp } from "../lib/store";
 

@@ -24,7 +24,7 @@ import {
   X,
   type LucideIcon
 } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
+import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 
 /* -------------------------------- modelo -------------------------------- */

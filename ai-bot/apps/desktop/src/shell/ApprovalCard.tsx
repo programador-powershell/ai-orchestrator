@@ -12,7 +12,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Clock, ShieldCheck, X } from "lucide-react";
-import type { ApprovalRequest, Risk } from "@ai-bot/contracts";
+import type { ApprovalRequest, Risk } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 
 /** Dez minutos, o mesmo prazo que o gateway usa para descartar o pedido. */

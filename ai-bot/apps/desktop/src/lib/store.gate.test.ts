@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Envelope, Gate } from "@ai-bot/contracts";
+import type { Envelope, Gate } from "@aibot/contracts";
 import { applyEnvelope, initialAppData } from "./store";
 
 const GATE_ID = "g-1";

@@ -28,7 +28,7 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { Container, Megaphone } from "lucide-react";
-import type { Notice } from "@ai-bot/contracts";
+import type { Notice } from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { hueStyle, specialistById } from "../lib/specialists";
 import { useApp } from "../lib/store";

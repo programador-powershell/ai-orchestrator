@@ -7,7 +7,7 @@
  * garantir que um dia o SVG baixado deixasse de ser o SVG da tela.
  */
 
-import type { Avatar } from "@ai-bot/contracts";
+import type { Avatar } from "@aibot/contracts";
 import { avatarKey, buildAvatarCss, buildAvatarNodes, mulberry32, type SvgNode } from "./BotAvatar";
 
 /* -------------------------------- as listas ------------------------------ */

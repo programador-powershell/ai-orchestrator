@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { Envelope, EnvelopeKind, Notice } from "@ai-bot/contracts";
+import type { Envelope, EnvelopeKind, Notice } from "@aibot/contracts";
 import { applyEnvelope, initialAppData } from "./store";
 
 let counter = 0;

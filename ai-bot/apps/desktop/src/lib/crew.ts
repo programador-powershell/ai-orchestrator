@@ -8,7 +8,7 @@
  * bem depois de o gateway já saber distinguir os dois casos.
  */
 
-import type { WorkerDone } from "@ai-bot/contracts";
+import type { WorkerDone } from "@aibot/contracts";
 
 /** Como o trabalho de um trabalhador acabou. */
 export type WorkerOutcome = "done" | "failed" | "escalated";

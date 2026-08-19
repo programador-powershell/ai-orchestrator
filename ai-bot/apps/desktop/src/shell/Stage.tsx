@@ -13,7 +13,7 @@ import {
   type LazyExoticComponent
 } from "react";
 import { Loader2 } from "lucide-react";
-import type { Surface } from "@ai-bot/contracts";
+import type { Surface } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 
 /**

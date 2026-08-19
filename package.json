@@ -8,6 +8,7 @@
     "check": "corepack pnpm -r --if-present check",
     "dev:desktop": "corepack pnpm --filter @ai-bot/desktop tauri dev",
     "dev:bootstrapper": "corepack pnpm --filter @ai-bot/bootstrapper tauri dev",
+    "dev:aibot": "corepack pnpm --dir ai-bot dev:desktop",
     "build:installer:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-installer.ps1",
     "test": "corepack pnpm -r --if-present test && node scripts/test-release-manifests.mjs",
     "test:release": "node scripts/test-release-manifests.mjs"

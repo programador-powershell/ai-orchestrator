@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Download, RotateCcw, Shuffle, X } from "lucide-react";
-import { MASTER_ID, type Avatar, type SpecialistDefinition } from "@ai-bot/contracts";
+import { MASTER_ID, type Avatar, type SpecialistDefinition } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { FALLBACK_SPECIALISTS, MASTER } from "../lib/specialists";
 import { BotAvatar } from "./BotAvatar";

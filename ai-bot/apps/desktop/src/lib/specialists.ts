@@ -32,7 +32,7 @@ import {
   Workflow,
   type LucideIcon
 } from "lucide-react";
-import { MASTER_ID, type SpecialistDefinition } from "@ai-bot/contracts";
+import { MASTER_ID, type SpecialistDefinition } from "@aibot/contracts";
 
 /** Para onde a conversa cai quando o id não é de ninguém (espelha o Go). */
 const DEFAULT_ID = "chat";

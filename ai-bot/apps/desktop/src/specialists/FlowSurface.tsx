@@ -13,7 +13,7 @@
 
 import { useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Download, Play, Workflow } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
+import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 

@@ -25,7 +25,7 @@
 
     "baseUrl": ".",
     "paths": {
-      "@ai-bot/contracts": ["../../packages/contracts/src/index.ts"]
+      "@aibot/contracts": ["../../packages/contracts/src/index.ts"]
     }
   },
   "include": ["src"]

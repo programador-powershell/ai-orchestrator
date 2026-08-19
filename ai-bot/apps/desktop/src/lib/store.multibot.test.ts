@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { ApprovalRequest, Delta, Envelope, Message } from "@ai-bot/contracts";
+import type { ApprovalRequest, Delta, Envelope, Message } from "@aibot/contracts";
 import { applyEnvelope, initialAppData } from "./store";
 
 let seq = 0;

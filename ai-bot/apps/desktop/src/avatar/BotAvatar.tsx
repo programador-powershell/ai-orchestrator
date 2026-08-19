@@ -28,7 +28,7 @@
  */
 
 import { createElement, useId, useMemo, type ReactElement, type SVGProps } from "react";
-import type { Avatar } from "@ai-bot/contracts";
+import type { Avatar } from "@aibot/contracts";
 
 /* ------------------------------ modelo de nó ----------------------------- */
 

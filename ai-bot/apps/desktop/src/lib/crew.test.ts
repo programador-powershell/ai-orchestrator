@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { WorkerDone } from "@ai-bot/contracts";
+import type { WorkerDone } from "@aibot/contracts";
 import { outcomeOf } from "./crew";
 
 /** `worker.done` mínimo. Os campos que não estão em teste ficam de fora. */

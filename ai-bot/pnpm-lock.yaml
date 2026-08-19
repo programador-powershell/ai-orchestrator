@@ -10,7 +10,7 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@ai-bot/contracts':
+      '@aibot/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@tauri-apps/api':

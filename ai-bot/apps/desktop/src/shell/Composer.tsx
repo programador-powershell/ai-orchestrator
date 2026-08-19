@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { AlertTriangle, ArrowUp, Bot, Check, ChevronDown, Paperclip, RotateCcw, Square, X } from "lucide-react";
-import type { SpecialistAction, SpecialistDefinition } from "@ai-bot/contracts";
+import type { SpecialistAction, SpecialistDefinition } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { FALLBACK_SPECIALISTS, MASTER, SPECIALIST_ICON, specialistById } from "../lib/specialists";
 import { ThinkingOrb } from "./ThinkingOrb";

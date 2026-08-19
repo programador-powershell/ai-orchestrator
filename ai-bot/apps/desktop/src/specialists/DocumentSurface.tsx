@@ -13,7 +13,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { FileText, Replace, Undo2 } from "lucide-react";
-import type { ConversationLine, ToolResult } from "@ai-bot/contracts";
+import type { ConversationLine, ToolResult } from "@aibot/contracts";
 import { useApp } from "../lib/store";
 import { TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface } from "./ConversationSurface";
