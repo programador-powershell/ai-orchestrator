@@ -4,6 +4,11 @@
  * É a peça que mais muda de forma: o placeholder, os atalhos e o destino da linha
  * dependem de QUEM vai ler o que está sendo escrito. Antes da primeira rota quem
  * lê é o master; depois, o especialista ativo; e, se a pessoa fixou um, é ele.
+ *
+ * ONDE ele mora: docado no pé da coluna do palco (irmão da superfície dentro de
+ * `main.app-stage`, ver App.tsx), no FLUXO do layout — padrão do AI-Orchestrator.
+ * Ele não flutua sobre superfície nenhuma: a versão absoluta cobria a saída e a
+ * statusbar da IDE, e o conserto foi de ancoragem, não de aparência.
  */
 
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";

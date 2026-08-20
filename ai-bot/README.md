@@ -147,6 +147,19 @@
 
 ### :pushpin: Fixes
 
+- **O composer saiu de cima das telas: agora ele é RODAPÉ do palco, homogêneo
+  em toda superfície — o padrão do AI-Orchestrator.** O campo flutuava em
+  `position:absolute` sobre o palco e, na IDE, cobria o painel de saída, os
+  chips e a barra de status do editor. Virou irmão da superfície no fluxo da
+  coluna (`flex:none`, mesma largura centrada em todas as telas — o mesmo
+  desenho do dock do terminal), as três compensações de `padding-bottom` que
+  disfarçavam a flutuação sumiram, e cada superfície ganhou a altura real.
+  A cara do composer não mudou — só o ancoramento. Os backdrops de aprovação
+  e do laboratório continuam por cima de tudo, e o CSS morto do antigo seletor
+  de especialista (que o novo layout clipparia) foi removido. Dois testes
+  montam o App REAL e fixam a estrutura: composer como irmão no fluxo, e na
+  IDE a saída/status/terminal renderizados ANTES dele na ordem do documento.
+
 - **Pedido de trabalho não SEQUESTRA mais a conversa: o especialista nasce como SUB-BOT.**
   "construa um html simples" fazia a conversa inteira virar o Código — a tela
   virava a IDE e a pessoa ficava presa nela (a reclamação recorrente das telas).

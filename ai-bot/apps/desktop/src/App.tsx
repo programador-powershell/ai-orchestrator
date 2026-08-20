@@ -242,16 +242,22 @@ function App() {
           <SurfaceBoundary key={activeSurface} name="A superfície">
             <Stage />
           </SurfaceBoundary>
+
+          {/* O composer é IRMÃO da superfície, no fluxo da coluna do palco —
+              padrão portado do AI-Orchestrator (.mode-viewport + .composer-wrap
+              + .statusbar na mesma coluna). Flutuar por cima cobria o rodapé
+              das telas de trabalho (saída da IDE, statusbar do editor). Fica
+              FORA do boundary com key: trocar de superfície não pode remontar
+              o campo e apagar o que a pessoa estava escrevendo. */}
+          <SurfaceBoundary name="O campo de texto">
+            <Composer />
+          </SurfaceBoundary>
         </main>
       </div>
 
-      <SurfaceBoundary name="O campo de texto">
-        <Composer />
-      </SurfaceBoundary>
-
-      {/* Abaixo do composer, e por isso o último da grade: o rodapé diz ONDE o
-          próximo comando roda, e é a linha que a pessoa procura depois de
-          escrever o pedido, não antes. */}
+      {/* Abaixo do palco (e do composer, que mora dentro dele): o rodapé diz
+          ONDE o próximo comando roda, e é a linha que a pessoa procura depois
+          de escrever o pedido, não antes. */}
       <SurfaceBoundary name="O rodapé">
         <StatusBar />
       </SurfaceBoundary>

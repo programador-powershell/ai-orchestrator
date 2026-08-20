@@ -62,9 +62,10 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  /* Mesma reserva do `.stage-scroll`: o composer flutua sobre TODA superfície,
-     não só sobre a conversa. */
-  padding: 14px 16px calc(150px + var(--shell-gap));
+  /* O composer virou dock ABAIXO da superfície (irmão no fluxo da coluna do
+     palco — ver shell.css): o corpo não reserva mais a altura de um campo
+     flutuante; o pé da superfície termina acima do composer por layout. */
+  padding: 14px 16px;
 }
 
 .surface-status {
