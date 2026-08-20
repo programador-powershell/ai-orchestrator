@@ -220,6 +220,22 @@ func serve() error {
 	/* ---------------------------- durabilidade --------------------------- */
 
 	durable, err := store.Open(cfg.DataDir)
+	if errors.Is(err, store.ErrLocked) {
+		// O dono da trava pode ser um GATEWAY ÓRFÃO DE BUILD VELHO: o processo
+		// de ontem que sobreviveu ao app, segurou a pasta e a porta, e fez o
+		// app novo conversar com o código antigo sem ninguém perceber — a
+		// pessoa recompilava e nada mudava. O takeover só age quando o núcleo
+		// prova o cenário (mesmo executável, iniciado antes da última escrita
+		// dele); qualquer dúvida preserva a trava e o erro original.
+		took, cause := store.TakeoverStale(cfg.DataDir)
+		if !took {
+			log.Warn("diretório de dados travado e o dono não é órfão de build velho",
+				"motivo", cause)
+			return err
+		}
+		log.Info("gateway órfão de build velho derrubado — assumindo o diretório de dados")
+		durable, err = store.Open(cfg.DataDir)
+	}
 	if err != nil {
 		return err
 	}

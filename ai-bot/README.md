@@ -146,6 +146,21 @@
 
 ### :pushpin: Fixes
 
+- **Clicar numa conversa do histórico não abria nada — e a causa era um gateway
+  FANTASMA.** O processo do gateway de ontem sobrevivia ao fechamento do app,
+  segurava a pasta de dados (`.lock`) e a porta; o gateway novo desistia na
+  trava e o app conectava NO VELHO — recompilar não mudava nada, silenciosamente.
+  Como o binário antigo era de antes do re-hello, o clique trocava o título
+  (que é local) e o replay nunca vinha: hero + "0 linhas". Agora o aibotd que
+  encontra a trava ocupada verifica com o núcleo se o dono é um ÓRFÃO DE BUILD
+  VELHO — mesmo executável, iniciado ANTES da última escrita dele (impossível
+  estar rodando o binário atual) — e o derruba, assumindo a pasta. Qualquer
+  dúvida (outro exe, horário inconclusivo) preserva a trava: derrubar um
+  gateway legítimo faria dois donos numerarem `seq` nas mesmas sessões. Quatro
+  testes: a decisão de mesa pelos dois lados da faca, a sonda contra o próprio
+  processo, a recusa de ponta a ponta com um processo vivo que não é nosso, e
+  as travas estranhas (pid ilegível, pid próprio).
+
 - **Recusa do modelo contada como sucesso na Equipe.** "Não posso ajudar" saía
   com ✓ e contaminava as tarefas dependentes. Agora recusa é FALHA do
   trabalhador, com heurística conservadora (teto de 280 caracteres, prefixo com
