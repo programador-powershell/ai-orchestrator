@@ -52,7 +52,9 @@ import {
   agendarAberturaDoBot,
   ativarArquivo,
   buscarNoProjeto,
+  descartarAberturaDoBot,
   editarAtivo,
+  entregarAberturaDoBot,
   fecharArquivo,
   indiceDeArquivos,
   indiceEmCache,
@@ -215,6 +217,12 @@ export function EditorSurface(): ReactNode {
    * replay (store.ts) — o crescimento pós-montagem é indistinguível de turno
    * vivo pelas linhas. O flush se anuncia em `replaysAssentados`: quando o
    * contador andou junto, foi histórico — só reancora.
+   *
+   * A ÂNCORA DA ENTREGA é o fechamento do turno. O modelo grava numa CÓPIA do
+   * projeto (o staging do gateway) e só a promoção — que roda antes do done —
+   * põe o arquivo no projeto visível: com o turno vivo (`busy`), o alvo fica
+   * retido no ideStore em vez de abrir na hora, porque o fs.read do instante
+   * do tool.result acharia um 404. O efeito de baixo entrega no done.
    */
   const replays = useApp((state) => state.replaysAssentados);
   const gravacoesDoBot = useMemo(() => coletarGravacoesDoBot(lines), [lines]);
@@ -228,8 +236,33 @@ export function EditorSurface(): ReactNode {
     if (antes < 0 || replaysAntes !== replays) return;
     if (gravacoesDoBot.length <= antes) return;
     const ultimo = gravacoesDoBot[gravacoesDoBot.length - 1];
-    if (ultimo !== undefined) agendarAberturaDoBot(ultimo);
-  }, [gravacoesDoBot, replays]);
+    if (ultimo !== undefined) agendarAberturaDoBot(ultimo, busy);
+  }, [gravacoesDoBot, replays, busy]);
+
+  /*
+   * A ENTREGA no fechamento do turno: busy caindo é o MESMO sinal do retry da
+   * árvore no FilesRail — o done do turno reduzido pelo store. Fechou bem
+   * (sem `error` no store, que o send zera ao abrir o turno e o envelope de
+   * erro preenche), a promoção entregou e o alvo retido abre; fechou mal, o
+   * staging foi descartado e o alvo morre junto — abrir seria uma aba
+   * fantasma de um arquivo que nunca chegou à pessoa.
+   */
+  const estavaOcupado = useRef(false);
+  useEffect(() => {
+    const antes = estavaOcupado.current;
+    estavaOcupado.current = busy;
+    if (!antes || busy) return;
+    if (useApp.getState().error !== "") {
+      descartarAberturaDoBot();
+      return;
+    }
+    entregarAberturaDoBot();
+  }, [busy]);
+
+  // Desmontar no meio do turno descarta o alvo retido: remontar reancora do
+  // zero (a mesma regra do replay), e um alvo velho não pode pegar carona na
+  // entrega de um turno futuro.
+  useEffect(() => () => descartarAberturaDoBot(), []);
 
   const active = files.find((arquivo) => arquivo.path === activePath);
   const buffer = active ? active.content : "";

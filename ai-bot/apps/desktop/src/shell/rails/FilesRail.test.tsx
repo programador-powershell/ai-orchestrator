@@ -247,7 +247,7 @@ describe("rail de arquivos", () => {
 });
 
 describe("árvore viva", () => {
-  it("tool.result de fs.write/fs.patch recarrega a árvore sozinho — rajada vira UMA relistagem, pastas abertas ficam abertas", async () => {
+  it("gravação no turno VIVO fica RETIDA — a árvore relista na ENTREGA (done), pastas abertas ficam abertas", async () => {
     montar();
     await assentar();
     act(() => {
@@ -265,13 +265,27 @@ describe("árvore viva", () => {
       return { ok: true, output: "(pasta vazia)" };
     };
 
-    // Duas gravações na MESMA rajada — o fio real de "criar o projeto inteiro".
+    // O turno está VIVO (busy, como o send liga) e as duas gravações chegam na
+    // MESMA rajada — mas elas aconteceram na CÓPIA (o staging do gateway):
+    // antes do done, relistar mostraria um projeto que ainda não recebeu nada.
+    act(() => {
+      useApp.setState({ busy: true, error: "" });
+    });
     act(() => {
       useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-1", "fs.write")));
       useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-2", "fs.patch")));
     });
-    // Antes do debounce vencer, nada relistou: é ele que colapsa a rajada.
+    await esperarAtualizacao();
     expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(2);
+    // A honestidade visual: o rail conta que a entrega vem no fim do turno.
+    const nota = container.querySelector<HTMLElement>(".rail-note");
+    expect(nota?.textContent).toContain("entrega no fim do turno");
+    expect(nota?.title).toContain("cópia do projeto");
+
+    // O done fecha o turno: a promoção entregou — a árvore relista UMA vez.
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, envelopeDe<Done>("done", { turn: "t-1" })));
+    });
     await esperarAtualizacao();
 
     // O arquivo do bot apareceu SEM clique, e a pasta aberta continuou aberta.
@@ -279,6 +293,53 @@ describe("árvore viva", () => {
     expect(nomesNaTela()).toEqual(["src", "main.go", "novo.go", "hello.html", "README.md"]);
     // Uma relistagem por pasta viva (raiz + src), apesar das duas gravações.
     expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(4);
+    // E a nota voltou ao normal: não há mais entrega retida.
+    expect(container.querySelector<HTMLElement>(".rail-note")?.textContent).toBe("projeto da sessão");
+  });
+
+  it("turno que FALHA descarta a entrega: nada relista e a árvore não mostra fantasma", async () => {
+    montar();
+    await assentar();
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+
+    // Se a relistagem saísse, o dublê até responderia com hello.html — o
+    // fantasma apareceria e o teste flagraria. O ponto é que o POST nem sai:
+    // o staging foi descartado junto com o turno, nada foi entregue.
+    responder = (corpo) =>
+      corpo.tool === "fs.list" && String(corpo.args?.path ?? "") === ""
+        ? { ok: true, output: "src/\nREADME.md (2048 bytes)\nhello.html (64 bytes)" }
+        : respostasPadrao(corpo);
+
+    act(() => {
+      useApp.setState({ busy: true, error: "" });
+    });
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-1", "fs.write")));
+    });
+    act(() => {
+      useApp.setState((state) =>
+        applyEnvelope(state, envelopeDe("error", { code: "internal", message: "o modelo caiu" }))
+      );
+    });
+    await esperarAtualizacao();
+
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+    expect(nomesNaTela()).toEqual(["src", "README.md"]);
+  });
+
+  it("gravação assentada SEM turno vivo (flush de histórico) relista direto — o estado real é sempre honesto", async () => {
+    montar();
+    await assentar();
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+
+    // Sem busy não há entrega para esperar: o que o fs.list devolver é o
+    // projeto REAL — relistar nunca mente, no máximo repete o que já se via.
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-9", "fs.write")));
+    });
+    await esperarAtualizacao();
+
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(2);
   });
 
   it("gravação RECUSADA (ok:false) não relista — nada mudou no disco", async () => {

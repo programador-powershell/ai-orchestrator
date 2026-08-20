@@ -25,13 +25,35 @@ type Execution struct {
 	Plan Plan
 	// LocalRoot existe SOMENTE dentro do worker. Vazio = a sessão não tem pasta
 	// de projeto (as ferramentas de arquivo recusam, como sempre recusaram).
+	// Num plano com staging real, ELE é a cópia: as ferramentas do turno agem
+	// na cópia sem saber que é uma — o projeto entregue só muda na promoção.
 	LocalRoot string
 	// ShadowGitDir é o git sombra usado para baseline/checkpoints. Vazio na v1
 	// — o checkpoint shadow-git ainda não foi implementado.
 	ShadowGitDir string
-	// LocalStaging é o lugar para preparar a publicação. Vazio na v1 — escreve
-	// direto no workspace (InplaceStaging).
+	// LocalStaging é a pasta da cópia de segurança quando o plano tem staging
+	// real (igual a LocalRoot). Vazio = execução inplace: escreve direto no
+	// workspace e a promoção é constatação.
 	LocalStaging string
+	// StagingNonce identifica ESTA materialização da cópia. Promote e Discard
+	// só agem se o staging ainda pertence a esta execução — um turno substituído
+	// que sobreviveu à troca não pode apagar (nem entregar) a cópia que o
+	// substituto acabou de materializar no mesmo lugar.
+	StagingNonce uint64
+	// StagingDegraded explica por que um plano que PEDIA staging acabou
+	// inplace (teto de tamanho, entrada que a cópia não espelha). Vazio = nada
+	// a avisar. O supervisor transforma isto num KindThinking honesto.
+	StagingDegraded string
+}
+
+// Publication descreve para a promoção O QUE esta execução publicou — o URI
+// congelado no plano e o nonce da materialização. Execução inplace (ou
+// degradada para inplace) publica a constatação de sempre.
+func (e *Execution) Publication() Publication {
+	if e == nil || e.LocalStaging == "" {
+		return Publication{StagingURI: InplaceStaging}
+	}
+	return Publication{StagingURI: e.Plan.Staging.URI, Nonce: e.StagingNonce}
 }
 
 // WithExecution pendura a execução no contexto. Nil não pendura nada — quem

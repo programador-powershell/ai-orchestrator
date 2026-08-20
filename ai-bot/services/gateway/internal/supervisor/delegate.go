@@ -35,6 +35,7 @@ import (
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
+	"aibot/gateway/internal/workspace"
 )
 
 const (
@@ -508,6 +509,18 @@ func (s *Supervisor) delegateWithRoute(
 				}
 				return finish(false, narracaoFailMessage(answer))
 			}
+			// A ENTREGA do caminho do master vem ANTES do delegate-done: aqui o
+			// desfecho da delegação é o resultado que a PESSOA lê (a filha ganha
+			// a mensagem e o done do bot), então o staging do turno é promovido
+			// agora — ela só é avisada de resultado que já está no projeto. SÓ o
+			// master: no bot-a-bot o turno do dono continua depois do sub-turno,
+			// e promover no meio entregaria (e apagaria o staging de) um trabalho
+			// pela metade — quem entrega lá é o done do turno, em runTurn.
+			if origin.ID == specialist.MasterID {
+				if err := s.entregaWorkspace(ctx, sessionID, turn); err != nil {
+					return finish(false, "o resultado não pôde ser entregue ao projeto: "+err.Error())
+				}
+			}
 			// A resposta do delegado NÃO entra no log como mensagem da conversa.
 			// Ela volta para quem delegou como contexto, igual ao resultado de uma
 			// ferramenta, e quem escreve para a pessoa continua sendo o dono da
@@ -721,8 +734,13 @@ func (s *Supervisor) masterDelegate(
 	// começo do turno leu o meta antes de a pasta existir — e as ferramentas do
 	// delegado rodam neste mesmo contexto.
 	if s.provisionaProjeto(sessionID, turn, target, question) {
-		ctx = s.comWorkspace(ctx, sessionID, "", "")
+		ctx = s.comWorkspace(ctx, sessionID, turn, "", "", workspace.OriginModel)
 	}
+	// O staging materializado AQUI (pós-provisionamento) não é visível ao defer
+	// do runTurn — o ctx dele é outro. O descarte deste também é garantido; no
+	// caminho feliz a promoção dentro do delegateWithRoute já o limpou e isto
+	// é não-op.
+	defer func() { s.descartaWorkspace(ctx) }()
 
 	masterActor := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
 	// A rota decidida fica visível como ETAPA, não como rota: o envelope de rota

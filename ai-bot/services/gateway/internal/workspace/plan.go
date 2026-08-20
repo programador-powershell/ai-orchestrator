@@ -35,9 +35,37 @@ const (
 	// HostSnapshot marca o runtime "a máquina como está", sem snapshot
 	// resolvido por digest.
 	HostSnapshot = "host"
-	// InplaceStaging marca que a v1 escreve DIRETO no workspace, sem área de
-	// staging — a promoção com cerca vira efetiva quando o staging existir.
+	// InplaceStaging marca que a execução escreve DIRETO no workspace, sem área
+	// de staging — a promoção com cerca é constatação. É o caso da UI (a pessoa
+	// edita o projeto ENTREGUE), da equipe (o isolamento dela é o worktree) e da
+	// raiz apontada pela pessoa (pasta própria, potencialmente gigante — a
+	// resposta para repositório grande é worktree/Puter, não cópia cega).
 	InplaceStaging = "local://inplace"
+	// StagingURIPrefix marca o staging REAL da v1: o turno de modelo trabalha
+	// numa CÓPIA do projeto em <dataDir>/staging/<planID>/ e só o desfecho
+	// bem-sucedido promove — falha, interrupção e recusa descartam a cópia sem
+	// que nada meio-escrito chegue à pessoa.
+	StagingURIPrefix = "staging://"
+)
+
+// Origin diz QUEM está por trás do pedido de execução. O staging só existe
+// para o MODELO: a pessoa que salva pela interface está editando o projeto
+// entregue, e o trabalhador de equipe tem o worktree como isolamento.
+type Origin string
+
+const (
+	// OriginModel é o turno (ou sub-turno delegado) de MODELO de um
+	// especialista: o único que ganha a cópia de segurança.
+	OriginModel Origin = "model"
+	// OriginUI é a pessoa agindo pela interface (Ctrl+S, árvore de arquivos):
+	// edição direta do projeto entregue, com aprovação — nunca staging.
+	OriginUI Origin = "ui"
+	// OriginCrew é o trabalhador de equipe. Deliberadamente SEM staging:
+	// trabalhadores rodam em PARALELO sobre o mesmo projeto, e duas cópias
+	// espelhadas de volta se apagariam mutuamente (o espelho remove o que não
+	// está na própria cópia). O isolamento da equipe é o worktree — misturar os
+	// dois mecanismos seria copiar uma cópia.
+	OriginCrew Origin = "crew"
 )
 
 // Source identifica o workspace de origem — de onde a execução materializa.
@@ -131,6 +159,13 @@ func (p Plan) Validate() error {
 		return errors.New("workspace plan sem baseline")
 	}
 	return nil
+}
+
+// Staged diz se o plano trabalha numa CÓPIA (staging real) em vez de direto
+// no projeto. É o que o supervisor consulta para a telemetria e para saber se
+// há algo a promover/descartar no fim do turno.
+func (p Plan) Staged() bool {
+	return strings.HasPrefix(p.Staging.URI, StagingURIPrefix)
 }
 
 func (p Plan) String() string {

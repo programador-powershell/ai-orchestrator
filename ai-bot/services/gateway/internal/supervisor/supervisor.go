@@ -228,7 +228,16 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// O WORKSPACE do turno também nasce aqui, congelado UMA vez: fs.read,
 	// git.diff e proc.run deste turno enxergam o mesmo root porque leem a mesma
 	// execução do contexto — nenhuma ferramenta resolve diretório sozinha.
-	ctx = s.comWorkspace(ctx, sessionID, "", "")
+	// OriginModel: este é o turno do modelo, e num projeto provisionado ele
+	// trabalha numa CÓPIA (o staging v1) até a entrega.
+	ctx = s.comWorkspace(ctx, sessionID, turn, "", "", workspace.OriginModel)
+	// O DESCARTE do staging é garantido: qualquer caminho que sair do turno sem
+	// promover — falha de modelo, interrupção, recusa, portão de narração,
+	// retorno antecipado — joga a cópia fora, e nada meio-escrito chega à
+	// pessoa. No caminho feliz a promoção já limpou o staging e isto é não-op.
+	// Closure sobre a variável `ctx` de propósito: o recongelamento pós-
+	// provisionamento (abaixo) troca a execução, e é a ÚLTIMA que se descarta.
+	defer func() { s.descartaWorkspace(ctx) }()
 	s.mu.Lock()
 	if previous, ok := s.running[sessionID]; ok {
 		previous.cancel()
@@ -393,7 +402,7 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// o meta antes da pasta existir — as ferramentas DESTE turno já precisam
 	// enxergar o root recém-criado.
 	if s.provisionaProjeto(sessionID, turn, definition, question) {
-		ctx = s.comWorkspace(ctx, sessionID, "", "")
+		ctx = s.comWorkspace(ctx, sessionID, turn, "", "", workspace.OriginModel)
 	}
 
 	actor := protocol.Actor{
@@ -492,6 +501,16 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 				}
 				s.fail(sessionID, turn, definition.ID, narracaoFailCode,
 					narracaoFailMessage(answer), true)
+				return nil
+			}
+			// A ENTREGA vem antes do anúncio: o staging do turno é promovido ao
+			// projeto AGORA — cerca de worker+época, espelho, limpeza — para a
+			// mensagem final e o done só saírem depois de o resultado existir
+			// onde a pessoa olha. Promoção recusada é falha honesta do turno
+			// (o defer descarta a cópia), nunca um ✓ sobre trabalho não entregue.
+			if err := s.entregaWorkspace(ctx, sessionID, turn); err != nil {
+				s.fail(sessionID, turn, definition.ID, "entrega_do_workspace",
+					"o resultado não pôde ser entregue ao projeto: "+err.Error(), true)
 				return nil
 			}
 			// A resposta final entra no log inteira. Os deltas já foram
@@ -1385,17 +1404,27 @@ func (s *Supervisor) foldCapsule(sessionID string) {
 // reatribuída, fs.write na época 18, em outro worker. O plano congelado é o
 // que garante que todas as ferramentas do mesmo turno enxergam o mesmo root.
 //
+// A ORIGEM decide o sandbox: o turno de MODELO (OriginModel) sobre um projeto
+// provisionado é materializado numa CÓPIA — as ferramentas dele agem nela e só
+// a promoção (entregaWorkspace) espelha o resultado no projeto. A UI
+// (OriginUI) continua no projeto entregue, porque o Ctrl+S da pessoa é edição
+// direta dela.
+//
 // Falha aqui NÃO derruba o turno: o contexto segue sem execução e as
 // ferramentas de arquivo recusam com motivo — um turno de pura conversa nunca
 // precisou de workspace.
-func (s *Supervisor) comWorkspace(ctx context.Context, sessionID, taskID, botID string) context.Context {
-	return s.workspaceDaTarefa(ctx, sessionID, taskID, botID, 1)
+func (s *Supervisor) comWorkspace(
+	ctx context.Context, sessionID, turn, taskID, botID string, origem workspace.Origin,
+) context.Context {
+	return s.workspaceDaTarefa(ctx, sessionID, turn, taskID, botID, 1, origem)
 }
 
 // workspaceDaTarefa é o comWorkspace com a TENTATIVA explícita: a refação de
 // uma onda congela um plano novo (attempt 2), o mesmo que foi anunciado no
 // despacho — plano do envelope e plano da execução não podem divergir.
-func (s *Supervisor) workspaceDaTarefa(ctx context.Context, sessionID, taskID, botID string, attempt int) context.Context {
+func (s *Supervisor) workspaceDaTarefa(
+	ctx context.Context, sessionID, turn, taskID, botID string, attempt int, origem workspace.Origin,
+) context.Context {
 	if s.deps.Workspaces == nil {
 		return ctx
 	}
@@ -1404,15 +1433,63 @@ func (s *Supervisor) workspaceDaTarefa(ctx context.Context, sessionID, taskID, b
 		TaskID:    taskID,
 		BotID:     botID,
 		Attempt:   attempt,
+		Origin:    origem,
 	})
 	if err != nil {
 		return ctx
 	}
+	// A cópia fica VISÍVEL enquanto é feita: a pessoa vê o gesto em vez de o
+	// primeiro passo do turno simplesmente demorar mais.
+	master := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
+	if plan.Staged() && s.deps.Bus != nil {
+		s.thinking(sessionID, turn, master, "trabalhando numa cópia de segurança do projeto…", false)
+	}
 	execution, err := s.deps.Workspaces.Materialize(ctx, plan)
+	if plan.Staged() && s.deps.Bus != nil {
+		s.thinking(sessionID, turn, master, "", true)
+	}
 	if err != nil {
 		return ctx
 	}
+	if execution.StagingDegraded != "" && s.deps.Bus != nil {
+		// O teto degradou para inplace: o turno segue direto no projeto, e a
+		// pessoa fica sabendo o porquê em vez de perder o sandbox em silêncio.
+		s.thinking(sessionID, turn, master, execution.StagingDegraded+" — trabalhando direto no projeto", false)
+	}
 	return workspace.WithExecution(ctx, execution)
+}
+
+// entregaWorkspace PROMOVE o staging do turno para o projeto — a cerca de
+// worker+época primeiro, o espelho depois. Chamada no SUCESSO, antes de a
+// pessoa ser avisada (mensagem final/done/delegate-done): ela só lê resultado
+// que já está entregue. Execução inplace (ou nenhuma) é não-op.
+func (s *Supervisor) entregaWorkspace(ctx context.Context, sessionID, turn string) error {
+	execution, ok := workspace.FromContext(ctx)
+	if !ok || execution.LocalStaging == "" || s.deps.Workspaces == nil {
+		return nil
+	}
+	master := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
+	if s.deps.Bus != nil {
+		s.thinking(sessionID, turn, master, "entregando o resultado ao projeto…", false)
+	}
+	err := s.deps.Workspaces.Promote(ctx, execution.Plan, execution.Publication())
+	if s.deps.Bus != nil {
+		s.thinking(sessionID, turn, master, "", true)
+	}
+	return err
+}
+
+// descartaWorkspace joga fora o staging do turno SEM tocar o projeto. É o
+// desfecho de TODO caminho que não promoveu — falha de modelo, interrupção,
+// recusa, portão de narração, retorno antecipado — e por isso roda em defer:
+// nada meio-escrito chega à pessoa. Depois de uma promoção é não-op (o staging
+// já foi embora), o que a torna segura de chamar sempre.
+func (s *Supervisor) descartaWorkspace(ctx context.Context) {
+	execution, ok := workspace.FromContext(ctx)
+	if !ok || execution.LocalStaging == "" || s.deps.Workspaces == nil {
+		return
+	}
+	_ = s.deps.Workspaces.Discard(context.Background(), execution.Plan, execution.Publication())
 }
 
 // mustPayload serializa para envelope efêmero. Só recebe tipos deste pacote,

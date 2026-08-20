@@ -1,12 +1,18 @@
 /**
- * O EDITOR AO VIVO: o especialista trabalha NA JANELA DELE.
+ * O EDITOR AO VIVO: o especialista trabalha NA JANELA DELE — numa CÓPIA.
  *
- * A regra de produto que este arquivo tranca é a do caso flagrado — o bot
- * gravava index.html via fs.write e a tela ficava em "nenhum arquivo aberto":
- * o tool.result CONFIRMADO de fs.write/fs.patch na sessão aberta tem de abrir
- * o arquivo no palco, com o conteúdo lido do disco (fs.read pela rota
- * /v1/tools/call). E as três guardas que não podem regredir:
+ * A regra de produto que este arquivo tranca mudou de âncora com o staging do
+ * gateway: o fs.write CONFIRMADO do bot acontece na cópia do projeto, e o
+ * arquivo só chega ao projeto visível quando a promoção roda — antes do done.
+ * Então a abertura no palco (com o conteúdo lido do disco, fs.read pela rota
+ * /v1/tools/call) acontece no FECHAMENTO do turno, nunca no instante do
+ * tool.result — ali o fs.read acharia um 404 de um arquivo não entregue.
  *
+ * As regras que este arquivo tranca:
+ *
+ * - gravação confirmada + turno VIVO → ainda NÃO abre (a entrega fica retida);
+ * - gravação confirmada + done → abre, com o conteúdo do disco entregue;
+ * - turno que FALHA → o staging foi descartado: não abre nunca;
  * - buffer SUJO da pessoa nunca é sobrescrito (fica o chip discreto);
  * - rajada de gravações abre só o ÚLTIMO arquivo (debounce do ideStore);
  * - replay/histórico não abre NADA (guarda de turno-vivo do FilesRail).
@@ -17,7 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ConversationLine, Envelope, ToolCall, ToolResult } from "@aibot/contracts";
+import type { ConversationLine, Done, Envelope, ToolCall, ToolResult } from "@aibot/contracts";
 import type { Transport } from "../lib/transport";
 import { applyEnvelope, initialAppData, useApp } from "../lib/store";
 import { ATRASO_DA_ATUALIZACAO_MS, abrirArquivo, useIde, zerarIde } from "../lib/ide/ideStore";
@@ -144,6 +150,25 @@ function reduzir(envelopes: Envelope<unknown>[]): void {
   });
 }
 
+/** O que o send da produção faz: liga o busy e zera o erro — turno VIVO. */
+function turnoComecou(): void {
+  act(() => {
+    useApp.setState({ busy: true, error: "" });
+  });
+}
+
+/** O done reduzido de verdade: busy cai e a promoção do staging já entregou. */
+function turnoFechou(turn = "t-1"): void {
+  reduzir([envelopeDe<Done>("done", { turn }, turn)]);
+}
+
+/** O envelope de erro de verdade: o turno morreu e o staging foi descartado. */
+function turnoFalhou(turn = "t-1"): void {
+  reduzir([
+    envelopeDe("error", { code: "internal", message: "o modelo caiu no meio do turno" }, turn)
+  ]);
+}
+
 /** A MESMA gravação, mas já assentada em linhas — o formato do replay. */
 function linhasDoHistorico(callId: string, path: string): ConversationLine[] {
   return [
@@ -201,16 +226,33 @@ afterEach(() => {
 });
 
 describe("editor ao vivo", () => {
-  it("fs.write confirmado do bot abre o arquivo no palco, com o conteúdo do disco", async () => {
+  it("gravação confirmada com o turno VIVO ainda NÃO abre — o bot trabalha numa cópia", async () => {
+    montar();
+    await assentar();
+    turnoComecou();
+    reduzir([chamadaDoBot("c-1", "index.html"), gravacaoDoBot("c-1")]);
+    await esperarAbertura();
+
+    // O staging ainda não foi promovido: o fs.read de agora seria um 404 de
+    // um arquivo que a pessoa ainda não recebeu — nada abre até o done.
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+    expect(container.textContent).toContain("nenhum arquivo aberto");
+  });
+
+  it("o done ENTREGA: fs.write confirmado abre no fechamento do turno, com o conteúdo do disco", async () => {
     montar();
     await assentar();
     // O ponto de partida do caso flagrado: nenhum arquivo aberto.
     expect(container.textContent).toContain("nenhum arquivo aberto");
 
+    turnoComecou();
     reduzir([chamadaDoBot("c-1", "index.html"), gravacaoDoBot("c-1")]);
+    turnoFechou();
     await esperarAbertura();
 
-    // O conteúdo veio do DISCO (fs.read pela rota), não do texto da conversa.
+    // O conteúdo veio do DISCO (fs.read pela rota), não do texto da conversa —
+    // e só DEPOIS do done, quando a promoção pôs o arquivo no projeto.
     expect(chamadas.some((corpo) => corpo.tool === "fs.read" && corpo.args?.path === "index.html")).toBe(true);
     expect(useIde.getState().activePath).toBe("index.html");
     const area = container.querySelector<HTMLTextAreaElement>(".editor-area");
@@ -219,16 +261,18 @@ describe("editor ao vivo", () => {
     expect(container.textContent).not.toContain("nenhum arquivo aberto");
   });
 
-  it("rajada de gravações no mesmo turno abre SÓ o último arquivo", async () => {
+  it("rajada de gravações no turno abre SÓ o último arquivo, na entrega", async () => {
     montar();
     await assentar();
 
+    turnoComecou();
     reduzir([
       chamadaDoBot("c-1", "a.html"),
       gravacaoDoBot("c-1"),
       chamadaDoBot("c-2", "b.html"),
       gravacaoDoBot("c-2")
     ]);
+    turnoFechou();
     await esperarAbertura();
 
     // Um fs.read só — o do último; a.html nem virou aba.
@@ -239,18 +283,44 @@ describe("editor ao vivo", () => {
     expect(useIde.getState().activePath).toBe("b.html");
   });
 
+  it("falha do turno DESCARTA a entrega — não abre nunca, nem de carona no turno seguinte", async () => {
+    montar();
+    await assentar();
+
+    turnoComecou();
+    reduzir([chamadaDoBot("c-1", "index.html"), gravacaoDoBot("c-1")]);
+    turnoFalhou();
+    await esperarAbertura();
+
+    // O staging morreu com o turno: o arquivo nunca chegou ao projeto, e a
+    // tela não pode fingir que chegou.
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+    expect(container.textContent).toContain("nenhum arquivo aberto");
+
+    // E o alvo descartado NÃO pega carona: um turno novo que fecha bem sem
+    // gravar nada continua sem abrir coisa alguma.
+    turnoComecou();
+    turnoFechou("t-2");
+    await esperarAbertura();
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+  });
+
   it("gravação RECUSADA não abre nada — escrita que não aconteceu não muda o palco", async () => {
     montar();
     await assentar();
 
+    turnoComecou();
     reduzir([chamadaDoBot("c-9", "index.html"), gravacaoDoBot("c-9", false)]);
+    turnoFechou();
     await esperarAbertura();
 
     expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
     expect(useIde.getState().files).toHaveLength(0);
   });
 
-  it("buffer SUJO da pessoa não é sobrescrito — fica o chip 'o bot gravou por cima no disco'", async () => {
+  it("buffer SUJO da pessoa não é sobrescrito — o chip 'gravou por cima' chega na ENTREGA", async () => {
     montar();
     await act(async () => {
       await abrirArquivo({ name: "main.go", path: "main.go" });
@@ -258,7 +328,13 @@ describe("editor ao vivo", () => {
     const area = container.querySelector<HTMLTextAreaElement>(".editor-area");
     digitar(area as HTMLTextAreaElement, "package main // meu rascunho\n");
 
+    turnoComecou();
     reduzir([chamadaDoBot("c-3", "main.go"), gravacaoDoBot("c-3")]);
+    // Turno vivo: nem o aviso ainda — o disco ENTREGUE só muda no done.
+    await esperarAbertura();
+    expect(slotTopbar.querySelector(".editor-chip-bot")).toBeNull();
+
+    turnoFechou();
     await esperarAbertura();
 
     // O rascunho local venceu: nenhuma releitura, nenhum byte trocado.
@@ -297,8 +373,11 @@ describe("editor ao vivo", () => {
     expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
     expect(useIde.getState().files).toHaveLength(0);
 
-    // E a guarda REANCORA no flush: a gravação viva que vem depois abre.
+    // E a guarda REANCORA no flush: a gravação viva que vem depois abre — na
+    // entrega do turno, como manda a âncora nova.
+    turnoComecou();
     reduzir([chamadaDoBot("c-2", "index.html"), gravacaoDoBot("c-2")]);
+    turnoFechou();
     await esperarAbertura();
     expect(useIde.getState().activePath).toBe("index.html");
   });

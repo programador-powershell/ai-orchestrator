@@ -440,6 +440,11 @@ func serve() error {
 	workspaces := workspace.NewManagerWithLeases(func(sessionID string) string {
 		return sessionRoot(durable, sessionID)
 	}, frota)
+	// O SANDBOX de staging v1: o turno de MODELO sobre um projeto provisionado
+	// (<dataDir>/projects/…) trabalha numa cópia em <dataDir>/staging/ e só o
+	// desfecho bem-sucedido promove — falha, interrupção e recusa descartam a
+	// cópia. A raiz apontada pela pessoa continua inplace (ver staging.go).
+	workspaces.EnableStaging(cfg.DataDir)
 
 	registry := supervisor.NewRegistry()
 	toolbox := &supervisor.Toolbox{

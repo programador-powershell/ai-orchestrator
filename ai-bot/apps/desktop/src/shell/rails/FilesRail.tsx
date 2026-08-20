@@ -10,7 +10,7 @@
  * diz isso com todas as letras — inventar arquivos de exemplo aqui faria a
  * pessoa clicar num arquivo que não existe.
  */
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -44,9 +44,12 @@ import { tipoDoArquivo, type TipoDeArquivo } from "../../lib/ide/projeto";
 /**
  * Quantas gravações CONFIRMADAS do bot a conversa carrega (fs.write/fs.patch
  * com ok). É o sinal que mantém a árvore VIVA: os tool.result já chegam ao
- * store como linhas — quando este número sobe, o disco mudou e a árvore
- * relista. Recusa (ok:false) não conta: gravação que não aconteceu não muda
- * pasta nenhuma, e relistar por ela seria um POST em troca de nada.
+ * store como linhas — quando este número sobe, o bot gravou. Com o turno vivo
+ * a gravação foi na CÓPIA (staging), então a relistagem fica RETIDA até o
+ * fechamento do turno — é a promoção, que roda antes do done, que põe os
+ * arquivos no projeto visível. Recusa (ok:false) não conta: gravação que não
+ * aconteceu não muda pasta nenhuma, e relistar por ela seria um POST em troca
+ * de nada.
  */
 function contarGravacoesDoBot(state: AppState): number {
   let total = 0;
@@ -114,36 +117,66 @@ export function FilesRail(): ReactNode {
     if (status === "ready" && session) bootstrapArvore();
   }, [session, status]);
 
+  // ENTREGA RETIDA: com o turno vivo, as gravações confirmadas do bot
+  // aconteceram na CÓPIA do projeto (o staging do gateway) — relistar agora
+  // mostraria o projeto de antes, que ainda não recebeu nada. A pendência
+  // marca "há entrega esperando o done" e vira o hint discreto do rail; morre
+  // com a troca de sessão, porque era do projeto anterior.
+  const [entregaPendente, setEntregaPendente] = useState(false);
+  useEffect(() => {
+    setEntregaPendente(false);
+  }, [session]);
+
   // ÁRVORE VIVA: o bot gravou (fs.write/fs.patch com ok) → o disco mudou → a
   // árvore relista sozinha, com debounce curto (rajada de gravações vira UMA
   // relistagem). Só o AUMENTO conta: a primeira observação é o replay/montagem
   // — o bootstrap acabou de listar o estado atual do disco, e as gravações
   // históricas já estão nele. Queda (troca de sessão zera as linhas) só
   // reancora o contador.
+  //
+  // Com o turno VIVO a relistagem NÃO sai agora: a gravação foi no staging e
+  // o projeto visível só muda na promoção, antes do done — a pendência espera
+  // o fechamento do turno no efeito de baixo. Sem turno vivo (replay/flush de
+  // histórico), vale o caminho antigo: relistar o estado real é sempre honesto.
   const gravacoesVistas = useRef(-1);
   useEffect(() => {
     const antes = gravacoesVistas.current;
     gravacoesVistas.current = gravacoes;
     if (antes < 0 || gravacoes <= antes) return;
     if (status !== "ready" || !session) return;
+    if (busy) {
+      setEntregaPendente(true);
+      return;
+    }
     agendarAtualizacaoDaArvore();
-  }, [gravacoes, status, session]);
+  }, [gravacoes, status, session, busy]);
 
-  // RETRY SEM CLIQUE: a árvore que falhou ao montar ("sessão sem pasta de
-  // projeto") tenta de novo quando um turno CONCLUI — o gateway provisiona o
-  // workspace no primeiro turno de trabalho, então o done é exatamente o
-  // momento em que a pasta pode ter passado a existir. O sinal é busy caindo
-  // (o mesmo done que o store reduz), nunca um relógio: uma tentativa por
-  // conclusão, sem polling.
+  // O FECHAMENTO DO TURNO (busy caindo — o mesmo done que o store reduz, sem
+  // relógio) resolve duas coisas de uma vez:
+  //
+  // - ENTREGA: turno que fechou BEM (sem `error` no store — o send zera ao
+  //   abrir o turno, o envelope de erro preenche) promoveu o staging para o
+  //   projeto; a relistagem retida sai agora. Turno que falhou DESCARTOU o
+  //   staging: nada foi entregue, não há o que relistar — a pendência morre
+  //   sem gastar POST e sem pintar arquivo fantasma.
+  // - RETRY SEM CLIQUE: a árvore que falhou ao montar ("sessão sem pasta de
+  //   projeto") tenta de novo — o gateway provisiona o workspace no primeiro
+  //   turno de trabalho, então o done é exatamente o momento em que a pasta
+  //   pode ter passado a existir. Uma tentativa por conclusão, sem polling.
   const estavaOcupado = useRef(false);
   useEffect(() => {
     const antes = estavaOcupado.current;
     estavaOcupado.current = busy;
     if (!antes || busy) return;
     if (status !== "ready" || !session) return;
+    const falhou = useApp.getState().error !== "";
+    if (entregaPendente) {
+      setEntregaPendente(false);
+      if (!falhou && erroDaRaiz === "") agendarAtualizacaoDaArvore();
+    }
     if (erroDaRaiz === "") return;
     recarregarArvore();
-  }, [busy, status, session, erroDaRaiz]);
+  }, [busy, status, session, erroDaRaiz, entregaPendente]);
 
   if (status !== "ready" || !session) {
     return (
@@ -240,7 +273,20 @@ export function FilesRail(): ReactNode {
   return (
     <>
       <div className="files-rail-tools">
-        <span className="rail-note">projeto da sessão</span>
+        {/* Honestidade visual, sem UI nova: enquanto a entrega está retida, a
+            nota do rail conta que o bot grava numa cópia — e o porquê de a
+            árvore ainda não mostrar os arquivos novos. */}
+        <span
+          className="rail-note"
+          data-entrega={entregaPendente ? "pendente" : undefined}
+          title={
+            entregaPendente
+              ? "O bot está trabalhando numa cópia do projeto — os arquivos chegam à árvore quando o turno terminar bem."
+              : undefined
+          }
+        >
+          {entregaPendente ? "o bot trabalha numa cópia — entrega no fim do turno" : "projeto da sessão"}
+        </span>
         <button
           type="button"
           className="icon-button"

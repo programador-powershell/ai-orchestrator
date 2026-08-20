@@ -51,7 +51,7 @@ func TestTurnoPenduraOWorkspaceDaSessao(t *testing.T) {
 	})
 
 	// O que o runTurn faz no começo — e o que a ferramenta enxerga na ponta.
-	ctx := supervisor.comWorkspace(context.Background(), sessionID, "", "")
+	ctx := supervisor.comWorkspace(context.Background(), sessionID, "t-ws", "", "", workspace.OriginModel)
 
 	execution, err := workspace.Require(ctx)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestTurnoPenduraOWorkspaceDaSessao(t *testing.T) {
 	if _, err := dataStore.CreateSession(store.SessionMeta{ID: "s-sem-pasta"}); err != nil {
 		t.Fatalf("criar sessão sem pasta: %v", err)
 	}
-	semPasta := supervisor.comWorkspace(context.Background(), "s-sem-pasta", "", "")
+	semPasta := supervisor.comWorkspace(context.Background(), "s-sem-pasta", "t-ws", "", "", workspace.OriginModel)
 	if _, err := registry.Call(semPasta, "fs.read", "s-sem-pasta", args); err == nil {
 		t.Fatal("sessão sem pasta de projeto tinha de recusar a leitura")
 	}

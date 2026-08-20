@@ -344,23 +344,62 @@ export async function abrirGravadoPeloBot(path: string): Promise<void> {
   await lerDoDisco(path, session);
 }
 
-/**
- * Agenda a abertura ao vivo com o MESMO debounce da árvore: uma rajada de
- * gravações (o bot criando o projeto inteiro) abre só o ÚLTIMO arquivo, em vez
- * de um fs.read por gravação e uma dança de abas. O timer mora no módulo pelo
- * mesmo motivo do agendarAtualizacaoDaArvore — o cleanup de um efeito o
- * cancelaria num re-render qualquer.
- */
-export function agendarAberturaDoBot(path: string): void {
-  if (path === "") return;
-  aberturaAlvo = path;
-  if (aberturaAgendada !== 0) window.clearTimeout(aberturaAgendada);
+/** O timer que consome o alvo — o miolo comum do agendamento e da entrega. */
+function dispararAberturaAgendada(): void {
   aberturaAgendada = window.setTimeout(() => {
     aberturaAgendada = 0;
     const alvo = aberturaAlvo;
     aberturaAlvo = "";
     void abrirGravadoPeloBot(alvo);
   }, ATRASO_DA_ATUALIZACAO_MS);
+}
+
+/**
+ * Agenda a abertura ao vivo com o MESMO debounce da árvore: uma rajada de
+ * gravações (o bot criando o projeto inteiro) abre só o ÚLTIMO arquivo, em vez
+ * de um fs.read por gravação e uma dança de abas. O timer mora no módulo pelo
+ * mesmo motivo do agendarAtualizacaoDaArvore — o cleanup de um efeito o
+ * cancelaria num re-render qualquer.
+ *
+ * Com `turnoVivo`, o alvo fica RETIDO até o fechamento do turno: o modelo
+ * trabalha numa CÓPIA do projeto (o staging do gateway) e o arquivo só chega
+ * ao projeto visível quando a promoção roda, antes do done. Abrir no instante
+ * do tool.result seria um fs.read de um arquivo que ainda não foi entregue —
+ * 404 até o turno fechar. Quem destrava é `entregarAberturaDoBot` (done) ou
+ * `descartarAberturaDoBot` (falha/descarte). Sem turno vivo vale o caminho
+ * antigo: não há entrega pendente para esperar.
+ */
+export function agendarAberturaDoBot(path: string, turnoVivo = false): void {
+  if (path === "") return;
+  aberturaAlvo = path;
+  if (aberturaAgendada !== 0) {
+    window.clearTimeout(aberturaAgendada);
+    aberturaAgendada = 0;
+  }
+  if (turnoVivo) return;
+  dispararAberturaAgendada();
+}
+
+/**
+ * O turno FECHOU bem (done): a promoção do staging acabou de entregar os
+ * arquivos ao projeto — agora sim o alvo retido pode abrir de verdade.
+ * Reaproveita o mesmo debounce da abertura normal só para o fs.read assentar
+ * pelo caminho único; sem alvo retido é neutro.
+ */
+export function entregarAberturaDoBot(): void {
+  if (aberturaAlvo === "") return;
+  if (aberturaAgendada !== 0) window.clearTimeout(aberturaAgendada);
+  dispararAberturaAgendada();
+}
+
+/**
+ * O turno morreu sem entregar (falha, interrupção, recusa do portão): o
+ * gateway DESCARTOU o staging e o arquivo retido nunca chegou ao projeto.
+ * Abrir agora seria criar uma aba fantasma com erro de leitura — o alvo morre
+ * junto com o staging.
+ */
+export function descartarAberturaDoBot(): void {
+  cancelarAberturaAgendada();
 }
 
 /**

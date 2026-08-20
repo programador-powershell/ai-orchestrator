@@ -314,8 +314,17 @@ func (s *Supervisor) runCrew(
 				}
 				var plan *workspace.Plan
 				if s.deps.Workspaces != nil {
+					// OriginCrew: a equipe fica DELIBERADAMENTE fora do staging.
+					// Os trabalhadores rodam em PARALELO sobre o mesmo projeto, e
+					// duas cópias espelhadas de volta se apagariam mutuamente (o
+					// espelho remove do projeto o que não está na própria cópia).
+					// O isolamento da equipe é o worktree (task.Worktree), que é
+					// outro mecanismo — misturar os dois copiaria uma cópia. O
+					// Promote na aceitação continua valendo como sempre: com
+					// staging inplace ele é a cerca de worker+época, constatação.
 					if frozen, err := s.deps.Workspaces.Plan(ctx, workspace.PlanRequest{
 						SessionID: sessionID, TaskID: task.ID, BotID: task.Specialist, Attempt: attempt,
+						Origin: workspace.OriginCrew,
 					}); err == nil {
 						plan = &frozen
 						dispatch.WorkspacePlanID = frozen.ID
@@ -460,12 +469,25 @@ func (s *Supervisor) runWorker(
 	// contexto segue sem execução e as ferramentas de arquivo recusam com
 	// motivo — nunca caem na pasta do processo.
 	if plan != nil && s.deps.Workspaces != nil {
-		execution, err := s.deps.Workspaces.Materialize(ctx, *plan)
-		if err != nil {
-			done.Error = "não foi possível materializar o workspace da tarefa: " + err.Error()
-			return done
+		if parent, ok := workspace.FromContext(ctx); ok && parent.LocalStaging != "" &&
+			parent.Plan.Source.URI == plan.Source.URI {
+			// O TURNO-MÃE trabalha numa CÓPIA (staging v1) do mesmo projeto: a
+			// equipe trabalha NA MESMA cópia — a execução do turno fica no
+			// contexto — e a entrega é UMA, a promoção do turno no done. Se
+			// cada tarefa materializasse o próprio plano (inplace), o
+			// trabalhador escreveria no projeto REAL enquanto o turno, no fim,
+			// espelharia por cima a cópia congelada ANTES da equipe rodar —
+			// apagando calado o trabalho dela. O plano da tarefa continua
+			// valendo para o que ele decide de verdade: a cerca de
+			// worker+época no Promote da aceitação, logo abaixo.
+		} else {
+			execution, err := s.deps.Workspaces.Materialize(ctx, *plan)
+			if err != nil {
+				done.Error = "não foi possível materializar o workspace da tarefa: " + err.Error()
+				return done
+			}
+			ctx = workspace.WithExecution(ctx, execution)
 		}
-		ctx = workspace.WithExecution(ctx, execution)
 	}
 
 	entry, _, err := s.deps.Models.Resolve(definition.ID, task.Model)

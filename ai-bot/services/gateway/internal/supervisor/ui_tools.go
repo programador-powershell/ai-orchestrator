@@ -27,6 +27,7 @@ import (
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/specialist"
 	"aibot/gateway/internal/store"
+	"aibot/gateway/internal/workspace"
 )
 
 // uiAllowedTools é o que a INTERFACE pode pedir por conta própria.
@@ -134,10 +135,15 @@ func (s *Supervisor) CallToolFromUI(ctx context.Context, sessionID, tool string,
 	// o que esta chamada produziu.
 	turn := s.nextID("ui")
 
-	// O workspace é congelado pelo MESMO comWorkspace do turno: fs.read daqui e
-	// fs.write do próximo turno enxergam a mesma raiz porque leem a mesma
-	// decisão — nenhuma ferramenta calcula diretório sozinha.
-	ctx = s.comWorkspace(ctx, sessionID, "", "")
+	// O workspace é congelado pelo MESMO comWorkspace do turno, mas com a
+	// ORIGEM da interface: a UI lê e escreve o projeto ENTREGUE (inplace),
+	// nunca a cópia de staging — o Ctrl+S da pessoa é edição direta dela, com
+	// aprovação; o sandbox é do MODELO. Se um turno de modelo estiver correndo
+	// em paralelo, a escrita da UI acontece no projeto e a promoção do turno
+	// espelha a cópia por cima depois: o ÚLTIMO a promover vence, a cerca de
+	// worker+época protege contra épocas velhas, e não há merge — inventar um
+	// seria prometer uma fusão que ninguém sabe fazer certa.
+	ctx = s.comWorkspace(ctx, sessionID, turn, "", "", workspace.OriginUI)
 
 	// O ator é a PESSOA agindo pela interface — não o especialista. É o que a
 	// auditoria precisa distinguir: "o modelo pediu" e "a UI pediu" são origens

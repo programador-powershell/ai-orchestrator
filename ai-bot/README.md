@@ -104,59 +104,36 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.3
+### :up: V.2.4
 ### :warning: Latest Changes
 
-- **Cada bot TRABALHA na própria janela — a regra do dono virou produto.**
-  O flagrante que motivou: o Código respondia com o HTML inteiro num bloco de
-  markdown no chat, com o editor parado em "nenhum arquivo aberto".
-  - **Personas que trabalham**: o Código agora é instruído a GRAVAR com
-    `fs.write`/`fs.patch` no projeto da sessão (pelo funil de aprovação, como
-    deve ser) e responder curto anunciando o que gravou — arquivo inteiro no
-    chat é proibido, só trecho ilustrativo. O Design LÊ o projeto (`fs.read`/
-    `fs.list` — o index.html que o Código gravou está no MESMO workspace) e
-    desenha pelas `design.*`. Dados produz pelo ferramental estruturado que a
-    tela desenha como ERD. O briefing do sub-turno reforça: "você está na SUA
-    janela; produza NO PROJETO — a pessoa vê o resultado na sua superfície".
-  - **Editor ao vivo**: gravação CONFIRMADA do bot abre o arquivo no painel
-    central — o "nenhum arquivo aberto" morre no primeiro arquivo. Rajada abre
-    só o último; recusa não abre; buffer com edição SUA não salva nunca é
-    recarregado (chip discreto "o bot gravou por cima no disco").
-  - **Canvas ao vivo**: resultado de `design.*` importa sozinho como nós
-    EDITÁVEIS (o caminho da Onda 3), com undo e persistência por sessão.
-  - **Espelho clicável**: na conversa do dono, a faixa "deleguei ao
-    especialista X" é botão de verdade — clicar navega para a janela da filha.
-  - **Rota da clarificação com rótulo próprio**: "você escolheu no cartão".
-  - **Verificado no fio de ponta a ponta**: um provedor roteirizado chamou
-    `fs.write` no sub-turno, o portão interceptou, a aprovação liberou e o
-    index.html apareceu byte a byte no projects/ compartilhado raiz↔filha —
-    a superfície viva NÃO criou nenhum bypass do funil.
+- **O bot trabalha numa CÓPIA e só entrega no fim — o sandbox de arquivos que
+  o dono pediu.** Turno de modelo num projeto provisionado materializa uma
+  cópia em `staging/<plano>/`; `fs.*` e `proc.run` agem NELA; a promoção (com
+  a cerca worker+época que já existia, mais uma cerca de NONCE — turno
+  substituído não entrega nem apaga a cópia do substituto) espelha
+  staging→projeto ANTES do `done`, e QUALQUER caminho de falha — erro de
+  modelo, interrupção, recusa, o portão narrou-sem-executar — DESCARTA sem
+  tocar o projeto. Provado no fio com espião no meio do turno: o projeto real
+  fica intocado enquanto o bot trabalha; a sabotagem no segundo passo terminou
+  honesta com o projeto limpo.
+  - Escopo v1 deliberado: staging para raiz sob `projects/` (pequena por
+    construção; teto 128 MiB / 4096 arquivos degrada para inplace com aviso);
+    pasta apontada pela pessoa segue inplace — repositório grande se resolve
+    com worktree/Puter, não cópia cega. A Equipe mantém o worktree dela — e
+    equipe disparada DENTRO de turno staged trabalha NA MESMA cópia (a
+    interação que apagaria o trabalho dos workers foi pega na revisão).
+  - A UI continua lendo e escrevendo o projeto ENTREGUE (o Ctrl+S é edição sua,
+    com aprovação; o sandbox é do modelo). Staging órfão de processo morto é
+    varrido no boot.
+  - A pessoa VÊ o gesto: "trabalhando numa cópia de segurança do projeto…" e
+    "entregando o resultado ao projeto…" como etapas do turno.
+- **A árvore e o editor ancoram na ENTREGA**: gravação confirmada abre no
+  editor e relista a árvore quando o turno FECHA (que é quando a promoção
+  entregou), nunca no meio — sem abas fantasmas de arquivos que ainda não
+  existem no seu projeto.
 
 ### :pushpin: Fixes
-
-- **O bot que NARRA em vez de executar agora bate no portão mecânico.** O
-  flagrante: o Código respondeu "Resultado do fs.list" com uma listagem
-  INVENTADA — nenhuma ferramenta rodou, a pasta do projeto estava vazia.
-  Persona é instrução; portão é lei: resposta de especialista de trabalho com
-  artefato narrado (listagem, "criei o arquivo", cerca de 10+ linhas) e ZERO
-  efeito real no turno não é publicada — o supervisor reinjeta UMA correção
-  com o exemplo concreto da cerca de ferramenta e o modelo roda de novo;
-  reincidência vira FALHA honesta (nunca ✓), com a etapa visível "o
-  especialista narrou sem executar — mandei executar de verdade". Onze casos
-  de mesa protegem os dois lados (pergunta legítima e trecho ilustrativo
-  passam; encenação reprova), e o fio de ponta a ponta provou com um modelo
-  que finge: corrigido → arquivo real no projeto; teimoso → falha honesta e
-  nenhum arquivo fantasma.
-
-- **Replay contado como turno vivo** (pego pelo conferente ANTES de sair):
-  reabrir uma conversa antiga abria o último arquivo do histórico no editor e
-  DUPLICAVA os nós da réplica no canvas a cada reabertura, porque a guarda das
-  superfícies ancorava na montagem e o histórico chega DEPOIS, num flush de
-  lote. O flush de replay agora se anuncia (`replaysAssentados`) e as guardas
-  reancoram nele — com testes trancando a ordem real do fio.
-- **Regressão fixada em teste**: a sequência "nova conversa → voltar ao
-  histórico" (relato do dono) ganhou teste com envelopes verbatim de log real —
-  gateway e redução provados corretos; o fluxo não volta a quebrar calado.
 
 ### :construction_worker: Refactors
 

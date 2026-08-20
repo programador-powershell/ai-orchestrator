@@ -332,7 +332,7 @@ func TestFsListNaFilhaRecemProvisionadaListaVazioLegitimo(t *testing.T) {
 	requireProvisionedDir(t, fixture.store, filho.CWD)
 
 	// O que um turno NA FILHA faz no começo — e o que a ferramenta enxerga.
-	ctx := fixture.supervisor.comWorkspace(context.Background(), filhoID, "", "")
+	ctx := fixture.supervisor.comWorkspace(context.Background(), filhoID, "t-filha", "", "", workspace.OriginModel)
 	args, _ := json.Marshal(map[string]string{"path": "."})
 	output, err := fixture.registry.Call(ctx, "fs.list", filhoID, args)
 	if err != nil {
