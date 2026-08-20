@@ -177,6 +177,15 @@ type turnOptions struct {
 	userLine string
 	// clarify permite transformar o primeiro input incerto em pergunta.
 	clarify bool
+	// clarified marca a continuação de uma CLARIFICAÇÃO respondida por opção.
+	//
+	// A distinção importa porque prompt.Specialist preenchido significa duas
+	// coisas diferentes: /mode e hello.specialist são "quero uma conversa DESTE
+	// bot" (a conversa vira dele), enquanto a opção do cartão só respondeu QUEM
+	// TRABALHA — e aí a raiz DELEGA como se a cascata tivesse decidido com
+	// confiança 1, em vez de adotar o modo e virar a IDE (o sequestro que o
+	// caminho do master existe para matar).
+	clarified bool
 }
 
 // runTurn é o turno de verdade; Prompt e as continuações de Reply chegam aqui.
@@ -291,6 +300,12 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		}); err != nil {
 			return err
 		}
+		// A superfície de trabalho flipa AGORA (a rota abaixo troca a tela), e
+		// uma sessão sem pasta abriria a IDE com a árvore morta — o próximo turno
+		// congela o workspace já com a pasta provisionada aqui. A semente é a
+		// `question` (vazia neste braço) de propósito: o "/mode code" cru viraria
+		// o nome da pasta, e o fallback do título/"projeto" nomeia melhor.
+		s.provisionaProjeto(sessionID, turn, definition, question)
 		if err := s.emit(sessionID, turn, protocol.KindRoute,
 			protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}, route); err != nil {
 			return err
@@ -324,8 +339,20 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// CASCATA desce por aqui: /mode e prompt.Specialist são escolhas da pessoa,
 	// e quem escolhe o modo vira o bot, como sempre (hello.specialist idem —
 	// a conversa nasce com dono e o sticky nem chega neste ponto).
-	if !hadCommand && strings.TrimSpace(prompt.Specialist) == "" &&
+	//
+	// EXCEÇÃO deliberada: a resposta da CLARIFICAÇÃO. Ela chega com
+	// prompt.Specialist preenchido (a opção escolhida), mas escolher "Código" no
+	// cartão é responder QUEM TRABALHA — a mesma pergunta que a cascata teria
+	// respondido sozinha se tivesse confiança —, não pedir uma conversa DESTE
+	// bot. Por isso ela desce pela delegação, com a razão trocada para
+	// "clarified": a rota na FILHA conta de onde a decisão veio (transparência)
+	// sem a raiz virar a IDE (sequestro).
+	if !hadCommand && (strings.TrimSpace(prompt.Specialist) == "" || opts.clarified) &&
 		masterDelegates(session, definition) {
+		if opts.clarified {
+			route.Reason = protocol.RouteClarified
+			route.Confidence = 1
+		}
 		return s.masterDelegate(ctx, sessionID, turn, route, definition, question, prompt)
 	}
 
@@ -356,6 +383,17 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		}
 	}); err != nil {
 		return err
+	}
+
+	// 3b. O WORKSPACE AUTOMÁTICO da adoção: um especialista de TRABALHO vai
+	// executar (/mode code com pedido, conversa nascida no bot, sticky) e a
+	// sessão não tem pasta — sem ela a árvore da IDE morre em "esta sessão não
+	// tem pasta de projeto definida" e o bot recusa gravar qualquer arquivo. O
+	// contexto é congelado DE NOVO porque o congelamento do começo do turno leu
+	// o meta antes da pasta existir — as ferramentas DESTE turno já precisam
+	// enxergar o root recém-criado.
+	if s.provisionaProjeto(sessionID, turn, definition, question) {
+		ctx = s.comWorkspace(ctx, sessionID, "", "")
 	}
 
 	actor := protocol.Actor{

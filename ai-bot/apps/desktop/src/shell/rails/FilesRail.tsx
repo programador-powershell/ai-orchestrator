@@ -10,7 +10,7 @@
  * diz isso com todas as letras — inventar arquivos de exemplo aqui faria a
  * pessoa clicar num arquivo que não existe.
  */
-import { useEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -29,9 +29,10 @@ import {
   WifiOff,
   type LucideIcon
 } from "lucide-react";
-import { useApp } from "../../lib/store";
+import { useApp, type AppState } from "../../lib/store";
 import {
   abrirArquivo,
+  agendarAtualizacaoDaArvore,
   alternarPasta,
   bootstrapArvore,
   recarregarArvore,
@@ -39,6 +40,25 @@ import {
   useIde
 } from "../../lib/ide/ideStore";
 import { tipoDoArquivo, type TipoDeArquivo } from "../../lib/ide/projeto";
+
+/**
+ * Quantas gravações CONFIRMADAS do bot a conversa carrega (fs.write/fs.patch
+ * com ok). É o sinal que mantém a árvore VIVA: os tool.result já chegam ao
+ * store como linhas — quando este número sobe, o disco mudou e a árvore
+ * relista. Recusa (ok:false) não conta: gravação que não aconteceu não muda
+ * pasta nenhuma, e relistar por ela seria um POST em troca de nada.
+ */
+function contarGravacoesDoBot(state: AppState): number {
+  let total = 0;
+  for (const line of state.lines) {
+    for (const resultado of line.toolResults ?? []) {
+      if (resultado.ok && (resultado.tool === "fs.write" || resultado.tool === "fs.patch")) {
+        total += 1;
+      }
+    }
+  }
+  return total;
+}
 
 /** A família (regra pura em lib/ide/projeto) vira ícone AQUI — quem desenha decide. */
 const ICONE_POR_TIPO: Record<TipoDeArquivo, LucideIcon> = {
@@ -78,10 +98,13 @@ function Vazio({ icon: Icon, titulo, hint, children }: {
 export function FilesRail(): ReactNode {
   const status = useApp((state) => state.status);
   const session = useApp((state) => state.session);
+  const busy = useApp((state) => state.busy);
+  const gravacoes = useApp(contarGravacoesDoBot);
   const tree = useIde((state) => state.tree);
   const expanded = useIde((state) => state.expanded);
   const files = useIde((state) => state.files);
   const activePath = useIde((state) => state.activePath);
+  const erroDaRaiz = useIde((state) => state.tree[""]?.erro ?? "");
 
   // A árvore é POR SESSÃO: adotar a sessão nova zera a anterior, e a primeira
   // carga só dispara com o gateway pronto — pedir fs.list offline é gastar um
@@ -90,6 +113,37 @@ export function FilesRail(): ReactNode {
     sincronizarSessao(session ?? "");
     if (status === "ready" && session) bootstrapArvore();
   }, [session, status]);
+
+  // ÁRVORE VIVA: o bot gravou (fs.write/fs.patch com ok) → o disco mudou → a
+  // árvore relista sozinha, com debounce curto (rajada de gravações vira UMA
+  // relistagem). Só o AUMENTO conta: a primeira observação é o replay/montagem
+  // — o bootstrap acabou de listar o estado atual do disco, e as gravações
+  // históricas já estão nele. Queda (troca de sessão zera as linhas) só
+  // reancora o contador.
+  const gravacoesVistas = useRef(-1);
+  useEffect(() => {
+    const antes = gravacoesVistas.current;
+    gravacoesVistas.current = gravacoes;
+    if (antes < 0 || gravacoes <= antes) return;
+    if (status !== "ready" || !session) return;
+    agendarAtualizacaoDaArvore();
+  }, [gravacoes, status, session]);
+
+  // RETRY SEM CLIQUE: a árvore que falhou ao montar ("sessão sem pasta de
+  // projeto") tenta de novo quando um turno CONCLUI — o gateway provisiona o
+  // workspace no primeiro turno de trabalho, então o done é exatamente o
+  // momento em que a pasta pode ter passado a existir. O sinal é busy caindo
+  // (o mesmo done que o store reduz), nunca um relógio: uma tentativa por
+  // conclusão, sem polling.
+  const estavaOcupado = useRef(false);
+  useEffect(() => {
+    const antes = estavaOcupado.current;
+    estavaOcupado.current = busy;
+    if (!antes || busy) return;
+    if (status !== "ready" || !session) return;
+    if (erroDaRaiz === "") return;
+    recarregarArvore();
+  }, [busy, status, session, erroDaRaiz]);
 
   if (status !== "ready" || !session) {
     return (

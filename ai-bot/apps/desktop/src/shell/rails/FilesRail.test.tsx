@@ -13,9 +13,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import type { Done, Envelope, ToolResult } from "@aibot/contracts";
 import type { Transport } from "../../lib/transport";
-import { initialAppData, useApp } from "../../lib/store";
-import { sincronizarSessao, useIde, zerarIde } from "../../lib/ide/ideStore";
+import { applyEnvelope, initialAppData, useApp } from "../../lib/store";
+import {
+  ATRASO_DA_ATUALIZACAO_MS,
+  sincronizarSessao,
+  useIde,
+  zerarIde
+} from "../../lib/ide/ideStore";
 import { FilesRail } from "./FilesRail";
 
 let transporteFalso: Transport | null = null;
@@ -72,6 +78,44 @@ function botaoPorTexto(texto: string): HTMLButtonElement {
   );
   if (!alvo) throw new Error(`botão "${texto}" não está na tela`);
   return alvo;
+}
+
+function nomesNaTela(): Array<string | null> {
+  return [...container.querySelectorAll(".files-tree-name")].map((item) => item.textContent);
+}
+
+/* Envelopes de VERDADE (reduzidos pelo applyEnvelope real): é assim que o
+ * tool.result e o done chegam à janela no fio de produção. */
+let seqDeEnvelope = 100;
+
+function envelopeDe<P>(kind: Envelope["kind"], payload: P, turn = "t-1"): Envelope<P> {
+  seqDeEnvelope += 1;
+  return {
+    v: 1,
+    id: `e-${seqDeEnvelope}`,
+    ts: "2026-08-20T12:00:00Z",
+    seq: seqDeEnvelope,
+    session: "s-1",
+    turn,
+    kind,
+    from: { kind: "specialist", id: "code", specialist: "code" },
+    payload
+  };
+}
+
+function gravacaoDoBot(callId: string, tool: "fs.write" | "fs.patch", ok = true): Envelope<ToolResult> {
+  const payload: ToolResult = ok
+    ? { callId, tool, ok: true, output: "gravado" }
+    : { callId, tool, ok: false, error: "a pessoa recusou a escrita" };
+  return envelopeDe("tool.result", payload);
+}
+
+/** Espera o debounce da atualização vencer e as listagens assentarem. */
+async function esperarAtualizacao(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolver) => setTimeout(resolver, ATRASO_DA_ATUALIZACAO_MS + 50));
+  });
+  await assentar();
 }
 
 beforeEach(() => {
@@ -199,5 +243,125 @@ describe("rail de arquivos", () => {
     // contrato dela mudar, este arquivo e o ideStore.test acusam juntos.
     sincronizarSessao("s-x");
     expect(useIde.getState().session).toBe("s-x");
+  });
+});
+
+describe("árvore viva", () => {
+  it("tool.result de fs.write/fs.patch recarrega a árvore sozinho — rajada vira UMA relistagem, pastas abertas ficam abertas", async () => {
+    montar();
+    await assentar();
+    act(() => {
+      botaoPorTexto("src").click();
+    });
+    await assentar();
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(2);
+
+    // O bot criou hello.html na raiz e novo.go dentro de src durante o turno.
+    responder = (corpo) => {
+      if (corpo.tool !== "fs.list") return respostasPadrao(corpo);
+      const path = String(corpo.args?.path ?? "");
+      if (path === "") return { ok: true, output: "src/\nREADME.md (2048 bytes)\nhello.html (64 bytes)" };
+      if (path === "src") return { ok: true, output: "main.go (12 bytes)\nnovo.go (7 bytes)" };
+      return { ok: true, output: "(pasta vazia)" };
+    };
+
+    // Duas gravações na MESMA rajada — o fio real de "criar o projeto inteiro".
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-1", "fs.write")));
+      useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-2", "fs.patch")));
+    });
+    // Antes do debounce vencer, nada relistou: é ele que colapsa a rajada.
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(2);
+    await esperarAtualizacao();
+
+    // O arquivo do bot apareceu SEM clique, e a pasta aberta continuou aberta.
+    // (arquivos em ordem de locale — "hello" antes de "README", como o parse ordena)
+    expect(nomesNaTela()).toEqual(["src", "main.go", "novo.go", "hello.html", "README.md"]);
+    // Uma relistagem por pasta viva (raiz + src), apesar das duas gravações.
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(4);
+  });
+
+  it("gravação RECUSADA (ok:false) não relista — nada mudou no disco", async () => {
+    montar();
+    await assentar();
+
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, gravacaoDoBot("c-3", "fs.write", false)));
+    });
+    await esperarAtualizacao();
+
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+    expect(nomesNaTela()).toEqual(["src", "README.md"]);
+  });
+
+  it("o erro de 'sem pasta de projeto' se recupera SOZINHO quando o turno conclui", async () => {
+    responder = () => ({ ok: false, error: "esta sessão não tem pasta de projeto definida" });
+    montar();
+    await assentar();
+    expect(container.querySelector(".rail-empty")?.textContent).toContain(
+      "não tem pasta de projeto"
+    );
+
+    // A pessoa mandou o pedido (busy sobe, como no send) e o gateway
+    // provisionou o workspace durante o turno de trabalho.
+    act(() => {
+      useApp.setState({ busy: true });
+    });
+    responder = respostasPadrao;
+    // O done que fecha o turno é o MESMO envelope que o store reduz.
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, envelopeDe<Done>("done", { turn: "t-1" })));
+    });
+    await assentar();
+
+    // A árvore que tinha falhado ao montar tentou de novo sem nenhum clique.
+    expect(nomesNaTela()).toEqual(["src", "README.md"]);
+    expect(container.querySelector(".rail-empty")).toBeNull();
+  });
+
+  it("turno que conclui com a árvore SAUDÁVEL não dispara relistagem nenhuma", async () => {
+    montar();
+    await assentar();
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+
+    act(() => {
+      useApp.setState({ busy: true });
+    });
+    act(() => {
+      useApp.setState((state) => applyEnvelope(state, envelopeDe<Done>("done", { turn: "t-2" })));
+    });
+    await esperarAtualizacao();
+
+    // O retry é do ERRO, não do relógio: árvore boa fica quieta.
+    expect(chamadas.filter((corpo) => corpo.tool === "fs.list")).toHaveLength(1);
+  });
+
+  it("na conversa FILHA, toda chamada /v1/tools/call carrega a sessão DELA", async () => {
+    montar();
+    await assentar();
+
+    // O gesto do openSession: linhas zeradas e a sessão vira a da filha.
+    act(() => {
+      useApp.setState({ session: "filha-1", lines: [] });
+    });
+    await assentar();
+
+    const listagens = chamadas.filter((corpo) => corpo.tool === "fs.list");
+    expect(listagens[listagens.length - 1]?.session).toBe("filha-1");
+
+    act(() => {
+      botaoPorTexto("README.md").click();
+    });
+    await assentar();
+
+    // Abrir arquivo na filha lê o PROJETO DA FILHA — nunca o da raiz.
+    expect(chamadas[chamadas.length - 1]).toEqual({
+      session: "filha-1",
+      tool: "fs.read",
+      args: { path: "README.md" }
+    });
+    expect(chamadas.some((corpo) => corpo.session !== "filha-1" && corpo.tool === "fs.read")).toBe(
+      false
+    );
   });
 });

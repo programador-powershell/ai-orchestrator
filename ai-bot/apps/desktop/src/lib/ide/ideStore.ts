@@ -89,6 +89,14 @@ let indice: EntradaProjeto[] | null = null;
 let indiceEmVoo: Promise<EntradaProjeto[]> | null = null;
 /** Trava da primeira carga da raiz: rail e superfície chamam, só a primeira ganha. */
 let raizEmVoo = false;
+/** O timer do debounce da atualização em lugar — ver agendarAtualizacaoDaArvore. */
+let atualizacaoAgendada = 0;
+
+/** Cancela a atualização agendada — a sessão trocou e ela era da anterior. */
+function cancelarAtualizacaoAgendada(): void {
+  if (atualizacaoAgendada !== 0) window.clearTimeout(atualizacaoAgendada);
+  atualizacaoAgendada = 0;
+}
 
 /**
  * Adota a sessão nova zerando o que era da anterior. Idempotente de propósito:
@@ -100,6 +108,7 @@ export function sincronizarSessao(session: string): void {
   indice = null;
   indiceEmVoo = null;
   raizEmVoo = false;
+  cancelarAtualizacaoAgendada();
   useIde.setState({ ...estadoInicialIde(), session });
 }
 
@@ -108,6 +117,7 @@ export function zerarIde(): void {
   indice = null;
   indiceEmVoo = null;
   raizEmVoo = false;
+  cancelarAtualizacaoAgendada();
   useIde.setState({ ...estadoInicialIde() });
 }
 
@@ -145,6 +155,61 @@ export function recarregarArvore(): void {
   indice = null;
   useIde.setState({ tree: {}, expanded: new Set<string>() });
   bootstrapArvore();
+}
+
+/**
+ * Recarrega a árvore EM LUGAR, preservando o que a pessoa deixou aberto.
+ *
+ * É a reação a uma gravação do BOT (tool.result de fs.write/fs.patch): o
+ * arquivo recém-criado tem de aparecer sem clique. O recarregarArvore não
+ * serve aqui porque ele zera `expanded` — recolher as pastas que a pessoa
+ * abriu esconderia justamente o arquivo novo dentro delas.
+ *
+ * A raiz e as pastas ABERTAS relistam agora (o conteúdo antigo fica na tela
+ * enquanto a resposta não chega — sem piscada); as fechadas SAEM do cache,
+ * porque a gravação as deixou velhas — a expansão preguiçosa as relista na
+ * próxima abertura. Raiz em erro também relista: a gravação que disparou esta
+ * atualização é a prova de que o workspace agora existe.
+ */
+export function atualizarArvore(): void {
+  // O índice do Quick Open ficou velho junto com a árvore.
+  indice = null;
+  const { tree, expanded } = useIde.getState();
+  if (!tree[""]) {
+    bootstrapArvore();
+    return;
+  }
+  const vivas = ["", ...expanded];
+  useIde.setState((state) => {
+    const proximo: Record<string, Pasta> = {};
+    for (const sub of vivas) {
+      const pasta = state.tree[sub];
+      if (pasta) proximo[sub] = pasta;
+    }
+    return { tree: proximo };
+  });
+  for (const sub of vivas) void carregarPasta(sub);
+}
+
+/**
+ * Quanto tempo a árvore espera antes de relistar depois de uma gravação.
+ * Curto de propósito: é só o bastante para uma RAJADA de fs.write (o bot
+ * criando o projeto inteiro) virar UMA relistagem em vez de uma por arquivo.
+ */
+export const ATRASO_DA_ATUALIZACAO_MS = 150;
+
+/**
+ * Agenda a atualização em lugar com debounce. O timer mora AQUI (módulo), não
+ * no efeito de quem chama: o cleanup de um efeito cancelaria a atualização
+ * pendente num re-render qualquer, e a relistagem prometida nunca aconteceria.
+ * Sem relógio de polling — o timer só nasce como reação a um envelope.
+ */
+export function agendarAtualizacaoDaArvore(): void {
+  cancelarAtualizacaoAgendada();
+  atualizacaoAgendada = window.setTimeout(() => {
+    atualizacaoAgendada = 0;
+    atualizarArvore();
+  }, ATRASO_DA_ATUALIZACAO_MS);
 }
 
 export function alternarPasta(path: string): void {

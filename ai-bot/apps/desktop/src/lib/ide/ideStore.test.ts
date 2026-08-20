@@ -13,6 +13,7 @@ import {
   abrirArquivo,
   abrirVindoDaConversa,
   alternarPasta,
+  atualizarArvore,
   buscarNoProjeto,
   carregarPasta,
   editarAtivo,
@@ -111,6 +112,41 @@ describe("árvore", () => {
     soltar({ ok: true, output: "fantasma/" });
     await pendente;
     expect(useIde.getState().tree[""]).toBeUndefined();
+  });
+
+  it("atualizarArvore relista EM LUGAR: raiz e abertas agora; fechada sai do cache velho", async () => {
+    await carregarPasta("");
+    alternarPasta("src");
+    await vi.waitFor(() => {
+      expect(useIde.getState().tree["src"]).toBeDefined();
+    });
+    // Fecha src: o cache dela fica — e é exatamente ele que a gravação do bot
+    // acabou de deixar VELHO.
+    alternarPasta("src");
+    responder = (corpo) =>
+      corpo.tool === "fs.list" && String(corpo.args?.path ?? "") === ""
+        ? { ok: true, output: "src/\nREADME.md (2048 bytes)\nhello.html (64 bytes)" }
+        : respostasPadrao(corpo);
+
+    atualizarArvore();
+    await vi.waitFor(() => {
+      // Arquivos em ordem de locale — "hello" antes de "README", como o parse ordena.
+      expect(useIde.getState().tree[""]?.entradas.map((item) => item.name)).toEqual([
+        "src",
+        "hello.html",
+        "README.md"
+      ]);
+    });
+    // src estava fechada: saiu do cache — a expansão preguiçosa a relista
+    // fresca na próxima abertura, em vez de reabrir mostrando o passado.
+    expect(useIde.getState().tree["src"]).toBeUndefined();
+  });
+
+  it("atualizarArvore sem raiz carregada vira a primeira carga — não há o que preservar", async () => {
+    atualizarArvore();
+    await vi.waitFor(() => {
+      expect(useIde.getState().tree[""]?.entradas.length).toBeGreaterThan(0);
+    });
   });
 });
 

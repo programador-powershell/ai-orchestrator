@@ -638,6 +638,15 @@ func masterDelegates(session store.SessionMeta, definition specialist.Definition
 	if session.ParentID != "" || session.BotID != "" || session.Specialist != "" {
 		return false
 	}
+	return especialistaDeTrabalho(definition)
+}
+
+// especialistaDeTrabalho diz se a definição é de um bot que TRABALHA numa
+// superfície própria (IDE, schema, canvas…) em vez de só conversar. É o mesmo
+// critério em dois lugares de propósito: quem dispara a delegação do master é
+// quem precisa de pasta de projeto — a superfície de trabalho abre uma árvore
+// de arquivos, e a conversa não.
+func especialistaDeTrabalho(definition specialist.Definition) bool {
 	return definition.ID != specialist.MasterID &&
 		definition.Surface != specialist.SurfaceConversation
 }
@@ -667,6 +676,17 @@ func (s *Supervisor) masterDelegate(
 		}
 	}); err != nil {
 		return err
+	}
+
+	// O WORKSPACE AUTOMÁTICO da delegação: a pasta nasce NA RAIZ, antes de a
+	// filha existir, porque a filha herda o CWD no nascimento (store.ChildSession)
+	// — raiz e filha compartilham o MESMO projeto, é o mesmo trabalho. Sem isto
+	// a IDE da filha abria com a árvore morta e o especialista recusava gravar
+	// qualquer arquivo. O contexto congela DE NOVO porque o congelamento do
+	// começo do turno leu o meta antes de a pasta existir — e as ferramentas do
+	// delegado rodam neste mesmo contexto.
+	if s.provisionaProjeto(sessionID, turn, target, question) {
+		ctx = s.comWorkspace(ctx, sessionID, "", "")
 	}
 
 	masterActor := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}

@@ -147,6 +147,23 @@
 
 ### :pushpin: Fixes
 
+- **Escolher "Código" na clarificação DELEGAVA nada — virava o modo da conversa.**
+  A resposta do cartão de clarificação voltava como escolha explícita e a raiz era
+  sequestrada pela IDE, exatamente o que o sub-bot veio matar. Agora escolher um
+  especialista de trabalho no cartão é escolher QUEM TRABALHA: a raiz delega
+  (rota `clarified` publicada NA FILHA, confiança 1) e fica com o master. Só
+  `/mode` e conversa nascida no bot continuam convertendo.
+- **Nenhuma sessão tinha pasta de projeto — a árvore da IDE nascia morta.**
+  Agora o primeiro turno de trabalho PROVISIONA o workspace (pasta durável em
+  `projects/<slug>` dentro dos dados, slug saneado contra traversal), raiz e
+  filha compartilham o MESMO projeto (é o mesmo trabalho — é o que deixa o
+  Design ler o index.html que o Código escreveu), e a segunda delegação nunca
+  reprovisiona. "preparando a pasta do projeto…" aparece como etapa efêmera.
+- **A árvore da IDE ficou VIVA**: gravação confirmada do bot (`fs.write`/
+  `fs.patch` com ok) relista com debounce preservando pastas abertas — o
+  arquivo aparece sem clique; o erro "sem pasta de projeto" se recupera sozinho
+  quando o turno termina; recusa não relista; sem nenhum polling de relógio.
+
 - **O composer saiu de cima das telas: agora ele é RODAPÉ do palco, homogêneo
   em toda superfície — o padrão do AI-Orchestrator.** O campo flutuava em
   `position:absolute` sobre o palco e, na IDE, cobria o painel de saída, os

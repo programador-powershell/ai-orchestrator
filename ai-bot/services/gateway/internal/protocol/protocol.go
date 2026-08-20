@@ -415,6 +415,14 @@ type RouteReason string
 const (
 	// RouteExplicit — a pessoa escolheu.
 	RouteExplicit RouteReason = "explicit"
+	// RouteClarified — a pessoa respondeu à CLARIFICAÇÃO do master.
+	//
+	// Não é o mesmo gesto que o explicit: quem escreve /mode (ou abre a conversa
+	// já no bot) pediu uma conversa DAQUELE bot, e a conversa vira dele; quem
+	// clicou numa opção do cartão só disse QUEM TRABALHA — a raiz delega como se
+	// a cascata tivesse decidido com confiança 1, e esta razão é a transparência
+	// disso na conversa FILHA, sem sequestrar a raiz.
+	RouteClarified RouteReason = "clarified"
 	// RouteHeuristic — o classificador léxico decidiu sozinho, com folga.
 	RouteHeuristic RouteReason = "heuristic"
 	// RouteNeedle — o modelo local minúsculo (Needle) classificou, na máquina,

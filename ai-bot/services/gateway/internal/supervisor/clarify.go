@@ -301,9 +301,15 @@ func (s *Supervisor) Reply(parent context.Context, sessionID string, reply proto
 			// A pessoa escolheu uma prateleira: o turno ORIGINAL roda com a
 			// escolha explícita. Nada é regravado — a pergunta já está no log —
 			// e a clarificação fica desligada: pergunta respondida não repergunta.
+			//
+			// O flag `clarified` diz ao turno DE ONDE a escolha veio: a opção do
+			// cartão responde "quem trabalha", não "quero uma conversa deste bot"
+			// — então especialista de TRABALHO numa raiz sem modo desce pela
+			// delegação do master (a filha nasce, a raiz não vira a IDE), enquanto
+			// a escolha de conversa responde na própria raiz, como sempre.
 			continuation := pending.prompt
 			continuation.Specialist = chosen
-			return s.runTurn(parent, sessionID, continuation, turnOptions{})
+			return s.runTurn(parent, sessionID, continuation, turnOptions{clarified: true})
 		}
 		// Texto livre: a pessoa não escolheu, acrescentou. A resposta vira o
 		// prompt de continuação com o pedido original anexado — juntos eles dão

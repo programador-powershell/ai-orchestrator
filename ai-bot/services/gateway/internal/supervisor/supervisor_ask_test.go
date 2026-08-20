@@ -4,8 +4,10 @@
 //
 //   - o primeiro input incerto NÃO gasta modelo — vira `ask` com opções do
 //     shortlist e o turno acaba ali;
-//   - o `reply` com uma opção roda o turno ORIGINAL com a escolha explícita,
-//     sem duplicar a fala da pessoa no log;
+//   - o `reply` com uma opção roda o turno ORIGINAL com a escolha, sem duplicar
+//     a fala da pessoa no log — escolha de TRABALHO desce pela delegação do
+//     master (a filha nasce, a raiz não vira a IDE) e escolha de conversa
+//     responde na própria raiz;
 //   - a mensagem normal seguinte MATA a pendência (quem ignorou o cartão já
 //     respondeu);
 //   - o bloco `aibot:plan` interrompe o turno ANTES de qualquer ferramenta — o
@@ -18,6 +20,8 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -197,20 +201,13 @@ func TestFirstInputFallbackAsksInsteadOfGuessing(t *testing.T) {
 	}
 }
 
-// A resposta com uma OPÇÃO roda o turno original com a escolha explícita: rota
-// `explicit` para o escolhido, modo gravado, e a fala da pessoa NÃO duplica no
-// log — ela já estava lá desde o turno da pergunta.
-func TestReplyWithOptionRunsOriginalTurnWithExplicit(t *testing.T) {
-	requireNoLexicalSignal(t, noSignalText)
-	fixture := newAskFixture(t, []string{"bora nessa"}, nil)
-	ctx := askContext(t)
-
-	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: noSignalText}); err != nil {
-		t.Fatalf("Prompt: %v", err)
-	}
+// replyWithChoice responde a clarificação pendente com o rótulo do
+// especialista dado, reprovando se a opção não estiver no cartão — o cenário
+// depende de a escolha existir de verdade.
+func replyWithChoice(t *testing.T, ctx context.Context, fixture *askFixture, id string) protocol.Ask {
+	t.Helper()
 	ask := pendingAskOf(t, fixture)
-
-	choice := clarifyLabelOf("code")
+	choice := clarifyLabelOf(id)
 	found := false
 	for _, option := range ask.Options {
 		if option == choice {
@@ -220,44 +217,88 @@ func TestReplyWithOptionRunsOriginalTurnWithExplicit(t *testing.T) {
 	if !found {
 		t.Fatalf("o cenário exige a opção %q no ask, obtive: %v", choice, ask.Options)
 	}
-
 	if err := fixture.supervisor.Reply(ctx, fixture.session,
 		protocol.Reply{AskID: ask.AskID, Answer: choice}); err != nil {
 		t.Fatalf("Reply: %v", err)
 	}
+	return ask
+}
+
+// A resposta com uma opção de TRABALHO não adota o modo: escolher "Código" no
+// cartão é dizer QUEM TRABALHA, e a raiz DELEGA como se a cascata tivesse
+// decidido com confiança 1 — a filha nasce (com pai, dono e pasta de projeto
+// provisionada), a rota "clarified" sai NA FILHA e a raiz continua sem dono.
+// Era exatamente aqui que a conversa inteira virava a IDE.
+func TestReplyEscolhendoTrabalhoDelegaEmVezDeAdotar(t *testing.T) {
+	requireNoLexicalSignal(t, noSignalText)
+	fixture := newAskFixture(t, []string{"bora nessa"}, nil)
+	ctx := askContext(t)
+
+	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: noSignalText}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	ask := replyWithChoice(t, ctx, fixture, "code")
 
 	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
-		t.Errorf("esperava 1 chamada de modelo (a continuação), obtive %d", calls)
+		t.Errorf("esperava 1 chamada de modelo (o sub-turno do delegado), obtive %d", calls)
 	}
 
-	routes := envelopesByKind(t, fixture.store, fixture.session, protocol.KindRoute)
-	if len(routes) != 1 {
-		t.Fatalf("esperava 1 rota (a da continuação), obtive %d", len(routes))
+	// A FILHA: pendurada na raiz, do bot, e com pasta de projeto NÃO-vazia —
+	// a sessão nasceu sem cwd, então a pasta veio do workspace automático e
+	// mora dentro de <dataDir>/projects.
+	filhoID := store.ChildSessionID(fixture.session, "code")
+	filho, err := fixture.store.GetSession(filhoID)
+	if err != nil {
+		t.Fatalf("a escolha de trabalho não abriu a conversa filha: %v", err)
 	}
-	var route protocol.Route
-	if err := routes[0].Decode(&route); err != nil {
-		t.Fatalf("decodificar rota: %v", err)
+	if filho.ParentID != fixture.session || filho.BotID != "code" {
+		t.Errorf("a filha não é a conversa do bot pendurada na raiz: %+v", filho)
 	}
-	if route.Reason != protocol.RouteExplicit || route.Specialist != "code" {
-		t.Errorf("continuação: esperava code/explicit, obtive %q/%q", route.Specialist, route.Reason)
+	if strings.TrimSpace(filho.CWD) == "" {
+		t.Error("a filha nasceu sem pasta de projeto — a árvore da IDE abre morta")
+	}
+	projetos := filepath.Join(fixture.store.Root(), "projects") + string(filepath.Separator)
+	if !strings.HasPrefix(filho.CWD, projetos) {
+		t.Errorf("a pasta provisionada tinha de morar em %q, obtive %q", projetos, filho.CWD)
+	}
+	if info, err := os.Stat(filho.CWD); err != nil || !info.IsDir() {
+		t.Errorf("a pasta provisionada não existe no disco: %v", err)
 	}
 
+	// A rota mora NA FILHA e conta de onde a decisão veio: clarified, com a
+	// confiança de quem respondeu — a raiz não recebe rota nenhuma.
+	if rotas := envelopesByKind(t, fixture.store, fixture.session, protocol.KindRoute); len(rotas) != 0 {
+		t.Errorf("a raiz recebeu %d rota(s) — a superfície de trabalho é da filha", len(rotas))
+	}
+	rotas := envelopesByKind(t, fixture.store, filhoID, protocol.KindRoute)
+	if len(rotas) != 1 {
+		t.Fatalf("esperava 1 rota na filha, obtive %d", len(rotas))
+	}
+	var rota protocol.Route
+	if err := rotas[0].Decode(&rota); err != nil {
+		t.Fatalf("decodificar a rota da filha: %v", err)
+	}
+	if rota.Reason != protocol.RouteClarified || rota.Specialist != "code" || rota.Confidence != 1 {
+		t.Errorf("esperava code/clarified/1 na filha, obtive %q/%q/%v",
+			rota.Specialist, rota.Reason, rota.Confidence)
+	}
+
+	// A RAIZ segue orquestradora: sem dono, com o espelho da delegação e a fala
+	// original UMA vez só (ela já estava no log desde o turno da pergunta).
 	meta, err := fixture.store.GetSession(fixture.session)
 	if err != nil {
 		t.Fatalf("ler a sessão: %v", err)
 	}
-	if meta.Specialist != "code" {
-		t.Errorf("a escolha não virou o modo da conversa: obtive %q", meta.Specialist)
+	if meta.Specialist != "" {
+		t.Errorf("a escolha da clarificação virou o modo %q — o master delega, não adota", meta.Specialist)
 	}
-
+	if delegations := envelopesByKind(t, fixture.store, fixture.session, protocol.KindDelegate); len(delegations) != 2 {
+		t.Errorf("esperava o par abre/fecha da delegação na raiz, obtive %d", len(delegations))
+	}
 	users := messageTexts(t, fixture.store, fixture.session, "user")
 	if countOf(users, noSignalText) != 1 {
 		t.Errorf("a fala original tinha de aparecer UMA vez no log, apareceu %d: %v",
 			countOf(users, noSignalText), users)
-	}
-	assistants := messageTexts(t, fixture.store, fixture.session, "assistant")
-	if countOf(assistants, "bora nessa") != 1 {
-		t.Errorf("a resposta do especialista não chegou ao log: %v", assistants)
 	}
 	if replies := envelopesByKind(t, fixture.store, fixture.session, protocol.KindReply); len(replies) != 1 {
 		t.Errorf("esperava o eco do reply no log (fecha o cartão nas outras janelas), obtive %d", len(replies))
@@ -266,8 +307,36 @@ func TestReplyWithOptionRunsOriginalTurnWithExplicit(t *testing.T) {
 	// A pendência foi consumida: responder de novo é erro com motivo, não um
 	// segundo turno fantasma.
 	if err := fixture.supervisor.Reply(ctx, fixture.session,
-		protocol.Reply{AskID: ask.AskID, Answer: choice}); err == nil {
+		protocol.Reply{AskID: ask.AskID, Answer: clarifyLabelOf("code")}); err == nil {
 		t.Error("Reply repetido deveria falhar — a pendência já foi consumida")
+	}
+}
+
+// A resposta escolhendo CONVERSA responde na própria raiz: pergunta não
+// precisa de conversa lateral nem de pasta de projeto — o chat atende onde a
+// pessoa está, sem filha e sem delegação.
+func TestReplyEscolhendoConversaRespondeNaRaiz(t *testing.T) {
+	requireNoLexicalSignal(t, noSignalText)
+	fixture := newAskFixture(t, []string{"bora nessa"}, nil)
+	ctx := askContext(t)
+
+	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: noSignalText}); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	replyWithChoice(t, ctx, fixture, "chat")
+
+	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
+		t.Errorf("esperava 1 chamada de modelo (a continuação), obtive %d", calls)
+	}
+	if delegations := envelopesByKind(t, fixture.store, fixture.session, protocol.KindDelegate); len(delegations) != 0 {
+		t.Errorf("a escolha de conversa virou delegação: %d envelope(s)", len(delegations))
+	}
+	if _, err := fixture.store.GetSession(store.ChildSessionID(fixture.session, "chat")); err == nil {
+		t.Error("a escolha de conversa abriu conversa filha")
+	}
+	assistants := messageTexts(t, fixture.store, fixture.session, "assistant")
+	if countOf(assistants, "bora nessa") != 1 {
+		t.Errorf("a resposta tinha de sair NA raiz: %v", assistants)
 	}
 }
 
