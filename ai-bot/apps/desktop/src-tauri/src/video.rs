@@ -41,7 +41,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::jail::Jail;
-use crate::tools::{arg_opt_str, arg_str, project_root, resolve_inside};
+// `work_root`, e não `project_root`: as cinco operações honram o `root` que o
+// gateway injeta no despacho — num turno jaulado a entrada E a saída do vídeo
+// moram na cópia da execução, não na pasta aberta na janela.
+use crate::tools::{arg_opt_str, arg_str, resolve_inside, work_root};
 
 #[cfg(windows)]
 use crate::jail::CREATION_FLAGS;
@@ -889,7 +892,7 @@ fn export_args(input: &str, output: &str, format: ExportFormat) -> Vec<String> {
 
 pub fn probe(args: &Value) -> Result<String, String> {
     let relative = arg_str(args, "path")?;
-    let root = project_root()?;
+    let root = work_root(args)?;
     let input = resolve_input(&root, relative)?;
     let ffprobe = find_media_binary("ffprobe")?;
 
@@ -1034,7 +1037,7 @@ pub fn trim(args: &Value) -> Result<String, String> {
         ));
     }
 
-    let root = project_root()?;
+    let root = work_root(args)?;
     let input = resolve_input(&root, relative)?;
     let output = resolve_output(&root, output_relative)?;
     let ffmpeg = find_media_binary("ffmpeg")?;
@@ -1097,7 +1100,7 @@ pub fn concat(args: &Value) -> Result<String, String> {
         return Err("emendar exige pelo menos dois vídeos em \"paths\"".into());
     }
 
-    let root = project_root()?;
+    let root = work_root(args)?;
     let mut lines = Vec::with_capacity(list.len());
     for (position, item) in list.iter().enumerate() {
         let relative = item
@@ -1148,7 +1151,7 @@ pub fn text(args: &Value) -> Result<String, String> {
         .ok_or_else(|| "falta o argumento \"text\" (o texto a gravar sobre o vídeo)".to_string())?;
     let position = parse_position(arg_opt_str(args, "position"))?;
 
-    let root = project_root()?;
+    let root = work_root(args)?;
     let input = resolve_input(&root, relative)?;
     let output = resolve_output(&root, output_relative)?;
     let ffmpeg = find_media_binary("ffmpeg")?;
@@ -1196,7 +1199,7 @@ pub fn export(args: &Value) -> Result<String, String> {
         ));
     }
 
-    let root = project_root()?;
+    let root = work_root(args)?;
     let input = resolve_input(&root, relative)?;
     let output = resolve_output(&root, output_relative)?;
     let ffmpeg = find_media_binary("ffmpeg")?;
@@ -1265,6 +1268,46 @@ mod tests {
         }))
         .expect_err("deveria recusar");
         assert!(erro.contains("depois do início"), "veio: {erro}");
+    }
+
+    /// O despacho com `root` resolve ENTRADA e SAÍDA na cópia da execução, não
+    /// na pasta da janela. A prova dispensa o ffmpeg: com a entrada existindo
+    /// SÓ na cópia, chegar à recusa "a saída já existe" — que vem DEPOIS de
+    /// resolver a entrada e ANTES de procurar o binário — só é possível se os
+    /// DOIS caminhos foram resolvidos contra o root.
+    #[test]
+    fn despacho_com_root_resolve_entrada_e_saida_na_copia() {
+        let _trava = crate::tools::ROOTS_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let _zelador = crate::tools::RootsTestGuard;
+
+        let base = std::env::temp_dir().join("aibot-video-root");
+        let _ = std::fs::remove_dir_all(&base);
+        let janela = base.join("janela");
+        let copia = base.join("dados").join("staging").join("wp-1");
+        std::fs::create_dir_all(&janela).expect("criar a janela");
+        std::fs::create_dir_all(&copia).expect("criar a cópia");
+        let copia = copia.canonicalize().expect("canonicalizar a cópia");
+        crate::tools::set_project_root(Some(janela)).expect("registrar a janela");
+        crate::tools::set_execution_area(Some(base.join("dados").join("staging")))
+            .expect("registrar a área");
+
+        // Entrada e saída existem APENAS na cópia — na janela não há nada.
+        std::fs::write(copia.join("entrada.mp4"), b"conteudo nao importa").expect("entrada");
+        std::fs::write(copia.join("saida.mp4"), b"ja existe").expect("saida");
+
+        let erro = trim(&json!({
+            "path": "entrada.mp4",
+            "output": "saida.mp4",
+            "start": 0,
+            "end": 1,
+            "root": copia.to_string_lossy(),
+        }))
+        .expect_err("a saída já existe NA CÓPIA — só quem resolveu lá enxerga isso");
+        assert!(erro.contains("já existe"), "veio: {erro}");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /* ----------------------------- tempos ------------------------------ */

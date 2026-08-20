@@ -633,13 +633,16 @@ func serve() error {
 		// despacha o proc.run se este comando cai num container — dois códigos
 		// decidindo o destino divergiriam na hora que importa.
 		ProcSandboxed: toolbox.ProcSandboxed,
-		// HostHonraRoot fica DESLIGADO de propósito: o aplicativo nativo
-		// (apps/desktop/src-tauri/src/tools.rs) ainda resolve office.*/video.*
-		// contra a pasta aberta na janela e ignora o `root` que o gateway
-		// injeta no despacho. Ligar isto antes de o host obedecer o campo
-		// relaxaria a aprovação de um efeito que cai no projeto REAL, fora da
-		// cópia e fora do cartão de entrega. Quando a frente do desktop honrar
-		// o contrato, é AQUI que a jaula passa a cobrir os gestos de host.
+		// HostHonraRoot LIGADO: o aplicativo nativo desta instalação passou a
+		// obedecer o campo `root` injetado no despacho (comRootDaExecucao) —
+		// office.*, video.* e o proc.run local resolvem caminho e cwd contra o
+		// root da execução (apps/desktop/src-tauri/src/tools.rs, work_root),
+		// com a mesma disciplina de symlink/traversal do resolve_inside, e um
+		// root fora da janela/staging é recusado lá. Com o host obedecendo, a
+		// jaula pode relaxar os gestos de host (jaula.go): o efeito cai na
+		// CÓPIA, vira chip em vez de cartão por comando, e a aprovação única
+		// da entrega volta a cobrir tudo o que o turno fez.
+		HostHonraRoot: true,
 	})
 	sup.InstallCrewTools(registry)
 

@@ -38,7 +38,6 @@
  */
 
 import {
-  useCallback,
   useEffect,
   useMemo,
   useReducer,
@@ -51,7 +50,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as Xterm, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ChevronDown, ChevronUp, Eraser, RotateCw, Terminal as TerminalIcon, X } from "lucide-react";
+import { Eraser, RotateCw, Terminal as TerminalIcon, X } from "lucide-react";
 import { useApp } from "../lib/store";
 
 /* ------------------------------- transporte ------------------------------- */
@@ -344,6 +343,25 @@ const SHELLS: Array<{ id: ShellKind; label: string }> = [
   { id: "bash", label: "bash" }
 ];
 
+/**
+ * A alça imperativa que o composer cli usa para FALAR com o shell deste
+ * painel. É o mesmo caminho do teclado — gesto da PESSOA, sem portão — e a
+ * mesma regra de segurança do arquivo inteiro vale para ela: nenhum texto de
+ * MODELO pode chegar aqui. O composer cli só a chama com o que a pessoa
+ * digitou na linha `$`.
+ */
+export interface TerminalPanelApi {
+  /**
+   * Escreve no shell VIVO e devolve true; com a sessão morta (ou ainda
+   * abrindo) devolve false sem efeito — quem chamou decide se reabre e
+   * reapresenta. Não enfileirar aqui é deliberado: comando guardado num shell
+   * que morreu executaria mais tarde num prompt que a pessoa não está vendo.
+   */
+  escrever(data: string): boolean;
+  /** Reabre o shell — o mesmo gesto do botão de reiniciar da barra. */
+  reabrir(): void;
+}
+
 export interface TerminalPanelProps {
   /**
    * Pasta onde o shell abre. Sem valor, o Rust cai no diretório atual do
@@ -355,9 +373,17 @@ export interface TerminalPanelProps {
   cwd?: string;
   /** Recolhe o painel (o shell continua vivo — quem mata é desmontar). */
   aoFechar?: () => void;
+  /** Recebe a alça do painel — ver TerminalPanelApi. Nula quando desmonta. */
+  apiRef?: { current: TerminalPanelApi | null };
+  /**
+   * Avisa que a sessão ABRIU (o pty_spawn devolveu id e o shell aceita
+   * teclado). É o gancho que o composer cli usa para drenar a fila dele: o
+   * comando digitado antes de o shell existir espera lá, não aqui.
+   */
+  aoVivo?: () => void;
 }
 
-export function TerminalPanel({ cwd, aoFechar }: TerminalPanelProps): ReactNode {
+export function TerminalPanel({ cwd, aoFechar, apiRef, aoVivo }: TerminalPanelProps): ReactNode {
   // Constante durante a vida da janela; lida no render para o teste conseguir
   // exercitar os dois mundos. Os hooks abaixo rodam SEMPRE (regra dos hooks) e
   // cada efeito se desliga sozinho quando não há PTY.
@@ -378,6 +404,34 @@ export function TerminalPanel({ cwd, aoFechar }: TerminalPanelProps): ReactNode 
   const [nonce, setNonce] = useState(0);
 
   const vivo = sessao.status === "vivo";
+
+  /**
+   * O callback `aoVivo` entra por REF no efeito da sessão: identidade nova a
+   * cada render do pai não pode reabrir o shell — o efeito só reage a
+   * disponibilidade, pasta, tipo de shell e nonce, como antes.
+   */
+  const aoVivoRef = useRef(aoVivo);
+  aoVivoRef.current = aoVivo;
+
+  /** A alça do composer cli — ver TerminalPanelApi. */
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      escrever: (data: string): boolean => {
+        const id = idRef.current;
+        if (!id) return false;
+        // TECLA DE HUMANO, mesma regra do onData: nunca ferramenta do agente.
+        void invoke("pty_write", { id, data }).catch(() => {
+          // sessão morreu entre o gesto e o IPC — o pty-exit conta a história
+        });
+        return true;
+      },
+      reabrir: () => setNonce((valor) => valor + 1)
+    };
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef]);
 
   /**
    * Monta o emulador UMA vez, separado do efeito da sessão de propósito:
@@ -524,6 +578,9 @@ export function TerminalPanel({ cwd, aoFechar }: TerminalPanelProps): ReactNode 
         despachar({ type: "aberto", id });
         inscricao.amarrar(id);
         term.focus();
+        // Só agora o shell aceita teclado — é o instante que o composer cli
+        // espera para entregar o comando que ficou na fila dele.
+        aoVivoRef.current?.();
       } catch (causa) {
         if (cancelado) return;
         // SHELL_NOT_FOUND, SESSION_LIMIT, CWD_INVALID… o Rust escreve o motivo
@@ -632,77 +689,12 @@ export function TerminalPanel({ cwd, aoFechar }: TerminalPanelProps): ReactNode 
   );
 }
 
-/* ---------------------------------- dock ---------------------------------- */
-
-export interface TerminalDockProps {
-  /** Pasta onde o shell abre — ver `TerminalPanelProps.cwd`. */
-  cwd?: string;
-}
-
-/**
- * O dock acoplável: uma barra fina no pé da superfície com o botão que abre e
- * fecha o painel, mais o atalho Ctrl+` (o mesmo músculo do VS Code).
- *
- * Duas decisões de ciclo de vida, e os porquês:
- *
- * 1. O painel só MONTA na primeira abertura (`jaAbriu`). Montar junto com a
- *    superfície abriria um shell que a pessoa talvez nunca use — ConPTY custa
- *    um processo, e o teto de 8 sessões do Rust é para quem usa, não para
- *    quem só passou pela aba.
- *
- * 2. Depois de aberto, fechar ESCONDE (`hidden`), não desmonta. Desmontar
- *    mata o shell (é o contrato do painel), e perder um dev server rodando
- *    porque a pessoa recolheu o painel para ler código seria punir o gesto
- *    mais comum. O CSS reafirma `display: none` para `[hidden]` porque o
- *    atributo é só folha de estilo de agente — qualquer `display` declarado
- *    depois o vence em silêncio (armadilha já vivida na referência).
+/*
+ * O dock que morava aqui (TerminalDock) virou o `ComposerCliDock` de
+ * `shell/ComposerCli.tsx`: o pé da tela de Código agora é UMA coisa — a linha
+ * `$` do composer cli mais este painel — e as decisões de ciclo de vida do
+ * dock (montar só na primeira abertura, fechar esconde em vez de desmontar)
+ * moram lá, com os mesmos porquês.
  */
-export function TerminalDock({ cwd }: TerminalDockProps): ReactNode {
-  const [aberto, setAberto] = useState(false);
-  const [jaAbriu, setJaAbriu] = useState(false);
-
-  const alternar = useCallback(() => {
-    setAberto((valor) => !valor);
-    setJaAbriu(true);
-  }, []);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      // `code === "Backquote"` cobre o layout ABNT, onde a crase é tecla
-      // morta e `event.key` chega como "Dead" — só o `key` deixaria o atalho
-      // inerte exatamente nas estações do time.
-      if ((event.ctrlKey || event.metaKey) && (event.key === "`" || event.code === "Backquote")) {
-        event.preventDefault();
-        alternar();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [alternar]);
-
-  return (
-    <section className="term-dock" data-aberto={aberto ? "1" : "0"} aria-label="terminal interativo">
-      <header className="term-dock-bar">
-        <button
-          type="button"
-          className="term-dock-alternar"
-          onClick={alternar}
-          aria-expanded={aberto}
-          title="Abrir/fechar o terminal (Ctrl+`)"
-        >
-          <TerminalIcon aria-hidden />
-          <span>Terminal</span>
-          <kbd>Ctrl+`</kbd>
-          {aberto ? <ChevronDown aria-hidden /> : <ChevronUp aria-hidden />}
-        </button>
-      </header>
-      {jaAbriu ? (
-        <div className="term-dock-corpo" hidden={!aberto}>
-          <TerminalPanel cwd={cwd} aoFechar={() => setAberto(false)} />
-        </div>
-      ) : null}
-    </section>
-  );
-}
 
 export default TerminalPanel;

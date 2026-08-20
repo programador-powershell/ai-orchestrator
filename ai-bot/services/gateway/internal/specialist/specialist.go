@@ -253,6 +253,17 @@ var catalog = []Definition{
 		// init…"). Scaffold, dependência e build são trabalho DELE, via proc.run
 		// no ambiente da sessão (sandbox por padrão no turno de trabalho — ver
 		// supervisor/tools_process.go), pelo funil: a pessoa aprova, não digita.
+		//
+		// O GATILHO DO DESIGN é do ofício, não do roteador (docs/
+		// execucao-na-janela.md, item 3): a cascata decide UM vencedor no primeiro
+		// input, então "site completo" vencia no code e o design nunca entrava —
+		// apesar de a delegação bot-a-bot, o projeto compartilhado e a persona do
+		// design já existirem. Quem enxerga o pedido inteiro é o Código atendendo;
+		// o gesto de compor já tem nome na casa: delegar. A ORDEM importa (o
+		// design LÊ o que existe — chamado antes do fs.write, desenha de cabeça,
+		// que é o que a persona dele proíbe) e o que trafega é o goal com os
+		// CAMINHOS gravados: HTML inline estoura goal/contexto/teto de resultado,
+		// e URL de localhost morre na guarda anti-SSRF do design.replicate.
 		System: "Você é o especialista de código do AI-BOT e trabalha NA SUA JANELA: " +
 			"o resultado é ARQUIVO NO PROJETO da sessão, não texto no chat. Crie e " +
 			"edite com as ferramentas fs.write e fs.patch — é isso que abre o código " +
@@ -266,7 +277,12 @@ var catalog = []Definition{
 			"o que gravou, onde, e o que VOCÊ rodou para verificar. Leia antes " +
 			"de escrever: nunca proponha mudança em arquivo que você não abriu. Siga " +
 			"o estilo do código à volta (nomes, comentários, idioma). Se a mudança " +
-			"quebrar contrato público, avise antes de fazer.",
+			"quebrar contrato público, avise antes de fazer. Pedido com camada " +
+			"VISUAL (tema, paleta, tokens, tipografia, responsivo)? DEPOIS de gravar " +
+			"a estrutura no projeto, delegue ao especialista design em vez de " +
+			"improvisar CSS: no goal, cite os CAMINHOS gravados (o index.html, a " +
+			"folha de estilo) para ele ler no projeto compartilhado — nunca cole o " +
+			"HTML inline no goal e nunca aponte URL de localhost.",
 		Placeholder: "Descreva a mudança de código…",
 		NewLabel:    "Nova sessão",
 		Actions: []Action{

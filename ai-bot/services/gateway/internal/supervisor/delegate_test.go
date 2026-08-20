@@ -537,10 +537,12 @@ func TestDelegateAnunciaOBotAntesDeExecutarEDevolveOResultado(t *testing.T) {
 
 	// 3. A FERRAMENTA do delegado passou pelo portão — `data` não tem `proc.run`,
 	// e o portão recusou. Sem esta linha, delegar seria a forma barata de escapar
-	// da aprovação: bastaria pedir a um colega que tem a ferramenta.
-	envelopes, err := dataStore.Since(sessionID, 0, 1000)
+	// da aprovação: bastaria pedir a um colega que tem a ferramenta. O par
+	// tool.call/tool.result mora na FILHA desde a correção da janela
+	// (docs/execucao-na-janela.md, item 1): é o log dela que o replay reconstrói.
+	envelopes, err := dataStore.Since(store.ChildSessionID(sessionID, "data"), 0, 1000)
 	if err != nil {
-		t.Fatalf("ler o log: %v", err)
+		t.Fatalf("ler o log da filha: %v", err)
 	}
 	refused := false
 	for _, envelope := range envelopes {

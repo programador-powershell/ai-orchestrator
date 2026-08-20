@@ -77,6 +77,44 @@ func TestPersonaDoCodigoRodaComandoEmVezDeMandarAPessoa(t *testing.T) {
 	}
 }
 
+// O Código DELEGA o visual ao Design — o gatilho é do OFÍCIO, não do roteador
+// (docs/execucao-na-janela.md, item 3): a cascata decide UM vencedor no
+// primeiro input, então "site completo" vencia no code e o design nunca
+// entrava. O que este teste prende é o texto que carrega a regra: a ORDEM
+// (depois de gravar a estrutura — chamado antes, o design desenha de cabeça),
+// o canal (delegar ao design), o que trafega (os CAMINHOS gravados no projeto
+// compartilhado) e o que NUNCA trafega (HTML inline estoura goal/contexto;
+// URL de localhost morre na guarda anti-SSRF do design.replicate).
+func TestPersonaDoCodigoDelegaAoDesignDepoisDeGravarAEstrutura(t *testing.T) {
+	code := persona(t, "code")
+
+	for _, want := range []string{
+		"DEPOIS de gravar",
+		"delegue ao especialista design",
+		"CAMINHOS gravados",
+		"projeto compartilhado",
+	} {
+		if !strings.Contains(code.System, want) {
+			t.Errorf("a persona do código não carrega %q — sem o gatilho, o design nunca entra num pedido misto:\n%s",
+				want, code.System)
+		}
+	}
+	// As duas proibições do canal: o goal leva caminho, nunca o artefato nem
+	// uma URL local para o replicate buscar.
+	if !strings.Contains(code.System, "HTML inline") {
+		t.Errorf("a persona não proíbe o HTML inline no goal:\n%s", code.System)
+	}
+	if !strings.Contains(code.System, "localhost") {
+		t.Errorf("a persona não proíbe a URL de localhost:\n%s", code.System)
+	}
+	// A camada visual precisa estar NOMEADA: é ela que dispara o gesto.
+	for _, sinal := range []string{"paleta", "tokens", "tipografia", "responsivo"} {
+		if !strings.Contains(code.System, sinal) {
+			t.Errorf("a persona não nomeia o sinal visual %q que dispara a delegação:\n%s", sinal, code.System)
+		}
+	}
+}
+
 // O Design LÊ o projeto (o index.html que o Código gravou mora no mesmo cwd) e
 // a permissão cobre a leitura — fs.read E fs.list, porque sem listar a pasta
 // ele não acha o arquivo que a persona manda ler.

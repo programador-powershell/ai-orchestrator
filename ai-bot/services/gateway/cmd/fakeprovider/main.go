@@ -21,7 +21,7 @@
 //
 //	{"providers":[{"id":"fake","kind":"local","label":"Mentira",
 //	  "baseURL":"http://127.0.0.1:8790/v1","enabled":true}],
-//	 "models":[{"id":"fake-1","provider":"fake","label":"Fake","context":32000,
+//	 "models":[{"id":"fake-1","provider":"fake","providerId":"fake","label":"Fake","context":32000,
 //	  "skills":["chat","code","reasoning","tools","long-context"]}]}
 //
 // O kind é `local` — os valores aceitos são `openai`, `anthropic` e `local`, e

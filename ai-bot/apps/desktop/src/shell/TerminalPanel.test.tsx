@@ -13,8 +13,11 @@
  *   4. A fiação inteira no app: inscrição ANTES do spawn, tecla → `pty_write`,
  *      saída → `term.write`, desmontar → `pty_kill`. E depois do exit a tecla
  *      cai no chão — digitar num shell morto não vai a lugar nenhum.
- *   5. O dock abre por Ctrl+` e por botão, e fechar ESCONDE em vez de
- *      desmontar (desmontar mataria o dev server que a pessoa deixou rodando).
+ *   5. A alça do composer cli (`TerminalPanelApi`): escrever no shell vivo é o
+ *      mesmo caminho do teclado; com a sessão morta devolve false SEM efeito —
+ *      comando de gente não pode executar mais tarde num prompt invisível.
+ *      (Os testes do dock em si moram em ComposerCli.test.tsx, que é onde o
+ *      dock mora agora.)
  *
  * Aqui não há @testing-library: a montagem é `react-dom/client` cru com o
  * `act` do React 19, como nos outros testes deste app — cada dependência
@@ -113,11 +116,11 @@ vi.mock("@xterm/xterm", () => ({ Terminal: mocks.XtermFake }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: mocks.FitFake }));
 
 import {
-  TerminalDock,
   TerminalPanel,
   escutarPendente,
   reduzirSessao,
-  sessaoInicial
+  sessaoInicial,
+  type TerminalPanelApi
 } from "./TerminalPanel";
 
 /* ------------------------------- utilidades ------------------------------- */
@@ -325,54 +328,37 @@ describe("TerminalPanel no aplicativo", () => {
   });
 });
 
-/* ---------------------------------- dock ----------------------------------- */
+/* ------------------------- alça do composer cli ---------------------------- */
 
-describe("TerminalDock", () => {
-  function corpo(): HTMLElement | null {
-    return container.querySelector<HTMLElement>(".term-dock-corpo");
-  }
-
-  it("abre por Ctrl+` e por botão; fechar esconde em vez de desmontar", async () => {
+describe("TerminalPanelApi", () => {
+  it("escrever entrega no shell vivo e devolve false (sem efeito) no morto", async () => {
+    fingirTauri(true);
+    const apiRef: { current: TerminalPanelApi | null } = { current: null };
     await act(async () => {
-      root.render(<TerminalDock />);
+      root.render(<TerminalPanel apiRef={apiRef} />);
     });
+    await escoar();
 
-    // Fechado de nascença: montar o painel junto com a superfície abriria um
-    // shell que a pessoa talvez nunca use.
-    expect(corpo()).toBeNull();
+    // Shell vivo: a alça é o MESMO caminho do teclado da pessoa.
+    expect(apiRef.current?.escrever("pnpm test\r")).toBe(true);
+    expect(chamadas("pty_write")[0]?.args).toMatchObject({ id: "pty-42", data: "pnpm test\r" });
 
-    // Ctrl+` abre (`code` cobre o layout ABNT, onde a crase é tecla morta).
+    // Shell morto: false SEM pty_write — comando de gente não pode ficar
+    // guardado para executar depois num prompt que ninguém está vendo.
     act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "`", code: "Backquote", ctrlKey: true }));
+      mocks.emitir("pty-exit", { id: "pty-42", exitCode: 0, reason: "exited" });
     });
-    expect(corpo()).not.toBeNull();
-    expect(corpo()?.hidden).toBe(false);
-
-    // Ctrl+` de novo: ESCONDE, não desmonta — desmontar mataria o shell (e o
-    // dev server que estivesse rodando nele).
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "`", code: "Backquote", ctrlKey: true }));
-    });
-    expect(corpo()).not.toBeNull();
-    expect(corpo()?.hidden).toBe(true);
-
-    // O botão da barra faz o mesmo caminho.
-    const botao = container.querySelector<HTMLButtonElement>(".term-dock-alternar");
-    expect(botao?.getAttribute("aria-expanded")).toBe("false");
-    act(() => {
-      botao?.click();
-    });
-    expect(botao?.getAttribute("aria-expanded")).toBe("true");
-    expect(corpo()?.hidden).toBe(false);
+    expect(apiRef.current?.escrever("echo fantasma\r")).toBe(false);
+    expect(chamadas("pty_write")).toHaveLength(1);
   });
 
-  it("sem Ctrl a crase é só uma tecla: digitar ` num campo não abre o painel", async () => {
+  it("aoVivo dispara quando a sessão abre — é o gancho que drena a fila do cli", async () => {
+    fingirTauri(true);
+    const vivos: string[] = [];
     await act(async () => {
-      root.render(<TerminalDock />);
+      root.render(<TerminalPanel aoVivo={() => vivos.push("vivo")} />);
     });
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "`", code: "Backquote" }));
-    });
-    expect(corpo()).toBeNull();
+    await escoar();
+    expect(vivos).toEqual(["vivo"]);
   });
 });

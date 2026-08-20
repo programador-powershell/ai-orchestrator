@@ -148,6 +148,64 @@ function CodeBlock({ code, lang }: { code: string; lang: string }): ReactNode {
   );
 }
 
+/* --------------------------- cercas de protocolo -------------------------- */
+
+/**
+ * As cercas de MÁQUINA do protocolo do gateway. O modelo emite
+ * ```aibot:tool / ```aibot:delegate para chamar ferramenta e delegar; o
+ * gateway as tira das mensagens duráveis (stripBlocks em delegate.go), mas os
+ * DELTAS chegam crus — o texto streama token a token, cerca inclusa. Sem este
+ * filtro do lado de cá, a bolha ao vivo mostrava o JSON do protocolo como
+ * bloco de código: na raiz quando o modelo só chamou ferramenta (a mensagem
+ * final com `visible == ""` nunca vem substituir o acumulado) e na janela da
+ * filha durante o sub-turno delegado.
+ *
+ * `aibot:plan` fica FORA de propósito, espelhando o stripBlocks do gateway: o
+ * plano é para a pessoa ler e aprovar — escondê-lo tiraria da tela exatamente
+ * o que o cartão de aprovação pede para julgar.
+ */
+export function ehCercaDeProtocolo(lang: string): boolean {
+  // Sensível a caixa DE PROPÓSITO, espelhando o parser do gateway: uma cerca
+  // grafada errado (AIBOT:TOOL) nunca executa nem é limpa lá — escondê-la
+  // aqui mascararia exatamente o erro do modelo que a pessoa precisa ver.
+  const nome = lang.trim();
+  return nome === "aibot:tool" || nome === "aibot:delegate";
+}
+
+/**
+ * O texto SEM os blocos de protocolo — o gêmeo textual do filtro do parser,
+ * para quem espelha texto fora do markdown (o composer cli, por exemplo).
+ * Cerca ABERTA no fim (streaming interrompido, resposta truncada) também cai:
+ * meio JSON de protocolo não é menos máquina que o JSON inteiro.
+ */
+export function semCercasDeProtocolo(text: string): string {
+  const lines = normalize(text).split("\n");
+  const out: string[] = [];
+  let dentroDeProtocolo = false;
+  let dentroDeCerca = false;
+  for (const line of lines) {
+    if (dentroDeProtocolo) {
+      if (RE_FENCE_END.test(line)) dentroDeProtocolo = false;
+      continue;
+    }
+    if (dentroDeCerca) {
+      if (RE_FENCE_END.test(line)) dentroDeCerca = false;
+      out.push(line);
+      continue;
+    }
+    const fence = RE_FENCE.exec(line);
+    if (fence) {
+      if (ehCercaDeProtocolo(fence[2] ?? "")) {
+        dentroDeProtocolo = true;
+        continue;
+      }
+      dentroDeCerca = true;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /* --------------------------------- blocos -------------------------------- */
 
 const RE_FENCE = /^\s*(`{3,})(.*)$/;
@@ -251,9 +309,10 @@ function normalize(text: string): string {
  * chaves se repetem e o React remonta os blocos (perdendo, entre outras coisas,
  * o "copiado" do bloco de código) a cada token.
  *
- * Invariante que o parse incremental depende: cada volta do laço empurra
- * EXATAMENTE um nó e incrementa a chave uma vez, então `nodes.length` é quantas
- * chaves o trecho consumiu.
+ * Invariante que o parse incremental depende: nó empurrado e chave andam
+ * SEMPRE juntos (um push, um incremento), então `nodes.length` é quantas
+ * chaves o trecho consumiu. A cerca de protocolo respeita a invariante pelo
+ * outro lado: não empurra nó E não anda a chave.
  */
 function parseBlocks(lines: string[], firstKey: number): ReactNode[] {
   const blocks: ReactNode[] = [];
@@ -276,6 +335,12 @@ function parseBlocks(lines: string[], firstKey: number): ReactNode[] {
       // chegando por streaming — renderiza o que há em vez de esperar, senão o
       // bloco só aparece quando a resposta termina.
       i += 1;
+      // Cerca de PROTOCOLO não vira bloco nenhum: é máquina, não fala — o
+      // registro visível da chamada é o ToolStrip/popup, alimentado pelos
+      // envelopes. Pular sem incrementar a chave mantém a invariante do parse
+      // incremental: `blocks.length` continua sendo quantas chaves o trecho
+      // consumiu.
+      if (ehCercaDeProtocolo(lang)) continue;
       blocks.push(<CodeBlock key={`b${k}`} code={body.join("\n")} lang={lang} />);
       k += 1;
       continue;
@@ -563,13 +628,17 @@ export function createMarkdownStream(): MarkdownStream {
   };
 }
 
-/** O último bloco cercado de um texto — o editor usa para "aplicar sugestão". */
+/**
+ * O último bloco cercado de um texto — o editor usa para "aplicar sugestão".
+ * Cerca de protocolo não conta: "aplicar" um `aibot:tool` colaria o JSON de
+ * máquina no buffer da pessoa como se fosse a sugestão de código.
+ */
 export function lastFencedBlock(text: string): string {
-  const re = /```[^\n]*\n([\s\S]*?)```/g;
+  const re = /```([^\n]*)\n([\s\S]*?)```/g;
   let found = "";
   let match = re.exec(text);
   while (match !== null) {
-    found = match[1] ?? "";
+    if (!ehCercaDeProtocolo(match[1] ?? "")) found = match[2] ?? "";
     match = re.exec(text);
   }
   return found;

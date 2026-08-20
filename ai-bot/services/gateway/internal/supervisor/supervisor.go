@@ -461,7 +461,7 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 
 	var totalUsage modelrouter.Usage
 	for round := 0; round < maxToolRounds; round++ {
-		s.thinking(sessionID, turn, actor, thinkingLabel(definition, round), false)
+		s.thinking(sessionID, turn, actor, thinkingLabel(definition, round, maxToolRounds), false)
 
 		answer, usage, err := s.runModel(ctx, sessionID, turn, actor, entry.Model.ID, messages)
 		totalUsage.PromptTokens += usage.PromptTokens
@@ -1203,7 +1203,9 @@ func (s *Supervisor) askApproval(
 		s.mu.Unlock()
 	}()
 
-	_ = s.emit(sessionID, turn, protocol.KindApprovalRequest, actor, protocol.ApprovalRequest{
+	// Espelhado (ver emitEspelhado): num sub-turno delegado o cartão sai na
+	// filha E na raiz, com o MESMO callID — a pessoa decide de onde estiver.
+	s.emitEspelhado(ctx, sessionID, turn, protocol.KindApprovalRequest, actor, protocol.ApprovalRequest{
 		CallID:  callID,
 		Tool:    call.Tool,
 		Risk:    risk,
@@ -1224,8 +1226,9 @@ func (s *Supervisor) askApproval(
 		// era aprovar tudo" ou "havia concessão anterior" — sumia justamente o
 		// registro do último degrau antes do efeito colateral. O verbo já existia no
 		// protocolo e no reducer da tela, e não tinha emissor nenhum no gateway; é
-		// também por ele que uma segunda janela fecha o cartão.
-		_ = s.emit(sessionID, turn, protocol.KindApprovalDecision,
+		// também por ele que uma segunda janela fecha o cartão — inclusive a
+		// raiz-espelho do sub-turno, que recebe o mesmo eco.
+		s.emitEspelhado(ctx, sessionID, turn, protocol.KindApprovalDecision,
 			protocol.Actor{Kind: protocol.ActorUser}, protocol.ApprovalDecision{
 				CallID:  callID,
 				Allow:   decision.Allow,
@@ -1282,6 +1285,25 @@ func (s *Supervisor) emit(sessionID, turn string, kind protocol.Kind, from proto
 	}
 	_, err := s.deps.Bus.Publish(sessionID, envelope)
 	return err
+}
+
+// emitEspelhado emite o envelope na sessão do trabalho E na raiz-espelho do
+// sub-turno, quando ela existe e é outra sessão. É o funil das APROVAÇÕES do
+// sub-turno delegado (ver espelhoDeAprovacao em delegate.go): o cliente assina
+// UMA sessão por vez, o cartão precisa abrir onde a pessoa está (a raiz) e o
+// log durável precisa ficar onde o trabalho é (a filha). O MESMO payload nos
+// dois — portanto o MESMO callID: o Decide() é por callID, não por sessão, o
+// redutor do cliente deduplica por callId e o eco da decisão fecha o cartão nas
+// duas janelas. Um callID diferente por sessão deixaria um dos cartões
+// invisível para o funil de decisão.
+func (s *Supervisor) emitEspelhado(
+	ctx context.Context, sessionID, turn string,
+	kind protocol.Kind, from protocol.Actor, payload any,
+) {
+	_ = s.emit(sessionID, turn, kind, from, payload)
+	if raiz, ok := espelhoDeAprovacao(ctx); ok && raiz != sessionID {
+		_ = s.emit(raiz, turn, kind, from, payload)
+	}
 }
 
 func (s *Supervisor) toolResult(
@@ -1611,7 +1633,10 @@ func (s *Supervisor) askEntrega(
 		s.mu.Unlock()
 	}()
 
-	_ = s.emit(sessionID, turn, protocol.KindApprovalRequest, actor, protocol.ApprovalRequest{
+	// O cartão de ENTREGA segue a mesma regra do de ferramenta: num sub-turno
+	// delegado ele sai na filha e é espelhado na raiz com o MESMO callID — a
+	// promoção pertence ao turno, o pedido aparece onde a pessoa está.
+	s.emitEspelhado(ctx, sessionID, turn, protocol.KindApprovalRequest, actor, protocol.ApprovalRequest{
 		CallID: callID,
 		Tool:   entregaTool,
 		Risk:   protocol.RiskWrite,
@@ -1632,7 +1657,7 @@ func (s *Supervisor) askEntrega(
 	case decision := <-channel:
 		// Durável ANTES do efeito, igual à aprovação de ferramenta: é o registro
 		// do último degrau antes de o projeto mudar (ou de a entrega morrer).
-		_ = s.emit(sessionID, turn, protocol.KindApprovalDecision,
+		s.emitEspelhado(ctx, sessionID, turn, protocol.KindApprovalDecision,
 			protocol.Actor{Kind: protocol.ActorUser}, protocol.ApprovalDecision{
 				CallID:  callID,
 				Allow:   decision.Allow,
@@ -1771,9 +1796,14 @@ func summarize(tool string, args json.RawMessage) string {
 	return tool
 }
 
-func thinkingLabel(definition specialist.Definition, round int) string {
+// thinkingLabel é o nome do orbe por rodada. A rodada 0 fala do OFÍCIO; da
+// segunda em diante o rótulo CONTA — "rodada 3/8 · rodando ferramentas" — em
+// vez do "trabalhando" eterno que colapsava um turno longo num pulso mudo. É o
+// onStage nomeado do fusion do original adaptado ao orbe; com o sub-turno
+// emitindo na filha, o pulso bate na janela de quem clicou na linha.
+func thinkingLabel(definition specialist.Definition, round, teto int) string {
 	if round > 0 {
-		return "trabalhando"
+		return fmt.Sprintf("rodada %d/%d · rodando ferramentas", round+1, teto)
 	}
 	switch definition.Surface {
 	case specialist.SurfaceEditor:

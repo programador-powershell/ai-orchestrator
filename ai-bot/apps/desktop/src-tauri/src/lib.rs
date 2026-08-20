@@ -396,6 +396,32 @@ pub fn run() {
                 );
             }
 
+            // --- a área de execução do gateway ---
+            //
+            // O gateway injeta um campo `root` em todo despacho de ferramenta
+            // de máquina (`comRootDaExecucao`, no Go): num turno com sandbox,
+            // office/video/proc devem agir na CÓPIA em `<dataDir>/staging/`,
+            // não na pasta da janela. O host só honra root que cai em área que
+            // ele reconhece (tools::work_root), e esta chamada é o que lhe
+            // ensina onde o staging mora — a MESMA pasta de dados passada ao
+            // `aibotd` no spawn, então os dois lados concordam por construção.
+            //
+            // Falhar aqui NÃO aborta o boot: sem a área registrada, um root de
+            // staging é recusado com motivo (o lado fechado) e o resto do app
+            // segue de pé.
+            match gateway::data_dir(&handle) {
+                Ok(data_dir) => {
+                    if let Err(error) = tools::set_execution_area(Some(data_dir.join("staging"))) {
+                        eprintln!(
+                            "[aibot] a área de execução do gateway não pôde ser registrada: {error}"
+                        );
+                    }
+                }
+                Err(error) => eprintln!(
+                    "[aibot] a área de execução do gateway não pôde ser descoberta: {error}"
+                ),
+            }
+
             // O segundo gancho — o abridor de terminal — vivia aqui e saiu com o
             // `term.open`. Ele volta junto com a ferramenta, no dia em que a
             // interface tiver painel de terminal: ver o bloco correspondente em

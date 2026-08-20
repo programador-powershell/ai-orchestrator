@@ -104,33 +104,40 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.6
+### :up: V.2.7
 ### :warning: Latest Changes
 
-- **Sandbox UNIVERSAL e a aprovação movida para a ENTREGA — a decisão do dono
-  virou o funil.** Todo turno de modelo com projeto trabalha na cópia
-  (qualquer especialista — office, design, dados e vídeo incluídos; a cópia de
-  ida exclui reproduzíveis, então até projeto com node_modules cabe na jaula).
-  - **Gesto na jaula não pergunta**: fs.write/fs.patch na cópia e proc.run no
-    container executam direto, com o chip "no sandbox: …" e log integral. A
-    lista do que NUNCA relaxa é fechada e consultada antes de tudo: segredo,
-    webhook, MCP, memória, agendamento, worktree — cofre não é sandboxável.
-  - **Você aprova UMA vez, na entrega**: cartão "entregar ao projeto" com
-    contagens e a lista aberta de caminhos (a lista é o objeto da decisão).
-    Permitir promove antes do done; recusar (ou o prazo de 10 minutos)
-    DESCARTA — projeto intocado, turno fecha honesto. Sem mudança, promove em
-    silêncio. A Equipe entrega no MESMO cartão único do turno.
-  - **Fora da jaula nada relaxa**: Local fixado, turno degradado por teto e o
-    Ctrl+S da interface continuam no modelo por-comando.
-  - **Defesa em profundidade dos gestos de HOST** (conserto do conferente):
-    office/vídeo/proc local só relaxam quando o aplicativo nativo declara
-    honrar o `root` injetado (`HostHonraRoot`, desligado até o desktop ler o
-    campo) — sem a declaração, host continua pedindo por comando. Sem isso, um
-    office.edit jaulado escreveria fora da cópia no produto real.
-  - **Provado no fio real**: "crie um site em next" → scaffold + gravações com
-    ZERO cartões no meio (asserto de ausência), chips no SSE, UM cartão
-    "5 criado(s)" sem node_modules, projeto intocado durante o turno; permitir
-    entrega os 5; recusar deixa 0 entradas.
+- **Cada bot executa NA PRÓPRIA JANELA — o contrato tirado da releitura do
+  AI-Orchestrator original virou código** (docs/execucao-na-janela.md):
+  - **O sub-turno delegado vive no log da FILHA**: ferramentas, etapas e a
+    resposta aparecem na janela do bot ao vivo e o replay dela reconstrói tudo;
+    a raiz guarda o espelho-resumo (o par de delegação que alimenta o popup, a
+    barra e a memória do dono) — nenhum JSON de cerca aparece como texto, em
+    janela nenhuma. **Aprovações são espelhadas** na raiz com o MESMO callID:
+    quem olha a raiz decide o trabalho da filha, e o cartão fecha nas duas.
+  - **O teto que queimava trabalho morreu**: 8 rodadas no sub-turno do master
+    (4 continuam no bot-a-bot, que é chamada pontual) e, no esgotamento, uma
+    chamada de RELATO + **entrega PARCIAL honesta** quando houve efeito real —
+    16 gestos bons nunca mais viram fogueira; sem efeito, falha com motivo
+    verdadeiro ("8 rodadas, última ferramenta fs.write"), nunca a frase
+    genérica. O portão de narração vale no relato: encenação não lava falha.
+    O orbe agora conta: "rodada 3/8 · rodando ferramentas".
+  - **O Código chama o Design**: pedido com camada visual → depois de gravar a
+    estrutura, delega ao Design citando os CAMINHOS gravados no projeto
+    compartilhado (nunca HTML inline nem localhost) — o "site completo" vira
+    dois bots aninhados sob a mesma raiz.
+  - **Composer CLI na janela do Código**, portado do original: a linha `$` com
+    os três gestos — comando vai ao PTY do teclado (gesto humano; comando
+    digitado antes do shell existir espera na fila, nunca cai no chão),
+    caminho existente abre no editor, `ai <pergunta>` fala com o modelo e
+    espelha a resposta no terminal quando o turno fecha.
+  - **O host honra o `root` injetado** (office/vídeo/proc local agem NA CÓPIA,
+    com o mesmo confinamento anti-traversal do project_root) e o interruptor
+    `HostHonraRoot` ligou — a jaula dos gestos de host, que a onda anterior
+    deixou armada e desligada, agora cobre o produto real.
+  - **Provado no fio com 50 asserções**: "crie um site completo em next" →
+    ferramentas no log da filha, cartão de entrega espelhado, parcial
+    promovido no esgotamento, Design delegado sob a mesma raiz.
 
 ### :pushpin: Fixes
 

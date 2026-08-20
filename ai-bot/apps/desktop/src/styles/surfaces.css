@@ -2699,7 +2699,8 @@ button.token-swatch {
 }
 
 /* ==========================================================================
-   Terminal da PESSOA (shell/TerminalPanel.tsx) — dock + painel xterm.js
+   Terminal da PESSOA (shell/TerminalPanel.tsx) + composer cli
+   (shell/ComposerCli.tsx) — o dock único do pé da tela de Código
 
    A MOLDURA (barra, botões, faixa de erro) usa os tokens do app; as 16 cores
    ANSI de dentro do emulador NÃO — quem escreve `\e[31m` está pedindo a cor 1
@@ -2718,11 +2719,6 @@ button.token-swatch {
   min-height: 0;
   border-top: 1px solid var(--line);
   background: var(--panel);
-}
-
-.term-dock-bar {
-  display: flex;
-  align-items: center;
 }
 
 .term-dock-alternar {
@@ -2882,6 +2878,89 @@ button.token-swatch {
 .term-panel--fora svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
 .term-panel--fora strong { color: var(--ink); }
 .term-panel--fora p { margin: 4px 0 0; }
+
+/* --------------------------- composer cli (dock) --------------------------
+   O pé da tela de Código é UMA coisa: cabeçalho do cli, o painel xterm
+   recolhível no meio e a linha `$` embaixo (shell/ComposerCli.tsx). O pane é
+   ESCURO nos dois temas de propósito — é o visual do glass-terminal do
+   original, e linha de comando sobre fundo claro leria como campo de busca,
+   não como terminal. As cores são fixas (não tokens) pelo mesmo motivo da
+   paleta ANSI do painel: o pane não acompanha o tema. */
+
+.cli-cabecalho {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cli-titulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.02em;
+}
+.cli-titulo svg { width: 12px; height: 12px; }
+
+/* A frase do cabeçalho do original, com elipse quando a coluna aperta. */
+.cli-nota {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  font-size: var(--fs-eyebrow);
+}
+
+.cli-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #101418;
+  color: #c9d1d9;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  cursor: text;
+}
+
+/* Histórico rolável, curto: o registro comprido é o scrollback do xterm — o
+   pane guarda os gestos e os espelhos, não a saída dos comandos. */
+.cli-historico {
+  margin: 0;
+  padding: 8px 12px 2px;
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  scrollbar-width: thin;
+  scrollbar-color: #3b4048 transparent;
+}
+.cli-linha { display: block; }
+
+.cli-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px;
+}
+.cli-prompt-sinal { color: #67d38a; }
+.cli-entrada {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  outline: none;
+  caret-color: #67d38a;
+}
+.cli-entrada::placeholder { color: #6e7681; }
 
 /* ----------------------- IDE do especialista Código ---------------------- */
 /* A árvore do FilesRail, as abas com fechar, os chips de salvamento e os

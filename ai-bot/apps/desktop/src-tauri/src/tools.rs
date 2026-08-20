@@ -126,14 +126,17 @@ video.text e video.export."
 
 /* ---------------------------- raiz do projeto ---------------------------- */
 
-/// Pasta de projeto da janela. Todo caminho de arquivo é confinado a ela.
+/// Pasta de projeto da janela. É a raiz PADRÃO de todo caminho de arquivo.
 ///
-/// Fica em estado de módulo porque o gateway NÃO manda a raiz junto do
-/// `tool.call` — ele manda `{path}` relativo, e quem sabe qual pasta a pessoa
-/// abriu é o aplicativo. Estado global assusta com razão; a alternativa era
-/// carregar a raiz por dentro de sete assinaturas até chegar em quem abre o
-/// arquivo, e aí o dia em que alguém esquecer de passar vira "abre em qualquer
-/// lugar" em vez de erro de compilação.
+/// Fica em estado de módulo porque quem sabe qual pasta a pessoa abriu é o
+/// aplicativo — o gateway manda `{path}` relativo. Estado global assusta com
+/// razão; a alternativa era carregar a raiz por dentro de sete assinaturas até
+/// chegar em quem abre o arquivo, e aí o dia em que alguém esquecer de passar
+/// vira "abre em qualquer lugar" em vez de erro de compilação.
+///
+/// PADRÃO, e não única: quando o turno roda numa execução congelada com outra
+/// pasta (a cópia da jaula), o gateway injeta um campo `root` no despacho
+/// (`comRootDaExecucao`, no Go) e quem decide entre os dois é `work_root`.
 static PROJECT_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Define (ou limpa) a pasta de projeto.
@@ -171,15 +174,169 @@ pub fn set_project_root(root: Option<PathBuf>) -> Result<(), String> {
 /// Recusar é melhor que cair na pasta do processo: a pasta do processo é onde
 /// mora o executável do AI-BOT, e um `proc.run` ali roda dentro da instalação
 /// do aplicativo — o lugar mais errado possível.
-///
-/// `pub(crate)` porque `video.rs` confina caminhos à MESMA raiz — uma segunda
-/// cópia deste estado seria duas verdades sobre qual pasta está aberta.
 pub(crate) fn project_root() -> Result<PathBuf, String> {
     let slot = PROJECT_ROOT
         .lock()
         .map_err(|_| "o estado da pasta de projeto ficou inconsistente".to_string())?;
     slot.clone()
         .ok_or_else(|| "esta sessão não tem pasta de projeto aberta — escolha a pasta do projeto antes de usar ferramentas que tocam arquivo ou rodam comando".to_string())
+}
+
+/* --------------------------- raiz da EXECUÇÃO ----------------------------- */
+
+/// Área de staging do gateway (`<dataDir>/staging`) — o ÚNICO lugar fora da
+/// pasta da janela onde um `root` de execução pode viver. Preenchida no boot
+/// pelo `lib.rs`, com a MESMA pasta de dados que ele passa ao `aibotd` no
+/// spawn: os dois lados concordam sobre onde a cópia mora por construção, não
+/// por configuração. Vazia = root de staging é recusado com motivo, que é o
+/// lado fechado.
+static EXECUTION_AREA: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Ensina (ou esquece) onde fica a área de staging do gateway.
+///
+/// A pasta `staging` em si pode ainda NÃO existir no boot — o gateway a cria
+/// no primeiro turno jaulado. Por isso a normalização canonicaliza o que der:
+/// a pasta inteira quando ela existe, senão a pasta-mãe (a de dados, que o
+/// boot já criou) recomposta com o nome. Sem canonicalizar, a comparação de
+/// prefixo em `work_root` nunca casaria no Windows — o caminho canônico ganha
+/// o prefixo `\\?\` e um `starts_with` entre canônico e cru é sempre falso.
+pub fn set_execution_area(dir: Option<PathBuf>) -> Result<(), String> {
+    let resolved = match dir {
+        Some(path) => Some(normalize_expected_dir(&path)?),
+        None => None,
+    };
+    let mut slot = EXECUTION_AREA
+        .lock()
+        .map_err(|_| "o estado da área de execução ficou inconsistente".to_string())?;
+    *slot = resolved;
+    Ok(())
+}
+
+/// Canonicaliza um diretório que TEM O DIREITO de ainda não existir.
+fn normalize_expected_dir(path: &Path) -> Result<PathBuf, String> {
+    if let Ok(canonical) = path.canonicalize() {
+        return Ok(canonical);
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("área de execução sem pasta-mãe: {}", path.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("área de execução sem nome: {}", path.display()))?;
+    let canonical_parent = parent.canonicalize().map_err(|error| {
+        format!(
+            "a pasta-mãe da área de execução não existe ({}): {error}",
+            parent.display()
+        )
+    })?;
+    Ok(canonical_parent.join(name))
+}
+
+/// Raiz de trabalho DESTA chamada: honra o campo `root` que o gateway injeta
+/// em todo despacho de ferramenta de host (`comRootDaExecucao`, tools.go do
+/// Go) — é a execução congelada dizendo ONDE o efeito deve cair: a cópia da
+/// jaula num turno com staging, a pasta da sessão numa execução inplace. Sem
+/// o campo, vale a pasta aberta na janela, como sempre valeu.
+///
+/// Vale para LEITURA também (office.open, pdf.extract, video.probe): o modelo
+/// que gravou um documento na cópia precisa reler o que gravou — ler da pasta
+/// real devolveria um passado que o turno já reescreveu.
+///
+/// O root recebido NÃO é aceito de fé. O campo viaja nos argumentos da
+/// ferramenta, e argumento é território do modelo: quando a sessão não tem
+/// execução congelada o gateway repassa os args intocados, e um "root"
+/// inventado ali seria fuga do confinamento por argumento — exatamente a
+/// porta lateral que a jaula do gateway fecha do lado dele. Por isso o root
+/// só é honrado quando cai numa área que ESTA máquina reconhece como de
+/// execução — ver `resolve_requested_root`.
+pub(crate) fn work_root(args: &Value) -> Result<PathBuf, String> {
+    let Some(requested) = arg_opt_str(args, "root") else {
+        return project_root();
+    };
+    let window = PROJECT_ROOT
+        .lock()
+        .map_err(|_| "o estado da pasta de projeto ficou inconsistente".to_string())?
+        .clone();
+    let area = EXECUTION_AREA
+        .lock()
+        .map_err(|_| "o estado da área de execução ficou inconsistente".to_string())?
+        .clone();
+    resolve_requested_root(requested, window.as_deref(), area.as_deref())
+}
+
+/// Valida um `root` pedido no despacho e devolve o caminho REAL dele.
+///
+/// A disciplina é a do `resolve_inside`, adaptada a um caminho que É absoluto
+/// por natureza: a canonicalização resolve `..` e QUALQUER symlink no meio
+/// ANTES da comparação — um atalho dentro do staging apontando para fora do
+/// disco reprova no prefixo porque quem é comparado é o ALVO, não o atalho.
+/// As áreas aceitas são duas, e só duas:
+///
+/// - a pasta do projeto da janela (ou dentro dela) — a execução inplace, que
+///   já é o confinamento de hoje;
+/// - DENTRO da área de staging do gateway — a cópia da jaula. A base em si é
+///   recusada: o gateway sempre manda `<staging>/<plano>`, e aceitar a base
+///   deixaria um root forjado agir sobre as cópias de todos os planos.
+///
+/// Separada de `work_root` (que lê o estado global) para ser testável em
+/// paralelo: os testes passam as áreas por parâmetro e não disputam o global.
+fn resolve_requested_root(
+    requested: &str,
+    window_root: Option<&Path>,
+    execution_area: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let path = Path::new(requested);
+    if !path.is_absolute() {
+        return Err(format!(
+            "o root da execução precisa ser um caminho absoluto (o gateway manda o caminho completo da cópia): {requested:?}"
+        ));
+    }
+    let canonical = path.canonicalize().map_err(|error| {
+        format!("o root da execução não existe nesta máquina ({requested}): {error}")
+    })?;
+    if !canonical.is_dir() {
+        return Err(format!(
+            "o root da execução precisa ser um diretório: {requested:?}"
+        ));
+    }
+    if let Some(window) = window_root {
+        // `set_project_root` guarda o canônico, então aqui o prefixo compara
+        // canônico com canônico.
+        if canonical.starts_with(window) {
+            return Ok(canonical);
+        }
+    }
+    if let Some(area) = execution_area {
+        if canonical.starts_with(area) && canonical.as_path() != area {
+            return Ok(canonical);
+        }
+    }
+    Err(format!(
+        "o root da execução ({requested}) fica fora das áreas que esta máquina reconhece \
+(a pasta do projeto da janela e o staging do gateway) — um root de fora seria fuga do confinamento por argumento"
+    ))
+}
+
+/// Trava dos testes que mexem nas raízes GLOBAIS (a pasta da janela e a área
+/// de execução): o cargo roda os testes do crate em paralelo no MESMO
+/// processo, e dois testes trocando o mesmo estado global viram flake
+/// intermitente. Quem mexe nas raízes segura a trava e cria o guard abaixo.
+/// `pub(crate)` porque os testes de `video.rs` pagam o mesmo pedágio.
+#[cfg(test)]
+pub(crate) static ROOTS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Zelador do estado global nos testes: o Drop devolve as raízes limpas MESMO
+/// quando o teste quebra no meio — sem ele, um assert que falha deixaria a
+/// pasta de um teste vazando para o seguinte.
+#[cfg(test)]
+pub(crate) struct RootsTestGuard;
+
+#[cfg(test)]
+impl Drop for RootsTestGuard {
+    fn drop(&mut self) {
+        let _ = set_project_root(None);
+        let _ = set_execution_area(None);
+    }
 }
 
 /* ------------------------- confinamento de caminho ------------------------ */
@@ -303,7 +460,10 @@ fn proc_run(args: &Value) -> Result<String, String> {
             "o comando passa de {MAX_COMMAND_CHARS} caracteres — quebre em passos menores"
         ));
     }
-    let root = project_root()?;
+    // `work_root`, não `project_root`: num turno jaulado o comando roda com a
+    // CÓPIA como cwd — é o que faz um `pnpm build` agir no sandbox e não no
+    // projeto real.
+    let root = work_root(args)?;
     let directory = match arg_opt_str(args, "cwd") {
         Some(cwd) => {
             let resolved = resolve_inside(&root, cwd)?;
@@ -607,6 +767,10 @@ const DIAGNOSTICS: [(&str, &str); 4] = [
 ];
 
 fn diagnostics_run() -> Result<String, String> {
+    // `project_root` DE PROPÓSITO, e não `work_root`: o diagnóstico é sobre a
+    // máquina/projeto da pessoa e está na lista do que nunca relaxa na jaula
+    // do gateway (nuncaRelaxamNaJaula) — ele sempre passa pelo cartão de
+    // aprovação, e é a pasta da janela que a pessoa aprova examinar.
     let root = project_root()?;
     let found = DIAGNOSTICS
         .iter()
@@ -666,7 +830,7 @@ type Archive = zip::ZipArchive<std::io::Cursor<Vec<u8>>>;
 
 fn office_open(args: &Value) -> Result<String, String> {
     let relative = arg_str(args, "path")?;
-    let root = project_root()?;
+    let root = work_root(args)?;
     let path = resolve_inside(&root, relative)?;
     let format = format_of(relative).ok_or_else(|| {
         format!("formato não reconhecido em {relative:?} — sei ler .docx, .pptx, .xlsx e .pdf")
@@ -1198,7 +1362,7 @@ fn office_edit(args: &Value) -> Result<String, String> {
         _ => return Err(format!("formato não suportado em {relative:?} (só .docx e .pptx)")),
     };
 
-    let root = project_root()?;
+    let root = work_root(args)?;
     let path = resolve_inside(&root, relative)?;
     let bytes = std::fs::read(&path)
         .map_err(|error| format!("não foi possível ler {relative}: {error}"))?;
@@ -1311,7 +1475,7 @@ fn office_export(args: &Value) -> Result<String, String> {
     let source_format = format_of(relative).ok_or_else(|| {
         format!("formato não reconhecido em {relative:?} — sei ler .docx, .pptx, .xlsx e .pdf")
     })?;
-    let root = project_root()?;
+    let root = work_root(args)?;
     let source = resolve_inside(&root, relative)?;
     let text = extract_document(&source, source_format)?;
     if text.trim().is_empty() {
@@ -1336,7 +1500,7 @@ fn office_export(args: &Value) -> Result<String, String> {
 
 fn pdf_extract(args: &Value) -> Result<String, String> {
     let relative = arg_str(args, "path")?;
-    let root = project_root()?;
+    let root = work_root(args)?;
     let path = resolve_inside(&root, relative)?;
     let text = crate::pdf::extract_text(&path)?;
     Ok(cap_document(text))
@@ -1532,6 +1696,236 @@ mod tests {
         let erro = resolve_inside(&root, "nao/existe/arquivo.txt").expect_err("deveria recusar");
         assert!(erro.contains("não existe"), "veio: {erro}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /* ----------------------- root da execução ----------------------- */
+
+    fn json_path(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Um DOCX mínimo mas VÁLIDO (zip com word/document.xml): é o que o
+    /// extrator de verdade abre — um arquivo de mentira mediria outra coisa.
+    fn grava_docx_minimo(path: &Path, texto: &str) {
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            writer
+                .start_file("word/document.xml", zip::write::SimpleFileOptions::default())
+                .expect("abrir a entrada do documento");
+            writer
+                .write_all(
+                    format!(
+                        "<w:document><w:body><w:p><w:r><w:t>{texto}</w:t></w:r></w:p></w:body></w:document>"
+                    )
+                    .as_bytes(),
+                )
+                .expect("escrever o XML de teste");
+            writer.finish().expect("fechar o zip de teste");
+        }
+        std::fs::write(path, cursor.into_inner()).expect("gravar o docx de teste");
+    }
+
+    /// Palco dos testes de root: uma pasta de janela e uma área de staging com
+    /// uma cópia de plano dentro — a geografia real do turno jaulado.
+    fn palco_de_execucao(nome: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let janela = temp_root(&format!("{nome}-janela"));
+        let dados = temp_root(&format!("{nome}-dados"));
+        let copia = dados.join("staging").join("wp-1");
+        std::fs::create_dir_all(&copia).expect("criar a cópia do plano");
+        let copia = copia.canonicalize().expect("canonicalizar a cópia");
+        (janela, dados, copia)
+    }
+
+    /// A validação pura, sem estado global (roda em paralelo sem trava).
+    #[test]
+    fn root_dentro_das_areas_conhecidas_e_aceito() {
+        let (janela, dados, copia) = palco_de_execucao("root-aceito");
+        let area = dados.join("staging");
+
+        // A própria janela (execução inplace) e algo dentro dela.
+        let aceito = resolve_requested_root(&json_path(&janela), Some(&janela), None)
+            .expect("a pasta da janela é área de execução");
+        assert_eq!(aceito, janela);
+
+        // A cópia do plano, dentro do staging.
+        let aceito = resolve_requested_root(&json_path(&copia), None, Some(&area))
+            .expect("a cópia do plano é área de execução");
+        assert_eq!(aceito, copia);
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+    }
+
+    /// A BASE do staging é recusada: o gateway sempre manda `<staging>/<plano>`,
+    /// e aceitar a base deixaria um root forjado agir sobre as cópias de todos
+    /// os planos de uma vez.
+    #[test]
+    fn a_base_do_staging_nao_e_root_valido() {
+        let (janela, dados, _copia) = palco_de_execucao("root-base");
+        let area = dados.join("staging").canonicalize().expect("área existe");
+        let erro = resolve_requested_root(&json_path(&area), None, Some(&area))
+            .expect_err("a base do staging não é a cópia de nenhum plano");
+        assert!(erro.contains("fora das áreas"), "veio: {erro}");
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+    }
+
+    /// O root viaja nos ARGUMENTOS, e argumento é território do modelo: um
+    /// root apontando para qualquer canto do disco seria fuga do confinamento
+    /// por argumento — recusar é o que fecha a porta lateral.
+    #[test]
+    fn root_malicioso_e_recusado() {
+        let (janela, dados, copia) = palco_de_execucao("root-malicioso");
+        let area = dados.join("staging");
+
+        // Fora de qualquer área conhecida (uma pasta irmã, real).
+        let fora = temp_root("root-malicioso-fora");
+        let erro = resolve_requested_root(&json_path(&fora), Some(&janela), Some(&area))
+            .expect_err("pasta de fora não pode virar root");
+        assert!(erro.contains("fora das áreas"), "veio: {erro}");
+
+        // Traversal: sobe da cópia até FORA do staging. A canonicalização
+        // resolve o `..` antes da comparação, então o prefixo reprova o ALVO.
+        let traversal = copia.join("..").join("..").join("..");
+        let erro = resolve_requested_root(&json_path(&traversal), Some(&janela), Some(&area))
+            .expect_err("traversal não pode escapar do staging");
+        assert!(erro.contains("fora das áreas"), "veio: {erro}");
+
+        // Relativo: o gateway sempre manda caminho completo — relativo é forja.
+        let erro = resolve_requested_root("staging/wp-1", Some(&janela), Some(&area))
+            .expect_err("root relativo é recusado");
+        assert!(erro.contains("absoluto"), "veio: {erro}");
+
+        // Inexistente: não há onde agir, e canonicalizar já recusa.
+        let erro = resolve_requested_root(
+            &json_path(&dados.join("staging").join("nao-existe")),
+            Some(&janela),
+            Some(&area),
+        )
+        .expect_err("root inexistente é recusado");
+        assert!(erro.contains("não existe"), "veio: {erro}");
+
+        // Sem NENHUMA área conhecida, nenhum root é honrado.
+        let erro = resolve_requested_root(&json_path(&copia), None, None)
+            .expect_err("sem áreas registradas não há root válido");
+        assert!(erro.contains("fora das áreas"), "veio: {erro}");
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+        let _ = std::fs::remove_dir_all(&fora);
+    }
+
+    /// O contrato de ponta a ponta: o despacho com `root` GRAVA na cópia — o
+    /// office.export lê o docx que só existe lá e deixa o .txt lá, com a
+    /// janela intacta. Se o host resolvesse contra a janela (o defeito da
+    /// varredura), a leitura falharia e a prova cairia aqui.
+    #[test]
+    fn despacho_com_root_grava_o_office_na_copia_e_nao_na_janela() {
+        let _trava = ROOTS_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _zelador = RootsTestGuard;
+        let (janela, dados, copia) = palco_de_execucao("root-office");
+        set_project_root(Some(janela.clone())).expect("registrar a janela");
+        set_execution_area(Some(dados.join("staging"))).expect("registrar a área");
+
+        grava_docx_minimo(&copia.join("doc.docx"), "conteúdo da cópia");
+
+        let saida = execute(
+            "office.export",
+            &json!({ "path": "doc.docx", "format": "txt", "root": json_path(&copia) }),
+        )
+        .expect("o export tinha de acontecer dentro do root da execução");
+        assert!(saida.contains("doc.txt"), "veio: {saida}");
+        assert!(
+            copia.join("doc.txt").is_file(),
+            "o txt tinha de nascer na cópia"
+        );
+        assert!(
+            !janela.join("doc.txt").exists(),
+            "nada deste despacho pode cair na pasta da janela"
+        );
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+    }
+
+    /// `proc.run` local com `root`: o comando roda com a CÓPIA como cwd — o
+    /// efeito (um arquivo escrito por redirecionamento) aparece nela, nunca na
+    /// janela. É o gesto que a jaula do gateway relaxa contando com isto.
+    #[test]
+    fn despacho_com_root_roda_o_proc_run_na_copia() {
+        let _trava = ROOTS_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _zelador = RootsTestGuard;
+        let (janela, dados, copia) = palco_de_execucao("root-proc");
+        set_project_root(Some(janela.clone())).expect("registrar a janela");
+        set_execution_area(Some(dados.join("staging"))).expect("registrar a área");
+
+        let saida = execute(
+            "proc.run",
+            &json!({ "command": "echo oi > marcador.txt", "root": json_path(&copia) }),
+        )
+        .expect("o comando tinha de rodar");
+        assert!(saida.contains("código 0"), "veio: {saida}");
+        assert!(
+            copia.join("marcador.txt").is_file(),
+            "o efeito do comando tinha de cair na cópia"
+        );
+        assert!(
+            !janela.join("marcador.txt").exists(),
+            "o comando não pode agir na pasta da janela"
+        );
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+    }
+
+    /// SEM o campo, nada muda: a raiz é a pasta da janela, como sempre foi —
+    /// o fallback é o comportamento de hoje, não um erro.
+    #[test]
+    fn despacho_sem_root_continua_na_pasta_da_janela() {
+        let _trava = ROOTS_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _zelador = RootsTestGuard;
+        let (janela, dados, _copia) = palco_de_execucao("root-fallback");
+        set_project_root(Some(janela.clone())).expect("registrar a janela");
+        set_execution_area(Some(dados.join("staging"))).expect("registrar a área");
+
+        let saida = execute("proc.run", &json!({ "command": "echo oi > semroot.txt" }))
+            .expect("o comando tinha de rodar");
+        assert!(saida.contains("código 0"), "veio: {saida}");
+        assert!(
+            janela.join("semroot.txt").is_file(),
+            "sem root, o efeito cai na pasta da janela como hoje"
+        );
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+    }
+
+    /// O despacho INTEIRO recusa root malicioso — a validação não é só da
+    /// função pura, ela está no caminho que o gateway realmente usa.
+    #[test]
+    fn despacho_com_root_malicioso_e_recusado_antes_de_agir() {
+        let _trava = ROOTS_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _zelador = RootsTestGuard;
+        let (janela, dados, _copia) = palco_de_execucao("root-recusa");
+        set_project_root(Some(janela.clone())).expect("registrar a janela");
+        set_execution_area(Some(dados.join("staging"))).expect("registrar a área");
+
+        let fora = temp_root("root-recusa-fora");
+        let erro = execute(
+            "proc.run",
+            &json!({ "command": "echo x > invasao.txt", "root": json_path(&fora) }),
+        )
+        .expect_err("root fora das áreas tinha de ser recusado");
+        assert!(erro.contains("fora das áreas"), "veio: {erro}");
+        assert!(
+            !fora.join("invasao.txt").exists(),
+            "a recusa tem de vir ANTES de qualquer efeito"
+        );
+
+        let _ = std::fs::remove_dir_all(&janela);
+        let _ = std::fs::remove_dir_all(&dados);
+        let _ = std::fs::remove_dir_all(&fora);
     }
 
     /* ---------------------------- saída ----------------------------- */

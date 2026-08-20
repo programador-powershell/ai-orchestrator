@@ -59,12 +59,30 @@ const (
 	// conversa. Nomeado porque `1` solto no meio do turno não diz nada.
 	firstDelegationDepth = 1
 
-	// maxDelegationRounds limita o vaivém modelo↔ferramenta DENTRO do sub-turno.
-	// Menor que o `maxToolRounds` do turno principal de propósito: o delegado
-	// recebeu UMA coisa pontual, e um delegado que precisa de oito rodadas está
-	// resolvendo outro problema — o de quem delegou.
+	// maxDelegationRounds limita o vaivém modelo↔ferramenta DENTRO do sub-turno
+	// BOT-A-BOT. Menor que o `maxToolRounds` do turno principal de propósito: o
+	// delegado recebeu UMA coisa pontual, e um delegado que precisa de oito
+	// rodadas está resolvendo outro problema — o de quem delegou. O caminho do
+	// MASTER não usa este teto (ver tetoDeRodadas): lá o sub-turno É o turno da
+	// pessoa, apenas emitido na filha.
 	maxDelegationRounds = 4
 )
+
+// tetoDeRodadas é o teto de rodadas do sub-turno POR PAPEL de quem delegou.
+//
+// O 4 foi calibrado para o bot-a-bot ("o delegado recebeu UMA coisa pontual") e
+// o caminho do master reusava o MESMO laço para o pedido INTEIRO da pessoa —
+// "construa um site" é um turno de quem atende, não uma coisa pontual, e morria
+// em "não concluiu em 4 rodadas" queimando dezesseis gestos bons. O sub-turno
+// do master usa o teto do turno principal (maxToolRounds) porque ele É o turno
+// da pessoa. E subir o número sem mudar o desfecho não corrige nada — o
+// esgotamento honesto mora no fim do laço de delegateWithRoute.
+func tetoDeRodadas(origin specialist.Definition) int {
+	if origin.ID == specialist.MasterID {
+		return maxToolRounds
+	}
+	return maxDelegationRounds
+}
 
 // delegateFence é o bloco cercado que o modelo emite para delegar. Mesmo
 // formato da chamada de ferramenta (ver toolContract) e pelo mesmo motivo: o
@@ -88,6 +106,28 @@ type delegateRequest struct {
 // sequência dentro do turno, e um lock aqui só esconderia o dia em que alguém
 // resolvesse paralelizá-la sem pensar no orçamento.
 type delegationBudget struct{ used int }
+
+// espelhoDeAprovacaoKey guarda no contexto a sessão-ESPELHO das aprovações do
+// sub-turno: a raiz onde a pessoa normalmente está quando o cartão abre.
+//
+// Por contexto, como o orçamento de equipe e o aviso de sandbox: é estado do
+// TURNO que precisa descer por toda a árvore de delegações sem cada função no
+// meio saber dele — o cartão de um sub-sub-turno também tem de aparecer onde a
+// pessoa está olhando, não na janela intermediária.
+type espelhoDeAprovacaoKey struct{}
+
+// comEspelhoDeAprovacao pendura a raiz-espelho no contexto do sub-turno. A
+// PRIMEIRA delegação do turno fixa a raiz; as aninhadas herdam.
+func comEspelhoDeAprovacao(ctx context.Context, raiz string) context.Context {
+	return context.WithValue(ctx, espelhoDeAprovacaoKey{}, raiz)
+}
+
+// espelhoDeAprovacao devolve a raiz-espelho quando o turno corrente é um
+// sub-turno delegado; fora dele não há espelho e a aprovação sai numa sessão só.
+func espelhoDeAprovacao(ctx context.Context) (string, bool) {
+	raiz, ok := ctx.Value(espelhoDeAprovacaoKey{}).(string)
+	return raiz, ok && strings.TrimSpace(raiz) != ""
+}
 
 /* -------------------------------- parsing ------------------------------- */
 
@@ -472,20 +512,48 @@ func (s *Supervisor) delegateWithRoute(
 	}
 	messages := s.delegateMessages(origin, target, request, depth, memoriaDoBot)
 
+	// A JANELA DO TRABALHO (docs/execucao-na-janela.md, item 1): os envelopes de
+	// EXECUÇÃO do sub-turno saem NA FILHA — é a janela que a pessoa abre ao
+	// clicar na linha do bot, e o replay dela tem de reconstruir rota,
+	// ferramentas, aprovações e resposta (a IDE, o schema e o canvas derivam a
+	// superfície dos tool.result DELA). Fallback para a raiz quando o espelho
+	// falhou: o espelho é acessório, e falhar em criá-lo não pode CALAR o
+	// trabalho. A raiz fica com o RESUMO — o par KindDelegate abre/fecha, que é
+	// o que o popup anuncia e o que o history() do dono dobra.
+	alvo := filho
+	if alvo == "" {
+		alvo = sessionID
+	}
+	// O ESPELHO DAS APROVAÇÕES: o cliente assina UMA sessão por vez e a pessoa
+	// normalmente está olhando a raiz quando o cartão abre — então todo
+	// approval.request/decision do sub-turno sai na filha (log durável, replay
+	// honesto) E é espelhado na raiz com o MESMO callID (ver emitEspelhado). A
+	// primeira delegação do turno fixa a raiz; as aninhadas herdam, para o
+	// cartão de um sub-sub-turno também abrir onde a pessoa está.
+	if _, temEspelho := espelhoDeAprovacao(ctx); !temEspelho {
+		ctx = comEspelhoDeAprovacao(ctx, sessionID)
+	}
+
+	teto := tetoDeRodadas(origin)
+
 	// O PORTÃO DE NARRAÇÃO vale no sub-turno também (ver narration.go): foi
 	// exatamente aqui que o flagrante aconteceu — o master delegou ao Código e
 	// o Código NARROU um fs.list que nunca rodou. Mesmo estado do turno
 	// principal: efeito consumado cala o portão, correção capada em UMA.
 	executouEfeito := false
 	corrigiuNarracao := false
+	// ultimaFerramenta lembra o último gesto CONSUMADO: é o pedaço concreto do
+	// "motivo verdadeiro" que o desfecho de esgotamento carrega no lugar do
+	// genérico "não concluiu em N rodadas".
+	ultimaFerramenta := ""
 
-	for round := 0; round < maxDelegationRounds; round++ {
+	for round := 0; round < teto; round++ {
 		if ctx.Err() != nil {
 			return finish(false, "o turno foi cancelado antes de o especialista terminar")
 		}
-		s.thinking(sessionID, turn, actor, thinkingLabel(target, round), false)
-		answer, _, err := s.runModel(ctx, sessionID, turn, actor, entry.Model.ID, messages)
-		s.thinking(sessionID, turn, actor, "", true)
+		s.thinking(alvo, turn, actor, thinkingLabel(target, round, teto), false)
+		answer, _, err := s.runModel(ctx, alvo, turn, actor, entry.Model.ID, messages)
+		s.thinking(alvo, turn, actor, "", true)
 		if err != nil {
 			return finish(false, err.Error())
 		}
@@ -501,7 +569,7 @@ func (s *Supervisor) delegateWithRoute(
 			if narrouSemExecutar(target, answer, executouEfeito) {
 				if !corrigiuNarracao {
 					corrigiuNarracao = true
-					s.thinking(sessionID, turn, actor, avisoDeNarracao, false)
+					s.thinking(alvo, turn, actor, avisoDeNarracao, false)
 					messages = append(messages,
 						modelrouter.ChatMessage{Role: "assistant", Content: answer},
 						modelrouter.ChatMessage{Role: "system", Content: correcaoDeNarracao})
@@ -516,8 +584,10 @@ func (s *Supervisor) delegateWithRoute(
 			// master: no bot-a-bot o turno do dono continua depois do sub-turno,
 			// e promover no meio entregaria (e apagaria o staging de) um trabalho
 			// pela metade — quem entrega lá é o done do turno, em runTurn.
+			// O cartão de entrega segue a regra da janela: sai na FILHA (é a
+			// promoção do trabalho dela) e o emitEspelhado o espelha na raiz.
 			if origin.ID == specialist.MasterID {
-				if err := s.entregaWorkspace(ctx, sessionID, turn, target.ID); err != nil {
+				if err := s.entregaWorkspace(ctx, alvo, turn, target.ID); err != nil {
 					if errors.Is(err, errEntregaRecusada) {
 						// Fecha honesto com a frase exata da recusa — quem recusou
 						// o cartão não pode ler depois um erro genérico de entrega.
@@ -546,9 +616,12 @@ func (s *Supervisor) delegateWithRoute(
 			// da aprovação (o especialista sem `proc.run` chamaria um que tem).
 			results := make([]string, 0, len(calls))
 			for _, call := range calls {
-				result, executou := s.executeTool(ctx, sessionID, turn, actor, target, call)
+				result, executou := s.executeTool(ctx, alvo, turn, actor, target, call)
 				if executou && ferramentaDeEfeito(call.Tool) {
 					executouEfeito = true
+				}
+				if executou {
+					ultimaFerramenta = call.Tool
 				}
 				results = append(results, result)
 			}
@@ -559,6 +632,12 @@ func (s *Supervisor) delegateWithRoute(
 		}
 
 		if len(nested) > 0 {
+			// A delegação ANINHADA continua ancorada na sessão de registro deste
+			// sub-turno (a raiz, no caminho do master) DE PROPÓSITO: é lá que o
+			// par KindDelegate dela abre/fecha — a árvore inteira de popups fica
+			// visível de onde a pessoa está lendo. O trabalho do sub-delegado, esse,
+			// sai na filha DELE (o alvo é recalculado lá dentro), e as aprovações
+			// dele continuam espelhadas na raiz pelo contexto.
 			results := make([]string, 0, len(nested))
 			for _, sub := range nested {
 				results = append(results, s.delegate(ctx, sessionID, turn, target, sub, budget, depth+1))
@@ -570,7 +649,92 @@ func (s *Supervisor) delegateWithRoute(
 		}
 	}
 
-	return finish(false, fmt.Sprintf("não concluiu em %d rodadas", maxDelegationRounds))
+	// ESTOURAR NÃO QUEIMA (docs/execucao-na-janela.md, item 2). O desfecho
+	// genérico "não concluiu em N rodadas" descartava gestos aprovados um a um
+	// com um motivo que não era o motivo. O esgotamento agora fecha em três
+	// passos honestos: uma última chamada SÓ de relato (nenhum bloco emitido
+	// nela é executado — a rodada de executar acabou), o motivo VERDADEIRO no
+	// texto (rodadas usadas, última ferramenta executada) e — quando houve
+	// efeito consumado — a promoção pelo MESMO caminho do sucesso: cada
+	// ferramenta que encheu o staging passou pelo portão, o trabalho é legítimo
+	// e o resultado é PARCIAL, não lixo. Sem efeito nenhum, a falha continua
+	// falha. O cancelamento não entra aqui: ctx.Err() descarta, como sempre —
+	// interrupção não é esgotamento, e nada meio-escrito chega à pessoa.
+	if ctx.Err() != nil {
+		return finish(false, "o turno foi cancelado antes de o especialista terminar")
+	}
+	motivo := fmt.Sprintf("o teto de %d rodadas do sub-turno esgotou", teto)
+	if ultimaFerramenta != "" {
+		motivo += "; última ferramenta executada: " + ultimaFerramenta
+	} else {
+		motivo += "; nenhuma ferramenta chegou a executar"
+	}
+	relato := s.relatoDeEncerramento(ctx, alvo, turn, actor, entry.Model.ID, messages)
+	if executouEfeito {
+		// Só o caminho do MASTER promove aqui — a mesma regra do sucesso: no
+		// bot-a-bot o turno do dono continua depois do sub-turno, e quem entrega
+		// lá é o done do turno. O ctx é o recongelado do provisionamento, o único
+		// que enxerga o staging deste sub-turno; o cartão de entrega continua
+		// valendo (é ele a aprovação única da jaula), agora para o parcial.
+		if origin.ID == specialist.MasterID {
+			if err := s.entregaWorkspace(ctx, alvo, turn, target.ID); err != nil {
+				if errors.Is(err, errEntregaRecusada) {
+					return finish(false, err.Error())
+				}
+				return finish(false, "o resultado não pôde ser entregue ao projeto: "+err.Error())
+			}
+		}
+		// O portão de narração não encosta no parcial: com efeito consumado o
+		// relato descreve o que ACONTECEU — é a condição do próprio portão.
+		texto := "RESULTADO PARCIAL — " + motivo + "."
+		if relato != "" {
+			texto += "\n\n" + relato
+		}
+		return finish(true, texto)
+	}
+	// Sem efeito, o portão de narração vale NO RELATO também: um encerramento
+	// que alega "criei os arquivos" sem efeito nenhum não pode virar o texto que
+	// a pessoa lê — o motivo seco é mais honesto que a cena.
+	if relato != "" && !narrouSemExecutar(target, relato, executouEfeito) {
+		return finish(false, motivo+" — o especialista relatou: "+relato)
+	}
+	return finish(false, motivo)
+}
+
+// pedidoDeRelato é a instrução da última chamada do sub-turno esgotado: SEM
+// executar mais nada — qualquer bloco emitido aqui é ignorado de propósito,
+// porque a rodada de executar acabou — e com a pergunta certa: o que ACONTECEU
+// e o que falta. É o stopRun do original (nós concluídos preservados,
+// "skipped · execução interrompida" nos que não rodaram) adaptado a um laço de
+// modelo.
+const pedidoDeRelato = "AS RODADAS DESTE TURNO ACABARAM. Não chame mais nenhuma " +
+	"ferramenta e não delegue — qualquer bloco emitido agora será IGNORADO. " +
+	"Relate em poucas linhas o que você CONCLUIU de verdade (apenas o que as " +
+	"ferramentas confirmaram) e o que ficou faltando."
+
+// relatoDeEncerramento faz a chamada final de relato do sub-turno esgotado e
+// devolve o texto limpo (blocos de protocolo removidos — nunca executados).
+// Vazio quando o modelo falhou ou o turno foi cancelado: o chamador tem o
+// motivo verdadeiro para usar no lugar, e uma segunda falha de modelo não pode
+// derrubar o desfecho que existe justamente para preservar o que já foi feito.
+func (s *Supervisor) relatoDeEncerramento(
+	ctx context.Context,
+	alvo, turn string,
+	actor protocol.Actor,
+	model string,
+	messages []modelrouter.ChatMessage,
+) string {
+	if ctx.Err() != nil {
+		return ""
+	}
+	messages = append(messages, modelrouter.ChatMessage{Role: "system", Content: pedidoDeRelato})
+	s.thinking(alvo, turn, actor, "as rodadas acabaram — relatando o que ficou pronto", false)
+	answer, _, err := s.runModel(ctx, alvo, turn, actor, model, messages)
+	s.thinking(alvo, turn, actor, "", true)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stripBlocks(answer))
 }
 
 // delegateMessages monta o prompt do sub-turno: o sistema DELE, as ferramentas
