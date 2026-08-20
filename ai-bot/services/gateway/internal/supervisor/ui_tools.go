@@ -148,7 +148,7 @@ func (s *Supervisor) CallToolFromUI(ctx context.Context, sessionID, tool string,
 	// Daqui em diante é o MESMO caminho do turno: portão, aprovação, ganchos,
 	// execução, projeção e envelopes. O retorno textual é formato para modelo;
 	// o desfecho estruturado da rota sai do envelope durável logo abaixo.
-	raw := s.executeTool(ctx, sessionID, turn, actor, definition, toolInvocation{
+	raw, _ := s.executeTool(ctx, sessionID, turn, actor, definition, toolInvocation{
 		Tool: tool,
 		Args: args,
 		raw:  string(args),

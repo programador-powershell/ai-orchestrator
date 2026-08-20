@@ -619,7 +619,11 @@ func (s *Supervisor) runWorker(
 		messages = append(messages, modelrouter.ChatMessage{Role: "assistant", Content: answer})
 		toolResults := make([]string, 0, len(calls))
 		for _, call := range calls {
-			toolResults = append(toolResults, s.executeTool(ctx, sessionID, turn, actor, definition, call))
+			// O desfecho booleano é do portão de narração do TURNO (ver
+			// narration.go); o trabalhador de equipe já tem os portões próprios
+			// (recusa, escalação, lease) e não o consome.
+			result, _ := s.executeTool(ctx, sessionID, turn, actor, definition, call)
+			toolResults = append(toolResults, result)
 		}
 		messages = append(messages, modelrouter.ChatMessage{
 			Role:    "user",

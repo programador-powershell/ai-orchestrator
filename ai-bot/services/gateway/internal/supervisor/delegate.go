@@ -471,6 +471,13 @@ func (s *Supervisor) delegateWithRoute(
 	}
 	messages := s.delegateMessages(origin, target, request, depth, memoriaDoBot)
 
+	// O PORTÃO DE NARRAÇÃO vale no sub-turno também (ver narration.go): foi
+	// exatamente aqui que o flagrante aconteceu — o master delegou ao Código e
+	// o Código NARROU um fs.list que nunca rodou. Mesmo estado do turno
+	// principal: efeito consumado cala o portão, correção capada em UMA.
+	executouEfeito := false
+	corrigiuNarracao := false
+
 	for round := 0; round < maxDelegationRounds; round++ {
 		if ctx.Err() != nil {
 			return finish(false, "o turno foi cancelado antes de o especialista terminar")
@@ -485,6 +492,22 @@ func (s *Supervisor) delegateWithRoute(
 		calls := parseToolCalls(answer)
 		nested := parseDelegations(answer)
 		if len(calls) == 0 && len(nested) == 0 {
+			// A encenação não vira resultado: quem delegou (ou a pessoa, no
+			// caminho do master) leria "criei os arquivos" como trabalho feito e
+			// construiria em cima do nada. Uma correção; na reincidência o
+			// desfecho é o caminho de FALHA que já existe — popup fechando com
+			// erro, aviso na raiz, "A tarefa não terminou" na filha — nunca um ✓.
+			if narrouSemExecutar(target, answer, executouEfeito) {
+				if !corrigiuNarracao {
+					corrigiuNarracao = true
+					s.thinking(sessionID, turn, actor, avisoDeNarracao, false)
+					messages = append(messages,
+						modelrouter.ChatMessage{Role: "assistant", Content: answer},
+						modelrouter.ChatMessage{Role: "system", Content: correcaoDeNarracao})
+					continue
+				}
+				return finish(false, narracaoFailMessage(answer))
+			}
 			// A resposta do delegado NÃO entra no log como mensagem da conversa.
 			// Ela volta para quem delegou como contexto, igual ao resultado de uma
 			// ferramenta, e quem escreve para a pessoa continua sendo o dono da
@@ -505,7 +528,11 @@ func (s *Supervisor) delegateWithRoute(
 			// da aprovação (o especialista sem `proc.run` chamaria um que tem).
 			results := make([]string, 0, len(calls))
 			for _, call := range calls {
-				results = append(results, s.executeTool(ctx, sessionID, turn, actor, target, call))
+				result, executou := s.executeTool(ctx, sessionID, turn, actor, target, call)
+				if executou && ferramentaDeEfeito(call.Tool) {
+					executouEfeito = true
+				}
+				results = append(results, result)
 			}
 			messages = append(messages, modelrouter.ChatMessage{
 				Role:    "user",

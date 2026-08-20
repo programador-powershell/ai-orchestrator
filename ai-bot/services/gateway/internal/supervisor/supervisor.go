@@ -419,6 +419,14 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// pode congelar o turno esperando aprovação de nada.
 	planExpected := s.planContract(definition) != ""
 
+	// O estado do PORTÃO DE NARRAÇÃO deste turno (ver narration.go):
+	// `executouEfeito` lembra se ALGUMA ferramenta de efeito rodou com sucesso —
+	// é o que separa o "gravei o arquivo" verdadeiro do narrado — e
+	// `corrigiuNarracao` capa o laço corretivo em UMA tentativa: reincidência
+	// vira falha honesta, nunca uma segunda chance infinita.
+	executouEfeito := false
+	corrigiuNarracao := false
+
 	var totalUsage modelrouter.Usage
 	for round := 0; round < maxToolRounds; round++ {
 		s.thinking(sessionID, turn, actor, thinkingLabel(definition, round), false)
@@ -466,6 +474,26 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		}
 
 		if len(calls) == 0 && len(delegations) == 0 {
+			// O PORTÃO DE NARRAÇÃO (ver narration.go): especialista de trabalho
+			// que DESCREVE resultado de ferramenta sem nenhum efeito consumado no
+			// turno não publica essa resposta como boa. Primeiro flagrante: UMA
+			// correção de sistema e mais um giro; reincidência: falha honesta —
+			// "não executado" não pode sair com cara de ✓.
+			if narrouSemExecutar(definition, answer, executouEfeito) {
+				if !corrigiuNarracao {
+					corrigiuNarracao = true
+					// Telemetria honesta: a pessoa vê o portão agindo em vez de a
+					// resposta só demorar um giro a mais sem explicação.
+					s.thinking(sessionID, turn, actor, avisoDeNarracao, false)
+					messages = append(messages,
+						modelrouter.ChatMessage{Role: "assistant", Content: answer},
+						modelrouter.ChatMessage{Role: "system", Content: correcaoDeNarracao})
+					continue
+				}
+				s.fail(sessionID, turn, definition.ID, narracaoFailCode,
+					narracaoFailMessage(answer), true)
+				return nil
+			}
 			// A resposta final entra no log inteira. Os deltas já foram
 			// entregues, mas eles são EFÊMEROS: quem abrir a conversa amanhã lê
 			// esta mensagem, não a soma de mil pedacinhos.
@@ -499,7 +527,13 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		if len(calls) > 0 {
 			results := make([]string, 0, len(calls))
 			for _, call := range calls {
-				results = append(results, s.executeTool(ctx, sessionID, turn, actor, definition, call))
+				result, executou := s.executeTool(ctx, sessionID, turn, actor, definition, call)
+				// Só o efeito CONSUMADO cala o portão de narração: recusa e erro
+				// não produziram nada que a resposta final possa anunciar.
+				if executou && ferramentaDeEfeito(call.Tool) {
+					executouEfeito = true
+				}
+				results = append(results, result)
 			}
 			messages = append(messages, modelrouter.ChatMessage{
 				Role:    "user",
@@ -903,12 +937,22 @@ func (s *Supervisor) toolContract(definition specialist.Definition) string {
 	if len(available) == 0 {
 		return ""
 	}
-	return "Você pode usar ferramentas. Para chamar uma, emita um bloco cercado exatamente assim:\n\n" +
+	contract := "Você pode usar ferramentas. Para chamar uma, emita um bloco cercado exatamente assim:\n\n" +
 		"```aibot:tool\n{\"tool\":\"<nome>\",\"args\":{...}}\n```\n\n" +
 		"Regras: um bloco por chamada; JSON válido; nada de texto dentro do bloco além do JSON. " +
 		"Depois de chamar, PARE e espere o resultado — ele chega como a próxima mensagem. " +
-		"Não invente resultado de ferramenta. Se o resultado vier com erro, leia o erro e corrija a chamada.\n\n" +
-		"Ferramentas disponíveis:\n" + strings.Join(available, "\n")
+		"Não invente resultado de ferramenta. Se o resultado vier com erro, leia o erro e corrija a chamada."
+	// O EXEMPLO CONCRETO entra para o especialista de TRABALHO que grava
+	// arquivo: modelos menores erram o formato quando só veem o exemplo
+	// abstrato ({...}), e errar o formato aqui é narrar em vez de executar — o
+	// flagrante do portão de narração (ver narration.go). O chat fica com o
+	// contrato genérico (a superfície dele é o próprio texto) e quem não tem
+	// fs.write também: exemplificar uma ferramenta que o portão recusa
+	// ensinaria o modelo a bater na porta errada.
+	if especialistaDeTrabalho(definition) && definition.AllowsTool("fs.write") {
+		contract += "\n\nExemplo real — gravar um arquivo do projeto:\n\n" + exemploDeCercaDeFerramenta
+	}
+	return contract + "\n\nFerramentas disponíveis:\n" + strings.Join(available, "\n")
 }
 
 /* ------------------------------ ferramentas ----------------------------- */
@@ -976,16 +1020,21 @@ func stripToolBlocks(answer string) string {
 
 // executeTool roda uma chamada passando pelo portão. Devolve SEMPRE um texto
 // para voltar ao modelo — inclusive quando recusa, porque o modelo precisa
-// saber que foi recusado para tentar outro caminho em vez de repetir.
+// saber que foi recusado para tentar outro caminho em vez de repetir — e um
+// booleano dizendo se a ferramenta EXECUTOU de verdade.
+//
+// O booleano existe para o portão de narração (ver narration.go): "houve
+// efeito neste turno?" não pode ser deduzido do texto de retorno, que é frase
+// montada para modelo ler — parseá-la acoplaria o portão a uma redação.
 func (s *Supervisor) executeTool(
 	ctx context.Context,
 	sessionID, turn string,
 	actor protocol.Actor,
 	definition specialist.Definition,
 	call toolInvocation,
-) string {
+) (string, bool) {
 	if call.Tool == "" {
-		return fmt.Sprintf("ERRO: bloco de ferramenta com JSON inválido. Recebido:\n%s", truncate(call.raw, 500))
+		return fmt.Sprintf("ERRO: bloco de ferramenta com JSON inválido. Recebido:\n%s", truncate(call.raw, 500)), false
 	}
 
 	callID := s.nextID("c")
@@ -1010,12 +1059,12 @@ func (s *Supervisor) executeTool(
 	switch decision {
 	case permissions.DecisionDeny:
 		s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", reason, 0)
-		return fmt.Sprintf("RECUSADO (%s): %s", call.Tool, reason)
+		return fmt.Sprintf("RECUSADO (%s): %s", call.Tool, reason), false
 	case permissions.DecisionAsk:
 		allowed, why := s.askApproval(ctx, sessionID, turn, actor, callID, call, risk, digest)
 		if !allowed {
 			s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", why, 0)
-			return fmt.Sprintf("RECUSADO PELO USUÁRIO (%s): %s", call.Tool, why)
+			return fmt.Sprintf("RECUSADO PELO USUÁRIO (%s): %s", call.Tool, why), false
 		}
 	}
 
@@ -1030,7 +1079,7 @@ func (s *Supervisor) executeTool(
 			Tool: call.Tool, Digest: digest,
 		}); denied {
 			s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", why, 0)
-			return fmt.Sprintf("RECUSADO PELA POLÍTICA DE PACOTE (%s): %s", call.Tool, why)
+			return fmt.Sprintf("RECUSADO PELA POLÍTICA DE PACOTE (%s): %s", call.Tool, why), false
 		}
 	}
 
@@ -1055,7 +1104,7 @@ func (s *Supervisor) executeTool(
 
 	if err != nil {
 		s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", err.Error(), elapsed)
-		return fmt.Sprintf("ERRO em %s: %s", call.Tool, err.Error())
+		return fmt.Sprintf("ERRO em %s: %s", call.Tool, err.Error()), false
 	}
 
 	// O TOOL OUTPUT GATEWAY (ver tool_gateway.go): a saída grande vira artefato
@@ -1073,7 +1122,7 @@ func (s *Supervisor) executeTool(
 		ArtifactRef: artifactRef,
 		RawBytes:    rawBytes,
 	})
-	return fmt.Sprintf("%s =>\n%s", call.Tool, truncate(projected, 20000))
+	return fmt.Sprintf("%s =>\n%s", call.Tool, truncate(projected, 20000)), true
 }
 
 // askApproval publica o pedido e espera a decisão humana.

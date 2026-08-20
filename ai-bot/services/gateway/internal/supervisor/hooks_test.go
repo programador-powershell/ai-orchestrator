@@ -173,7 +173,7 @@ func TestDenyDePacoteRecusaDentroDoExecuteTool(t *testing.T) {
 		Hooks: runner,
 	})
 
-	back := supervisor.executeTool(context.Background(), sessionID, "t1",
+	back, _ := supervisor.executeTool(context.Background(), sessionID, "t1",
 		hookActor(), specialist.GetOrDefault("chat"),
 		toolInvocation{Tool: "fs.read", Args: json.RawMessage(`{"path":"a.txt"}`)})
 
@@ -220,7 +220,7 @@ func TestFalhaDeWebhookNaoDerrubaOTurno(t *testing.T) {
 		Hooks: runner,
 	})
 
-	back := supervisor.executeTool(context.Background(), sessionID, "t1",
+	back, _ := supervisor.executeTool(context.Background(), sessionID, "t1",
 		hookActor(), specialist.GetOrDefault("chat"),
 		toolInvocation{Tool: "fs.read", Args: json.RawMessage(`{"path":"a.txt"}`)})
 

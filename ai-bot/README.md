@@ -134,6 +134,20 @@
 
 ### :pushpin: Fixes
 
+- **O bot que NARRA em vez de executar agora bate no portão mecânico.** O
+  flagrante: o Código respondeu "Resultado do fs.list" com uma listagem
+  INVENTADA — nenhuma ferramenta rodou, a pasta do projeto estava vazia.
+  Persona é instrução; portão é lei: resposta de especialista de trabalho com
+  artefato narrado (listagem, "criei o arquivo", cerca de 10+ linhas) e ZERO
+  efeito real no turno não é publicada — o supervisor reinjeta UMA correção
+  com o exemplo concreto da cerca de ferramenta e o modelo roda de novo;
+  reincidência vira FALHA honesta (nunca ✓), com a etapa visível "o
+  especialista narrou sem executar — mandei executar de verdade". Onze casos
+  de mesa protegem os dois lados (pergunta legítima e trecho ilustrativo
+  passam; encenação reprova), e o fio de ponta a ponta provou com um modelo
+  que finge: corrigido → arquivo real no projeto; teimoso → falha honesta e
+  nenhum arquivo fantasma.
+
 - **Replay contado como turno vivo** (pego pelo conferente ANTES de sair):
   reabrir uma conversa antiga abria o último arquivo do histórico no editor e
   DUPLICAVA os nós da réplica no canvas a cada reabertura, porque a guarda das
