@@ -316,20 +316,25 @@ func TestNewMessageKillsPendingClarification(t *testing.T) {
 	}
 	ask := pendingAskOf(t, fixture)
 
-	// A pessoa ignora a pergunta e manda um pedido claro.
+	// A pessoa ignora a pergunta e manda um pedido claro. Ele roteia para o
+	// especialista de TRABALHO (security) — e numa raiz sem modo isso vira a
+	// delegação do master: a filha nasce, a raiz continua sem dono.
 	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: xssText}); err != nil {
 		t.Fatalf("Prompt normal: %v", err)
 	}
 
+	if _, err := fixture.store.GetSession(store.ChildSessionID(fixture.session, "security")); err != nil {
+		t.Fatalf("a mensagem clara tinha de rotear normalmente — a filha de security não nasceu: %v", err)
+	}
 	meta, err := fixture.store.GetSession(fixture.session)
 	if err != nil {
 		t.Fatalf("ler a sessão: %v", err)
 	}
-	if meta.Specialist != "security" {
-		t.Fatalf("a mensagem clara tinha de rotear normalmente: esperava security, obtive %q", meta.Specialist)
+	if meta.Specialist != "" {
+		t.Fatalf("a raiz ganhou o dono %q — o master delega, não adota o modo", meta.Specialist)
 	}
 	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
-		t.Errorf("esperava 1 chamada de modelo (o turno normal), obtive %d", calls)
+		t.Errorf("esperava 1 chamada de modelo (o sub-turno do delegado), obtive %d", calls)
 	}
 
 	if err := fixture.supervisor.Reply(ctx, fixture.session,

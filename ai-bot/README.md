@@ -38,11 +38,12 @@
 - **Tela única dinâmica** — sem abas, sem menu de modos. A barra lateral
   esquerda, a barra superior, o campo de texto e a cor de acento do app mudam
   conforme o especialista ativo.
-- **A conversa tem UM modo**, decidido no **primeiro input** e gravado nela. Da
-  segunda mensagem em diante nada é reclassificado: `"agora corrija o login"` vai
-  direto para o executor de código porque a conversa já é de código. Reclassificar
-  a cada linha custaria latência antes de toda resposta e leria uma frase de
-  continuação como pedido isolado.
+- **A raiz é do master; trabalho nasce em SUB-BOT.** Pedido de trabalho
+  ("construa um html…") não sequestra a conversa: o especialista (Código,
+  Design, Dados…) ganha conversa FILHA aninhada na barra, e a raiz guarda o
+  espelho. O mesmo bot pedido de novo continua NA MESMA filha, com a memória
+  dela. Conversa aberta já no bot (`/mode`, "novo schema", filha) tem UM modo,
+  decidido na abertura e gravado nela — ali nada é reclassificado.
 - **Roteamento em cascata, do barato para o caro** —
   `FAST ROUTER (Go puro, léxico, offline, microssegundos)` →
   `NEEDLE Router Pro (.cact treinado no harness, ~23 MB, cgo, offline, milissegundos)` →
@@ -145,6 +146,19 @@
   porque a equipe continua rodando enquanto a pessoa olha outra superfície.
 
 ### :pushpin: Fixes
+
+- **Pedido de trabalho não SEQUESTRA mais a conversa: o especialista nasce como SUB-BOT.**
+  "construa um html simples" fazia a conversa inteira virar o Código — a tela
+  virava a IDE e a pessoa ficava presa nela (a reclamação recorrente das telas).
+  Agora a raiz fica com o MASTER, na superfície de conversa, e o especialista de
+  trabalho (Código, Design, Dados…) nasce como conversa FILHA aninhada na barra
+  — retrato do bot, estado trabalhando, espelho do pedido e do resultado na
+  raiz — pela MESMA máquina da delegação bot-a-bot (uma filha por par; segundo
+  pedido ao mesmo bot continua na mesma filha, com a memória dela). Pergunta
+  simples continua respondida na raiz, sem filha. NADA muda para /mode
+  explícito, conversa nascida no bot ("novo schema") e conversas filhas. De
+  quebra, a filha herda a PASTA DO PROJETO da raiz — a árvore da IDE deixou de
+  nascer vazia. Nove testes de gateway e nove de cliente fixam o contrato.
 
 - **O app abria e fechava sozinho quando não havia gateway de pé.** O
   bootstrapper procurava o `aibotd.exe` ao lado do app e no PATH — nunca no

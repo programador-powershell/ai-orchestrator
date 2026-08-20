@@ -83,21 +83,38 @@ describe("a linha da conversa ativa", () => {
     expect(estado.sessions[0]?.title).toBe("primeiro pedido");
   });
 
-  it("a rota assina o dono da linha — é o que troca o retrato para o do bot", () => {
-    // "identificou dados, mas não abriu bot de dados, apenas alterou tela": a
-    // superfície mudava e a barra continuava com o orbe genérico.
-    const estado = applyEnvelope(
+  it("só o /mode assina o dono da linha — rota de passagem não troca o retrato", () => {
+    // A raiz é orquestradora: pedido de trabalho vira DELEGAÇÃO (o retrato do
+    // bot mora na filha) e a resposta do chat na raiz não muda o dono dela.
+    // Antes, qualquer rota assinava — e a raiz vestia o retrato de quem só
+    // respondeu de passagem, em vez de manter o do master.
+    const dePassagem = applyEnvelope(
       comSessaoVazia(),
       envelope<Route>("route", {
-        specialist: "data",
+        specialist: "chat",
         model: "m1",
-        surface: "database",
+        surface: "conversation",
         reason: "heuristic",
         confidence: 1
       })
     );
 
-    expect(estado.sessions[0]?.specialist).toBe("data");
+    expect(dePassagem.sessions[0]?.specialist).toBeUndefined();
+
+    // Quem pede /mode está ESCOLHENDO o dono: a conversa vira o bot, retrato
+    // incluído — na hora, sem esperar a próxima reconexão.
+    const escolhido = applyEnvelope(
+      comSessaoVazia(),
+      envelope<Route>("route", {
+        specialist: "data",
+        model: "m1",
+        surface: "schema",
+        reason: "explicit",
+        confidence: 1
+      })
+    );
+
+    expect(escolhido.sessions[0]?.specialist).toBe("data");
   });
 
   it("o done conta o turno na linha", () => {

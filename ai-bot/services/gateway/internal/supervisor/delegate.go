@@ -27,6 +27,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -306,6 +307,28 @@ func (s *Supervisor) delegate(
 	budget *delegationBudget,
 	depth int,
 ) string {
+	texto, _ := s.delegateWithRoute(ctx, sessionID, turn, origin, request, budget, depth, nil)
+	return texto
+}
+
+// delegateWithRoute é o delegate() de verdade, com os ajustes que o caminho
+// master→raiz precisa e o bot-a-bot não: a ROTA decidida (quando presente) é
+// publicada na conversa FILHA — é lá que o modo e a superfície vivem — e o
+// desfecho volta como (texto, ok) para quem não tem um modelo esperando o
+// texto: o master precisa saber se a recusa/falha deve virar aviso na raiz.
+//
+// É UM caminho só de propósito. A criação da filha, o espelho e os limites não
+// podem existir em duas cópias — a segunda discordaria da primeira em silêncio
+// no dia em que uma delas mudasse.
+func (s *Supervisor) delegateWithRoute(
+	ctx context.Context,
+	sessionID, turn string,
+	origin specialist.Definition,
+	request delegateRequest,
+	budget *delegationBudget,
+	depth int,
+	childRoute *protocol.Route,
+) (string, bool) {
 	var allows func(string) bool
 	if s.deps.Gate != nil {
 		allows = s.deps.Gate.AllowsSpecialist
@@ -315,7 +338,7 @@ func (s *Supervisor) delegate(
 		// que ENTROU, e aqui não entrou ninguém; um popup que abre e fecha sozinho
 		// é ruído que a pessoa aprende a ignorar — inclusive no dia em que for de
 		// verdade. O motivo volta para quem tem o que fazer com ele: o modelo.
-		return fmt.Sprintf("DELEGAÇÃO RECUSADA: %s", reason)
+		return fmt.Sprintf("DELEGAÇÃO RECUSADA: %s", reason), false
 	}
 	budget.used++
 
@@ -324,7 +347,7 @@ func (s *Supervisor) delegate(
 		// Inalcançável — `delegationRefusal` já checou. Fica como recusa em vez de
 		// GetOrDefault: cair no especialista padrão aqui chamaria um bot que
 		// ninguém pediu.
-		return fmt.Sprintf("DELEGAÇÃO RECUSADA: não existe especialista %q", request.Specialist)
+		return fmt.Sprintf("DELEGAÇÃO RECUSADA: não existe especialista %q", request.Specialist), false
 	}
 
 	// O modelo é resolvido para o DELEGADO, não herdado de quem delegou: a
@@ -337,13 +360,20 @@ func (s *Supervisor) delegate(
 	// abrir um popup para um bot que nunca chegou a rodar.
 	entry, _, err := s.deps.Models.Resolve(target.ID, "")
 	if err != nil {
-		return fmt.Sprintf("DELEGAÇÃO PARA %s NÃO DEU CERTO: %v", target.ID, err)
+		return fmt.Sprintf("DELEGAÇÃO PARA %s NÃO DEU CERTO: %v", target.ID, err), false
 	}
 
 	originActor := protocol.Actor{
 		Kind:       protocol.ActorSpecialist,
 		ID:         origin.ID,
 		Specialist: origin.ID,
+	}
+	if origin.ID == specialist.MasterID {
+		// O master não é um especialista atendendo: o From sai como supervisor e
+		// SEM o campo Specialist, porque o store carimba meta.Specialist de todo
+		// envelope que o traz preenchido — e a raiz orquestradora não pode ganhar
+		// dono por efeito colateral do próprio anúncio de delegação.
+		originActor = protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
 	}
 	payload := protocol.Delegate{
 		From:   origin.ID,
@@ -375,6 +405,16 @@ func (s *Supervisor) delegate(
 	// reescrevê-la em TypeScript criaria uma segunda regra que discorda em
 	// silêncio no dia em que a primeira mudar.
 	payload.Session = filho
+	// No caminho do master a rota decidida sai NA FILHA, depois do pedido — a
+	// mesma ordem de um turno normal (fala, depois rota). É a faixa "agora é X"
+	// no lugar onde o modo vive; na raiz sobra só o rótulo de etapa. O modelo
+	// resolvido vai junto, como iria no envelope de rota de qualquer turno.
+	if filho != "" && childRoute != nil {
+		rota := *childRoute
+		rota.Model = entry.Model.ID
+		_ = s.emit(filho, turn, protocol.KindRoute,
+			protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}, rota)
+	}
 
 	// Antes de executar, e não depois: é este envelope que faz o popup do bot
 	// aparecer na hora certa — e agora também a linha dele na barra lateral.
@@ -385,7 +425,7 @@ func (s *Supervisor) delegate(
 	// finish fecha o popup. TODA saída daqui para baixo passa por ele — um
 	// caminho de erro que esquecesse o segundo envelope deixaria o bot do
 	// delegado girando na tela para sempre.
-	finish := func(succeeded bool, outcome string) string {
+	finish := func(succeeded bool, outcome string) (string, bool) {
 		outcome = truncate(outcome, 20000)
 		payload.Done = true
 		payload.Result = outcome
@@ -419,9 +459,9 @@ func (s *Supervisor) delegate(
 			}, protocol.Done{Specialist: target.ID})
 		}
 		if !succeeded {
-			return fmt.Sprintf("DELEGAÇÃO PARA %s NÃO DEU CERTO: %s", target.ID, outcome)
+			return fmt.Sprintf("DELEGAÇÃO PARA %s NÃO DEU CERTO: %s", target.ID, outcome), false
 		}
-		return fmt.Sprintf("RESULTADO DA DELEGAÇÃO PARA %s (%s):\n%s", target.Name, target.ID, outcome)
+		return fmt.Sprintf("RESULTADO DA DELEGAÇÃO PARA %s (%s):\n%s", target.Name, target.ID, outcome), true
 	}
 
 	actor := protocol.Actor{
@@ -524,16 +564,27 @@ func (s *Supervisor) delegateMessages(
 	}
 
 	var briefing strings.Builder
-	fmt.Fprintf(&briefing, "O especialista %s (%s) está atendendo uma conversa e chamou VOCÊ para uma coisa.\n\n",
-		origin.Name, origin.ID)
-	fmt.Fprintf(&briefing, "O que ele precisa:\n%s\n", strings.TrimSpace(request.Goal))
-	if reason := strings.TrimSpace(request.Reason); reason != "" {
-		fmt.Fprintf(&briefing, "\nPor quê: %s\n", reason)
+	if origin.ID == specialist.MasterID {
+		// Chamado pelo MASTER, não há outro bot esperando resposta: a conversa
+		// filha é deste especialista e quem lê o resultado é a PESSOA. O briefing
+		// de bot-a-bot ("escreva para ELE ler") produziria o tom errado para a
+		// única audiência que existe aqui.
+		fmt.Fprintf(&briefing, "O master do AI-BOT roteou para VOCÊ este pedido da pessoa:\n%s\n",
+			strings.TrimSpace(request.Goal))
+		briefing.WriteString("\nEsta conversa é sua: entregue o que foi pedido e responda direto à pessoa, " +
+			"sem se apresentar. Se faltar informação essencial, pergunte em uma linha em vez de adivinhar.")
+	} else {
+		fmt.Fprintf(&briefing, "O especialista %s (%s) está atendendo uma conversa e chamou VOCÊ para uma coisa.\n\n",
+			origin.Name, origin.ID)
+		fmt.Fprintf(&briefing, "O que ele precisa:\n%s\n", strings.TrimSpace(request.Goal))
+		if reason := strings.TrimSpace(request.Reason); reason != "" {
+			fmt.Fprintf(&briefing, "\nPor quê: %s\n", reason)
+		}
+		briefing.WriteString("\nEntregue só isso e pare. Quem responde à pessoa é ele, não você: " +
+			"escreva o resultado para ELE ler — sem cumprimento, sem se apresentar, sem perguntar " +
+			"se pode continuar. Se faltar informação para fazer o que foi pedido, diga o que falta em " +
+			"uma linha em vez de adivinhar.")
 	}
-	briefing.WriteString("\nEntregue só isso e pare. Quem responde à pessoa é ele, não você: " +
-		"escreva o resultado para ELE ler — sem cumprimento, sem se apresentar, sem perguntar " +
-		"se pode continuar. Se faltar informação para fazer o que foi pedido, diga o que falta em " +
-		"uma linha em vez de adivinhar.")
 
 	messages = append(messages, modelrouter.ChatMessage{Role: "user", Content: briefing.String()})
 	return messages
@@ -570,6 +621,111 @@ func (s *Supervisor) mirrorDelegation(parentID string, target specialist.Definit
 		})
 	}
 	return meta.ID
+}
+
+/* --------------------------- master → sub-bot ----------------------------- */
+
+// masterDelegates diz se este turno é o do MASTER orquestrando a raiz: conversa
+// raiz (sem pai e sem dono fixo), SEM modo gravado — a rota veio da cascata, não
+// de uma escolha — e decidida para um especialista de TRABALHO, aquele cuja
+// superfície não é a de conversa.
+//
+// Cada exclusão é uma regra de produto: a conversa FILHA é do bot (falar nela é
+// falar com ele); a conversa com modo é sticky (/mode, o seletor, a resposta da
+// clarificação e o hello.specialist são ESCOLHAS, e quem escolhe vira o bot);
+// e o chat não delega porque pergunta se responde onde foi feita.
+func masterDelegates(session store.SessionMeta, definition specialist.Definition) bool {
+	if session.ParentID != "" || session.BotID != "" || session.Specialist != "" {
+		return false
+	}
+	return definition.ID != specialist.MasterID &&
+		definition.Surface != specialist.SurfaceConversation
+}
+
+// masterDelegate é o turno da raiz quando o master DELEGA em vez de adotar o
+// modo: o pedido desce ao especialista de trabalho pelo MESMO caminho da
+// delegação bot-a-bot — filha por par (raiz, bot), espelho do pedido/resultado,
+// limites — e a raiz termina com o done normal, sem nunca virar o bot.
+//
+// Como o modo não é gravado, o PRÓXIMO input da raiz roteia de novo: mesmo bot
+// vence → a mesma filha continua (o childHistory dá a continuidade); pergunta
+// simples → o chat responde na própria raiz. A raiz é orquestradora.
+func (s *Supervisor) masterDelegate(
+	ctx context.Context,
+	sessionID, turn string,
+	route protocol.Route,
+	target specialist.Definition,
+	question string,
+	prompt protocol.Prompt,
+) error {
+	// O título da raiz continua nascendo do primeiro texto — e ANTES da
+	// delegação, para a linha na barra não passar o turno inteiro do bot como
+	// "Nova conversa".
+	if _, err := s.deps.Store.UpdateSession(sessionID, func(meta *store.SessionMeta) {
+		if meta.Title == "" {
+			meta.Title = titleFrom(prompt.Text)
+		}
+	}); err != nil {
+		return err
+	}
+
+	masterActor := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
+	// A rota decidida fica visível como ETAPA, não como rota: o envelope de rota
+	// troca a superfície da tela, e a superfície do trabalho é da FILHA (o
+	// delegateWithRoute a publica lá). Na raiz sobra o rótulo de quem entrou.
+	s.thinking(sessionID, turn, masterActor, "chamando o especialista "+target.Name+"…", false)
+
+	// O objetivo é o pedido da pessoa, com os anexos NOMEADOS quando o texto não
+	// os cita: o roteador pode ter decidido pela extensão, e o goal é o único
+	// texto que desce à filha — um anexo que decide a rota e some do pedido
+	// deixaria o bot trabalhando sem saber que o arquivo existe.
+	goal := question
+	if names := attachmentNames(prompt.Attachments); len(names) > 0 {
+		missing := make([]string, 0, len(names))
+		for _, name := range names {
+			if !strings.Contains(question, name) {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			goal += "\n\nAnexo(s): " + strings.Join(missing, ", ")
+		}
+	}
+
+	// Orçamento normal de turno e primeiro salto em profundidade normal: o
+	// master→bot não é um nível grátis — o que o bot delegar em seguida conta na
+	// mesma árvore e nos mesmos tetos.
+	budget := &delegationBudget{}
+	outcome, ok := s.delegateWithRoute(ctx, sessionID, turn, specialist.Master, delegateRequest{
+		Specialist: target.ID,
+		Goal:       goal,
+		Reason:     "o pedido é trabalho da especialidade dele",
+	}, budget, firstDelegationDepth, &route)
+	s.thinking(sessionID, turn, masterActor, "", true)
+
+	interrupted := errors.Is(ctx.Err(), context.Canceled)
+	if !ok && !interrupted {
+		// Recusa e falha ficam NA RAIZ, como aviso do sistema — a regra da
+		// delegação bot-a-bot vale aqui também: a filha só recebe trabalho que
+		// aconteceu. No bot-a-bot o texto volta ao modelo do dono; aqui o dono é
+		// a pessoa, e o aviso é o único jeito de o texto chegar a ela.
+		_ = s.emit(sessionID, turn, protocol.KindMessage,
+			protocol.Actor{Kind: protocol.ActorSupervisor},
+			protocol.Message{Role: "system", Text: outcome})
+	}
+
+	// O Specialist da raiz volta a VAZIO antes do done: o store carimba
+	// meta.Specialist de todo envelope com From.Specialist preenchido, e as
+	// ferramentas do delegado (que rodam nesta sessão) teriam coroado o bot como
+	// dono — reabrindo exatamente o defeito que este caminho fecha. O done sai
+	// sem especialista pelo mesmo motivo; o precedente é a clarificação.
+	if _, err := s.deps.Store.UpdateSession(sessionID, func(meta *store.SessionMeta) {
+		meta.Specialist = ""
+	}); err != nil {
+		return err
+	}
+	s.done(sessionID, turn, "", modelrouter.Usage{}, interrupted)
+	return nil
 }
 
 // childHistory devolve o que o bot delegado já conversou NESTA conversa — os

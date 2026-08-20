@@ -415,11 +415,12 @@ func TestPalavraInteiraPesaMaisQuePrefixo(t *testing.T) {
 // completa".
 //
 // O que este teste exercita DE VERDADE é o roteamento — offline, determinístico,
-// sem modelo nenhum: o pedido tem de virar uma conversa de CÓDIGO, e o dono tem
-// de ficar GRAVADO na sessão. A fala do modelo é roteirizada (não há provedor
-// configurado nesta estação), e serve para exercitar o resto do caminho: o dono
-// chama o especialista de design no meio do turno, o popup abre e fecha, e quem
-// conclui é o dono — não o convidado.
+// sem modelo nenhum: o pedido decide para CÓDIGO no fast router, e o master
+// DELEGA — a raiz não vira a IDE (era a reclamação recorrente do produto), o
+// trabalho nasce na conversa FILHA do Código e a rota/superfície saem LÁ. A
+// fala do modelo é roteirizada e exercita o resto do caminho: o Código chama o
+// Design no meio do sub-turno (delegação aninhada, profundidade 2), os popups
+// abrem e fecham na raiz, e o resultado final é a voz do Código NA FILHA.
 func TestPedidoDeAplicacaoViraConversaDeCodigoEChamaODesign(t *testing.T) {
 	dataStore, err := store.Open(t.TempDir())
 	if err != nil {
@@ -459,17 +460,37 @@ func TestPedidoDeAplicacaoViraConversaDeCodigoEChamaODesign(t *testing.T) {
 		t.Fatalf("prompt: %v", err)
 	}
 
-	// 1. O dono da conversa é o CODE, decidido no primeiro degrau e GRAVADO.
+	// 1. A RAIZ continua do master: nenhum modo gravado e nenhuma rota nela —
+	// era o envelope de rota que virava a tela em IDE.
 	meta, err := dataStore.GetSession(sessionID)
 	if err != nil {
 		t.Fatalf("ler a sessão: %v", err)
 	}
-	if meta.Specialist != "code" {
-		t.Errorf("o dono gravado na conversa é %q; esperava \"code\"", meta.Specialist)
+	if meta.Specialist != "" {
+		t.Errorf("a raiz ganhou o dono %q — o master delega, não adota o modo", meta.Specialist)
 	}
-	rotas := envelopesByKind(t, dataStore, sessionID, protocol.KindRoute)
+	if rotas := envelopesByKind(t, dataStore, sessionID, protocol.KindRoute); len(rotas) != 0 {
+		t.Errorf("a raiz recebeu %d rota(s) — a superfície de trabalho é da filha", len(rotas))
+	}
+
+	// 2. Nenhuma pergunta de clarificação: o pedido era claro.
+	if perguntas := envelopesByKind(t, dataStore, sessionID, protocol.KindAsk); len(perguntas) != 0 {
+		t.Errorf("o motor perguntou de quem era o pedido %d vez(es) — ele decidia sozinho", len(perguntas))
+	}
+
+	// 3. O trabalho nasceu na FILHA do Código, com a rota (e a superfície do
+	// editor) publicada LÁ — decidida pelo fast router, sem gastar modelo.
+	filhoID := store.ChildSessionID(sessionID, "code")
+	filho, err := dataStore.GetSession(filhoID)
+	if err != nil {
+		t.Fatalf("a conversa filha do código não nasceu: %v", err)
+	}
+	if filho.ParentID != sessionID || filho.BotID != "code" {
+		t.Errorf("a filha não está pendurada na raiz com o bot certo: %+v", filho)
+	}
+	rotas := envelopesByKind(t, dataStore, filhoID, protocol.KindRoute)
 	if len(rotas) != 1 {
-		t.Fatalf("esperava 1 envelope de rota, obtive %d", len(rotas))
+		t.Fatalf("esperava 1 envelope de rota NA FILHA, obtive %d", len(rotas))
 	}
 	var rota protocol.Route
 	if err := rotas[0].Decode(&rota); err != nil {
@@ -480,36 +501,46 @@ func TestPedidoDeAplicacaoViraConversaDeCodigoEChamaODesign(t *testing.T) {
 			"sem gastar modelo nenhum", rota.Reason)
 	}
 	if rota.Surface != string(specialist.SurfaceEditor) {
-		t.Errorf("a tela devia virar o editor de código, veio %q", rota.Surface)
+		t.Errorf("a superfície da filha devia ser o editor de código, veio %q", rota.Surface)
 	}
 
-	// 2. Nenhuma pergunta de clarificação: o pedido era claro.
-	if perguntas := envelopesByKind(t, dataStore, sessionID, protocol.KindAsk); len(perguntas) != 0 {
-		t.Errorf("o motor perguntou de quem era o pedido %d vez(es) — ele decidia sozinho", len(perguntas))
-	}
-
-	// 3. O design foi chamado no meio do turno, e o popup abriu E fechou.
+	// 4. Os popups na raiz: master→code abre, code→design abre e fecha por
+	// dentro, master→code fecha por último — a árvore inteira visível de onde a
+	// pessoa está lendo.
 	delegacoes := delegateEnvelopes(t, dataStore, sessionID)
-	if len(delegacoes) != 2 {
-		t.Fatalf("esperava o par abre/fecha da delegação, obtive %d: %+v", len(delegacoes), delegacoes)
+	if len(delegacoes) != 4 {
+		t.Fatalf("esperava 4 envelopes de delegação (master→code e code→design, abre/fecha), obtive %d: %+v",
+			len(delegacoes), delegacoes)
 	}
-	if delegacoes[0].From != "code" || delegacoes[0].To != "design" {
-		t.Errorf("de/para da delegação: %+v", delegacoes[0])
+	if delegacoes[0].From != specialist.MasterID || delegacoes[0].To != "code" || delegacoes[0].Done {
+		t.Errorf("o primeiro envelope tinha de abrir master→code: %+v", delegacoes[0])
 	}
-	if delegacoes[0].Done || !delegacoes[1].Done {
-		t.Errorf("o popup precisa abrir aberto e fechar concluído: %+v", delegacoes)
+	if delegacoes[0].Session != filhoID {
+		t.Errorf("o id da filha não viajou no envelope: %q, esperava %q", delegacoes[0].Session, filhoID)
+	}
+	if delegacoes[1].From != "code" || delegacoes[1].To != "design" || delegacoes[1].Done {
+		t.Errorf("o segundo envelope tinha de abrir code→design: %+v", delegacoes[1])
+	}
+	if !delegacoes[2].Done || delegacoes[2].To != "design" {
+		t.Errorf("o terceiro envelope tinha de fechar code→design: %+v", delegacoes[2])
+	}
+	if !delegacoes[3].Done || delegacoes[3].To != "code" {
+		t.Errorf("o último envelope tinha de fechar master→code: %+v", delegacoes[3])
 	}
 	if !provider.sawRequestContaining("identidade visual") {
 		t.Error("o design não chegou a rodar")
 	}
 
-	// 4. Quem CONCLUI é o dono, e a conversa NÃO trocou de dono por causa disso.
-	respostas := messageTexts(t, dataStore, sessionID, "assistant")
-	if len(respostas) == 0 || !strings.Contains(respostas[len(respostas)-1], "App Next.js pronto") {
-		t.Errorf("a conclusão não é a de quem atendeu: %q", respostas)
+	// 5. A conclusão é a VOZ do Código na conversa dele — na raiz o resultado
+	// chega pelo envelope de delegação, não como uma segunda voz de assistente.
+	falasDaFilha := messageTexts(t, dataStore, filhoID, "assistant")
+	if len(falasDaFilha) == 0 || !strings.Contains(falasDaFilha[len(falasDaFilha)-1], "App Next.js pronto") {
+		t.Errorf("a conclusão não chegou à conversa do bot: %q", falasDaFilha)
 	}
-	if meta, err := dataStore.GetSession(sessionID); err == nil && meta.Specialist != "code" {
-		t.Errorf("delegar trocou o dono da conversa para %q — delegar é emprestar "+
-			"especialidade, não trocar de modo", meta.Specialist)
+	if !strings.Contains(delegacoes[3].Result, "App Next.js pronto") {
+		t.Errorf("o resultado não voltou à raiz pelo envelope: %q", delegacoes[3].Result)
+	}
+	if respostas := messageTexts(t, dataStore, sessionID, "assistant"); len(respostas) != 0 {
+		t.Errorf("a raiz ganhou fala de assistente que é da filha: %q", respostas)
 	}
 }

@@ -38,6 +38,15 @@ func (s *Store) ChildSession(parentID, botID, title string) (SessionMeta, error)
 	if strings.TrimSpace(title) == "" {
 		title = botID
 	}
+	// A filha HERDA o CWD do pai NO NASCIMENTO. A superfície de trabalho do bot
+	// (a IDE, o schema) precisa da pasta do projeto, e uma filha sem pasta abre
+	// com a árvore vazia — o bot "trabalha" numa conversa que não enxerga o
+	// repositório. Uma vez, na criação: quem quiser outra pasta troca na
+	// própria filha, e a troca não é desfeita pela próxima delegação.
+	cwd := ""
+	if parent, err := s.GetSession(parentID); err == nil {
+		cwd = parent.CWD
+	}
 	// O dono da conversa filha é o bot, e `Specialist` nasce igual: assim, quem
 	// abrir e escrever continua falando com ELE — o roteamento por conversa já
 	// respeita o último especialista, e aqui o último é o único.
@@ -47,6 +56,7 @@ func (s *Store) ChildSession(parentID, botID, title string) (SessionMeta, error)
 		BotID:      botID,
 		ParentID:   parentID,
 		Specialist: botID,
+		CWD:        cwd,
 	})
 }
 

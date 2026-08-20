@@ -314,6 +314,21 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 		}
 	}
 
+	// 2c. A RAIZ NÃO VIRA O BOT DE TRABALHO: o master delega.
+	//
+	// "Construa um html" roteava para o Código e a conversa INTEIRA virava a
+	// IDE — a pessoa ficava presa na superfície do bot. Agora a conversa raiz
+	// fica com o master (superfície de conversa) e o especialista de trabalho
+	// nasce como conversa FILHA, pelo MESMO caminho da delegação bot-a-bot; o
+	// modo, a rota e a superfície acontecem NA FILHA. Só a rota vinda da
+	// CASCATA desce por aqui: /mode e prompt.Specialist são escolhas da pessoa,
+	// e quem escolhe o modo vira o bot, como sempre (hello.specialist idem —
+	// a conversa nasce com dono e o sticky nem chega neste ponto).
+	if !hadCommand && strings.TrimSpace(prompt.Specialist) == "" &&
+		masterDelegates(session, definition) {
+		return s.masterDelegate(ctx, sessionID, turn, route, definition, question, prompt)
+	}
+
 	// 3. O modelo. A escolha do usuário vence a preferência do especialista.
 	choice := prompt.Model
 	if choice == "" {

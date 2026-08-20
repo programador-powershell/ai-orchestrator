@@ -97,6 +97,10 @@ describe("applyEnvelope", () => {
   });
 
   it("abre linha com a rota preenchida e troca a superfície", () => {
+    // A rota continua flipando a TELA onde quer que chegue: conversa nascida
+    // no bot, conversa filha, `/mode` explícito e replay de log antigo. O que
+    // mudou mora no GATEWAY: o primeiro input de trabalho numa raiz não emite
+    // mais rota — vira delegação (ver store.raizOrquestradora.test.ts).
     const decision = route("data", "schema");
     const state = applyEnvelope(initialAppData(), envelope<Route>("route", decision, { specialist: "master" }));
 
@@ -286,6 +290,10 @@ describe("applyEnvelope", () => {
   });
 
   it("deixa cada linha com o seu próprio especialista quando o histórico tem duas rotas", () => {
+    // O cenário hoje nasce de `/mode` (ou do replay de uma conversa antiga):
+    // a raiz não recebe mais rota de trabalho no roteamento do master. A regra
+    // que o teste tranca é a mesma de sempre — a segunda rota NÃO pode apagar
+    // de quem era a resposta anterior.
     const state = reduce(initialAppData(), [
       envelope<Message>("message", { role: "user", text: "corrige o parser" }, { turn: "t-1" }),
       envelope<Route>("route", route("code", "editor"), { turn: "t-1", specialist: "master" }),

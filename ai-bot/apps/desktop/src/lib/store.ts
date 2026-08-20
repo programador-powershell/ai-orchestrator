@@ -95,7 +95,12 @@ export interface AppData {
   models: ModelInfo[];
   sessions: SessionMeta[];
   lines: ConversationLine[];
-  /** "" antes de o master decidir na primeira linha. */
+  /**
+   * "" enquanto a conversa é do MASTER — e na raiz orquestradora isso é o
+   * estado normal: pedido de trabalho vira delegação (a filha é quem tem o
+   * modo), então só rota de verdade (chat, `/mode`, conversa nascida no bot,
+   * conversa filha) preenche isto.
+   */
   activeSpecialist: string;
   /** "conversation" enquanto não houver rota. */
   activeSurface: Surface;
@@ -611,14 +616,21 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
       });
       return {
         ...state,
-        // A rota também assina a LINHA DA BARRA: é ela que troca o retrato da
-        // conversa para o do especialista que assumiu — sem isto, a barra
-        // mostrava o orbe genérico até a próxima reconexão ("não abriu bot de
-        // dados, apenas alterou tela").
-        sessions: comMetaDaSessao(state.sessions, envelope.session, (meta) => ({
-          ...meta,
-          specialist: route.specialist
-        })),
+        // O RETRATO DA LINHA NA BARRA só troca quando a PESSOA trocou o dono
+        // (`/mode`, reason "explicit"). A raiz é ORQUESTRADORA: pedido de
+        // trabalho no primeiro input não roteia mais aqui — o master DELEGA
+        // (case "delegate") e o retrato do bot mora na conversa FILHA; a
+        // resposta do chat na raiz não muda o dono dela (o retrato segue o
+        // master); e a conversa nascida no bot já chega com o dono no meta,
+        // gravado pelo gateway na criação. Assinar qualquer rota — como era —
+        // vestia na raiz o retrato de quem só respondeu de passagem.
+        sessions:
+          route.reason === "explicit"
+            ? comMetaDaSessao(state.sessions, envelope.session, (meta) => ({
+                ...meta,
+                specialist: route.specialist
+              }))
+            : state.sessions,
         activeSpecialist: route.specialist,
         activeSurface: isSurface(route.surface) ? route.surface : definition.surface,
         activeModel: route.model !== "" ? route.model : state.activeModel,
