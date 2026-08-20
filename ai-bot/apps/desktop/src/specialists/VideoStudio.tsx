@@ -22,10 +22,11 @@
  * que a pessoa confirme a pasta — blob: não aponta para nada fora do navegador.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { create } from "zustand";
 import {
+  Bot,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -40,6 +41,7 @@ import {
   Trash2,
   Type
 } from "lucide-react";
+import type { ConversationLine } from "@aibot/contracts";
 import {
   addClip,
   buildFfmpegArgs,
@@ -206,10 +208,87 @@ export const useVideoStudio = create<VideoStudioState>((set, get) => ({
 export const QUADRO_W = 1280;
 export const QUADRO_H = 720;
 
+/* -------------------------- o trabalho do bot ----------------------------- */
+
+/**
+ * Uma operação de vídeo que o BOT executou nesta conversa — o conserto
+ * anti-casca da aba Vídeo. O Design tem as ferramentas `video.probe/trim/
+ * concat/text/export` (rodadas pelo host, atrás do portão de aprovação), e
+ * até aqui a aba não reagia a nada disso: o bot cortava e exportava e a tela
+ * seguia como se nada tivesse acontecido. A âncora é a mesma das outras
+ * janelas — o `tool.result` nas linhas da conversa; a tela mostra, não
+ * inventa.
+ */
+export interface TrabalhoDeVideo {
+  /** linha+call — estável entre renders, único mesmo com replay. */
+  key: string;
+  tool: string;
+  ok: boolean;
+  /** O(s) arquivo(s) de entrada, dos argumentos da chamada. */
+  entrada: string;
+  /** O arquivo de saída (trim/concat/text/export); "" para o probe. */
+  saida: string;
+  /** A primeira linha do resultado (ok) ou o erro — o resumo honesto. */
+  resumo: string;
+}
+
+function textoDoArg(args: unknown, chave: string): string {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return "";
+  const valor = (args as Record<string, unknown>)[chave];
+  if (typeof valor === "string") return valor.trim();
+  if (Array.isArray(valor)) {
+    return valor.filter((item): item is string => typeof item === "string").join(", ");
+  }
+  return "";
+}
+
+/**
+ * As operações `video.*` da conversa, na ordem em que aconteceram — as que
+ * FALHARAM também entram, com o erro: um export que morreu no meio é
+ * exatamente o que a pessoa precisa ver para pedir de novo. Só chamada COM
+ * resultado vira linha (o que está em curso ainda não tem o que mostrar).
+ */
+export function coletarTrabalhoDoBot(lines: ConversationLine[]): TrabalhoDeVideo[] {
+  const chamadaPorCall = new Map<string, { tool: string; args: unknown }>();
+  for (const line of lines) {
+    for (const call of line.toolCalls ?? []) {
+      if (call.tool.startsWith("video.")) chamadaPorCall.set(call.callId, { tool: call.tool, args: call.args });
+    }
+  }
+
+  const out: TrabalhoDeVideo[] = [];
+  for (const line of lines) {
+    for (const result of line.toolResults ?? []) {
+      const chamada = chamadaPorCall.get(result.callId);
+      // O tool do result é a fonte quando presente; a chamada cobre gateway
+      // antigo que não repete o campo no resultado.
+      const tool = result.tool !== "" ? result.tool : chamada?.tool ?? "";
+      if (!tool.startsWith("video.")) continue;
+      const texto = result.ok ? result.output ?? "" : result.error ?? "";
+      out.push({
+        key: `${line.id}:${result.callId}`,
+        tool,
+        ok: result.ok,
+        entrada: textoDoArg(chamada?.args, "path") || textoDoArg(chamada?.args, "paths"),
+        saida: textoDoArg(chamada?.args, "output"),
+        resumo: (texto.split("\n")[0] ?? "").trim()
+      });
+    }
+  }
+  // As últimas oito bastam: a aba é um estúdio, não um log — o registro
+  // integral continua no painel de ferramentas da conversa.
+  return out.slice(-8);
+}
+
 /* ------------------------------ a superfície ------------------------------ */
 
 export function VideoStudio(): ReactNode {
   const setInput = useApp((state) => state.setInput);
+  const lines = useApp((state) => state.lines);
+
+  // A reação da aba ao trabalho do PRÓPRIO bot: as operações video.* desta
+  // conversa, derivadas dos tool.result (ver coletarTrabalhoDoBot).
+  const trabalhoDoBot = useMemo(() => coletarTrabalhoDoBot(lines), [lines]);
 
   const media = useVideoStudio((state) => state.media);
   const clips = useVideoStudio((state) => state.clips);
@@ -969,6 +1048,53 @@ export function VideoStudio(): ReactNode {
                 />
                 <small>Incluir áudio</small>
               </label>
+            </div>
+          </section>
+
+          {/*
+            O que o BOT já fez com vídeo nesta conversa (video.probe/trim/
+            concat/text/export). Sempre visível, com vazio honesto: é a reação
+            da aba à entrega dele — sem esta seção, o export rodava no turno do
+            agente e a tela seguia como se nada tivesse acontecido. O registro
+            integral (argumentos, saída completa) continua no painel de
+            ferramentas da conversa.
+          */}
+          <section className="card" aria-label="trabalho do bot em vídeo">
+            <div className="card-head">
+              <Bot size={13} aria-hidden="true" />
+              <span className="card-title">Trabalho do bot</span>
+              <span className="chip">{trabalhoDoBot.length}</span>
+            </div>
+            <div className="card-body vid-fields">
+              {trabalhoDoBot.length === 0 ? (
+                <p className="hint">
+                  Quando o bot cortar, emendar ou exportar vídeo nesta conversa (as ferramentas{" "}
+                  <code>video.*</code>), o resultado de cada operação aparece aqui.
+                </p>
+              ) : (
+                <ul className="vid-bot-lista">
+                  {trabalhoDoBot.map((item) => (
+                    <li key={item.key} className="vid-bot-item" data-ok={item.ok ? "true" : "false"}>
+                      <div className="vid-overlay-head">
+                        <strong>{item.tool}</strong>
+                        <span className="chip" data-active={item.ok ? "true" : "false"}>
+                          {item.ok ? "ok" : "erro"}
+                        </span>
+                      </div>
+                      {item.saida !== "" ? (
+                        <p className="hint" title={item.entrada !== "" ? `entrada: ${item.entrada}` : undefined}>
+                          saída <code>{item.saida}</code>
+                        </p>
+                      ) : item.entrada !== "" ? (
+                        <p className="hint">
+                          arquivo <code>{item.entrada}</code>
+                        </p>
+                      ) : null}
+                      {item.resumo !== "" ? <p className="hint">{item.resumo}</p> : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </section>
         </aside>

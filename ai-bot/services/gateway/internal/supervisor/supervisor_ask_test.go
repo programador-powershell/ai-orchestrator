@@ -344,7 +344,11 @@ func TestReplyEscolhendoConversaRespondeNaRaiz(t *testing.T) {
 // com o pedido original anexado, e só a resposta entra como fala nova no log.
 func TestReplyWithFreeTextBecomesContinuationPrompt(t *testing.T) {
 	requireNoLexicalSignal(t, noSignalText)
-	fixture := newAskFixture(t, []string{"aqui está"}, nil)
+	// A continuação de texto livre roteia pela CASCATA (não é escolha explícita),
+	// então o master PLANEJA antes de delegar (ver master_plan.go): as duas
+	// primeiras falas do roteiro são a chamada de planejamento e o retry — aqui
+	// inválidas de propósito, para o caminho cair no item único de sempre.
+	fixture := newAskFixture(t, []string{"sem plano", "sem plano", "aqui está"}, nil)
 	ctx := askContext(t)
 
 	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: noSignalText}); err != nil {
@@ -358,8 +362,8 @@ func TestReplyWithFreeTextBecomesContinuationPrompt(t *testing.T) {
 		t.Fatalf("Reply: %v", err)
 	}
 
-	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
-		t.Errorf("esperava 1 chamada de modelo na continuação, obtive %d", calls)
+	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 3 {
+		t.Errorf("esperava 3 chamadas na continuação (planejamento + retry + sub-turno), obtive %d", calls)
 	}
 	users := messageTexts(t, fixture.store, fixture.session, "user")
 	if countOf(users, freeText) != 1 || countOf(users, noSignalText) != 1 {
@@ -377,7 +381,10 @@ func TestReplyWithFreeTextBecomesContinuationPrompt(t *testing.T) {
 // pergunta morta falha com motivo em vez de rodar um turno fantasma.
 func TestNewMessageKillsPendingClarification(t *testing.T) {
 	requireNoLexicalSignal(t, noSignalText)
-	fixture := newAskFixture(t, []string{"revisando a vulnerabilidade"}, nil)
+	// A mensagem clara desce pela cascata e o master PLANEJA antes de delegar
+	// (ver master_plan.go): as duas primeiras falas são o planejamento e o
+	// retry, inválidos de propósito — o caminho cai no item único de sempre.
+	fixture := newAskFixture(t, []string{"sem plano", "sem plano", "revisando a vulnerabilidade"}, nil)
 	ctx := askContext(t)
 
 	if err := fixture.supervisor.Prompt(ctx, fixture.session, protocol.Prompt{Text: noSignalText}); err != nil {
@@ -402,15 +409,15 @@ func TestNewMessageKillsPendingClarification(t *testing.T) {
 	if meta.Specialist != "" {
 		t.Fatalf("a raiz ganhou o dono %q — o master delega, não adota o modo", meta.Specialist)
 	}
-	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
-		t.Errorf("esperava 1 chamada de modelo (o sub-turno do delegado), obtive %d", calls)
+	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 3 {
+		t.Errorf("esperava 3 chamadas (planejamento + retry + sub-turno do delegado), obtive %d", calls)
 	}
 
 	if err := fixture.supervisor.Reply(ctx, fixture.session,
 		protocol.Reply{AskID: ask.AskID, Answer: clarifyLabelOf("code")}); err == nil {
 		t.Error("o reply da pergunta morta deveria falhar — a mensagem nova já era a resposta")
 	}
-	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 1 {
+	if calls := atomic.LoadInt32(fixture.modelCalls); calls != 3 {
 		t.Errorf("o reply morto rodou um turno fantasma: %d chamadas de modelo", atomic.LoadInt32(fixture.modelCalls))
 	}
 }

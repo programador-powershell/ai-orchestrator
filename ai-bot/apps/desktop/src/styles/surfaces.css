@@ -573,6 +573,17 @@ button.chip {
 
 /* --------------------------------- quadro ------------------------------- */
 
+/* A coluna principal do quadro empilha as colunas de tarefa E a seção de
+   automações — a entrega real do bot de Trabalho (schedule.*). É um wrapper
+   porque o filho direto do .board-split é célula de grid: pendurar a seção
+   solta ali criaria uma terceira coluna em vez de uma segunda linha. */
+.board-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
 .board {
   display: flex;
   gap: 10px;
@@ -580,6 +591,35 @@ button.chip {
   min-width: 0;
   overflow-x: auto;
   padding-bottom: 6px;
+}
+
+/* ------------------------ automações agendadas --------------------------- */
+
+.board-automacoes-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.board-automacao {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+}
+
+/* Gatilho desligado continua NA LISTA (ele existe no disco), só esmaece:
+   sumir com ele diria que a agenda está limpa quando não está. */
+.board-automacao[data-desligada="true"] {
+  opacity: 0.6;
+}
+
+.board-automacao-id {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--fs-micro);
 }
 
 .board-column {
@@ -2375,6 +2415,33 @@ button.token-swatch {
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
   background: var(--panel-2);
+}
+
+/* O trabalho do bot (video.*) — mesma moldura dos cartões de overlay, para a
+   coluna lateral falar uma língua visual só. */
+.vid-bot-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vid-bot-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--panel-2);
+}
+
+/* A falha tinge a borda com o token de perigo da casa — o chip "erro" não
+   fica sendo a única prova, e a cor vem da mesma paleta do resto do app. */
+.vid-bot-item[data-ok="false"] {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
 }
 
 .vid-overlay-head {

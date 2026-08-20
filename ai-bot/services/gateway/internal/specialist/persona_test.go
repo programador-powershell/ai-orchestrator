@@ -11,6 +11,7 @@
 package specialist
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -149,6 +150,51 @@ func TestPersonaDeDadosProduzPeloFerramentalEstruturado(t *testing.T) {
 		}
 		if !data.AllowsTool(want) {
 			t.Errorf("a persona manda usar %q e a lista de permitidas não cobre", want)
+		}
+	}
+}
+
+// A AUDITORIA (b) da paridade, generalizada: TODA persona de TRABALHO
+// (Surface != conversation) manda trabalhar NA PRÓPRIA JANELA e cita pelo nome
+// ao menos uma ferramenta do próprio catálogo — sem o nome, o modelo não sabe
+// COMO produzir na superfície e volta a colar o artefato no chat. E toda
+// ferramenta citada tem de estar coberta pela permissão: ordem sem permissão é
+// recusa garantida no portão (o outro lado do defeito).
+//
+// Só tokens que SÃO ferramentas do catálogo contam — "index.html" e "next.js"
+// têm a mesma cara e não são ordem nenhuma.
+func TestPersonasDeTrabalhoMandamUsarFerramentaPropria(t *testing.T) {
+	conhecidas := make(map[string]bool, 64)
+	for _, definition := range All() {
+		for _, tool := range definition.Tools {
+			conhecidas[tool] = true
+		}
+	}
+	padraoDeFerramenta := regexp.MustCompile(`[a-z]+\.[a-z]+`)
+
+	for _, definition := range All() {
+		if definition.Surface == SurfaceConversation {
+			continue
+		}
+		if !strings.Contains(definition.System, "NA SUA JANELA") {
+			t.Errorf("a persona de %s não manda trabalhar NA SUA JANELA — a superfície dele fica vazia:\n%s",
+				definition.ID, definition.System)
+		}
+		citouPropria := false
+		for _, token := range padraoDeFerramenta.FindAllString(definition.System, -1) {
+			if !conhecidas[token] {
+				continue
+			}
+			if !definition.AllowsTool(token) {
+				t.Errorf("a persona de %s manda usar %q e a permissão não cobre — recusa garantida no portão",
+					definition.ID, token)
+				continue
+			}
+			citouPropria = true
+		}
+		if !citouPropria {
+			t.Errorf("a persona de %s não cita nenhuma ferramenta própria pelo nome:\n%s",
+				definition.ID, definition.System)
 		}
 	}
 }

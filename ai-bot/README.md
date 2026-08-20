@@ -104,40 +104,36 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.7
+### :up: V.2.8
 ### :warning: Latest Changes
 
-- **Cada bot executa NA PRÓPRIA JANELA — o contrato tirado da releitura do
-  AI-Orchestrator original virou código** (docs/execucao-na-janela.md):
-  - **O sub-turno delegado vive no log da FILHA**: ferramentas, etapas e a
-    resposta aparecem na janela do bot ao vivo e o replay dela reconstrói tudo;
-    a raiz guarda o espelho-resumo (o par de delegação que alimenta o popup, a
-    barra e a memória do dono) — nenhum JSON de cerca aparece como texto, em
-    janela nenhuma. **Aprovações são espelhadas** na raiz com o MESMO callID:
-    quem olha a raiz decide o trabalho da filha, e o cartão fecha nas duas.
-  - **O teto que queimava trabalho morreu**: 8 rodadas no sub-turno do master
-    (4 continuam no bot-a-bot, que é chamada pontual) e, no esgotamento, uma
-    chamada de RELATO + **entrega PARCIAL honesta** quando houve efeito real —
-    16 gestos bons nunca mais viram fogueira; sem efeito, falha com motivo
-    verdadeiro ("8 rodadas, última ferramenta fs.write"), nunca a frase
-    genérica. O portão de narração vale no relato: encenação não lava falha.
-    O orbe agora conta: "rodada 3/8 · rodando ferramentas".
-  - **O Código chama o Design**: pedido com camada visual → depois de gravar a
-    estrutura, delega ao Design citando os CAMINHOS gravados no projeto
-    compartilhado (nunca HTML inline nem localhost) — o "site completo" vira
-    dois bots aninhados sob a mesma raiz.
-  - **Composer CLI na janela do Código**, portado do original: a linha `$` com
-    os três gestos — comando vai ao PTY do teclado (gesto humano; comando
-    digitado antes do shell existir espera na fila, nunca cai no chão),
-    caminho existente abre no editor, `ai <pergunta>` fala com o modelo e
-    espelha a resposta no terminal quando o turno fecha.
-  - **O host honra o `root` injetado** (office/vídeo/proc local agem NA CÓPIA,
-    com o mesmo confinamento anti-traversal do project_root) e o interruptor
-    `HostHonraRoot` ligou — a jaula dos gestos de host, que a onda anterior
-    deixou armada e desligada, agora cobre o produto real.
-  - **Provado no fio com 50 asserções**: "crie um site completo em next" →
-    ferramentas no log da filha, cartão de entrega espelhado, parcial
-    promovido no esgotamento, Design delegado sob a mesma raiz.
+- **O orquestrador agora COMPREENDE o pedido, LISTA o que precisa e delega em
+  ordem — ninguém fica de fora.** (No teste do dono, "site completo" chamou só
+  o Código e o Design ficou de fora; a corrente dependia da persona.)
+  - **Uma chamada de planejamento** com contrato fechado: o master recebe o
+    catálogo real de especialistas e devolve a lista `[{especialista, objetivo,
+    depende de}]` — validada com a régua da Equipe (existe, sem ciclo, teto de
+    4, política da sessão); inválida → uma retentativa → fallback exato para o
+    comportamento de item único.
+  - **A lista é mensagem visível na conversa ANTES de qualquer delegação**:
+    "Para este pedido preciso de: 1. Código — estrutura… 2. Design — visual
+    (depois de 1)".
+  - **Execução em ondas de dependência**: cada item pelo masterDelegate de
+    sempre (mesma filha por par, staging próprio, cartão de entrega POR OFÍCIO
+    — você aprova cada entrega ao vê-la); o dependente só roda DEPOIS da
+    entrega do anterior, com o goal citando os caminhos promovidos — o staging
+    encadeado foi provado no fio: o fs.read do Design devolveu o index.html
+    que o Código tinha acabado de entregar.
+  - **Falha corta os dependentes com aviso honesto** ("dependia do item 1, que
+    não entregou"); independentes seguem. Resposta de clarificação pula o
+    planejamento (a pessoa acabou de dizer quem trabalha). Pedido trivial =
+    lista de um item, sem cerimônia.
+- **Auditoria dos 10 especialistas** (matrizes no relatório da onda): nenhuma
+  ferramenta de efeito escreve fora do root/jaula; **6 personas chat-ish
+  consertadas** no padrão "NA SUA JANELA" (office, work, security, agent,
+  fluxo, tune) com teste-invariante; delegabilidade + memória de filha
+  provadas por teste para os 10; superfícies reagindo à entrega revisadas do
+  lado da tela.
 
 ### :pushpin: Fixes
 

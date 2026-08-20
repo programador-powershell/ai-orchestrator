@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
+  CalendarClock,
   CircleAlert,
   CircleCheckBig,
   CircleDashed,
@@ -23,7 +24,7 @@ import {
   LoaderCircle,
   TriangleAlert
 } from "lucide-react";
-import type { Escalate, Task, TaskProgress, WorkerDone } from "@aibot/contracts";
+import type { ConversationLine, Escalate, Task, TaskProgress, WorkerDone } from "@aibot/contracts";
 import { outcomeOf } from "../lib/crew";
 import { SPECIALIST_ICON } from "../lib/specialists";
 import { useApp } from "../lib/store";
@@ -204,6 +205,196 @@ function TaskCard({ card }: { card: CardModel }): ReactNode {
   );
 }
 
+/* ------------------------------- automações ------------------------------ */
+
+/**
+ * Uma automação AGENDADA DE VERDADE — derivada das chamadas `schedule.*` que
+ * deram certo nas linhas da conversa, nunca de estado próprio da tela.
+ *
+ * Este é o conserto anti-casca da janela de Trabalho: o quadro de colunas é
+ * alimentado por `crew` (task.dispatch/progress/done), eventos que o bot de
+ * TRABALHO não emite — quem os emite é a Equipe. Na sessão do próprio bot, a
+ * entrega dele é o gatilho (`schedule.create/list/remove` — ver
+ * specialist.go), e sem esta seção a tela ficava no "Nenhuma tarefa ainda"
+ * enquanto o bot agendava automações que ninguém via.
+ */
+export interface Automacao {
+  id: string;
+  /** O prompt que o gatilho dispara — o "o quê" da automação. */
+  prompt: string;
+  /** "a cada 1h" / "às 07:30" — a redação do próprio gateway. */
+  agenda: string;
+  nota: string;
+  /** "20/08/2026 15:04" quando o texto do resultado a traz; "" sem ela. */
+  proximo: string;
+  disparos: number;
+  desligada: boolean;
+}
+
+function argTexto(args: unknown, chave: string): string {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return "";
+  const valor = (args as Record<string, unknown>)[chave];
+  return typeof valor === "string" ? valor.trim() : "";
+}
+
+/**
+ * O recibo do `schedule.create`: "gatilho <id> criado (<agenda>). primeiro
+ * disparo em <dd/mm/aaaa hh:mm>…" (tools_flow.go). O id e a agenda saem do
+ * RESULTADO — é ele que prova que o gatilho existe; o prompt e a nota saem dos
+ * argumentos da chamada, porque o recibo não os repete.
+ */
+const RECIBO_DE_CRIACAO = /^gatilho (\S+) criado \(([^)]*)\)/;
+const PRIMEIRO_DISPARO = /primeiro disparo em ([\d/]+ [\d:]+)/;
+
+/**
+ * Uma entrada do relatório do `schedule.list`:
+ * `- <id>[ [desligado]] — <agenda> — próximo <data> — <N> disparo(s)`.
+ */
+const LINHA_DA_LISTA = /^- (\S+?)( \[desligado\])? — (.+?) — próximo (.+?) — (\d+) disparo/;
+
+/** O relatório de lista vazia, nas duas redações do gateway. */
+function listaVazia(saida: string): boolean {
+  return saida.startsWith("não há nenhum gatilho") || saida.startsWith("nenhum gatilho agendado");
+}
+
+/**
+ * O quadro de automações desta sessão, reconstruído dos `tool.result` na ordem
+ * em que aconteceram: `create` acrescenta, `remove` tira, e `list` SUBSTITUI o
+ * quadro inteiro — a lista é a fotografia mais recente da agenda, e somar por
+ * cima dela deixaria na tela um gatilho que o disco já não tem.
+ *
+ * Recusa (ok:false) fica de fora em todos os verbos: agendamento que não
+ * aconteceu não vira linha — o mesmo princípio das gravações do editor.
+ */
+export function collectAutomacoes(lines: ConversationLine[]): Automacao[] {
+  // Os argumentos por callId, do log inteiro: o result só carrega o recibo.
+  const argsPorCall = new Map<string, unknown>();
+  for (const line of lines) {
+    for (const call of line.toolCalls ?? []) {
+      if (call.tool.startsWith("schedule.")) argsPorCall.set(call.callId, call.args);
+    }
+  }
+
+  const ferramentaPorCall = new Map<string, string>();
+  for (const line of lines) {
+    for (const call of line.toolCalls ?? []) ferramentaPorCall.set(call.callId, call.tool);
+  }
+
+  let quadro: Automacao[] = [];
+
+  for (const line of lines) {
+    for (const result of line.toolResults ?? []) {
+      if (!result.ok) continue;
+      const ferramenta = result.tool || ferramentaPorCall.get(result.callId) || "";
+      const saida = result.output ?? "";
+
+      if (ferramenta === "schedule.create") {
+        const recibo = RECIBO_DE_CRIACAO.exec(saida);
+        // Sem o recibo não há id — e uma linha sem id não tem como sair do
+        // quadro quando o remove chegar. Melhor não inventar.
+        if (!recibo) continue;
+        const args = argsPorCall.get(result.callId);
+        const nova: Automacao = {
+          id: recibo[1] ?? "",
+          prompt: argTexto(args, "prompt"),
+          agenda: recibo[2] ?? "",
+          nota: argTexto(args, "note"),
+          proximo: PRIMEIRO_DISPARO.exec(saida)?.[1] ?? "",
+          disparos: 0,
+          desligada: false
+        };
+        // O mesmo id criado de novo (replay tolerante) não duplica a linha.
+        quadro = [...quadro.filter((item) => item.id !== nova.id), nova];
+        continue;
+      }
+
+      if (ferramenta === "schedule.remove") {
+        // O id sai do recibo ("gatilho X apagado") ou dos argumentos.
+        const id = /^gatilho (\S+) apagado/.exec(saida)?.[1] ?? argTexto(argsPorCall.get(result.callId), "id");
+        if (id !== "") quadro = quadro.filter((item) => item.id !== id);
+        continue;
+      }
+
+      if (ferramenta === "schedule.list") {
+        if (listaVazia(saida)) {
+          quadro = [];
+          continue;
+        }
+        const itens: Automacao[] = [];
+        const linhas = saida.split("\n");
+        for (let i = 0; i < linhas.length; i += 1) {
+          const casada = LINHA_DA_LISTA.exec((linhas[i] ?? "").trim());
+          if (!casada) continue;
+          // As linhas indentadas logo abaixo: a primeira é o prompt, e a que
+          // começa com "nota:" é a nota (truncadas pelo gateway, e tudo bem).
+          let prompt = "";
+          let nota = "";
+          for (let j = i + 1; j < linhas.length; j += 1) {
+            const corpo = linhas[j] ?? "";
+            if (!corpo.startsWith("  ")) break;
+            const texto = corpo.trim();
+            if (texto.startsWith("nota:")) nota = texto.slice(5).trim();
+            else if (prompt === "") prompt = texto;
+          }
+          itens.push({
+            id: casada[1] ?? "",
+            prompt,
+            agenda: casada[3] ?? "",
+            nota,
+            proximo: (casada[4] ?? "").trim(),
+            disparos: Number.parseInt(casada[5] ?? "0", 10) || 0,
+            desligada: casada[2] !== undefined
+          });
+        }
+        // Relatório com formato irreconhecível preserva o quadro que já havia:
+        // apagar a tela por causa de uma redação nova esconderia trabalho real.
+        if (itens.length > 0) quadro = itens;
+      }
+    }
+  }
+
+  return quadro;
+}
+
+/** O cartão de UMA automação — id, agenda e o pedido que ela dispara. */
+function AutomacaoRow({ item }: { item: Automacao }): ReactNode {
+  const setInput = useApp((state) => state.setInput);
+  return (
+    <li className="board-automacao" data-desligada={item.desligada ? "true" : undefined}>
+      <div className="card-head">
+        <code className="board-automacao-id">{item.id}</code>
+        <span className="chip" title="quando o gatilho dispara">
+          {item.agenda || "sem agenda"}
+        </span>
+        {item.desligada ? <span className="chip">desligado</span> : null}
+        {item.proximo !== "" ? (
+          <span className="card-eyebrow" title="próximo disparo, hora local desta máquina">
+            próximo {item.proximo}
+          </span>
+        ) : null}
+        {item.disparos > 0 ? (
+          <span className="card-eyebrow">
+            {item.disparos} {item.disparos === 1 ? "disparo" : "disparos"}
+          </span>
+        ) : null}
+      </div>
+      {item.prompt !== "" ? <p className="card-body">{item.prompt}</p> : null}
+      {item.nota !== "" ? <p className="card-eyebrow">nota: {item.nota}</p> : null}
+      <div className="card-foot">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => setInput(`Remova o gatilho agendado ${item.id} porque `)}
+          title="escreve o pedido no campo de texto — quem remove é o especialista, via schedule.remove"
+        >
+          <CornerDownRight size={12} aria-hidden="true" />
+          pedir para remover
+        </button>
+      </div>
+    </li>
+  );
+}
+
 /* -------------------------------- superfície ---------------------------- */
 
 export function BoardSurface(): ReactNode {
@@ -212,6 +403,11 @@ export function BoardSurface(): ReactNode {
   const progress = useApp((state) => state.crew.progress);
   const done = useApp((state) => state.crew.done);
   const escalations = useApp((state) => state.crew.escalations);
+  const lines = useApp((state) => state.lines);
+
+  // A reação da tela ao trabalho do PRÓPRIO bot: os gatilhos que ele agendou
+  // nesta sessão, derivados dos tool.result (ver collectAutomacoes).
+  const automacoes = useMemo(() => collectAutomacoes(lines), [lines]);
 
   const cards = useMemo<CardModel[]>(() => {
     const dispatchByTask = new Map<string, { workerId: string; wave: number }>();
@@ -272,36 +468,68 @@ export function BoardSurface(): ReactNode {
       </div>
 
       <div className="surface-body board-split">
-        <section className="board" aria-label="quadro de tarefas">
-          {cards.length === 0 ? (
-            <div className="surface-empty">
-              <p>Nenhuma tarefa ainda.</p>
-              <p>
-                Peça um plano ao especialista de trabalho. Cada tarefa despachada vira um cartão, e a coluna
-                acompanha o que o worker relata.
-              </p>
+        <div className="board-main">
+          <section className="board" aria-label="quadro de tarefas">
+            {cards.length === 0 ? (
+              <div className="surface-empty">
+                <p>Nenhuma tarefa ainda.</p>
+                <p>
+                  Peça um plano ao especialista de trabalho. Cada tarefa despachada vira um cartão, e a coluna
+                  acompanha o que o worker relata.
+                </p>
+              </div>
+            ) : (
+              LANES.map((lane) => {
+                const items = cards.filter((card) => card.lane === lane.id);
+                return (
+                  <div className="board-column" key={lane.id} data-lane={lane.id}>
+                    <div className="board-column-head" title={lane.hint}>
+                      <span>{lane.title}</span>
+                      <span className="board-column-count">{items.length}</span>
+                    </div>
+                    <div className="board-column-list">
+                      {items.length === 0 ? (
+                        <p className="board-column-empty">vazio</p>
+                      ) : (
+                        items.map((card) => <TaskCard card={card} key={card.task.id} />)
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </section>
+
+          {/*
+            A ENTREGA do bot de Trabalho é o gatilho agendado, não a tarefa de
+            equipe — e é aqui que ela aparece assim que o schedule.create
+            confirma. Sempre visível, com vazio honesto: dizer o que vai
+            aparecer é o padrão da casa, e esconder a seção deixaria a pessoa
+            sem saber que o quadro TAMBÉM mostra a agenda.
+          */}
+          <section className="card board-automacoes" aria-label="automações agendadas">
+            <div className="card-head">
+              <CalendarClock size={14} aria-hidden="true" />
+              <span className="card-title">Automações</span>
+              <span className="chip">{automacoes.length}</span>
             </div>
-          ) : (
-            LANES.map((lane) => {
-              const items = cards.filter((card) => card.lane === lane.id);
-              return (
-                <div className="board-column" key={lane.id} data-lane={lane.id}>
-                  <div className="board-column-head" title={lane.hint}>
-                    <span>{lane.title}</span>
-                    <span className="board-column-count">{items.length}</span>
-                  </div>
-                  <div className="board-column-list">
-                    {items.length === 0 ? (
-                      <p className="board-column-empty">vazio</p>
-                    ) : (
-                      items.map((card) => <TaskCard card={card} key={card.task.id} />)
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </section>
+            <p className="card-eyebrow">
+              gatilhos agendados pelo bot nesta sessão — fonte: schedule.create · schedule.list
+            </p>
+            {automacoes.length === 0 ? (
+              <p className="card-body">
+                nenhuma automação agendada nesta sessão — <code>/automacao</code> descreve o gatilho e o
+                especialista o agenda de verdade
+              </p>
+            ) : (
+              <ul className="board-automacoes-lista">
+                {automacoes.map((item) => (
+                  <AutomacaoRow item={item} key={item.id} />
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
 
         <aside className="board-talk" aria-label="conversa">
           <ConversationSurface compact />
@@ -323,6 +551,9 @@ export function BoardSurface(): ReactNode {
         */}
         <span>
           concluídas <b>{finished}</b>
+        </span>
+        <span>
+          automações <b>{automacoes.length}</b>
         </span>
         <span>estado muda pelo bot, não pelo mouse</span>
       </div>

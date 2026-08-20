@@ -80,6 +80,30 @@ describe("a conversa do bot na barra lateral", () => {
     expect(estado.sessions.map((item) => item.id).sort()).toEqual(["s-1-code", "s-1-design"]);
   });
 
+  it("as filhas ficam sob o pai NA ORDEM em que nasceram — a barra lê o plano", () => {
+    // Duas delegações em sequência (Código, depois Design) precisam aparecer
+    // nessa ordem sob a raiz. A versão que prependava invertia: a filha mais
+    // nova subia para cima da mais velha e a barra contava a história de trás
+    // para a frente.
+    const raiz = {
+      id: "s-1",
+      title: "site completo",
+      createdAt: "2026-08-20T12:00:00Z",
+      updatedAt: "2026-08-20T12:00:00Z",
+      lastSeq: 1,
+      syncedSeq: 0,
+      turns: 1
+    };
+    let estado = { ...initialAppData(), sessions: [raiz] };
+    estado = applyEnvelope(estado, delegacao(ABERTA));
+    estado = applyEnvelope(
+      estado,
+      delegacao({ from: "chat", to: "design", goal: "a paleta", depth: 1, session: "s-1-design" }, 2)
+    );
+
+    expect(estado.sessions.map((item) => item.id)).toEqual(["s-1", "s-1-code", "s-1-design"]);
+  });
+
   it("gateway sem o campo não quebra nada — a delegação vale, só não há linha", () => {
     // Compatibilidade real: o campo é novo, e um gateway antigo (ou um espelho
     // que falhou no disco) manda a delegação sem ele. Perder a linha lateral é

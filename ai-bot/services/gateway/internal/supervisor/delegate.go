@@ -869,9 +869,16 @@ func especialistaDeTrabalho(definition specialist.Definition) bool {
 }
 
 // masterDelegate é o turno da raiz quando o master DELEGA em vez de adotar o
-// modo: o pedido desce ao especialista de trabalho pelo MESMO caminho da
+// modo: o pedido desce ao(s) especialista(s) de trabalho pelo MESMO caminho da
 // delegação bot-a-bot — filha por par (raiz, bot), espelho do pedido/resultado,
 // limites — e a raiz termina com o done normal, sem nunca virar o bot.
+//
+// ANTES de delegar, o master LISTA o que o pedido precisa (ver master_plan.go):
+// uma chamada de planejamento com contrato fechado devolve os itens
+// [{specialist, goal, dependsOn}], a lista sai como mensagem visível na raiz e
+// os itens executam em ordem de dependência — cada um por este mesmo caminho.
+// Planejamento indisponível ou inválido (após um retry) cai no comportamento
+// de sempre: item único com o dono decidido pela cascata.
 //
 // Como o modo não é gravado, o PRÓXIMO input da raiz roteia de novo: mesmo bot
 // vence → a mesma filha continua (o childHistory dá a continuidade); pergunta
@@ -912,15 +919,12 @@ func (s *Supervisor) masterDelegate(
 	defer func() { s.descartaWorkspace(ctx) }()
 
 	masterActor := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
-	// A rota decidida fica visível como ETAPA, não como rota: o envelope de rota
-	// troca a superfície da tela, e a superfície do trabalho é da FILHA (o
-	// delegateWithRoute a publica lá). Na raiz sobra o rótulo de quem entrou.
-	s.thinking(sessionID, turn, masterActor, "chamando o especialista "+target.Name+"…", false)
 
-	// O objetivo é o pedido da pessoa, com os anexos NOMEADOS quando o texto não
-	// os cita: o roteador pode ter decidido pela extensão, e o goal é o único
-	// texto que desce à filha — um anexo que decide a rota e some do pedido
-	// deixaria o bot trabalhando sem saber que o arquivo existe.
+	// O objetivo-base é o pedido da pessoa, com os anexos NOMEADOS quando o
+	// texto não os cita: o roteador pode ter decidido pela extensão, e o goal é
+	// o único texto que desce à filha — um anexo que decide a rota e some do
+	// pedido deixaria o bot trabalhando sem saber que o arquivo existe. O
+	// planejamento recebe o MESMO texto, pelo mesmo motivo.
 	goal := question
 	if names := attachmentNames(prompt.Attachments); len(names) > 0 {
 		missing := make([]string, 0, len(names))
@@ -934,27 +938,30 @@ func (s *Supervisor) masterDelegate(
 		}
 	}
 
-	// Orçamento normal de turno e primeiro salto em profundidade normal: o
-	// master→bot não é um nível grátis — o que o bot delegar em seguida conta na
-	// mesma árvore e nos mesmos tetos.
-	budget := &delegationBudget{}
-	outcome, ok := s.delegateWithRoute(ctx, sessionID, turn, specialist.Master, delegateRequest{
-		Specialist: target.ID,
-		Goal:       goal,
-		Reason:     "o pedido é trabalho da especialidade dele",
-	}, budget, firstDelegationDepth, &route)
-	s.thinking(sessionID, turn, masterActor, "", true)
-
-	interrupted := errors.Is(ctx.Err(), context.Canceled)
-	if !ok && !interrupted {
-		// Recusa e falha ficam NA RAIZ, como aviso do sistema — a regra da
-		// delegação bot-a-bot vale aqui também: a filha só recebe trabalho que
-		// aconteceu. No bot-a-bot o texto volta ao modelo do dono; aqui o dono é
-		// a pessoa, e o aviso é o único jeito de o texto chegar a ela.
-		_ = s.emit(sessionID, turn, protocol.KindMessage,
-			protocol.Actor{Kind: protocol.ActorSupervisor},
-			protocol.Message{Role: "system", Text: outcome})
+	// O PLANEJAMENTO DO MASTER (ver master_plan.go): o padrão é o item único
+	// com o dono da cascata — o comportamento de sempre — e o plano do modelo
+	// só o substitui quando veio VÁLIDO. A resposta da CLARIFICAÇÃO pula o
+	// planejamento de propósito: a pessoa acabou de dizer QUEM trabalha, e
+	// listar outros ofícios por cima seria desfazer a escolha dela.
+	plano := planoDeItemUnico(target.ID, goal)
+	if route.Reason != protocol.RouteClarified {
+		s.thinking(sessionID, turn, masterActor, "listando o que o pedido precisa…", false)
+		planejado, err := s.planejaComOMaster(ctx, goal)
+		s.thinking(sessionID, turn, masterActor, "", true)
+		if err == nil {
+			plano = planejado
+			// A LISTA É VISÍVEL E DURÁVEL na raiz ANTES de qualquer delegação:
+			// é a fala do master ("Para este pedido preciso de…"), em markdown
+			// de lista — o formato que o cliente já renderiza —, e ela fica no
+			// log para o replay e para o histórico dos próximos turnos.
+			_ = s.emit(sessionID, turn, protocol.KindMessage, masterActor, protocol.Message{
+				Role: "assistant",
+				Text: renderizaPlanoDoMaster(plano),
+			})
+		}
 	}
+
+	interrupted := s.executaPlanoDoMaster(ctx, sessionID, turn, route, target, plano)
 
 	// O Specialist da raiz volta a VAZIO antes do done: o store carimba
 	// meta.Specialist de todo envelope com From.Specialist preenchido, e as

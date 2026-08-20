@@ -1587,6 +1587,17 @@ func (s *Supervisor) entregaWorkspace(ctx context.Context, sessionID, turn, spec
 	if s.deps.Bus != nil {
 		s.thinking(sessionID, turn, master, "", true)
 	}
+	if err == nil {
+		// O plano do master (ver master_plan.go) precisa CITAR ao item
+		// dependente o que este item entregou, e o único lugar que conhece os
+		// caminhos promovidos é aqui. Eles sobem pelo coletor do contexto — só
+		// o criado e o alterado, porque o dependente vai LER esses arquivos e
+		// um caminho apagado não se lê.
+		if coletor, ok := coletorDeEntrega(ctx); ok {
+			*coletor = append(*coletor, changes.Created...)
+			*coletor = append(*coletor, changes.Modified...)
+		}
+	}
 	return err
 }
 

@@ -177,8 +177,12 @@ func TestEsgotamentoComEfeitoPromoveOParcial(t *testing.T) {
 	if entries := stagingEntries(t, fixture.store); len(entries) != 0 {
 		t.Errorf("o staging tinha de sumir na promoção do parcial, sobraram %d entrada(s)", len(entries))
 	}
-	if got := chamadas.Load(); got != int32(maxToolRounds+1) {
-		t.Errorf("esperava %d chamadas (8 rodadas + relato), obtive %d", maxToolRounds+1, got)
+	// +2: o planejamento do master (ver master_plan.go) roda antes de delegar —
+	// aqui o provedor responde a cerca de fs.write, que não é lista válida, e o
+	// contrato manda tentar UMA vez de novo antes de cair no item único.
+	if got := chamadas.Load(); got != int32(maxToolRounds+1+2) {
+		t.Errorf("esperava %d chamadas (planejamento inválido + retry + 8 rodadas + relato), obtive %d",
+			maxToolRounds+1+2, got)
 	}
 
 	// O espelho da raiz fecha como PARCIAL com o motivo verdadeiro e o relato.

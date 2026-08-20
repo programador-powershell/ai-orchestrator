@@ -518,25 +518,42 @@ function comConversaDoBot(state: AppData, parentId: string, delegation: Delegate
   }
   const bot = specialistById(state.specialists, delegation.to);
   const agora = new Date().toISOString();
-  return [
-    {
-      id,
-      title: bot.name,
-      specialist: bot.id,
-      botId: bot.id,
-      parentId,
-      createdAt: agora,
-      updatedAt: agora,
-      lastGoal: objetivo,
-      // Já tem conteúdo de verdade: o gateway gravou o pedido ali antes de
-      // publicar este envelope. Zero aqui faria o filtro da barra escondê-la
-      // justamente na hora em que ela precisa aparecer.
-      lastSeq: 1,
-      syncedSeq: 0,
-      turns: 1
-    },
-    ...state.sessions
-  ];
+  const nova: SessionMeta = {
+    id,
+    title: bot.name,
+    specialist: bot.id,
+    botId: bot.id,
+    parentId,
+    createdAt: agora,
+    updatedAt: agora,
+    lastGoal: objetivo,
+    // Já tem conteúdo de verdade: o gateway gravou o pedido ali antes de
+    // publicar este envelope. Zero aqui faria o filtro da barra escondê-la
+    // justamente na hora em que ela precisa aparecer.
+    lastSeq: 1,
+    syncedSeq: 0,
+    turns: 1
+  };
+  /*
+   * A filha entra DEPOIS do bloco do pai (o pai + as filhas que ele já tem),
+   * não no topo da lista. É o que faz o plano do orquestrador se ler na barra
+   * na ORDEM em que ele delegou: Código primeiro, Design depois. Prependar —
+   * como era — invertia a sequência (a filha mais nova aparecia acima da mais
+   * velha), e a barra contava a história de trás para a frente.
+   */
+  const indicePai = state.sessions.findIndex((item) => item.id === parentId);
+  if (indicePai < 0) {
+    // Pai fora da lista (janela aberta no meio do turno): topo, como antes —
+    // o agrupamento da barra a promove a raiz de qualquer jeito.
+    return [nova, ...state.sessions];
+  }
+  let insercao = indicePai + 1;
+  for (let i = indicePai + 1; i < state.sessions.length; i += 1) {
+    if (state.sessions[i]?.parentId === parentId) insercao = i + 1;
+  }
+  const next = state.sessions.slice();
+  next.splice(insercao, 0, nova);
+  return next;
 }
 
 /**
