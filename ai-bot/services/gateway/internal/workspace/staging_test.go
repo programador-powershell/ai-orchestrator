@@ -211,6 +211,66 @@ func TestMaterializeTrabalhaNaCopiaEPromoteEspelha(t *testing.T) {
 	}
 }
 
+// A ENTREGA É O PRODUTO: o espelho da promoção exclui os reproduzíveis nos
+// DOIS sentidos — o node_modules que o container instalou no staging não chega
+// ao projeto, e o node_modules que a própria pessoa tinha no projeto não é
+// apagado por estar "sumido" da cópia. Build de verdade (dist/) ENTRA: é o que
+// foi pedido.
+func TestPromoteExcluiReproduziveisNosDoisSentidos(t *testing.T) {
+	harness := newStagingHarness(t)
+	escreve(t, harness.projeto, "app.js", "fonte")
+	// O que JÁ É da pessoa e o espelho não pode destruir: as dependências que
+	// ela instalou e o histórico git dela.
+	escreve(t, harness.projeto, "node_modules/preexistente/lib.js", "instalado pela pessoa")
+	escreve(t, harness.projeto, ".git/config", "historico da pessoa")
+
+	plan, err := harness.manager.Plan(context.Background(),
+		PlanRequest{SessionID: "s-projeto", Origin: OriginModel})
+	if err != nil {
+		t.Fatalf("congelar: %v", err)
+	}
+	execution, err := harness.manager.Materialize(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("materializar: %v", err)
+	}
+
+	// O "turno no sandbox": instala, builda e mexe no git — tudo NA CÓPIA.
+	escreve(t, execution.LocalRoot, "node_modules/instalado/pacote.js", "veio do pnpm install")
+	escreve(t, execution.LocalRoot, "pacote/node_modules/aninhado.js", "reproduzível aninhado")
+	escreve(t, execution.LocalRoot, ".pnpm-store/v3/blob", "cache do pnpm")
+	escreve(t, execution.LocalRoot, "__pycache__/m.pyc", "bytecode")
+	escreve(t, execution.LocalRoot, ".venv/pyvenv.cfg", "venv do container")
+	escreve(t, execution.LocalRoot, ".git/config", "git do staging")
+	escreve(t, execution.LocalRoot, "dist/bundle.js", "produto buildado")
+	escreve(t, execution.LocalRoot, "app.js", "fonte v2")
+
+	if err := harness.manager.Promote(context.Background(), plan, execution.Publication()); err != nil {
+		t.Fatalf("promover: %v", err)
+	}
+
+	// O PRODUTO chegou: fonte alterada e o build.
+	if le(t, harness.projeto, "app.js") != "fonte v2" || le(t, harness.projeto, "dist/bundle.js") != "produto buildado" {
+		t.Error("o produto (fonte alterada e dist/) tinha de chegar ao projeto")
+	}
+	// Os REPRODUZÍVEIS do staging não chegaram — a máquina da pessoa não ganha
+	// nem node_modules.
+	for _, proibido := range []string{
+		"node_modules/instalado", "pacote/node_modules", ".pnpm-store", "__pycache__", ".venv",
+	} {
+		if existe(harness.projeto, proibido) {
+			t.Errorf("%s do staging não podia chegar ao projeto", proibido)
+		}
+	}
+	// E o que era da pessoa SOBREVIVEU: o espelho não copiou os reproduzíveis,
+	// e o apagamento também não pode tocá-los.
+	if le(t, harness.projeto, "node_modules/preexistente/lib.js") != "instalado pela pessoa" {
+		t.Error("o node_modules pré-existente da pessoa foi apagado pelo espelho")
+	}
+	if le(t, harness.projeto, ".git/config") != "historico da pessoa" {
+		t.Error("o .git da pessoa foi sobrescrito pelo git do staging")
+	}
+}
+
 // Discard joga a cópia fora SEM tocar o projeto — é o desfecho de falha,
 // interrupção e recusa. Idempotente.
 func TestDiscardRemoveACopiaSemTocarOProjeto(t *testing.T) {

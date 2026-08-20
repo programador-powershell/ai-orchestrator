@@ -222,6 +222,10 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 	// até as sub-equipes. Criá-lo dentro de `task.dispatch` daria cota nova a cada
 	// nível da árvore, que é exatamente o que o teto existe para impedir.
 	ctx = withCrewBudget(ctx)
+	// O marcador do aviso de degradação do sandbox também nasce uma vez por
+	// turno: "execução isolada indisponível" sai UMA vez, não a cada proc.run.
+	// Ver tools_process.go.
+	ctx = withSandboxWarning(ctx)
 	// A CÁPSULA dobra no fim do turno, aconteça o que acontecer com ele —
 	// falha também é estado que o próximo turno precisa saber.
 	defer s.foldCapsule(sessionID)

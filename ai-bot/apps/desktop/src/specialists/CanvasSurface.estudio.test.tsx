@@ -326,7 +326,7 @@ describe("o canvas editável", () => {
 });
 
 describe("as abas de estúdio", () => {
-  it("Canvas ativa; Vídeo abre o estúdio de verdade; Site segue com a dica honesta", () => {
+  it("Canvas ativa; Vídeo e Site abrem os estúdios de verdade", () => {
     monta();
     const abas = [...container.querySelectorAll<HTMLButtonElement>(".studio-tab")];
     expect(abas.map((aba) => (aba.textContent ?? "").trim().startsWith("Canvas"))).toContain(true);
@@ -351,9 +351,17 @@ describe("as abas de estúdio", () => {
     expect(container.querySelector(".cnv-editor")).not.toBeNull();
     expect(container.querySelector(".video-studio")).toBeNull();
 
-    // Site continua desabilitada, com a dica de QUANDO chega.
-    expect(site?.disabled).toBe(true);
-    expect(site?.title).toContain("Onda 3");
+    // A aba Site também está VIVA: abre o estúdio do site entregue. Sem
+    // gateway neste teste, o vazio é digno — diz o que vai aparecer ali
+    // (a moldura renderizada é assunto de CanvasSurface.site.test.tsx).
+    expect(site?.disabled).toBe(false);
+    act(() => {
+      site?.click();
+    });
+    expect(site?.getAttribute("data-active")).toBe("true");
+    expect(container.querySelector(".site-studio")).not.toBeNull();
+    expect(container.querySelector(".cnv-editor")).toBeNull();
+    expect(container.textContent).toContain("Nenhum site entregue ainda");
   });
 
   it("com o estúdio de Vídeo aberto, Delete NÃO apaga nó do canvas fora da tela", () => {

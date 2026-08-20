@@ -104,36 +104,43 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.4
+### :up: V.2.5
 ### :warning: Latest Changes
 
-- **O bot trabalha numa CÓPIA e só entrega no fim — o sandbox de arquivos que
-  o dono pediu.** Turno de modelo num projeto provisionado materializa uma
-  cópia em `staging/<plano>/`; `fs.*` e `proc.run` agem NELA; a promoção (com
-  a cerca worker+época que já existia, mais uma cerca de NONCE — turno
-  substituído não entrega nem apaga a cópia do substituto) espelha
-  staging→projeto ANTES do `done`, e QUALQUER caminho de falha — erro de
-  modelo, interrupção, recusa, o portão narrou-sem-executar — DESCARTA sem
-  tocar o projeto. Provado no fio com espião no meio do turno: o projeto real
-  fica intocado enquanto o bot trabalha; a sabotagem no segundo passo terminou
-  honesta com o projeto limpo.
-  - Escopo v1 deliberado: staging para raiz sob `projects/` (pequena por
-    construção; teto 128 MiB / 4096 arquivos degrada para inplace com aviso);
-    pasta apontada pela pessoa segue inplace — repositório grande se resolve
-    com worktree/Puter, não cópia cega. A Equipe mantém o worktree dela — e
-    equipe disparada DENTRO de turno staged trabalha NA MESMA cópia (a
-    interação que apagaria o trabalho dos workers foi pega na revisão).
-  - A UI continua lendo e escrevendo o projeto ENTREGUE (o Ctrl+S é edição sua,
-    com aprovação; o sandbox é do modelo). Staging órfão de processo morto é
-    varrido no boot.
-  - A pessoa VÊ o gesto: "trabalhando numa cópia de segurança do projeto…" e
-    "entregando o resultado ao projeto…" como etapas do turno.
-- **A árvore e o editor ancoram na ENTREGA**: gravação confirmada abre no
-  editor e relista a árvore quando o turno FECHA (que é quando a promoção
-  entregou), nunca no meio — sem abas fantasmas de arquivos que ainda não
-  existem no seu projeto.
+- **O cenário Vercel completo: construir DENTRO do sandbox e entregar o
+  produto pronto.** A visão do dono virou produto em três peças:
+  - **Execução isolada por padrão**: `proc.run` de turno de trabalho prefere o
+    sandbox Docker/sbx quando ele está são (prioridade: escolha explícita da
+    pessoa > sandbox disponível > padrão de sempre), com o **staging montado
+    como workdir** — `npm install` e build acontecem no container, agindo na
+    cópia; a máquina da pessoa não ganha nem `node_modules`. Sem sandbox,
+    degrada honesto: UM aviso por turno e segue Local com aprovação.
+  - **Entrega é o PRODUTO**: o espelho da promoção exclui reproduzíveis
+    (`node_modules`, `.pnpm-store`, `__pycache__`, `.venv`, `.git` do staging)
+    nos dois sentidos — não chegam ao projeto e não apagam os pré-existentes
+    da pessoa; `dist/` entra, porque é o produto.
+  - **Aba Site viva no Design**: o app entregue renderiza em iframe
+    `sandbox=""` **sem script** (sanitização própria: script/iframe/object/
+    embed/base/link fora, todo `on*`, `javascript:`/`data:` não-imagem
+    bloqueados, CSS com cerca escapada), e o botão **"editar no canvas"**
+    importa o HTML entregue como nós editáveis com undo.
+  - **Persona sem terceirizar trabalho**: o Código não manda mais a pessoa
+    abrir terminal — scaffold, dependência, build e verificação são ele quem
+    roda, pelo funil, com teste impedindo o flagrante de voltar.
+  - **Interrupção honesta na borda**: o `done` interrompido é carimbado na
+    linha e o editor não abre aba de arquivo descartado — nem no vácuo do
+    stop, nem de carona no turno seguinte.
+  - **Provado no fio**: `npm install` rodou `[ambiente: docker]` com cwd na
+    cópia congelada, funil exercido em `proc.run` e `fs.write`, e o projeto
+    entregue terminou com `index.html` e `dist/` — sem `node_modules`.
 
 ### :pushpin: Fixes
+
+- **MAX_PATH no workdir do sandbox** (flagrado pelo conferente com o sbx REAL
+  da estação): staging com caminho acima de 260 caracteres fazia o
+  CreateProcess recusar o diretório com um erro que não diz a causa. O nome da
+  pasta de staging ficou curto (prefixo de 24 + hash) — a unicidade vem do
+  hash, não do comprimento.
 
 ### :construction_worker: Refactors
 

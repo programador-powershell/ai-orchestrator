@@ -3127,3 +3127,52 @@ button.token-swatch {
   color: var(--faint);
   font-size: var(--fs-micro);
 }
+
+/* ----------------------------- estúdio do Site --------------------------- */
+
+/* O corpo inteiro do canvas dá lugar ao site entregue — a mesma regra do
+   .video-studio: toolbar, corpo e status pertencem ao estúdio da aba. */
+.site-studio {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.site-body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A moldura ocupa o palco inteiro: um site entregue se julga em tela cheia,
+   não numa tira de 320px. A grade de pontos do .canvas-frame sai — página
+   real por cima de grade de esboço vira ruído e parece defeito de fundo. */
+.site-frame {
+  flex: 1;
+  min-height: 420px;
+  background-color: var(--panel);
+  background-image: none;
+}
+
+/* A legenda da moldura carrega o ícone de escudo — alinhado ao texto. */
+.site-frame .canvas-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.site-vazio-titulo {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* O motivo REAL do gateway (arquivo não existe, sem conexão): discreto e
+   monoespaçado, porque é diagnóstico para quem quiser saber — não convite. */
+.site-motivo {
+  max-width: 520px;
+  overflow-wrap: anywhere;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}

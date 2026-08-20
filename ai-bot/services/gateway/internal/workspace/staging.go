@@ -63,14 +63,22 @@ func (m *Manager) stagesRoot(root string) bool {
 	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
-// stagingPathFor resolve a pasta física da cópia de um plano. O nome sai do id
-// do plano SANEADO + um sufixo de hash: o id carrega o id da sessão, que vem
-// do cliente — um id hostil ("../x") não pode virar traversal, e o hash mantém
-// a unicidade que o saneamento poderia colapsar.
+// stagingPathFor resolve a pasta física da cópia de um plano. O nome é CURTO
+// de propósito: um prefixo saneado do id (só para o humano reconhecer no
+// disco) + o hash do id inteiro, que carrega sozinho a unicidade e mata o
+// traversal de um id hostil ("../x"). O corte do prefixo não é estética — o
+// workdir do sandbox passa por CreateProcess, que recusa lpCurrentDirectory
+// acima de MAX_PATH (260) com um "The directory name is invalid" que não diz
+// a causa; o id do plano embute sessão+tarefa e crescia sem teto (flagrado
+// pelo conferente com o sbx real: caminho de 313 caracteres).
 func (m *Manager) stagingPathFor(plan Plan) string {
 	sum := sha256.Sum256([]byte(plan.ID))
+	prefix := safeSegment(plan.ID)
+	if len(prefix) > 24 {
+		prefix = prefix[:24]
+	}
 	return filepath.Join(m.stagingBase,
-		fmt.Sprintf("%s-%s", safeSegment(plan.ID), hex.EncodeToString(sum[:4])))
+		fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(sum[:8])))
 }
 
 // safeSegment reduz um id a UM componente de caminho: só [a-zA-Z0-9._-], o
@@ -283,9 +291,47 @@ type degradeError struct{ reason string }
 func (e *degradeError) Error() string { return e.reason }
 func errDegrade(reason string) error  { return &degradeError{reason: reason} }
 
+// mirrorSkips lista os REPRODUZÍVEIS por nome: o que uma instalação ou uma
+// execução reconstrói sozinha e por isso NÃO é produto do turno. A entrega é o
+// PRODUTO — código-fonte e build de verdade (dist/ ENTRA: é o que a pessoa
+// pediu) — nunca o material de obra que o container acumulou para chegar lá.
+//
+// A lista vale nos DOIS sentidos do espelho: o que está no staging com esses
+// nomes não chega ao projeto, e o que já existe no projeto com esses nomes não
+// é apagado por estar "sumido" da cópia — apagar o node_modules que a própria
+// pessoa instalou seria interferir na máquina dela, que é exatamente o que o
+// sandbox existe para não fazer.
+func mirrorSkips(name string) bool {
+	switch name {
+	case "node_modules":
+		// Instalado pelo npm/pnpm DENTRO do sandbox; são dezenas de milhares de
+		// arquivos que um `install` reconstrói do lockfile — espelhá-los não
+		// entrega nada e enche o disco da pessoa.
+		return true
+	case ".pnpm-store":
+		// Cache de conteúdo do pnpm, endereçado por hash: recriado sob demanda.
+		return true
+	case "__pycache__":
+		// Bytecode do Python: nasce de novo na primeira execução.
+		return true
+	case ".venv":
+		// Ambiente virtual do Python: carrega caminhos absolutos do lugar onde
+		// nasceu — copiado para outra máquina (ou outra pasta), quebra.
+		return true
+	case ".git":
+		// O .git do staging é da CÓPIA (um scaffold com `git init` dentro do
+		// container, ou objetos que o turno mexeu): espelhá-lo sobrescreveria —
+		// e o apagamento do espelho destruiria — o histórico da própria pessoa.
+		return true
+	}
+	return false
+}
+
 // mirrorTree faz do destino um ESPELHO da origem: copia tudo o que existe na
 // origem (o projeto é pequeno por construção — comparar tamanho+mtime pouparia
 // menos do que custa errar a comparação) e remove do destino o que sumiu.
+// Reproduzíveis (mirrorSkips) ficam fora dos dois lados: nem chegam, nem são
+// apagados.
 func mirrorTree(src, dst string) error {
 	// 1. O que vive na origem vai para o destino — e fica anotado como vivo.
 	alive := make(map[string]bool)
@@ -299,6 +345,15 @@ func mirrorTree(src, dst string) error {
 		}
 		if relative == "." {
 			return os.MkdirAll(dst, 0o755)
+		}
+		if mirrorSkips(entry.Name()) {
+			// Reproduzível não é produto: não copia e não marca como vivo. O
+			// SkipDir poupa a subárvore inteira — um node_modules é a maior
+			// parte dos arquivos de qualquer projeto web.
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		alive[relative] = true
 		target := filepath.Join(dst, relative)
@@ -334,6 +389,15 @@ func mirrorTree(src, dst string) error {
 			return err
 		}
 		if alive[relative] {
+			return nil
+		}
+		if mirrorSkips(entry.Name()) {
+			// O reproduzível PRÉ-EXISTENTE do projeto sobrevive: o passo 1 não o
+			// copiou do staging (então ele nunca está "vivo"), e apagá-lo aqui
+			// destruiria o node_modules/.venv que a própria pessoa instalou.
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		stale = append(stale, path)

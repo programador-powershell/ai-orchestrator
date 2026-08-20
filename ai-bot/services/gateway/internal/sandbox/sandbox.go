@@ -518,6 +518,20 @@ func (r *Registry) Active(ctx context.Context, sessionID string) protocol.Enviro
 	return r.DefaultEnvironment(ctx)
 }
 
+// Chosen devolve a escolha EXPLÍCITA da sessão, se houver.
+//
+// Existe separado de Active porque a preferência do proc.run precisa
+// distinguir "a pessoa fixou Local no rodapé" (que manda sempre) de "ninguém
+// escolheu nada" (que abre espaço para o sandbox virar o padrão do turno de
+// trabalho) — e Active esconde essa diferença de propósito, devolvendo sempre
+// um ambiente utilizável.
+func (r *Registry) Chosen(sessionID string) (protocol.Environment, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	chosen, ok := r.active[sessionID]
+	return chosen, ok
+}
+
 // Set troca o ambiente ativo da sessão.
 //
 // NÃO confere disponibilidade de propósito: medir custa processo filho e exige

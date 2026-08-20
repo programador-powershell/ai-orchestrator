@@ -59,19 +59,22 @@ func (r *noticeSpyRunner) Run(_ context.Context, _, command string) (sandbox.Res
 }
 
 // noticeToolbox monta o registro de ferramentas com o barramento e os
-// ambientes de mentira já ligados.
-func noticeToolbox(t *testing.T, timeline *noticeLog, runners ...sandbox.Runner) (*Registry, *noticeSpyBus) {
+// ambientes de mentira já ligados. Devolve também o registro de ambientes:
+// desde que o sandbox virou o padrão do turno de trabalho, o teste que quer o
+// comportamento local precisa FIXAR o local — que é a regra do produto.
+func noticeToolbox(t *testing.T, timeline *noticeLog, runners ...sandbox.Runner) (*Registry, *noticeSpyBus, *sandbox.Registry) {
 	t.Helper()
 	registry := NewRegistry()
 	registry.SetBridge(&procHostSpy{})
 	bus := &noticeSpyBus{timeline: timeline}
+	environments := sandbox.NewRegistry(append([]sandbox.Runner{sandbox.NewLocalRunner()}, runners...)...)
 	toolbox := &Toolbox{
-		Environments: sandbox.NewRegistry(append([]sandbox.Runner{sandbox.NewLocalRunner()}, runners...)...),
+		Environments: environments,
 		Notices:      bus,
 		Specialist:   func(string) string { return "code" },
 	}
 	toolbox.Install(registry)
-	return registry, bus
+	return registry, bus, environments
 }
 
 // decodeNotice tira o payload do envelope registrado.
@@ -92,7 +95,7 @@ func decodeNotice(t *testing.T, envelope protocol.Envelope) protocol.Notice {
 func TestProcRunAnunciaAntesDeRodarNoDocker(t *testing.T) {
 	timeline := &noticeLog{}
 	docker := &noticeSpyRunner{id: protocol.EnvDocker, timeline: timeline, available: true}
-	registry, bus := noticeToolbox(t, timeline, docker)
+	registry, bus, _ := noticeToolbox(t, timeline, docker)
 
 	output, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"docker compose up -d"}`))
@@ -127,7 +130,7 @@ func TestProcRunAnunciaAntesDeRodarNoDocker(t *testing.T) {
 func TestProcRunPedidoExplicitoDoModeloTambemAnuncia(t *testing.T) {
 	timeline := &noticeLog{}
 	docker := &noticeSpyRunner{id: protocol.EnvDocker, timeline: timeline, available: true}
-	registry, bus := noticeToolbox(t, timeline, docker)
+	registry, bus, _ := noticeToolbox(t, timeline, docker)
 
 	// O comando em si não fala de docker — quem pediu o container foi o
 	// modelo, pelo argumento `env`.
@@ -150,7 +153,7 @@ func TestProcRunSemSbxCaiNoAiJailDaVPSComAviso(t *testing.T) {
 		available: false, detail: "o Docker Sandboxes não está instalado — instale o Docker Desktop e o sbx",
 	}
 	vps := &noticeSpyRunner{id: protocol.EnvVPS, timeline: timeline, available: true}
-	registry, bus := noticeToolbox(t, timeline, docker, vps)
+	registry, bus, _ := noticeToolbox(t, timeline, docker, vps)
 
 	output, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"docker build ."}`))
@@ -179,9 +182,15 @@ func TestProcRunSemSbxCaiNoAiJailDaVPSComAviso(t *testing.T) {
 func TestProcRunComandoComumNaoDisparaAviso(t *testing.T) {
 	timeline := &noticeLog{}
 	docker := &noticeSpyRunner{id: protocol.EnvDocker, timeline: timeline, available: true}
-	registry, bus := noticeToolbox(t, timeline, docker)
+	registry, bus, environments := noticeToolbox(t, timeline, docker)
 
-	// Comando sem nada de container, sessão no ambiente local: vai ao host,
+	// A pessoa FIXOU o local no rodapé: desde que o sandbox virou o padrão do
+	// turno de trabalho, o local é escolha explícita — e a escolha manda.
+	if err := environments.Set("s1", protocol.EnvLocal); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Comando sem nada de container, sessão fixada no local: vai ao host,
 	// sem popup nenhum — aviso de rotina é aviso que ninguém lê.
 	if _, err := registry.Call(ctxComRoot(t.TempDir()), "proc.run", "s1",
 		json.RawMessage(`{"command":"go build ./..."}`)); err != nil {

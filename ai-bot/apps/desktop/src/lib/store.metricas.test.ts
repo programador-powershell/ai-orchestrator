@@ -72,6 +72,25 @@ describe("métricas do turno no done", () => {
     expect(resposta?.durationMs).toBe(3000);
     expect(resposta?.outputTokens).toBeUndefined();
   });
+
+  it("carimba o DESFECHO na linha: done normal = interrupted false; cancelado = true", () => {
+    // É o discriminador honesto da borda do editor/aba Site: o stop derruba
+    // `busy` localmente com `error` vazio, e só ESTE dado (a linha do done)
+    // separa entrega de interrupção — inclusive no replay de amanhã.
+    const base = [
+      envelope<Message>("message", { role: "user", text: "constrói o site" }),
+      envelope<Delta>("delta", { text: "construindo…" }, { specialist: "code", from: "code" })
+    ];
+
+    const entregue = reduce(initialAppData(), [...base, envelope<Done>("done", { turn: "t-1" })]);
+    expect(entregue.lines[entregue.lines.length - 1]?.interrupted).toBe(false);
+
+    const cancelado = reduce(initialAppData(), [
+      ...base,
+      envelope<Done>("done", { turn: "t-1", interrupted: true })
+    ]);
+    expect(cancelado.lines[cancelado.lines.length - 1]?.interrupted).toBe(true);
+  });
 });
 
 describe("raciocínio no thinking", () => {

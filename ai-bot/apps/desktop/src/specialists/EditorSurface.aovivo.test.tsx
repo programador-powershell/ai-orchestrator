@@ -13,6 +13,9 @@
  * - gravação confirmada + turno VIVO → ainda NÃO abre (a entrega fica retida);
  * - gravação confirmada + done → abre, com o conteúdo do disco entregue;
  * - turno que FALHA → o staging foi descartado: não abre nunca;
+ * - turno INTERROMPIDO → o stop derruba busy com error vazio, e o dado que
+ *   separa isso de entrega é a LINHA do done (carimbo `interrupted`): a aba
+ *   do arquivo descartado não abre nem no vácuo, nem depois, nem de carona;
  * - buffer SUJO da pessoa nunca é sobrescrito (fica o chip discreto);
  * - rajada de gravações abre só o ÚLTIMO arquivo (debounce do ideStore);
  * - replay/histórico não abre NADA (guarda de turno-vivo do FilesRail).
@@ -302,6 +305,45 @@ describe("editor ao vivo", () => {
     // gravar nada continua sem abrir coisa alguma.
     turnoComecou();
     turnoFechou("t-2");
+    await esperarAbertura();
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+  });
+
+  it("interrupção (stop) NÃO abre aba de arquivo descartado — o discriminador é a linha do done", async () => {
+    montar();
+    await assentar();
+
+    turnoComecou();
+    reduzir([chamadaDoBot("c-1", "index.html"), gravacaoDoBot("c-1")]);
+
+    // O stop derruba busy LOCALMENTE, com error vazio — pela borda antiga
+    // (busy caindo = entrega) isso era indistinguível de done, e a tela abria
+    // a aba de um arquivo que só existiu na cópia descartada.
+    act(() => {
+      useApp.setState({ busy: false });
+    });
+    await esperarAbertura();
+    // No vácuo entre o stop e a verdade do gateway, nada abre.
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+
+    // A verdade chega: o done do turno com `interrupted: true` vira linha no
+    // store (o carimbo do redutor) — o staging morreu e o alvo morre junto.
+    reduzir([envelopeDe<Done>("done", { turn: "t-1", interrupted: true }, "t-1")]);
+    await esperarAbertura();
+    expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
+    expect(useIde.getState().files).toHaveLength(0);
+    expect(container.textContent).toContain("nenhum arquivo aberto");
+
+    // E o alvo morto não pega carona: um turno seguinte que fecha BEM (com
+    // linha própria e done limpo) continua sem abrir coisa alguma.
+    turnoComecou();
+    reduzir([
+      envelopeDe<ToolCall>("tool.call", { callId: "c-2", tool: "proc.exec", args: { cmd: "ls" } }, "t-2"),
+      envelopeDe<ToolResult>("tool.result", { callId: "c-2", tool: "proc.exec", ok: true, output: "" }, "t-2"),
+      envelopeDe<Done>("done", { turn: "t-2" }, "t-2")
+    ]);
     await esperarAbertura();
     expect(chamadas.some((corpo) => corpo.tool === "fs.read")).toBe(false);
     expect(useIde.getState().files).toHaveLength(0);

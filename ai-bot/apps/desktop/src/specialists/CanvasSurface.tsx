@@ -4,8 +4,9 @@
  * Três faixas: os TOKENS à esquerda (da réplica e do HTML/CSS colado), o
  * canvas editável no centro (criar/mover/redimensionar por arrasto, pan e
  * zoom), o Inspect e a conversa compacta à direita. No topo da superfície, as
- * abas de estúdio Canvas/Vídeo/Site — Vídeo e Site ainda desabilitadas, com a
- * dica honesta de quando chegam.
+ * abas de estúdio Canvas/Vídeo/Site — as três vivas: Vídeo abre o VideoStudio
+ * e Site abre o SiteStudio (o projeto ENTREGUE da sessão, renderizado numa
+ * moldura isolada, com o «editar no canvas» voltando para cá como nós).
  *
  * Duas verdades convivem aqui, cada uma com um dono:
  *
@@ -100,6 +101,7 @@ import { activeTransport, useApp } from "../lib/store";
 import { structuredJson } from "../lib/toolJson";
 import { TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface } from "./ConversationSurface";
+import { SiteStudio } from "./SiteStudio";
 import { VideoStudio } from "./VideoStudio";
 
 /* --------------------------- leitura do tool.result ---------------------- */
@@ -777,10 +779,10 @@ export function CanvasSurface(): ReactNode {
   const [panning, setPanning] = useState(false);
   const [nota, setNota] = useState("");
   const [modo, setModo] = useState<"editar" | "previa">("editar");
-  // A aba de ESTÚDIO ativa (Canvas/Vídeo). É estado local, não do store do
-  // canvas: a aba é da tela, não do documento — trocar de sessão não deve
-  // arrastar a pessoa de volta para o Canvas se ela estava no Vídeo.
-  const [estudio, setEstudio] = useState<"canvas" | "video">("canvas");
+  // A aba de ESTÚDIO ativa (Canvas/Vídeo/Site). É estado local, não do store
+  // do canvas: a aba é da tela, não do documento — trocar de sessão não deve
+  // arrastar a pessoa de volta para o Canvas se ela estava no Vídeo ou no Site.
+  const [estudio, setEstudio] = useState<"canvas" | "video" | "site">("canvas");
   const [fonteColada, setFonteColada] = useState("");
   const [extraidos, setExtraidos] = useState<ExtractedTokens | null>(null);
   const [cloneUrl, setCloneUrl] = useState("");
@@ -1172,9 +1174,8 @@ export function CanvasSurface(): ReactNode {
 
       {/* As abas de ESTÚDIO moram na superfície, não na barra do app: elas
           trocam o conteúdo desta tela, e a barra de cima pertence ao app
-          inteiro. Vídeo agora abre o estúdio DE VERDADE (VideoStudio); Site
-          continua desabilitada com a dica honesta — botão que finge funcionar
-          ensina a não acreditar na tela. */}
+          inteiro. As três estão vivas: Vídeo abre o VideoStudio e Site abre o
+          SiteStudio — o projeto ENTREGUE da sessão numa moldura isolada. */}
       <div className="studio-tabs" role="tablist" aria-label="Estúdios do Design">
         <button
           type="button"
@@ -1202,14 +1203,14 @@ export function CanvasSurface(): ReactNode {
         <button
           type="button"
           role="tab"
-          aria-selected="false"
+          aria-selected={estudio === "site"}
+          data-active={estudio === "site"}
           className="studio-tab"
-          disabled
-          title="Clonagem de site — chega na Onda 3"
+          title="Site entregue — o index.html do projeto da sessão, renderizado numa moldura isolada"
+          onClick={() => setEstudio("site")}
         >
           <Globe2 size={12} aria-hidden="true" />
           Site
-          <span className="studio-tab-hint">Onda 3</span>
         </button>
       </div>
 
@@ -1219,6 +1220,20 @@ export function CanvasSurface(): ReactNode {
         // (Replicar/Exportar tokens) continuam: pertencem à superfície, não à
         // aba. O documento do canvas segue vivo no store; voltar não perde nada.
         <VideoStudio />
+      ) : estudio === "site" ? (
+        // O estúdio do Site também substitui o corpo inteiro. O «Editar no
+        // canvas» entra pelo MESMO caminho do "Importar como nós" da réplica
+        // (registrar → nós → selecionar): o Ctrl+Z desfaz a importação e o doc
+        // persistido é o da sessão — e a aba volta ao Canvas, que é onde os
+        // nós recém-importados estão.
+        <SiteStudio
+          aoImportar={(snapshot) => {
+            importarPreviaComoNos(snapshot);
+            setEstudio("canvas");
+            setModo("editar");
+            flashNote("site entregue importado como nós");
+          }}
+        />
       ) : (
         <>
       <div className="surface-toolbar canvas-toolbar">

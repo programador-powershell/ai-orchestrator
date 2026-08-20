@@ -679,5 +679,15 @@ export interface ConversationLine {
    */
   durationMs?: number;
   outputTokens?: number;
+  /**
+   * O DESFECHO do turno, carimbado pelo `done` na mesma linha das métricas:
+   * `false` = fechou bem (a promoção do staging entregou os arquivos),
+   * `true` = foi interrompido (o gateway descartou o staging). `undefined` =
+   * o turno desta linha ainda não fechou. É o discriminador honesto da borda
+   * do editor: o stop derruba `busy` localmente com `error` vazio, e sem este
+   * dado a interrupção era indistinguível de entrega — a tela abria a aba de
+   * um arquivo que nunca chegou ao projeto.
+   */
+  interrupted?: boolean;
   ts: string;
 }

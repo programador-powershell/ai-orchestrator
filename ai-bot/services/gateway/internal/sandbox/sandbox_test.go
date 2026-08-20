@@ -361,6 +361,31 @@ func TestRegistryTrocaEDevolveOAtivo(t *testing.T) {
 	}
 }
 
+func TestRegistryChosenSeparaEscolhaDePadrao(t *testing.T) {
+	// `Active` responde sempre um ambiente utilizável — e por isso ESCONDE se
+	// foi a pessoa que escolheu. `Chosen` é a pergunta que a preferência do
+	// proc.run faz: "alguém fixou?", porque só a omissão abre espaço para o
+	// sandbox virar o padrão do turno de trabalho.
+	registry := novoRegistro()
+
+	if _, ok := registry.Chosen("s1"); ok {
+		t.Fatal("sessão que nunca escolheu não pode aparecer como escolha explícita")
+	}
+	if err := registry.Set("s1", protocol.EnvLocal); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	// Fixar o LOCAL é exatamente o caso que Active não distingue do padrão.
+	chosen, ok := registry.Chosen("s1")
+	if !ok || chosen != protocol.EnvLocal {
+		t.Fatalf("esperava a escolha explícita (local, true), veio (%q, %v)", chosen, ok)
+	}
+	// Esquecer a sessão volta a ser omissão.
+	registry.Forget("s1")
+	if _, ok := registry.Chosen("s1"); ok {
+		t.Fatal("depois do Forget a sessão não tem mais escolha explícita")
+	}
+}
+
 func TestRegistryRecusaAmbienteDesconhecido(t *testing.T) {
 	registry := novoRegistro()
 	if err := registry.Set("s1", protocol.EnvDocker); err != nil {

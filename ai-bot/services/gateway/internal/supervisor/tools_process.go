@@ -11,6 +11,17 @@
 //     Object e ConPTY, e o Go não executa comando na estação de propósito;
 //   - qualquer outro -> o Runner correspondente (docker/sbx, wsl, vps…), aqui.
 //
+// # Execução isolada por padrão no turno de trabalho
+//
+// A ideia do sandbox é NÃO INTERFERIR no computador da pessoa: o especialista
+// que executa (Código, Equipe) instala dependência e builda DENTRO do
+// container, agindo na cópia congelada do turno — a máquina dela não ganha nem
+// node_modules. Por isso o PADRÃO do turno de trabalho mudou: com o Docker/sbx
+// são, o proc.run vai para o sandbox sem ninguém pedir; o Local virou escolha
+// explícita (o seletor do rodapé continua mandando — o que mudou é onde o
+// comando cai por OMISSÃO). A prioridade completa vive em turnEnvironment:
+// escolha explícita da pessoa > sandbox disponível > o padrão de sempre.
+//
 // Uma exceção vem ANTES do ambiente ativo: trabalho de container (comando com
 // docker/docker-compose/container, ou pedido explícito do modelo) vai para o
 // Docker Sandboxes — e vai ANUNCIADO com um KindNotice antes de rodar. Sem o
@@ -28,10 +39,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"aibot/gateway/internal/protocol"
 	"aibot/gateway/internal/sandbox"
+	"aibot/gateway/internal/specialist"
 )
 
 // procTimeout limita UM comando no ambiente remoto.
@@ -99,7 +112,7 @@ func (t *Toolbox) procRun(
 
 	environment := protocol.EnvLocal
 	if t.Environments != nil {
-		environment = t.Environments.Active(ctx, sessionID)
+		environment = t.turnEnvironment(ctx, sessionID)
 	}
 
 	if environment == protocol.EnvLocal {
@@ -159,6 +172,114 @@ func (t *Toolbox) runInEnvironment(
 		return "", fmt.Errorf("ambiente %s: %w", environment, err)
 	}
 	return formatProcResult(environment, result), nil
+}
+
+/* ---------------------- o padrão do turno de trabalho --------------------- */
+
+// sandboxUnavailable é o começo do aviso de degradação. Fixo e acionável — diz
+// O QUE instalar; o resto da frase diz onde o comando vai rodar em vez disso.
+const sandboxUnavailable = "execução isolada indisponível — instale o Docker Desktop e o sbx"
+
+// turnEnvironment decide ONDE o proc.run deste turno roda, nesta prioridade:
+//
+//  1. a escolha EXPLÍCITA da pessoa (o seletor do rodapé) manda sempre — quem
+//     fixou Local fixou Local, e um padrão "inteligente" que passa por cima da
+//     escolha é o seletor de enfeite de novo;
+//  2. o SANDBOX são (Docker/sbx respondendo) é o padrão do turno de TRABALHO:
+//     instalar dependência, buildar e scaffoldar acontecem dentro do container,
+//     agindo na cópia do turno — a máquina da pessoa não ganha nem node_modules;
+//  3. o padrão de sempre (VPS configurada pela TI, senão Local) para o turno de
+//     conversa e para a máquina sem sandbox.
+//
+// A disponibilidade vem do REGISTRO, que sonda com prazo curto (probeTimeout)
+// e guarda o resultado por 30s (availabilityTTL): sondar o Docker a cada
+// proc.run seria pagar o frio da sondagem toda hora.
+func (t *Toolbox) turnEnvironment(ctx context.Context, sessionID string) protocol.Environment {
+	if chosen, ok := t.Environments.Chosen(sessionID); ok {
+		return chosen
+	}
+	if !t.workTurn(ctx, sessionID) {
+		return t.Environments.Active(ctx, sessionID)
+	}
+	if ok, _ := t.Environments.Availability(ctx, protocol.EnvDocker); ok {
+		return protocol.EnvDocker
+	}
+	// DEGRADAÇÃO HONESTA: sem sandbox o turno de trabalho segue no padrão de
+	// sempre — com o funil de aprovação intacto — e a pessoa fica sabendo UMA
+	// vez por turno. Uma porque o turno chama proc.run dezenas de vezes, e
+	// repetir o aviso a cada comando ensinaria a ignorá-lo; nenhuma seria
+	// perder o isolamento em silêncio, que é pior.
+	fallback := t.Environments.Active(ctx, sessionID)
+	if warnSandboxOnce(ctx) {
+		t.thinkingNotice(sessionID, fmt.Sprintf("%s; rodando %s com aprovação",
+			sandboxUnavailable, environmentName(fallback)))
+	}
+	return fallback
+}
+
+// workTurn diz se ESTE turno é de trabalho: o especialista ativo da sessão
+// EXECUTA (tem proc.run na própria lista — Código, Equipe). O turno de
+// conversa não muda de padrão: o chat nem tem a ferramenta, e mudar onde a
+// conversa roda sem ninguém pedir seria o oposto da previsibilidade.
+//
+// Sem raiz de projeto também não é trabalho: o sandbox age na cópia congelada
+// do turno, e um turno sem pasta não tem o que montar no container — segue o
+// caminho de sempre em vez de morrer numa recusa de workdir.
+func (t *Toolbox) workTurn(ctx context.Context, sessionID string) bool {
+	if t.root(ctx) == "" {
+		return false
+	}
+	return specialist.GetOrDefault(t.specialistOf(sessionID)).AllowsTool("proc.run")
+}
+
+// environmentName é o nome do ambiente como a pessoa o lê no rodapé. Só o
+// aviso precisa disso; o carimbo da saída continua com o id cru, que é o que o
+// modelo compara.
+func environmentName(id protocol.Environment) string {
+	if id == protocol.EnvLocal {
+		return "Local"
+	}
+	return string(id)
+}
+
+// sandboxWarnedKey guarda o marcador "o aviso de degradação já saiu". Vive no
+// CONTEXTO porque o turno é o escopo certo do aviso: tudo que deriva do
+// contexto do turno — sub-turnos delegados inclusive — compartilha o mesmo
+// marcador, e o mapa por sessão que seria a alternativa nunca saberia quando
+// um turno terminou para zerar.
+type sandboxWarnedKey struct{}
+
+// withSandboxWarning arma o marcador. Chamado UMA vez por turno (runTurn).
+func withSandboxWarning(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sandboxWarnedKey{}, new(atomic.Bool))
+}
+
+// warnSandboxOnce devolve true só na PRIMEIRA chamada do turno. Contexto sem
+// marcador avisa sempre: calar por falta de encanamento esconderia a
+// degradação, e o defeito barulhento é o que se conserta.
+func warnSandboxOnce(ctx context.Context) bool {
+	flag, ok := ctx.Value(sandboxWarnedKey{}).(*atomic.Bool)
+	if !ok {
+		return true
+	}
+	return flag.CompareAndSwap(false, true)
+}
+
+// thinkingNotice publica um rótulo de etapa (KindThinking) pelo mesmo canal
+// dos avisos animados. EFÊMERO como todo rótulo: o replay de um "sandbox
+// indisponível" de ontem descreveria a máquina de ontem.
+func (t *Toolbox) thinkingNotice(sessionID, label string) {
+	if t.Notices == nil {
+		return
+	}
+	t.Notices.PublishEphemeral(sessionID, protocol.Envelope{
+		V:       protocol.Version,
+		TS:      time.Now().UTC(),
+		Session: sessionID,
+		Kind:    protocol.KindThinking,
+		From:    protocol.Actor{Kind: protocol.ActorSupervisor, Specialist: t.specialistOf(sessionID)},
+		Payload: mustPayload(protocol.Thinking{Label: label}),
+	})
 }
 
 /* ---------------------- a decisão anunciada do Docker --------------------- */

@@ -42,7 +42,7 @@ import {
   X
 } from "lucide-react";
 import type { ConversationLine, ToolResult } from "@aibot/contracts";
-import { useApp } from "../lib/store";
+import { fechamentosDeTurno, useApp } from "../lib/store";
 import { lastFencedBlock } from "../lib/markdown";
 import { fuzzyRank } from "../lib/ide/fuzzy";
 import { nomeBase, type EntradaProjeto, type OcorrenciaBusca } from "../lib/ide/projeto";
@@ -110,10 +110,11 @@ function coletarDaConversa(lines: ConversationLine[]): Array<{ path: string; con
  * As gravações CONFIRMADAS do bot nesta conversa, em ordem de chegada — o
  * caminho vem do tool.call (o result só carrega callId e desfecho). Recusa
  * (ok:false) fica de fora: gravação que não aconteceu não abre arquivo nenhum.
- * É o gêmeo do contarGravacoesDoBot do FilesRail, só que com o PATH: a árvore
- * só precisa saber QUE o disco mudou; o editor precisa saber ONDE.
+ * É o gêmeo do contarGravacoesDoBot do FilesRail, só que com o PATH e o TURNO:
+ * a árvore só precisa saber QUE o disco mudou; o editor precisa saber ONDE — e
+ * de QUAL turno a gravação é, para reter a abertura até o fechamento DELE.
  */
-function coletarGravacoesDoBot(lines: ConversationLine[]): string[] {
+function coletarGravacoesDoBot(lines: ConversationLine[]): Array<{ path: string; turn?: string }> {
   const porCall = new Map<string, string>();
   for (const line of lines) {
     for (const call of line.toolCalls ?? []) {
@@ -122,13 +123,13 @@ function coletarGravacoesDoBot(lines: ConversationLine[]): string[] {
       if (path !== "") porCall.set(call.callId, path);
     }
   }
-  const out: string[] = [];
+  const out: Array<{ path: string; turn?: string }> = [];
   for (const line of lines) {
     for (const resultado of line.toolResults ?? []) {
       if (!resultado.ok) continue;
       if (resultado.tool !== "fs.write" && resultado.tool !== "fs.patch") continue;
       const path = porCall.get(resultado.callId);
-      if (path !== undefined) out.push(path);
+      if (path !== undefined) out.push({ path, turn: line.turn });
     }
   }
   return out;
@@ -218,11 +219,13 @@ export function EditorSurface(): ReactNode {
    * vivo pelas linhas. O flush se anuncia em `replaysAssentados`: quando o
    * contador andou junto, foi histórico — só reancora.
    *
-   * A ÂNCORA DA ENTREGA é o fechamento do turno. O modelo grava numa CÓPIA do
+   * A ÂNCORA DA ENTREGA é o fechamento do turno — lido do DADO (a linha do
+   * done, carimbo `interrupted`), não de `busy`. O modelo grava numa CÓPIA do
    * projeto (o staging do gateway) e só a promoção — que roda antes do done —
-   * põe o arquivo no projeto visível: com o turno vivo (`busy`), o alvo fica
-   * retido no ideStore em vez de abrir na hora, porque o fs.read do instante
-   * do tool.result acharia um 404. O efeito de baixo entrega no done.
+   * põe o arquivo no projeto visível: com o turno da gravação ainda aberto, o
+   * alvo fica retido no ideStore em vez de abrir na hora, porque o fs.read do
+   * instante do tool.result acharia um 404. O efeito de baixo entrega quando a
+   * linha do done chega — e descarta quando ela chega com `interrupted`.
    */
   const replays = useApp((state) => state.replaysAssentados);
   const gravacoesDoBot = useMemo(() => coletarGravacoesDoBot(lines), [lines]);
@@ -236,27 +239,56 @@ export function EditorSurface(): ReactNode {
     if (antes < 0 || replaysAntes !== replays) return;
     if (gravacoesDoBot.length <= antes) return;
     const ultimo = gravacoesDoBot[gravacoesDoBot.length - 1];
-    if (ultimo !== undefined) agendarAberturaDoBot(ultimo, busy);
-  }, [gravacoesDoBot, replays, busy]);
+    if (ultimo === undefined) return;
+    // O turno da gravação está ABERTO enquanto a linha do done dele não chegou
+    // (carimbo `interrupted` — ver o efeito de baixo). Era `busy`, mas o stop
+    // derruba busy localmente ANTES da verdade do gateway: um tool.result em
+    // voo nesse vácuo abriria na hora um arquivo que só existiu no staging.
+    const turnoAberto = !useApp
+      .getState()
+      .lines.some((linha) => linha.turn === ultimo.turn && linha.interrupted !== undefined);
+    agendarAberturaDoBot(ultimo.path, turnoAberto);
+  }, [gravacoesDoBot, replays]);
 
   /*
-   * A ENTREGA no fechamento do turno: busy caindo é o MESMO sinal do retry da
-   * árvore no FilesRail — o done do turno reduzido pelo store. Fechou bem
-   * (sem `error` no store, que o send zera ao abrir o turno e o envelope de
-   * erro preenche), a promoção entregou e o alvo retido abre; fechou mal, o
-   * staging foi descartado e o alvo morre junto — abrir seria uma aba
-   * fantasma de um arquivo que nunca chegou à pessoa.
+   * A ENTREGA mudou de âncora: busy caindo NÃO basta, porque o stop() derruba
+   * busy localmente com `error` vazio ANTES de a verdade do gateway chegar —
+   * nesse vácuo, entregar abria a aba de um arquivo cujo staging foi
+   * DESCARTADO. O dado real é a linha do done: o gateway emite o done com
+   * `interrupted` (true no cancelamento) e o store o carimba na última linha
+   * do assistente do turno (fechamentosDeTurno). Fechou bem → a promoção
+   * entregou e o alvo retido abre; interrompido → o staging morreu e o alvo
+   * morre junto. Montagem e flush de replay só REANCORAM o contador, como na
+   * guarda das gravações.
+   */
+  const fechamentos = useMemo(() => fechamentosDeTurno(lines), [lines]);
+  const fechamentosVistos = useRef(-1);
+  const replaysNoFechamento = useRef(-1);
+  useEffect(() => {
+    const antes = fechamentosVistos.current;
+    const replaysAntes = replaysNoFechamento.current;
+    fechamentosVistos.current = fechamentos.total;
+    replaysNoFechamento.current = replays;
+    if (antes < 0 || replaysAntes !== replays) return;
+    if (fechamentos.total <= antes) return;
+    if (fechamentos.ultimoInterrompido) {
+      descartarAberturaDoBot();
+      return;
+    }
+    entregarAberturaDoBot();
+  }, [fechamentos, replays]);
+
+  /*
+   * A FALHA continua na queda do busy: o envelope de erro fecha o turno sem
+   * carimbar fechamento nenhum (não há done), mas preenche `error` no mesmo
+   * set() que derruba busy — o staging foi descartado e o alvo morre aqui.
    */
   const estavaOcupado = useRef(false);
   useEffect(() => {
     const antes = estavaOcupado.current;
     estavaOcupado.current = busy;
     if (!antes || busy) return;
-    if (useApp.getState().error !== "") {
-      descartarAberturaDoBot();
-      return;
-    }
-    entregarAberturaDoBot();
+    if (useApp.getState().error !== "") descartarAberturaDoBot();
   }, [busy]);
 
   // Desmontar no meio do turno descarta o alvo retido: remontar reancora do

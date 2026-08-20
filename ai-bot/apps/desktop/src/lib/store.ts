@@ -1029,6 +1029,15 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
         if (typeof done?.outputTokens === "number" && done.outputTokens > 0) {
           patch.outputTokens = done.outputTokens;
         }
+        /*
+         * O DESFECHO vira dado da linha, sempre (true E false): o gateway emite
+         * o done com `interrupted: true` quando o turno foi cancelado — e é o
+         * ÚNICO sinal confiável, porque o stop() derruba `busy` localmente com
+         * `error` vazio antes de a verdade chegar. A borda do editor (e da aba
+         * Site) lê este carimbo para separar entrega de interrupção; como é
+         * linha, sobrevive ao replay igual às métricas.
+         */
+        patch.interrupted = done?.interrupted === true;
         if (Object.keys(patch).length > 0) {
           lines = patchLine(lines, index, patch);
         }
@@ -1178,6 +1187,34 @@ export function ultimoTurnoDoUsuario(lines: ConversationLine[]): UltimoTurno | n
     return { lineId: line.id, seq: line.seq, turn: line.turn, text: line.text };
   }
   return null;
+}
+
+/**
+ * Os FECHAMENTOS de turno assentados nas linhas — o carimbo `interrupted` que
+ * o redutor do `done` deixa na última linha do assistente do turno (true =
+ * interrompido, staging descartado; false = fechou bem, entrega promovida).
+ *
+ * É o discriminador honesto das bordas que esperam a ENTREGA (editor ao vivo,
+ * aba Site do Design): `busy` caindo NÃO serve como sinal de entrega, porque o
+ * stop() o derruba localmente com `error` vazio antes de a verdade do gateway
+ * chegar — nesse vácuo, entregar abriria a aba de um arquivo descartado.
+ */
+export interface FechamentosDeTurno {
+  /** Quantos turnos já fecharam (bem ou interrompidos) nas linhas atuais. */
+  total: number;
+  /** O desfecho do fechamento MAIS RECENTE; false quando não houve nenhum. */
+  ultimoInterrompido: boolean;
+}
+
+export function fechamentosDeTurno(lines: ConversationLine[]): FechamentosDeTurno {
+  let total = 0;
+  let ultimoInterrompido = false;
+  for (const line of lines) {
+    if (line.interrupted === undefined) continue;
+    total += 1;
+    ultimoInterrompido = line.interrupted;
+  }
+  return { total, ultimoInterrompido };
 }
 
 /** Limpa o que pertence a UMA conversa, preservando preferências e catálogo. */

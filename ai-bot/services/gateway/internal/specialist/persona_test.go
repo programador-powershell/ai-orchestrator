@@ -52,6 +52,31 @@ func TestPersonaDoCodigoMandaGravarComFerramentaENaoColarNoChat(t *testing.T) {
 	}
 }
 
+// O Código RODA os próprios comandos. O flagrante que este teste guarda:
+// pedida uma aplicação, o Código mandou a PESSOA operar a máquina ("crie a
+// pasta, rode git init…"). Scaffold, dependência e build são trabalho dele,
+// via proc.run no ambiente da sessão, pelo funil de aprovação — e a persona
+// tem de dizer isso com o nome da ferramenta E proibir a ordem à pessoa.
+func TestPersonaDoCodigoRodaComandoEmVezDeMandarAPessoa(t *testing.T) {
+	code := persona(t, "code")
+
+	if !strings.Contains(code.System, "proc.run") {
+		t.Errorf("a persona do código não cita proc.run — sem o nome, o modelo volta a ditar comandos no chat:\n%s",
+			code.System)
+	}
+	if !code.AllowsTool("proc.run") {
+		t.Error("a persona manda executar com proc.run e a lista de permitidas não cobre")
+	}
+	if !strings.Contains(code.System, "NUNCA mande a pessoa") {
+		t.Errorf("a persona não proíbe mandar a pessoa rodar comando — o flagrante volta:\n%s", code.System)
+	}
+	// A frase antiga terminava entregando a verificação à pessoa ("o que rodar
+	// para verificar") — ela não pode voltar.
+	if strings.Contains(code.System, "o que rodar para verificar") {
+		t.Errorf("a persona voltou a entregar a verificação à pessoa:\n%s", code.System)
+	}
+}
+
 // O Design LÊ o projeto (o index.html que o Código gravou mora no mesmo cwd) e
 // a permissão cobre a leitura — fs.read E fs.list, porque sem listar a pasta
 // ele não acha o arquivo que a persona manda ler.
