@@ -37,9 +37,9 @@ const (
 	HostSnapshot = "host"
 	// InplaceStaging marca que a execução escreve DIRETO no workspace, sem área
 	// de staging — a promoção com cerca é constatação. É o caso da UI (a pessoa
-	// edita o projeto ENTREGUE), da equipe (o isolamento dela é o worktree) e da
-	// raiz apontada pela pessoa (pasta própria, potencialmente gigante — a
-	// resposta para repositório grande é worktree/Puter, não cópia cega).
+	// edita o projeto ENTREGUE), da equipe (o isolamento dela é o worktree) e
+	// do turno DEGRADADO (raiz que estoura o teto da cópia) — degradado, o
+	// turno volta ao modelo de aprovação por comando.
 	InplaceStaging = "local://inplace"
 	// StagingURIPrefix marca o staging REAL da v1: o turno de modelo trabalha
 	// numa CÓPIA do projeto em <dataDir>/staging/<planID>/ e só o desfecho

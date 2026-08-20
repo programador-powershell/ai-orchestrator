@@ -80,6 +80,23 @@ export interface CrewState {
   gate: Gate | null;
 }
 
+/**
+ * Um gesto liberado DENTRO da jaula — o KindNotice "no sandbox: …" que o
+ * gateway publica quando um passo roda isolado sem pedir permissão.
+ *
+ * Vira CHIP na conversa, não popup: o turno de trabalho executa dezenas de
+ * gestos na cópia, e um cartão animado de 4 s por gesto cobriria a tela o
+ * turno inteiro — ensinar a ignorar o aviso é pior que não avisar. O chip fica
+ * pendurado na linha em que aconteceu, discreto e permanente enquanto a
+ * conversa está aberta.
+ */
+export interface ChipDeSandbox {
+  /** A linha do assistente em que o gesto se pendurou; "" = ainda sem linha. */
+  lineId: string;
+  title: string;
+  detail?: string;
+}
+
 /** Os dados. Separados das ações para `applyEnvelope` poder ser pura e testável. */
 export interface AppData {
   status: "connecting" | "ready" | "offline";
@@ -133,6 +150,26 @@ export interface AppData {
   environment: Environment;
   /** O catálogo medido nesta máquina; começa com a reserva local. */
   environments: EnvironmentInfo[];
+  /**
+   * A pessoa FIXOU um ambiente no rodapé desta sessão?
+   *
+   * O gateway distingue "fixou Local" (que manda sempre) de "ninguém escolheu"
+   * (que abre espaço para o sandbox virar o padrão do turno de trabalho) — ver
+   * sandbox.Registry.Chosen. O rodapé precisa da MESMA distinção para não
+   * mentir: sem ela, ele escrevia "Local" enquanto o proc.run do turno de
+   * trabalho ia para o container. É espelho local do gesto (o `ready` não
+   * transmite a escolha), então zera ao trocar de conversa — o pior caso é o
+   * rodapé mostrar "auto (sandbox)" numa sessão que já tinha escolha, que é
+   * exatamente o padrão que o gateway aplicaria a um turno de trabalho.
+   */
+  environmentChosen: boolean;
+  /**
+   * Os gestos da jaula do turno, na ordem em que aconteceram. Fila só de
+   * acréscimo como `notices` — zera com a conversa (conversationReset). Não
+   * sobrevive ao replay de propósito: o gateway publica o aviso fora do log
+   * durável, e o registro permanente continua sendo tool.call/tool.result.
+   */
+  chipsDeSandbox: ChipDeSandbox[];
   /**
    * As delegações do turno, em ordem de chegada.
    *
@@ -274,6 +311,8 @@ export function initialAppData(): AppData {
     crew: emptyCrew(),
     environment: DEFAULT_ENVIRONMENT,
     environments: FALLBACK_ENVIRONMENTS,
+    environmentChosen: false,
+    chipsDeSandbox: [],
     delegations: [],
     notices: [],
     updateAvailable: false,
@@ -559,6 +598,19 @@ function speakerOf(envelope: Envelope, fallback: string): string {
   const specialist = envelope.from.specialist;
   if (typeof specialist === "string" && specialist !== "") return specialist;
   return fallback;
+}
+
+/**
+ * O aviso é um GESTO DA JAULA? O contrato com o gateway é o TÍTULO "no
+ * sandbox: …" (é assim que avisoDeJaula, em jaula.go, narra fs.write/proc.run
+ * liberados dentro da execução isolada). O título, e NÃO o ícone: o gateway usa
+ * o mesmo ícone "sandbox" também na degradação ("sem sandbox: este turno
+ * trabalha direto no projeto"), que precisa continuar POPUP — ela avisa que o
+ * modelo de aprovação mudou, e rebaixá-la a chip discreto esconderia
+ * exatamente o aviso que não pode passar despercebido.
+ */
+function ehChipDeSandbox(notice: Notice): boolean {
+  return notice.title.trim().toLowerCase().startsWith("no sandbox");
 }
 
 /* ------------------------------ a redução ------------------------------- */
@@ -1001,6 +1053,32 @@ export function applyEnvelope(state: AppData, envelope: Envelope): AppData {
     case "notice": {
       const notice = payloadOf<Notice>(envelope);
       if (!notice || typeof notice.title !== "string" || notice.title === "") return state;
+      if (ehChipDeSandbox(notice)) {
+        // O gesto da jaula NÃO vira popup: vira chip pendurado na linha do
+        // turno (a mesma âncora dos tool.call). Um turno de trabalho executa
+        // dezenas de gestos — dezenas de cartões animados cobririam a tela e
+        // ensinariam a ignorá-los, que é pior que não avisar.
+        let index = currentLineIndex(state.lines, envelope.turn);
+        if (index < 0) {
+          // O aviso da jaula viaja SEM turno (é efêmero, publicado fora do
+          // log durável): ancora na última bolha de assistente — durante o
+          // turno vivo, que é quando ele chega, essa bolha é a do gesto.
+          for (let i = state.lines.length - 1; i >= 0; i -= 1) {
+            if (state.lines[i]?.role === "assistant") {
+              index = i;
+              break;
+            }
+          }
+        }
+        const lineId = index >= 0 ? state.lines[index]?.id ?? "" : "";
+        return {
+          ...state,
+          chipsDeSandbox: [
+            ...state.chipsDeSandbox,
+            { lineId, title: notice.title, detail: notice.detail }
+          ]
+        };
+      }
       // Fila SÓ de acréscimo: quem tira o aviso da tela é o componente, com o
       // timer dele (~4 s) — este redutor é puro e não tem relógio para decidir
       // que "já passou". A fila zera com a conversa, em conversationReset.
@@ -1228,6 +1306,9 @@ function conversationReset(): Partial<AppData> {
     // Mesmo destino para os avisos de execução: um "vai rodar num container"
     // da conversa anterior não anuncia nada sobre esta.
     notices: [],
+    // E para os chips da jaula: eles apontam para linhas que acabaram de ser
+    // zeradas — chip órfão de outra conversa narraria o trabalho errado.
+    chipsDeSandbox: [],
     busy: false,
     thinking: "",
     pendingApprovals: [],
@@ -1497,8 +1578,12 @@ export const useApp = create<AppState>()(
        * interface: é o comando caindo na estação da pessoa.
        */
       setEnvironment: (id) => {
-        const { environment: previous, session } = get();
-        if (id === previous) return;
+        const { environment: previous, environmentChosen: previousChosen, session } = get();
+        // Escolher o ambiente que JÁ está ativo continua sendo um gesto quando
+        // nada foi fixado ainda: é assim que a pessoa sai do "auto (sandbox)"
+        // e FIXA o Local — o POST precisa ir para o gateway registrar a
+        // escolha (Registry.Set), senão o turno de trabalho segue na jaula.
+        if (id === previous && previousChosen) return;
 
         if (transport === null || session === null || session === "") {
           set({ error: `sem conexão com o gateway: o ambiente continua em ${previous}` });
@@ -1506,8 +1591,9 @@ export const useApp = create<AppState>()(
         }
 
         // Otimista, porque o menu tem de fechar com a escolha aplicada — e
-        // reversível, porque a confirmação é do outro lado.
-        set({ environment: id, error: "" });
+        // reversível, porque a confirmação é do outro lado. A escolha marca
+        // `environmentChosen`: é ela que tira o rodapé do "auto (sandbox)".
+        set({ environment: id, environmentChosen: true, error: "" });
 
         void transport
           .post(`/v1/sessions/${encodeURIComponent(session)}/environment`, { environment: id })
@@ -1518,7 +1604,11 @@ export const useApp = create<AppState>()(
               // por cima dela devolveria o rodapé a um ambiente que ninguém
               // pediu. Só desfaz o que ainda é o nosso.
               current.environment === id
-                ? { environment: previous, error: `o ambiente continua em ${previous}: ${reason}` }
+                ? {
+                    environment: previous,
+                    environmentChosen: previousChosen,
+                    error: `o ambiente continua em ${previous}: ${reason}`
+                  }
                 : {}
             );
           });
@@ -1536,7 +1626,12 @@ export const useApp = create<AppState>()(
         const bot = (botId ?? "").trim();
         transport?.switchSession(null, bot === "" ? undefined : bot);
         if (bot === "") {
-          set({ ...conversationReset(), session: null });
+          // A escolha de ambiente é DA SESSÃO (Registry por sessionID): a
+          // conversa nova nasce sem escolha, e o rodapé volta ao padrão
+          // honesto ("auto (sandbox)" quando a jaula vige). Fora do
+          // conversationReset de propósito: o regenerar/editar reseta a MESMA
+          // sessão e não pode esquecer uma escolha que continua valendo lá.
+          set({ ...conversationReset(), session: null, environmentChosen: false });
           return;
         }
         // "Novo schema" na tela de Dados: a conversa nasce DO BOT e a pessoa
@@ -1546,6 +1641,7 @@ export const useApp = create<AppState>()(
         set({
           ...conversationReset(),
           session: null,
+          environmentChosen: false,
           activeSpecialist: bot,
           activeSurface: specialistById(get().specialists, bot).surface
         });
@@ -1559,8 +1655,16 @@ export const useApp = create<AppState>()(
         // olhando) desta conversa se apaga aqui.
         const atividade = { ...get().atividadeDasConversas };
         delete atividade[id];
-        // As linhas voltam pelo replay do gateway, não de um cache local.
-        set({ ...conversationReset(), session: id, atividadeDasConversas: atividade });
+        // As linhas voltam pelo replay do gateway, não de um cache local. A
+        // escolha de ambiente NÃO volta (o ready não a transmite): a sessão
+        // aberta recomeça em "auto" — limitação registrada, o gateway ainda
+        // guarda a escolha e o pior caso é o rodapé mostrar o padrão da jaula.
+        set({
+          ...conversationReset(),
+          session: id,
+          environmentChosen: false,
+          atividadeDasConversas: atividade
+        });
       },
 
       /**

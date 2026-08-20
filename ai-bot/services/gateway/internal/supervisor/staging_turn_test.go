@@ -6,7 +6,8 @@
 //   - DURANTE o turno o projeto real está intocado e o trabalho vive na cópia;
 //     o done só sai depois de o espelho entregar (e o staging sumir);
 //   - falha no meio do turno descarta a cópia — nada meio-escrito chega;
-//   - a raiz apontada pela pessoa (fora de projects/) segue inplace, fixado;
+//   - a raiz apontada pela pessoa TAMBÉM trabalha em cópia (sandbox universal),
+//     com os reproduzíveis dela fora da ida e intactos na entrega;
 //   - o teto degrada para inplace com um KindThinking avisando;
 //   - a UI (CallToolFromUI) lê e escreve o projeto ENTREGUE mesmo com o
 //     staging ligado — o Ctrl+S é edição direta da pessoa;
@@ -100,6 +101,7 @@ type stagingTurnFixture struct {
 	supervisor *Supervisor
 	store      *store.Store
 	manager    *workspace.Manager
+	registry   *Registry
 	session    string
 	projeto    string
 }
@@ -109,6 +111,21 @@ type stagingTurnFixture struct {
 // aprova-tudo — a mecânica sob teste aqui é o staging, não a aprovação.
 // `specialistID` vazio deixa a raiz SEM dono, o cenário do master orquestrador.
 func newStagingTurnFixture(t *testing.T, server *httptest.Server, dentroDeProjects bool, specialistID string) *stagingTurnFixture {
+	t.Helper()
+	return newStagingTurnFixtureComPolitica(t, server, dentroDeProjects, specialistID,
+		permissions.Policy{Mode: permissions.ModeAll, AgentTools: true})
+}
+
+// newStagingTurnFixtureComPolitica é a variante com a POLÍTICA escolhida —
+// os testes da jaula usam "edições", que é onde o cartão de entrega e o chip
+// "no sandbox" aparecem de verdade.
+func newStagingTurnFixtureComPolitica(
+	t *testing.T,
+	server *httptest.Server,
+	dentroDeProjects bool,
+	specialistID string,
+	policy permissions.Policy,
+) *stagingTurnFixture {
 	t.Helper()
 	dataStore, err := store.Open(t.TempDir())
 	if err != nil {
@@ -146,7 +163,7 @@ func newStagingTurnFixture(t *testing.T, server *httptest.Server, dentroDeProjec
 		Store:      dataStore,
 		Bus:        eventbus.New(dataStore),
 		Models:     scriptedRouter(server.URL),
-		Gate:       permissions.NewGate(permissions.Policy{Mode: permissions.ModeAll, AgentTools: true}),
+		Gate:       permissions.NewGate(policy),
 		Tools:      registry,
 		Router:     NewRouter(nil, nil),
 		Workspaces: manager,
@@ -155,7 +172,7 @@ func newStagingTurnFixture(t *testing.T, server *httptest.Server, dentroDeProjec
 	// staging precisa dela — e ela é inofensiva para os demais.
 	supervisor.InstallCrewTools(registry)
 	return &stagingTurnFixture{supervisor: supervisor, store: dataStore, manager: manager,
-		session: sessionID, projeto: projeto}
+		registry: registry, session: sessionID, projeto: projeto}
 }
 
 // existeEm/leEm/escreveEm: leitura e escrita relativas a uma raiz, no disco.
@@ -281,13 +298,14 @@ func TestFalhaDoModeloNoMeioDescartaOStaging(t *testing.T) {
 	}
 }
 
-/* ----------------------- fora de projects/ é inplace ----------------------- */
+/* ------------------- a pasta da pessoa também é sandbox -------------------- */
 
-// A raiz apontada pela PESSOA (fora de <dataDir>/projects/) segue inplace como
-// hoje — fixado: o espião vê o arquivo JÁ no projeto durante o turno, porque a
-// pasta dela pode ser gigante e a resposta para isso é worktree/Puter, não
-// cópia cega.
-func TestRaizDaPessoaForaDeProjectsSegueInplace(t *testing.T) {
+// SANDBOX UNIVERSAL: a raiz apontada pela PESSOA (fora de <dataDir>/projects/)
+// também trabalha em cópia — a decisão do dono. O espião prova que durante o
+// turno a pasta dela está intocada e o trabalho vive na cópia; o done entrega.
+// E o node_modules dela nem viaja: a cópia de ida exclui os reproduzíveis (é o
+// que tornou a pasta da pessoa viável sem estourar o teto à toa).
+func TestRaizDaPessoaTambemTrabalhaEmSandbox(t *testing.T) {
 	var fixture *stagingTurnFixture
 	var espiou atomic.Bool
 	hook := func(body string) {
@@ -295,18 +313,32 @@ func TestRaizDaPessoaForaDeProjectsSegueInplace(t *testing.T) {
 			return
 		}
 		espiou.Store(true)
-		if !existeEm(fixture.projeto, "direto.txt") {
-			t.Error("fora de projects/ a escrita tinha de ir DIRETO ao projeto, como sempre foi")
+		if existeEm(fixture.projeto, "direto.txt") {
+			t.Error("a pasta da pessoa mudou DURANTE o turno — o sandbox universal não valeu para ela")
 		}
-		if entries := stagingEntries(t, fixture.store); len(entries) != 0 {
-			t.Errorf("fora de projects/ não pode nascer cópia, obtive %d entrada(s)", len(entries))
+		entries := stagingEntries(t, fixture.store)
+		if len(entries) != 1 {
+			t.Errorf("esperava a cópia única do turno, obtive %d entrada(s)", len(entries))
+			return
+		}
+		copia := filepath.Join(fixture.store.Root(), "staging", entries[0].Name())
+		if !existeEm(copia, "direto.txt") {
+			t.Error("a escrita do turno tinha de estar na cópia")
+		}
+		if existeEm(copia, "node_modules") {
+			t.Error("o node_modules da pessoa não podia viajar na cópia de ida")
 		}
 	}
 	server := stagingProvider(t, []route{
 		{trigger: "Resultado das ferramentas", answer: "direto.txt gravado."},
-		{trigger: "grava direto", answer: "gravando\n\n" + fenceWrite("direto.txt", "sem sandbox")},
+		{trigger: "grava direto", answer: "gravando\n\n" + fenceWrite("direto.txt", "no sandbox")},
 	}, hook)
 	fixture = newStagingTurnFixture(t, server, false, "code")
+	escreveEm(t, fixture.projeto, "app.js", "fonte da pessoa")
+	if err := os.MkdirAll(filepath.Join(fixture.projeto, "node_modules", "dep"), 0o755); err != nil {
+		t.Fatalf("montar node_modules: %v", err)
+	}
+	escreveEm(t, fixture.projeto, filepath.Join("node_modules", "dep", "index.js"), "instalado pela pessoa")
 
 	if err := fixture.supervisor.Prompt(motorContext(t), fixture.session,
 		protocol.Prompt{Text: "grava direto na minha pasta"}); err != nil {
@@ -315,8 +347,15 @@ func TestRaizDaPessoaForaDeProjectsSegueInplace(t *testing.T) {
 	if !espiou.Load() {
 		t.Fatal("o espião do meio do turno nunca rodou — o teste não observou o que promete")
 	}
-	if leEm(t, fixture.projeto, "direto.txt") != "sem sandbox" {
-		t.Error("o arquivo não chegou à pasta da pessoa")
+	if leEm(t, fixture.projeto, "direto.txt") != "no sandbox" {
+		t.Error("a entrega não chegou à pasta da pessoa no done")
+	}
+	// O que era dela sobreviveu à entrega — o espelho não toca reproduzível.
+	if leEm(t, fixture.projeto, "node_modules/dep/index.js") != "instalado pela pessoa" {
+		t.Error("o node_modules da pessoa foi tocado pela entrega")
+	}
+	if entries := stagingEntries(t, fixture.store); len(entries) != 0 {
+		t.Errorf("o staging tinha de sumir depois da entrega, sobraram %d entrada(s)", len(entries))
 	}
 }
 

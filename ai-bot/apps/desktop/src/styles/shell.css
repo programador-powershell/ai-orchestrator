@@ -1627,6 +1627,95 @@ select {
   border-top: 1px solid var(--line);
 }
 
+/* ------------------------- o corpo da entrega ---------------------------- */
+
+/*
+ * O cartão de `workspace.promote`: contagens + lista de caminhos, ABERTA (a
+ * lista é o objeto da decisão — mesma lição do .ask-detail). A lista rola
+ * sozinha para cinquenta arquivos não empurrarem os botões da decisão para
+ * fora da tela.
+ */
+.approval-entrega {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-entrega-contagens {
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.approval-entrega-lista {
+  margin: 0;
+  padding: 9px;
+  max-height: 40vh;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  user-select: text;
+}
+
+.approval-entrega-lista li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow-wrap: anywhere;
+}
+
+/* A marca (+/~/−) é reforço visual; a cor NUNCA é a única prova — o tipo por
+   extenso vai no title e num span só-para-leitor na própria linha. */
+.approval-entrega-marca {
+  flex: none;
+  width: 1ch;
+  color: var(--muted);
+}
+
+.approval-entrega-lista li[data-tipo="criado"] .approval-entrega-marca {
+  color: var(--ok);
+}
+
+.approval-entrega-lista li[data-tipo="alterado"] .approval-entrega-marca {
+  color: var(--warn);
+}
+
+.approval-entrega-lista li[data-tipo="apagado"] .approval-entrega-marca {
+  color: var(--danger);
+}
+
+/* ------------------------- os chips da jaula ----------------------------- */
+
+/*
+ * "no sandbox: …" pendurado na bolha do turno. Alinha com o corpo da linha
+ * (24px do retrato + 10px do vão) para o chip ler como parte da resposta, e
+ * não como uma linha nova de conversa.
+ */
+.line-sandbox {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: 34px;
+}
+
+.line-sandbox:empty {
+  display: none;
+}
+
+/* O texto do gesto pode ser um comando comprido; o chip corta com reticências
+   em vez de empurrar a conversa para o lado (o integral fica no title). */
+.line-sandbox-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---------------------------- configurações ----------------------------- */
 
 /*

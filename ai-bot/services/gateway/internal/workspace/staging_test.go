@@ -76,11 +76,12 @@ func existe(root, relative string) bool {
 
 /* ------------------------------ a decisão --------------------------------- */
 
-// SÓ o turno de modelo sobre raiz provisionada ganha cópia. Cada linha da
-// tabela é uma regra de produto: a UI edita o projeto entregue, a equipe tem o
-// worktree, a pasta da pessoa pode ser gigante, e origem não declarada cai no
-// comportamento antigo e seguro.
-func TestPlanDecideStagingSoParaModeloEmProjects(t *testing.T) {
+// O sandbox é UNIVERSAL para o turno de MODELO: qualquer raiz definida ganha
+// cópia — a provisionada E a apontada pela pessoa (a decisão do dono). O que
+// continua inplace é decisão de produto: a UI edita o projeto entregue, a
+// equipe tem o worktree, e origem não declarada cai no comportamento antigo e
+// seguro.
+func TestPlanDecideStagingPorOrigemComRaizUniversal(t *testing.T) {
 	harness := newStagingHarness(t)
 
 	casos := []struct {
@@ -90,10 +91,10 @@ func TestPlanDecideStagingSoParaModeloEmProjects(t *testing.T) {
 		staged  bool
 	}{
 		{"modelo em projects/ ganha cópia", "s-projeto", OriginModel, true},
+		{"pasta da pessoa TAMBÉM ganha cópia — sandbox universal", "s-pessoal", OriginModel, true},
 		{"UI fica no projeto entregue", "s-projeto", OriginUI, false},
 		{"equipe fica inplace (worktree é o isolamento dela)", "s-projeto", OriginCrew, false},
 		{"origem não declarada cai em inplace", "s-projeto", Origin(""), false},
-		{"pasta da pessoa fica inplace", "s-pessoal", OriginModel, false},
 		{"sessão sem pasta fica inplace", "s-solta", OriginModel, false},
 	}
 	for _, caso := range casos {
@@ -115,18 +116,26 @@ func TestPlanDecideStagingSoParaModeloEmProjects(t *testing.T) {
 		})
 	}
 
-	// O prefixo CRU é a armadilha clássica: "projects-2" começa com "projects"
-	// como string, mas não mora dentro de projects/. Canonicalizado, não passa.
-	vizinho := filepath.Join(harness.dataDir, "projects-2", "app")
+	// A cerca FÍSICA que sobrou no universal: raiz que contém a área de staging
+	// (copiar copiaria a cópia enquanto ela é escrita) ou que mora dentro dela
+	// (a cópia de OUTRO turno) fica inplace.
+	if harness.manager.stagesRoot(harness.dataDir) {
+		t.Error("a raiz que CONTÉM <dataDir>/staging não pode ganhar cópia — a caminhada revisitaria o destino")
+	}
+	if harness.manager.stagesRoot(filepath.Join(harness.dataDir, "staging", "wp-x")) {
+		t.Error("uma raiz DENTRO de staging/ é a cópia de outro turno — espelhá-la entregaria trabalho alheio")
+	}
+	if harness.manager.stagesRoot(filepath.Join(harness.dataDir, "staging")) {
+		t.Error("a própria staging/ não pode ganhar cópia")
+	}
+	// E o prefixo CRU continua sendo a armadilha clássica: "staging-2" começa
+	// com "staging" como string e NÃO é a área de staging — ganha cópia normal.
+	vizinho := filepath.Join(harness.dataDir, "staging-2", "app")
 	if err := os.MkdirAll(vizinho, 0o755); err != nil {
 		t.Fatalf("criar o vizinho: %v", err)
 	}
-	if harness.manager.stagesRoot(vizinho) {
-		t.Error("projects-2/ passou pela comparação de prefixo — a canonicalização não está valendo")
-	}
-	// E a própria projects/ não é um projeto.
-	if harness.manager.stagesRoot(filepath.Join(harness.dataDir, "projects")) {
-		t.Error("a própria projects/ não pode ganhar staging — o espelho apagaria os vizinhos")
+	if !harness.manager.stagesRoot(vizinho) {
+		t.Error("staging-2/ caiu na cerca por comparação de prefixo cru — a canonicalização não está valendo")
 	}
 
 	// Gerente SEM EnableStaging: tudo inplace, como sempre foi.
@@ -363,6 +372,136 @@ func TestTetoDegradaParaInplaceComMotivo(t *testing.T) {
 	if execution.StagingDegraded == "" || execution.LocalStaging != "" {
 		t.Fatal("o teto de bytes tinha de degradar para inplace com motivo")
 	}
+}
+
+// A cópia de IDA exclui os reproduzíveis — a pendência declarada da v1: o
+// projeto da pessoa com node_modules não estoura o teto à toa. Três arquivos
+// de node_modules + um de fonte com teto de 2 arquivos: sem a exclusão, a
+// materialização degradava; com ela, a cópia nasce SÓ com a fonte.
+func TestCopiaDeIdaExcluiReproduziveisENaoEstouraOTeto(t *testing.T) {
+	harness := newStagingHarness(t)
+	harness.manager.EnableStagingWithLimits(harness.dataDir, maxStagingBytes, 2)
+	escreve(t, harness.pessoal, "app.js", "fonte da pessoa")
+	escreve(t, harness.pessoal, "node_modules/a/index.js", "dep 1")
+	escreve(t, harness.pessoal, "node_modules/b/index.js", "dep 2")
+	escreve(t, harness.pessoal, "node_modules/c/index.js", "dep 3")
+
+	plan, err := harness.manager.Plan(context.Background(),
+		PlanRequest{SessionID: "s-pessoal", Origin: OriginModel})
+	if err != nil {
+		t.Fatalf("congelar: %v", err)
+	}
+	execution, err := harness.manager.Materialize(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("materializar: %v", err)
+	}
+	if execution.LocalStaging == "" {
+		t.Fatalf("com os reproduzíveis excluídos a cópia tinha de caber no teto — degradou: %q",
+			execution.StagingDegraded)
+	}
+	if existe(execution.LocalRoot, "node_modules") {
+		t.Error("o node_modules da pessoa não podia viajar na cópia de ida")
+	}
+	if le(t, execution.LocalRoot, "app.js") != "fonte da pessoa" {
+		t.Error("a fonte tinha de estar na cópia")
+	}
+
+	// E o link simbólico DENTRO do reproduzível (o pnpm planta aos montes) não
+	// degrada uma cópia que nunca precisou dele. Sem privilégio de symlink no
+	// Windows o cenário não se monta — aí não há o que provar aqui.
+	if err := os.Symlink(
+		filepath.Join(harness.pessoal, "app.js"),
+		filepath.Join(harness.pessoal, "node_modules", "link.js")); err == nil {
+		execution, err = harness.manager.Materialize(context.Background(), plan)
+		if err != nil {
+			t.Fatalf("rematerializar com link no node_modules: %v", err)
+		}
+		if execution.LocalStaging == "" {
+			t.Errorf("o link dentro de node_modules não podia degradar a cópia: %q", execution.StagingDegraded)
+		}
+	}
+}
+
+/* --------------------------- o diff da entrega ----------------------------- */
+
+// StagingChanges é o conteúdo do cartão de entrega: criados, alterados e
+// apagados — calculados com as MESMAS regras do espelho (reproduzível não
+// conta), em ordem estável. Sem mudança, vazio (a promoção é silenciosa);
+// materialização substituída bate na cerca do nonce.
+func TestStagingChangesCalculaODiffDaEntrega(t *testing.T) {
+	harness := newStagingHarness(t)
+	escreve(t, harness.projeto, "igual.txt", "não muda")
+	escreve(t, harness.projeto, "muda.txt", "v1")
+	escreve(t, harness.projeto, "docs/some.md", "vai sumir")
+
+	plan, err := harness.manager.Plan(context.Background(),
+		PlanRequest{SessionID: "s-projeto", Origin: OriginModel})
+	if err != nil {
+		t.Fatalf("congelar: %v", err)
+	}
+	execution, err := harness.manager.Materialize(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("materializar: %v", err)
+	}
+
+	// ANTES de qualquer gesto: sem mudança, sem cartão.
+	changes, err := harness.manager.StagingChanges(plan, execution.Publication())
+	if err != nil {
+		t.Fatalf("diff sem mudança: %v", err)
+	}
+	if !changes.Empty() {
+		t.Fatalf("a cópia recém-nascida não pode ter diff: %+v", changes)
+	}
+
+	// O turno trabalha: 3 criados, 1 alterado, 1 apagado — e ruído reproduzível
+	// dos dois lados, que não pode aparecer no cartão.
+	escreve(t, execution.LocalRoot, "novo-a.txt", "A")
+	escreve(t, execution.LocalRoot, "novo-b.txt", "B")
+	escreve(t, execution.LocalRoot, "src/novo-c.txt", "C")
+	escreve(t, execution.LocalRoot, "muda.txt", "v2")
+	escreve(t, execution.LocalRoot, "node_modules/dep/index.js", "instalado no sandbox")
+	if err := os.RemoveAll(filepath.Join(execution.LocalRoot, "docs")); err != nil {
+		t.Fatalf("apagar na cópia: %v", err)
+	}
+
+	changes, err = harness.manager.StagingChanges(plan, execution.Publication())
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	wantCreated := []string{"novo-a.txt", "novo-b.txt", "src/novo-c.txt"}
+	if len(changes.Created) != len(wantCreated) {
+		t.Fatalf("criados: %v, esperava %v", changes.Created, wantCreated)
+	}
+	for i, want := range wantCreated {
+		if changes.Created[i] != want {
+			t.Fatalf("criados fora de ordem/conteúdo: %v, esperava %v", changes.Created, wantCreated)
+		}
+	}
+	if len(changes.Modified) != 1 || changes.Modified[0] != "muda.txt" {
+		t.Fatalf("alterados: %v, esperava [muda.txt]", changes.Modified)
+	}
+	if len(changes.Deleted) != 1 || changes.Deleted[0] != "docs/some.md" {
+		t.Fatalf("apagados: %v, esperava [docs/some.md]", changes.Deleted)
+	}
+	if changes.Total() != 5 || changes.Empty() {
+		t.Fatalf("total tinha de ser 5, veio %d", changes.Total())
+	}
+
+	// A cerca do nonce: uma SEGUNDA materialização do mesmo plano torna a
+	// publicação antiga incapaz até de DESCREVER uma entrega.
+	substituta, err := harness.manager.Materialize(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("rematerializar: %v", err)
+	}
+	if _, err := harness.manager.StagingChanges(plan, execution.Publication()); !errors.Is(err, ErrStaleStaging) {
+		t.Fatalf("o diff da materialização substituída tinha de bater na cerca, veio %v", err)
+	}
+	// E a publicação inplace (degradado, UI) devolve vazio sem erro: não há
+	// staging para descrever.
+	if diff, err := harness.manager.StagingChanges(plan, Publication{StagingURI: InplaceStaging}); err != nil || !diff.Empty() {
+		t.Fatalf("inplace tinha de devolver diff vazio: %+v (%v)", diff, err)
+	}
+	_ = harness.manager.Discard(context.Background(), plan, substituta.Publication())
 }
 
 /* -------------------------------- as cercas -------------------------------- */

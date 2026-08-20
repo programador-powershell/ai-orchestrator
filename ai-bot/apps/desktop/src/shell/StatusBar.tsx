@@ -131,6 +131,7 @@ export function CrewBadge() {
 export function EnvBadge() {
   const environment = useApp((state) => state.environment);
   const environments = useApp((state) => state.environments);
+  const environmentChosen = useApp((state) => state.environmentChosen);
   const setEnvironment = useApp((state) => state.setEnvironment);
 
   const [open, setOpen] = useState(false);
@@ -155,7 +156,21 @@ export function EnvBadge() {
   }, [open]);
 
   const current = environmentInfo(environments, environment);
-  const Icon = ENVIRONMENT_ICON[current.id] ?? ENVIRONMENT_ICON.local;
+
+  /*
+   * O RODAPÉ HONESTO da jaula: sem escolha explícita e com o sandbox são, o
+   * turno de TRABALHO roda no container por padrão (a regra é do gateway —
+   * ver turnEnvironment em tools_process.go). Mostrar "Local" nessa condição
+   * era o rodapé prometendo a estação enquanto o proc.run ia para a jaula —
+   * exatamente o silêncio de execução que o seletor existe para acabar. O
+   * rótulo "auto (sandbox)" só some quando a pessoa FIXA um ambiente, e aí o
+   * fixado volta a mandar (inclusive sobre o padrão da jaula).
+   */
+  const dockerDisponivel = environments.some((item) => item.id === "docker" && item.available);
+  const autoSandbox = !environmentChosen && dockerDisponivel;
+  const Icon = autoSandbox
+    ? ENVIRONMENT_ICON.docker
+    : ENVIRONMENT_ICON[current.id] ?? ENVIRONMENT_ICON.local;
 
   function choose(id: Environment) {
     setEnvironment(id);
@@ -167,15 +182,21 @@ export function EnvBadge() {
       <button
         type="button"
         className="envbadge-button"
+        data-auto={autoSandbox ? "sandbox" : undefined}
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="listbox"
         aria-expanded={open}
         // O motivo entra junto: o "indisponível" ao lado do rótulo diz QUE não
         // dá, e só o `detail` diz o que fazer para passar a dar.
-        title={environmentTitle(current)}
+        title={
+          autoSandbox
+            ? `turno de trabalho roda no sandbox (Docker), agindo na cópia do turno; ` +
+              `conversa segue em ${current.label} — fixe um ambiente no menu para mandar sempre`
+            : environmentTitle(current)
+        }
       >
         <Icon size={12} aria-hidden />
-        <span>{current.label}</span>
+        <span>{autoSandbox ? "auto (sandbox)" : current.label}</span>
         {/* O ambiente em vigor pode ter deixado de existir (a VPS saiu do ar, o
             Docker foi desligado). O aviso é mais honesto que o rótulo sozinho. */}
         {current.available ? null : <em className="envbadge-warn">indisponível</em>}
@@ -187,6 +208,13 @@ export function EnvBadge() {
               dizer isso aqui evita a leitura de que o botão migra a sessão. */}
           <p className="envbadge-note">
             Vale para o <strong>próximo comando</strong>. O que já rodou continua onde rodou.
+            {autoSandbox ? (
+              <>
+                {" "}
+                Sem escolha fixa, o <strong>turno de trabalho</strong> roda no sandbox (Docker);
+                escolher abaixo fixa o ambiente e desliga o automático.
+              </>
+            ) : null}
           </p>
 
           {environments.map((item) => {

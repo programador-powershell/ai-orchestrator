@@ -117,9 +117,12 @@ func (t *Toolbox) procRun(
 
 	if environment == protocol.EnvLocal {
 		// O caminho de sempre: quem executa na estação é o Rust. Os argumentos
-		// vão INTOCADOS (o `raw` original), e não remontados a partir da struct
-		// acima — o host pode entender campos que este pacote nem lê, e
-		// reserializar aqui os apagaria em silêncio.
+		// vão do `raw` original, não remontados da struct acima — o host pode
+		// entender campos que este pacote nem lê, e reserializar por struct os
+		// apagaria em silêncio. A ÚNICA adição é o root da execução congelada,
+		// que o CallHost injeta preservando o resto (ver comRootDaExecucao):
+		// é ele que mantém o comando dentro do workspace do plano — a cópia,
+		// num turno com staging — em vez da pasta aberta na janela.
 		return registry.CallHost(ctx, sessionID, "proc.run", raw)
 	}
 	return t.runInEnvironment(ctx, sessionID, environment, args.CWD, args.Command)
@@ -195,26 +198,61 @@ const sandboxUnavailable = "execução isolada indisponível — instale o Docke
 // e guarda o resultado por 30s (availabilityTTL): sondar o Docker a cada
 // proc.run seria pagar o frio da sondagem toda hora.
 func (t *Toolbox) turnEnvironment(ctx context.Context, sessionID string) protocol.Environment {
-	if chosen, ok := t.Environments.Chosen(sessionID); ok {
-		return chosen
-	}
-	if !t.workTurn(ctx, sessionID) {
-		return t.Environments.Active(ctx, sessionID)
-	}
-	if ok, _ := t.Environments.Availability(ctx, protocol.EnvDocker); ok {
-		return protocol.EnvDocker
-	}
+	environment, degraded := t.resolveTurnEnvironment(ctx, sessionID)
 	// DEGRADAÇÃO HONESTA: sem sandbox o turno de trabalho segue no padrão de
 	// sempre — com o funil de aprovação intacto — e a pessoa fica sabendo UMA
 	// vez por turno. Uma porque o turno chama proc.run dezenas de vezes, e
 	// repetir o aviso a cada comando ensinaria a ignorá-lo; nenhuma seria
 	// perder o isolamento em silêncio, que é pior.
-	fallback := t.Environments.Active(ctx, sessionID)
-	if warnSandboxOnce(ctx) {
+	if degraded && warnSandboxOnce(ctx) {
 		t.thinkingNotice(sessionID, fmt.Sprintf("%s; rodando %s com aprovação",
-			sandboxUnavailable, environmentName(fallback)))
+			sandboxUnavailable, environmentName(environment)))
 	}
-	return fallback
+	return environment
+}
+
+// resolveTurnEnvironment é a DECISÃO pura de turnEnvironment, sem o aviso —
+// existe apartada porque a previsão do gesto jaulado (ProcSandboxed) precisa
+// responder "onde este comando cairia?" sem consumir o aviso-uma-vez do turno
+// nem publicar nada. O segundo retorno diz se o turno de trabalho DEGRADOU
+// (queria sandbox e não há) — é o gatilho do aviso de quem executa de verdade.
+func (t *Toolbox) resolveTurnEnvironment(ctx context.Context, sessionID string) (protocol.Environment, bool) {
+	if chosen, ok := t.Environments.Chosen(sessionID); ok {
+		return chosen, false
+	}
+	if !t.workTurn(ctx, sessionID) {
+		return t.Environments.Active(ctx, sessionID), false
+	}
+	if ok, _ := t.Environments.Availability(ctx, protocol.EnvDocker); ok {
+		return protocol.EnvDocker, false
+	}
+	return t.Environments.Active(ctx, sessionID), true
+}
+
+// ProcSandboxed prevê, SEM executar nem avisar, se ESTE proc.run vai cair num
+// container (EnvDocker) — a informação de que o portão precisa para saber se o
+// gesto está na jaula (supervisor/jaula.go). A previsão espelha o despacho do
+// procRun: a intenção de container decide primeiro (e só vale com o Docker
+// são; o downgrade para a VPS/ai-jail NÃO é sandbox de kernel e não relaxa
+// aprovação), depois o ambiente do turno. O cache de disponibilidade do
+// registro (30s) é o que mantém previsão e execução respondendo a mesma coisa.
+func (t *Toolbox) ProcSandboxed(ctx context.Context, sessionID string, raw json.RawMessage) bool {
+	if t == nil || t.Environments == nil {
+		return false
+	}
+	var args struct {
+		Command string `json:"command"`
+		Env     string `json:"env"`
+	}
+	if err := decodeArgs(raw, &args); err != nil {
+		return false
+	}
+	if _, wants := containerIntent(args.Command, args.Env); wants {
+		ok, _ := t.Environments.Availability(ctx, protocol.EnvDocker)
+		return ok
+	}
+	environment, _ := t.resolveTurnEnvironment(ctx, sessionID)
+	return environment == protocol.EnvDocker
 }
 
 // workTurn diz se ESTE turno é de trabalho: o especialista ativo da sessão

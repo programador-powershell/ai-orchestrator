@@ -440,10 +440,11 @@ func serve() error {
 	workspaces := workspace.NewManagerWithLeases(func(sessionID string) string {
 		return sessionRoot(durable, sessionID)
 	}, frota)
-	// O SANDBOX de staging v1: o turno de MODELO sobre um projeto provisionado
-	// (<dataDir>/projects/…) trabalha numa cópia em <dataDir>/staging/ e só o
-	// desfecho bem-sucedido promove — falha, interrupção e recusa descartam a
-	// cópia. A raiz apontada pela pessoa continua inplace (ver staging.go).
+	// O SANDBOX UNIVERSAL de staging: TODO turno de MODELO com raiz definida —
+	// provisionada ou apontada pela pessoa — trabalha numa cópia em
+	// <dataDir>/staging/ (a ida exclui reproduzíveis; o teto degrada com aviso
+	// alto) e só o desfecho bem-sucedido promove, com o cartão de entrega
+	// quando há mudança. Falha, interrupção e recusa descartam a cópia.
 	workspaces.EnableStaging(cfg.DataDir)
 
 	registry := supervisor.NewRegistry()
@@ -628,6 +629,17 @@ func serve() error {
 		PackPrompt: pack.PromptFor,
 		Workspaces: workspaces,
 		Runs:       fleet.NewRunLog(durable),
+		// A previsão do gesto jaulado: o portão pergunta ao MESMO toolbox que
+		// despacha o proc.run se este comando cai num container — dois códigos
+		// decidindo o destino divergiriam na hora que importa.
+		ProcSandboxed: toolbox.ProcSandboxed,
+		// HostHonraRoot fica DESLIGADO de propósito: o aplicativo nativo
+		// (apps/desktop/src-tauri/src/tools.rs) ainda resolve office.*/video.*
+		// contra a pasta aberta na janela e ignora o `root` que o gateway
+		// injeta no despacho. Ligar isto antes de o host obedecer o campo
+		// relaxaria a aprovação de um efeito que cai no projeto REAL, fora da
+		// cópia e fora do cartão de entrega. Quando a frente do desktop honrar
+		// o contrato, é AQUI que a jaula passa a cobrir os gestos de host.
 	})
 	sup.InstallCrewTools(registry)
 

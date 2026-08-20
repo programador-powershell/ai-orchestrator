@@ -517,7 +517,12 @@ func (s *Supervisor) delegateWithRoute(
 			// e promover no meio entregaria (e apagaria o staging de) um trabalho
 			// pela metade — quem entrega lá é o done do turno, em runTurn.
 			if origin.ID == specialist.MasterID {
-				if err := s.entregaWorkspace(ctx, sessionID, turn); err != nil {
+				if err := s.entregaWorkspace(ctx, sessionID, turn, target.ID); err != nil {
+					if errors.Is(err, errEntregaRecusada) {
+						// Fecha honesto com a frase exata da recusa — quem recusou
+						// o cartão não pode ler depois um erro genérico de entrega.
+						return finish(false, err.Error())
+					}
 					return finish(false, "o resultado não pôde ser entregue ao projeto: "+err.Error())
 				}
 			}

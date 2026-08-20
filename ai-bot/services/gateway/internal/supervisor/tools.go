@@ -187,7 +187,7 @@ func (r *Registry) Call(ctx context.Context, name, sessionID string, args json.R
 		if bridge == nil {
 			return "", errHostDisconnected(name)
 		}
-		return bridge.Call(ctx, sessionID, name, args)
+		return bridge.Call(ctx, sessionID, name, comRootDaExecucao(ctx, args))
 	}
 	if entry.fn == nil {
 		return "", fmt.Errorf("a ferramenta %s não tem implementação", name)
@@ -210,11 +210,47 @@ func (r *Registry) CallHost(ctx context.Context, sessionID, tool string, args js
 	if bridge == nil {
 		return "", errHostDisconnected(tool)
 	}
-	return bridge.Call(ctx, sessionID, tool, args)
+	return bridge.Call(ctx, sessionID, tool, comRootDaExecucao(ctx, args))
 }
 
 func errHostDisconnected(tool string) error {
 	return fmt.Errorf("a ferramenta %s roda na máquina e o aplicativo não está conectado", tool)
+}
+
+// comRootDaExecucao injeta o root da EXECUÇÃO CONGELADA nos argumentos de toda
+// chamada de host — o conserto da varredura do sandbox universal.
+//
+// As ferramentas de host que tocam arquivo (office.*, video.*, pdf.extract, o
+// proc.run local) resolviam o caminho contra a pasta ABERTA NA JANELA do
+// aplicativo, não contra o workspace decidido pelo plano: num turno com
+// staging, o efeito escapava da cópia e ia parar no projeto real — e o espelho
+// da promoção passaria por cima dele, apagando trabalho calado. Com o campo
+// `root` no despacho, o host executa dentro do MESMO root(ctx) que as
+// ferramentas locais já usam: a cópia na jaula, a pasta da sessão inplace.
+//
+// O valor é SOBRESCRITO de propósito quando o modelo mandou um "root" próprio:
+// onde a execução trabalha é decisão do plano congelado, nunca do modelo — um
+// root escolhido por ele seria fuga do confinamento por argumento. A injeção
+// preserva os campos que este pacote nem conhece (decodifica para mapa, não
+// para struct), e qualquer forma que não seja objeto JSON passa intocada — o
+// host recusa do jeito dele, com o erro de sempre.
+func comRootDaExecucao(ctx context.Context, args json.RawMessage) json.RawMessage {
+	execution, ok := workspace.FromContext(ctx)
+	if !ok || execution.LocalRoot == "" {
+		return args
+	}
+	fields := map[string]any{}
+	if len(args) > 0 && string(args) != "null" {
+		if err := json.Unmarshal(args, &fields); err != nil || fields == nil {
+			return args
+		}
+	}
+	fields["root"] = execution.LocalRoot
+	injected, err := json.Marshal(fields)
+	if err != nil {
+		return args
+	}
+	return injected
 }
 
 /* ------------------------------- toolbox -------------------------------- */

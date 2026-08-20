@@ -95,6 +95,21 @@ type Deps struct {
 	// recebe uma execução cujo workspace já foi decidido. Nil = nenhum
 	// workspace é pendurado e as ferramentas de arquivo recusam com motivo.
 	Workspaces *workspace.Manager
+	// ProcSandboxed prevê, SEM executar, se um proc.run vai cair num container
+	// (Toolbox.ProcSandboxed) — é o que decide se o gesto está na jaula (ver
+	// jaula.go). Nil = sem previsão, e proc.run continua perguntando sempre,
+	// que é o lado fechado.
+	ProcSandboxed func(ctx context.Context, sessionID string, args json.RawMessage) bool
+	// HostHonraRoot declara que o aplicativo NATIVO desta instalação honra o
+	// campo `root` injetado nos despachos de host (comRootDaExecucao) — isto é,
+	// que office.*/video.* de verdade escrevem DENTRO do root da execução, e
+	// não na pasta aberta na janela. É a condição para a jaula relaxar os
+	// gestos de host (ver jaula.go): o gateway envia o root desde já, mas
+	// relaxar a aprovação ANTES de o host obedecê-lo abriria a porta lateral —
+	// o efeito cairia no projeto real, sem cartão e fora do cartão de entrega.
+	// False (o padrão, e o valor de produção enquanto apps/desktop não lê o
+	// campo) mantém essas ferramentas pedindo por comando mesmo jauladas.
+	HostHonraRoot bool
 }
 
 // turnHandle é o cancelamento de UM turno, com IDENTIDADE.
@@ -128,6 +143,10 @@ type Supervisor struct {
 	counter uint64
 	// capsuleLocks serializa a dobra da cápsula por sessão (ver foldCapsule).
 	capsuleLocks sync.Map
+	// prazoDeEntrega é o teto de espera do cartão de entrega (askEntrega).
+	// Zero usa o approvalTimeout de produção; os testes o encurtam para provar
+	// que o prazo vencido RECUSA sem esperar dez minutos de verdade.
+	prazoDeEntrega time.Duration
 }
 
 // New monta o supervisor.
@@ -508,13 +527,18 @@ func (s *Supervisor) runTurn(parent context.Context, sessionID string, prompt pr
 				return nil
 			}
 			// A ENTREGA vem antes do anúncio: o staging do turno é promovido ao
-			// projeto AGORA — cerca de worker+época, espelho, limpeza — para a
-			// mensagem final e o done só saírem depois de o resultado existir
-			// onde a pessoa olha. Promoção recusada é falha honesta do turno
-			// (o defer descarta a cópia), nunca um ✓ sobre trabalho não entregue.
-			if err := s.entregaWorkspace(ctx, sessionID, turn); err != nil {
-				s.fail(sessionID, turn, definition.ID, "entrega_do_workspace",
-					"o resultado não pôde ser entregue ao projeto: "+err.Error(), true)
+			// projeto AGORA — cartão de entrega quando há mudança, cerca de
+			// worker+época, espelho, limpeza — para a mensagem final e o done só
+			// saírem depois de o resultado existir onde a pessoa olha. Entrega
+			// recusada fecha o turno HONESTO com a frase exata (o defer descarta
+			// a cópia); promoção que falhou por infraestrutura idem, com o
+			// motivo — nunca um ✓ sobre trabalho não entregue.
+			if err := s.entregaWorkspace(ctx, sessionID, turn, definition.ID); err != nil {
+				code, message := "entrega_do_workspace", "o resultado não pôde ser entregue ao projeto: "+err.Error()
+				if errors.Is(err, errEntregaRecusada) {
+					code, message = "entrega_recusada", err.Error()
+				}
+				s.fail(sessionID, turn, definition.ID, code, message, true)
 				return nil
 			}
 			// A resposta final entra no log inteira. Os deltas já foram
@@ -1079,6 +1103,17 @@ func (s *Supervisor) executeTool(
 	})
 
 	decision, reason := s.deps.Gate.Evaluate(definition.ID, call.Tool, risk, digest)
+	// O GESTO NA JAULA NÃO PERGUNTA (ver jaula.go): num turno com staging, o
+	// efeito de arquivo acontece na cópia e o proc.run sandboxado roda num
+	// container — o "perguntar" desses gestos vira o chip "no sandbox", e a
+	// aprovação humana fica UMA, na entrega (askEntrega). Só o ASK relaxa: o
+	// DENY do admin e do catálogo continua deny — jaula não é imunidade.
+	if decision == permissions.DecisionAsk {
+		if label, jailed := s.gestoNaJaula(ctx, sessionID, call); jailed {
+			decision = permissions.DecisionAllow
+			s.avisoDeJaula(sessionID, actor, label)
+		}
+	}
 	switch decision {
 	case permissions.DecisionDeny:
 		s.toolResult(sessionID, turn, actor, callID, call.Tool, false, "", reason, 0)
@@ -1456,31 +1491,195 @@ func (s *Supervisor) workspaceDaTarefa(
 		return ctx
 	}
 	if execution.StagingDegraded != "" && s.deps.Bus != nil {
-		// O teto degradou para inplace: o turno segue direto no projeto, e a
-		// pessoa fica sabendo o porquê em vez de perder o sandbox em silêncio.
+		// O teto degradou para inplace: AVISO ALTO, não rodapé. A degradação
+		// muda duas coisas que a pessoa precisa saber ANTES do primeiro gesto —
+		// o turno trabalha direto no projeto dela E o modelo de aprovação
+		// rebaixa da entrega única para o por-comando (a jaula não existiu; ver
+		// jaula.go). O KindThinking continua saindo para a linha do orbe; o
+		// KindNotice é o popup que não passa despercebido.
 		s.thinking(sessionID, turn, master, execution.StagingDegraded+" — trabalhando direto no projeto", false)
+		s.deps.Bus.PublishEphemeral(sessionID, protocol.Envelope{
+			V:       protocol.Version,
+			TS:      time.Now().UTC(),
+			Session: sessionID,
+			Turn:    turn,
+			Kind:    protocol.KindNotice,
+			From:    master,
+			Payload: mustPayload(protocol.Notice{
+				Icon:  "sandbox",
+				Title: "sem sandbox: este turno trabalha direto no projeto",
+				Detail: execution.StagingDegraded +
+					" — cada gravação e execução volta a pedir aprovação individual.",
+			}),
+		})
 	}
 	return workspace.WithExecution(ctx, execution)
 }
 
-// entregaWorkspace PROMOVE o staging do turno para o projeto — a cerca de
-// worker+época primeiro, o espelho depois. Chamada no SUCESSO, antes de a
-// pessoa ser avisada (mensagem final/done/delegate-done): ela só lê resultado
-// que já está entregue. Execução inplace (ou nenhuma) é não-op.
-func (s *Supervisor) entregaWorkspace(ctx context.Context, sessionID, turn string) error {
+// errEntregaRecusada é o desfecho honesto da entrega negada: o defer do turno
+// descarta a cópia e a pessoa lê exatamente o que aconteceu — nada mudou.
+var errEntregaRecusada = errors.New("a entrega foi recusada — nada foi alterado no projeto")
+
+// entregaTool é o nome do "gesto" de entrega no cartão de aprovação — não é
+// uma ferramenta do catálogo (nenhum modelo a chama): é o verbo da promoção,
+// para o cartão e o log dizerem O QUE está sendo aprovado.
+const entregaTool = "workspace.promote"
+
+// entregaWorkspace PROMOVE o staging do turno para o projeto — e é AQUI que
+// mora a APROVAÇÃO ÚNICA da jaula: os gestos do turno não perguntaram (ver
+// jaula.go), então a decisão humana acontece na entrega. O fluxo:
+//
+//  1. calcula o diff staging→projeto (criados/alterados/apagados);
+//  2. SEM mudança, promove em silêncio — constatação, sem cartão;
+//  3. COM mudança, emite o approval.request de entrega (mesmo mecanismo
+//     durável de sempre: decisão humana, prazo que recusa, digest) — permitir
+//     promove; recusar (ou silêncio) devolve errEntregaRecusada e o chamador
+//     fecha o turno honesto, com o defer descartando a cópia.
+//
+// Turno degradado para inplace nem chega aqui (LocalStaging vazio): a jaula
+// não existiu, cada gesto já pediu por comando, e não há entrega para aprovar.
+// ModeAll (automação sem humano) promove sem cartão — perguntar a quem não
+// existe recusaria toda entrega por prazo.
+func (s *Supervisor) entregaWorkspace(ctx context.Context, sessionID, turn, specialistID string) error {
 	execution, ok := workspace.FromContext(ctx)
 	if !ok || execution.LocalStaging == "" || s.deps.Workspaces == nil {
 		return nil
 	}
+
+	changes, err := s.deps.Workspaces.StagingChanges(execution.Plan, execution.Publication())
+	if err != nil {
+		return err
+	}
+	if !changes.Empty() && s.deps.Gate != nil && s.deps.Gate.Policy().Mode != permissions.ModeAll {
+		allowed, why := s.askEntrega(ctx, sessionID, turn, specialistID, changes)
+		if !allowed {
+			return fmt.Errorf("%w (%s)", errEntregaRecusada, why)
+		}
+	}
+
 	master := protocol.Actor{Kind: protocol.ActorSupervisor, ID: specialist.MasterID}
 	if s.deps.Bus != nil {
 		s.thinking(sessionID, turn, master, "entregando o resultado ao projeto…", false)
 	}
-	err := s.deps.Workspaces.Promote(ctx, execution.Plan, execution.Publication())
+	err = s.deps.Workspaces.Promote(ctx, execution.Plan, execution.Publication())
 	if s.deps.Bus != nil {
 		s.thinking(sessionID, turn, master, "", true)
 	}
 	return err
+}
+
+// maxEntregaPaths é quantos caminhos o cartão de entrega lista. O resto vira
+// "… e mais N": um turno que tocou 400 arquivos não pode virar um cartão de
+// 400 linhas que ninguém lê — e cartão que ninguém lê é aprovação no automático.
+const maxEntregaPaths = 20
+
+// askEntrega publica o cartão de entrega e espera a decisão humana, pelo MESMO
+// mecanismo durável da aprovação de ferramenta (canal em `waiting`, decisão via
+// Decide, envelope approval.decision antes do efeito, prazo que RECUSA).
+//
+// Duas diferenças deliberadas em relação a askApproval:
+//   - NÃO há Grant: a entrega é aprovada UMA a UMA, sempre — "aprovar sempre"
+//     uma lista de arquivos de hoje não diz nada sobre a lista de amanhã;
+//   - o resumo fala de ENTREGA ("N arquivo(s) ao projeto"), não de ferramenta:
+//     é a frase que a pessoa lê para decidir.
+func (s *Supervisor) askEntrega(
+	ctx context.Context,
+	sessionID, turn, specialistID string,
+	changes workspace.Changes,
+) (bool, string) {
+	callID := s.nextID("c")
+	actor := protocol.Actor{Kind: protocol.ActorSpecialist, ID: specialistID, Specialist: specialistID}
+	name := specialist.GetOrDefault(specialistID).Name
+
+	// Os argumentos do cartão: contagens + até maxEntregaPaths caminhos. É
+	// também o que o digest prende — a MESMA entrega, não qualquer entrega.
+	summaryArgs := mustPayload(map[string]any{
+		"created":  len(changes.Created),
+		"modified": len(changes.Modified),
+		"deleted":  len(changes.Deleted),
+		"paths":    entregaPaths(changes),
+	})
+	digest := digestOf(s.approvalScope(sessionID, specialistID), entregaTool, summaryArgs)
+
+	channel := make(chan protocol.ApprovalDecision, 1)
+	s.mu.Lock()
+	s.waiting[callID] = channel
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.waiting, callID)
+		s.mu.Unlock()
+	}()
+
+	_ = s.emit(sessionID, turn, protocol.KindApprovalRequest, actor, protocol.ApprovalRequest{
+		CallID: callID,
+		Tool:   entregaTool,
+		Risk:   protocol.RiskWrite,
+		Summary: fmt.Sprintf("%s quer entregar %d arquivo(s) ao projeto: %d criado(s), %d alterado(s), %d apagado(s)",
+			name, changes.Total(), len(changes.Created), len(changes.Modified), len(changes.Deleted)),
+		Detail: entregaDetail(changes),
+		Digest: digest,
+	})
+
+	prazo := s.prazoDeEntrega
+	if prazo <= 0 {
+		prazo = approvalTimeout
+	}
+	timer := time.NewTimer(prazo)
+	defer timer.Stop()
+
+	select {
+	case decision := <-channel:
+		// Durável ANTES do efeito, igual à aprovação de ferramenta: é o registro
+		// do último degrau antes de o projeto mudar (ou de a entrega morrer).
+		_ = s.emit(sessionID, turn, protocol.KindApprovalDecision,
+			protocol.Actor{Kind: protocol.ActorUser}, protocol.ApprovalDecision{
+				CallID:  callID,
+				Allow:   decision.Allow,
+				Scope:   decision.Scope,
+				Comment: decision.Comment,
+			})
+		if decision.Allow {
+			return true, ""
+		}
+		if decision.Comment != "" {
+			return false, decision.Comment
+		}
+		return false, "a pessoa recusou a entrega"
+	case <-timer.C:
+		// Silêncio NÃO é consentimento — nem para entregar.
+		return false, "ninguém decidiu a entrega dentro do prazo — recusada por segurança"
+	case <-ctx.Done():
+		return false, "o turno foi cancelado antes da decisão da entrega"
+	}
+}
+
+// entregaPaths achata o diff em até maxEntregaPaths caminhos com o prefixo do
+// verbo — a ordem é criado, alterado, apagado, a mesma do resumo.
+func entregaPaths(changes workspace.Changes) []string {
+	out := make([]string, 0, maxEntregaPaths)
+	appendAll := func(prefix string, paths []string) {
+		for _, path := range paths {
+			if len(out) >= maxEntregaPaths {
+				return
+			}
+			out = append(out, prefix+path)
+		}
+	}
+	appendAll("+ ", changes.Created)
+	appendAll("~ ", changes.Modified)
+	appendAll("- ", changes.Deleted)
+	return out
+}
+
+// entregaDetail é o corpo do cartão: a lista (capada) e o excedente contado.
+func entregaDetail(changes workspace.Changes) string {
+	paths := entregaPaths(changes)
+	detail := strings.Join(paths, "\n")
+	if rest := changes.Total() - len(paths); rest > 0 {
+		detail += fmt.Sprintf("\n… e mais %d arquivo(s)", rest)
+	}
+	return detail
 }
 
 // descartaWorkspace joga fora o staging do turno SEM tocar o projeto. É o

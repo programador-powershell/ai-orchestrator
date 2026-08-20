@@ -68,6 +68,10 @@ describe("setEnvironment", () => {
     // É ESTA frase que o composer desenha. "409" sozinho não é acionável.
     expect(useApp.getState().error).toContain("instale o Docker Desktop e o sbx");
     expect(useApp.getState().environment).toBe("local");
+    // A escolha recusada também desfaz a MARCA de "fixado": o rodapé volta ao
+    // "auto (sandbox)" em vez de fingir que a pessoa fixou algo que o gateway
+    // não registrou.
+    expect(useApp.getState().environmentChosen).toBe(false);
   });
 
   it("mantém a escolha quando o gateway aceita", async () => {
@@ -79,5 +83,7 @@ describe("setEnvironment", () => {
     useApp.getState().setEnvironment("docker");
     await vi.waitFor(() => expect(useApp.getState().environment).toBe("docker"));
     expect(useApp.getState().error).toBe("");
+    // Fixou de verdade: é esta marca que tira o crachá do "auto (sandbox)".
+    expect(useApp.getState().environmentChosen).toBe(true);
   });
 });

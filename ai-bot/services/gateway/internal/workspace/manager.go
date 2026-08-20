@@ -73,13 +73,13 @@ type Manager struct {
 	roots  func(sessionID string) string
 	leases Leases
 
-	// O SANDBOX de staging da v1 (desligado até EnableStaging): o turno de
-	// modelo sobre um workspace PROVISIONADO (<dataDir>/projects/…) trabalha
-	// numa cópia em <dataDir>/staging/<plano>/ e só a promoção espelha o
-	// resultado de volta. Os tetos existem porque copiar é O(bytes): um projeto
-	// que os estoura degrada para inplace com aviso, em vez de travar o turno.
+	// O SANDBOX de staging (desligado até EnableStaging): TODO turno de modelo
+	// com raiz definida trabalha numa cópia em <dataDir>/staging/<plano>/ e só
+	// a promoção espelha o resultado de volta — sandbox universal, decisão do
+	// dono. Os tetos existem porque copiar é O(bytes): um projeto que os
+	// estoura (já sem contar os reproduzíveis, que a cópia de ida exclui)
+	// degrada para inplace com aviso, em vez de travar o turno.
 	stagingBase     string // <dataDir>/staging — vazio = staging desligado
-	projectsBase    string // <dataDir>/projects — a única raiz que ganha cópia
 	stagingMaxBytes int64
 	stagingMaxFiles int
 
@@ -108,16 +108,17 @@ func NewManagerWithLeases(roots func(sessionID string) string, leases Leases) *M
 	return &Manager{roots: roots, leases: leases}
 }
 
-// Tetos da cópia de segurança. Os workspaces provisionados são pequenos por
-// construção; o teto existe para o dia em que alguém apontar (ou encher) um
-// gigante — copiar 40 GB por turno não é sandbox, é pane de disco.
+// Tetos da cópia de segurança. Com os reproduzíveis excluídos da ida, o que
+// se copia é código-fonte — e código-fonte que passa de 128 MiB é o gigante
+// para o qual a resposta é worktree/Puter: aí o turno degrada para inplace com
+// aviso alto, em vez de transformar cada mensagem numa pane de disco.
 const (
 	maxStagingBytes = 128 << 20 // 128 MiB
 	maxStagingFiles = 4096
 )
 
-// EnableStaging liga o sandbox de staging: o turno de MODELO sobre uma raiz
-// dentro de <dataDir>/projects/ passa a trabalhar numa cópia. Sem esta chamada
+// EnableStaging liga o sandbox de staging: TODO turno de MODELO com raiz
+// definida passa a trabalhar numa cópia (sandbox universal). Sem esta chamada
 // (ou com dataDir vazio) TUDO segue inplace, como sempre foi.
 func (m *Manager) EnableStaging(dataDir string) {
 	m.EnableStagingWithLimits(dataDir, maxStagingBytes, maxStagingFiles)
@@ -130,7 +131,6 @@ func (m *Manager) EnableStagingWithLimits(dataDir string, maxBytes int64, maxFil
 		return
 	}
 	m.stagingBase = filepath.Join(dataDir, "staging")
-	m.projectsBase = filepath.Join(dataDir, "projects")
 	m.stagingMaxBytes = maxBytes
 	m.stagingMaxFiles = maxFiles
 	m.stagingNonces = make(map[string]uint64)
@@ -182,11 +182,12 @@ func (m *Manager) Plan(ctx context.Context, request PlanRequest) (Plan, error) {
 	// aleatório, o plano sobrevive a replay e a comparação em teste.
 	planID := fmt.Sprintf("wp-%s-%s-%d", sessionID, taskID, attempt)
 
-	// A DECISÃO do staging mora aqui, no congelamento: turno de MODELO sobre
-	// raiz provisionada ganha cópia; todo o resto — a UI (edição direta da
-	// pessoa), a equipe (worktree é o isolamento dela) e a raiz apontada pela
-	// pessoa (potencialmente gigante; a resposta para repositório grande é
-	// worktree/Puter, não cópia cega) — segue inplace, como sempre foi.
+	// A DECISÃO do staging mora aqui, no congelamento: turno de MODELO com
+	// raiz definida ganha cópia — QUALQUER raiz, desde o sandbox universal; a
+	// cópia de ida exclui os reproduzíveis e o teto cuida do resto. O que
+	// segue inplace é decisão de produto, não de tamanho: a UI (edição direta
+	// da pessoa no projeto entregue) e a equipe (o isolamento dela é o
+	// worktree; duas cópias espelhadas de volta se apagariam mutuamente).
 	staging := Staging{URI: InplaceStaging}
 	if request.Origin == OriginModel && m.stagesRoot(root) {
 		staging = Staging{URI: StagingURIPrefix + planID}

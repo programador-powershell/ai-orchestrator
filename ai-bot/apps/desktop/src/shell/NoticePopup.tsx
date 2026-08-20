@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
-import { Container, Megaphone } from "lucide-react";
+import { Box, Container, Megaphone } from "lucide-react";
 import type { Notice } from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { hueStyle, specialistById } from "../lib/specialists";
@@ -50,6 +50,11 @@ function noticeGlyph(icon: string) {
   switch (icon) {
     case "docker":
       return Container;
+    case "sandbox":
+      // O aviso de DEGRADAÇÃO da jaula ("sem sandbox: …") chega com este
+      // ícone e continua popup — o gesto liberado ("no sandbox: …") nem passa
+      // por aqui: o store o desvia para o chip da conversa.
+      return Box;
     default:
       return Megaphone;
   }

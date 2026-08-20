@@ -104,43 +104,35 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.5
+### :up: V.2.6
 ### :warning: Latest Changes
 
-- **O cenário Vercel completo: construir DENTRO do sandbox e entregar o
-  produto pronto.** A visão do dono virou produto em três peças:
-  - **Execução isolada por padrão**: `proc.run` de turno de trabalho prefere o
-    sandbox Docker/sbx quando ele está são (prioridade: escolha explícita da
-    pessoa > sandbox disponível > padrão de sempre), com o **staging montado
-    como workdir** — `npm install` e build acontecem no container, agindo na
-    cópia; a máquina da pessoa não ganha nem `node_modules`. Sem sandbox,
-    degrada honesto: UM aviso por turno e segue Local com aprovação.
-  - **Entrega é o PRODUTO**: o espelho da promoção exclui reproduzíveis
-    (`node_modules`, `.pnpm-store`, `__pycache__`, `.venv`, `.git` do staging)
-    nos dois sentidos — não chegam ao projeto e não apagam os pré-existentes
-    da pessoa; `dist/` entra, porque é o produto.
-  - **Aba Site viva no Design**: o app entregue renderiza em iframe
-    `sandbox=""` **sem script** (sanitização própria: script/iframe/object/
-    embed/base/link fora, todo `on*`, `javascript:`/`data:` não-imagem
-    bloqueados, CSS com cerca escapada), e o botão **"editar no canvas"**
-    importa o HTML entregue como nós editáveis com undo.
-  - **Persona sem terceirizar trabalho**: o Código não manda mais a pessoa
-    abrir terminal — scaffold, dependência, build e verificação são ele quem
-    roda, pelo funil, com teste impedindo o flagrante de voltar.
-  - **Interrupção honesta na borda**: o `done` interrompido é carimbado na
-    linha e o editor não abre aba de arquivo descartado — nem no vácuo do
-    stop, nem de carona no turno seguinte.
-  - **Provado no fio**: `npm install` rodou `[ambiente: docker]` com cwd na
-    cópia congelada, funil exercido em `proc.run` e `fs.write`, e o projeto
-    entregue terminou com `index.html` e `dist/` — sem `node_modules`.
+- **Sandbox UNIVERSAL e a aprovação movida para a ENTREGA — a decisão do dono
+  virou o funil.** Todo turno de modelo com projeto trabalha na cópia
+  (qualquer especialista — office, design, dados e vídeo incluídos; a cópia de
+  ida exclui reproduzíveis, então até projeto com node_modules cabe na jaula).
+  - **Gesto na jaula não pergunta**: fs.write/fs.patch na cópia e proc.run no
+    container executam direto, com o chip "no sandbox: …" e log integral. A
+    lista do que NUNCA relaxa é fechada e consultada antes de tudo: segredo,
+    webhook, MCP, memória, agendamento, worktree — cofre não é sandboxável.
+  - **Você aprova UMA vez, na entrega**: cartão "entregar ao projeto" com
+    contagens e a lista aberta de caminhos (a lista é o objeto da decisão).
+    Permitir promove antes do done; recusar (ou o prazo de 10 minutos)
+    DESCARTA — projeto intocado, turno fecha honesto. Sem mudança, promove em
+    silêncio. A Equipe entrega no MESMO cartão único do turno.
+  - **Fora da jaula nada relaxa**: Local fixado, turno degradado por teto e o
+    Ctrl+S da interface continuam no modelo por-comando.
+  - **Defesa em profundidade dos gestos de HOST** (conserto do conferente):
+    office/vídeo/proc local só relaxam quando o aplicativo nativo declara
+    honrar o `root` injetado (`HostHonraRoot`, desligado até o desktop ler o
+    campo) — sem a declaração, host continua pedindo por comando. Sem isso, um
+    office.edit jaulado escreveria fora da cópia no produto real.
+  - **Provado no fio real**: "crie um site em next" → scaffold + gravações com
+    ZERO cartões no meio (asserto de ausência), chips no SSE, UM cartão
+    "5 criado(s)" sem node_modules, projeto intocado durante o turno; permitir
+    entrega os 5; recusar deixa 0 entradas.
 
 ### :pushpin: Fixes
-
-- **MAX_PATH no workdir do sandbox** (flagrado pelo conferente com o sbx REAL
-  da estação): staging com caminho acima de 260 caracteres fazia o
-  CreateProcess recusar o diretório com um erro que não diz a causa. O nome da
-  pasta de staging ficou curto (prefixo de 24 + hash) — a unicidade vem do
-  hash, não do comprimento.
 
 ### :construction_worker: Refactors
 

@@ -25,7 +25,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { Bot, Brain, Check, ChevronRight, Copy, MessagesSquare, Pencil, RotateCcw, Wrench, X } from "lucide-react";
+import { Bot, Box, Brain, Check, ChevronRight, Copy, MessagesSquare, Pencil, RotateCcw, Wrench, X } from "lucide-react";
 import { MASTER_ID } from "@aibot/contracts";
 import type {
   Avatar,
@@ -40,7 +40,7 @@ import type {
 } from "@aibot/contracts";
 import { BotAvatar } from "../avatar/BotAvatar";
 import { MASTER, SPECIALIST_ICON, hueStyle, specialistById } from "../lib/specialists";
-import { ultimoTurnoDoUsuario, useApp } from "../lib/store";
+import { ultimoTurnoDoUsuario, useApp, type ChipDeSandbox } from "../lib/store";
 import { createMarkdownStream, renderMarkdown, type MarkdownStream } from "../lib/markdown";
 import { SurfaceStatus } from "../shell/StatusBar";
 
@@ -271,6 +271,36 @@ function ToolStrip({ calls, results }: { calls?: ToolCall[]; results?: ToolResul
           })}
         </ul>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Os GESTOS DA JAULA de uma linha — "no sandbox: pnpm install", "no sandbox:
+ * gravou src/App.tsx" — como chips discretos, pendurados na bolha do turno.
+ *
+ * Chip, e não popup, de propósito: dentro da jaula o gesto não pede permissão
+ * (a aprovação única é a entrega), então o rastro visível precisa existir SEM
+ * interromper — dezenas de cartões animados por turno ensinariam a ignorá-los.
+ * O painel de ferramentas (ToolStrip) continua sendo o registro integral; o
+ * chip é o "onde rodou", de relance. Mesma classe `.chip` do resto da tela —
+ * uma terceira linguagem visual para "informação pequena" seria ruído.
+ */
+function SandboxChips({ chips }: { chips: ChipDeSandbox[] }): ReactNode {
+  if (chips.length === 0) return null;
+  return (
+    <div className="line-sandbox" role="list" aria-label="passos executados no sandbox">
+      {chips.map((chip, index) => (
+        <span
+          key={`${index}:${chip.title}`}
+          role="listitem"
+          className="chip line-sandbox-chip"
+          title={chip.detail ?? chip.title}
+        >
+          <Box aria-hidden="true" />
+          {chip.title}
+        </span>
+      ))}
     </div>
   );
 }
@@ -597,6 +627,7 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   const busy = useApp((state) => state.busy);
   const status = useApp((state) => state.status);
   const delegations = useApp((state) => state.delegations);
+  const chipsDeSandbox = useApp((state) => state.chipsDeSandbox);
   const openSession = useApp((state) => state.openSession);
 
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -677,6 +708,22 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
     });
   }, [lines, specialists, busy, status, delegations]);
 
+  /**
+   * Chips da jaula agrupados pela linha em que aconteceram. Fora do `items` de
+   * propósito: os chips chegam por envelope próprio (notice) e mudam a
+   * identidade da fila sem tocar nas linhas — misturá-los no memo de cima
+   * refaria o casamento delegação↔linha a cada gesto do sandbox.
+   */
+  const chipsPorLinha = useMemo(() => {
+    const map = new Map<string, ChipDeSandbox[]>();
+    for (const chip of chipsDeSandbox) {
+      const grupo = map.get(chip.lineId);
+      if (grupo) grupo.push(chip);
+      else map.set(chip.lineId, [chip]);
+    }
+    return map;
+  }, [chipsDeSandbox]);
+
   const tail = lines.length > 0 ? lines[lines.length - 1] : undefined;
   const tailLength = tail ? tail.text.length : 0;
 
@@ -747,10 +794,19 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
                     podeRegenerar={podeRegenerar}
                     podeEditar={podeEditar}
                   />
+                  <SandboxChips chips={chipsPorLinha.get(line.id) ?? []} />
                 </div>
               );
             })
           )}
+          {/* Gesto da jaula que chegou ANTES de existir linha do turno (raro:
+              o notice costuma vir depois do tool.call). Aparecer no fim é
+              melhor que sumir — o chip é a prova visível do isolamento. */}
+          {(chipsPorLinha.get("") ?? []).length > 0 ? (
+            <div className="line-group">
+              <SandboxChips chips={chipsPorLinha.get("") ?? []} />
+            </div>
+          ) : null}
         </div>
       </div>
     </>

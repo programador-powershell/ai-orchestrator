@@ -70,7 +70,9 @@ func TestProcRunNoAmbienteLocalVaiParaOAplicativoNativo(t *testing.T) {
 	environments := sandbox.NewRegistry(sandbox.NewLocalRunner(), fake)
 	registry, host, root := procToolbox(t, environments)
 
-	args := json.RawMessage(`{"command":"go build ./...","cwd":"."}`)
+	// O campo que só o host entende vai junto de propósito: a injeção do root
+	// não pode apagar o que este pacote nem lê.
+	args := json.RawMessage(`{"command":"go build ./...","cwd":".","soDoHost":"fica"}`)
 	output, err := registry.Call(ctxComRoot(root), "proc.run", "s1", args)
 	if err != nil {
 		t.Fatalf("proc.run: %v", err)
@@ -78,10 +80,24 @@ func TestProcRunNoAmbienteLocalVaiParaOAplicativoNativo(t *testing.T) {
 	if !host.chamado || host.tool != "proc.run" {
 		t.Fatal("o comando tinha de ser despachado ao aplicativo nativo")
 	}
-	// Os argumentos vão INTOCADOS: remontá-los aqui apagaria em silêncio um
-	// campo que só o host entende.
-	if host.args != string(args) {
-		t.Fatalf("os argumentos foram reescritos: %s", host.args)
+	// Os argumentos chegam com os campos originais PRESERVADOS (inclusive o que
+	// só o host entende) e com o root da EXECUÇÃO CONGELADA injetado — é o
+	// conserto do sandbox universal: o host executa no workspace do plano (a
+	// cópia, num turno com staging), não na pasta aberta na janela.
+	var entregue struct {
+		Command  string `json:"command"`
+		CWD      string `json:"cwd"`
+		SoDoHost string `json:"soDoHost"`
+		Root     string `json:"root"`
+	}
+	if err := json.Unmarshal([]byte(host.args), &entregue); err != nil {
+		t.Fatalf("decodificar o que chegou ao host: %v (%s)", err, host.args)
+	}
+	if entregue.Command != "go build ./..." || entregue.CWD != "." || entregue.SoDoHost != "fica" {
+		t.Fatalf("os campos originais foram alterados: %s", host.args)
+	}
+	if entregue.Root != root {
+		t.Fatalf("o root da execução tinha de ir junto: root=%q em %s", entregue.Root, host.args)
 	}
 	if fake.chamado {
 		t.Fatal("nenhum sandbox podia ter sido acionado no ambiente local")
