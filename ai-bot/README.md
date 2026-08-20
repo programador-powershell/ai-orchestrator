@@ -146,6 +146,19 @@
 
 ### :pushpin: Fixes
 
+- **O app abria e fechava sozinho quando não havia gateway de pé.** O
+  bootstrapper procurava o `aibotd.exe` ao lado do app e no PATH — nunca no
+  `dist/` do repositório. Em dev isso sempre passou despercebido porque um
+  gateway antigo estava eternamente escutando na porta e era ADOTADO; no dia em
+  que o órfão morreu, o boot não achou binário nenhum, abortou o setup e a
+  janela fechou sem uma palavra (o motivo ia para o stderr, que não existe num
+  duplo clique). Agora: (1) o finder sobe a árvore procurando `dist/aibotd.exe`
+  — com teto de oito níveis, para um app instalado em Program Files não sair
+  varrendo o disco; e (2) toda falha de setup deixa o motivo em
+  `boot-erro.log` na pasta de dados — "fecha sozinho" nunca mais fica sem
+  rastro. Deliberadamente NÃO se copia o exe para o lado do app em dev: a
+  cópia sombrearia o `dist/` e recriaria o problema do binário defasado.
+
 - **Clicar numa conversa do histórico não abria nada — e a causa era um gateway
   FANTASMA.** O processo do gateway de ontem sobrevivia ao fechamento do app,
   segurava a pasta de dados (`.lock`) e a porta; o gateway novo desistia na

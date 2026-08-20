@@ -296,14 +296,20 @@ fn binary_name() -> &'static str {
     }
 }
 
-/// Procura o gateway em dois lugares, nesta ordem:
+/// Procura o gateway em três lugares, nesta ordem:
 ///
 /// 1. **ao lado do executável do app** — é onde o empacotamento deixa o
 ///    sidecar, e é o único caminho que garante que o gateway é o da MESMA
 ///    versão do app;
-/// 2. **no PATH** — o caso de quem compila o Go à mão, em desenvolvimento.
+/// 2. **em `dist/` subindo a árvore** — o caso do REPOSITÓRIO: o app de dev
+///    mora em `apps/desktop/src-tauri/target/debug/` e o gateway compilado em
+///    `<repo>/dist/`. Sem esta sonda, abrir o app pelo executável (fora do
+///    `dev:aibot`) só funcionava enquanto um gateway ANTIGO estivesse de pé
+///    para ser adotado — foi assim que um órfão de ontem virou "o app abre e
+///    fecha sozinho" no dia em que ele finalmente morreu;
+/// 3. **no PATH** — o caso de quem compila o Go à mão e o instala no sistema.
 ///
-/// O erro cita OS DOIS lugares, com o caminho de verdade. "aibotd não
+/// O erro cita OS TRÊS lugares, com o caminho de verdade. "aibotd não
 /// encontrado" manda a pessoa adivinhar onde o app procurou.
 fn find_binary() -> Result<PathBuf, String> {
     let name = binary_name();
@@ -315,6 +321,12 @@ fn find_binary() -> Result<PathBuf, String> {
     if let Some(dir) = exe_dir.as_ref() {
         let candidate = dir.join(name);
         if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    if let Some(dir) = exe_dir.as_ref() {
+        if let Some(candidate) = dist_na_arvore(dir, name) {
             return Ok(candidate);
         }
     }
@@ -333,9 +345,46 @@ fn find_binary() -> Result<PathBuf, String> {
         .unwrap_or_else(|| "(não foi possível descobrir a pasta do aplicativo)".to_string());
     Err(format!(
         "não encontrei o gateway `{name}`. Procurei ao lado do aplicativo, em {ao_lado}, \
-e depois em cada pasta do PATH. Se você compilou o gateway à mão, ponha o binário \
-em uma das duas."
+depois em `dist/` subindo a árvore do repositório, e por fim em cada pasta do PATH. \
+Se você compilou o gateway à mão, ponha o binário em uma delas."
     ))
+}
+
+/// Sobe a árvore a partir da pasta do app procurando `dist/<name>`.
+///
+/// O limite de oito níveis cobre a profundidade real do repositório
+/// (`apps/desktop/src-tauri/target/debug` → raiz são cinco) com folga, e
+/// impede que um app instalado em `C:\Program Files\...` saia varrendo o disco
+/// de alguém: fora do repositório a sonda esgota os níveis e desiste em paz.
+fn dist_na_arvore(inicio: &Path, name: &str) -> Option<PathBuf> {
+    let mut atual = inicio.to_path_buf();
+    for _ in 0..8 {
+        let candidate = atual.join("dist").join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !atual.pop() {
+            return None;
+        }
+    }
+    None
+}
+
+/// Deixa o motivo de um boot abortado onde a pessoa consegue achar.
+///
+/// O setup que falha vira pânico do Tauri no stderr — e stderr de app aberto
+/// por duplo clique não existe para ninguém: a janela abre e fecha "sozinha",
+/// sem uma palavra. Este arquivo é o rastro: o mesmo texto do erro, na pasta
+/// de dados que a pessoa (ou o suporte) já conhece. Falha ao gravar é
+/// engolida — quem está morrendo não pode morrer DE NOVO por causa do bilhete.
+pub(crate) fn registrar_falha_de_boot(reason: &str) {
+    let Some(base) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let dir = Path::new(&base).join("com.aibot.app").join("AI-BOT");
+    let _ = std::fs::create_dir_all(&dir);
+    let texto = format!("o aplicativo abortou o boot:\n{reason}\n");
+    let _ = std::fs::write(dir.join("boot-erro.log"), texto);
 }
 
 /* ----------------------- TRILHA C: trocar o binário ----------------------- */
@@ -927,6 +976,27 @@ mod tests {
         assert_eq!(conteudo(&binary), "novo");
         assert_eq!(conteudo(&binary.with_extension(BACKUP_SUFFIX)), "antigo");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A sonda do repositório: o app em target/debug acha o gateway em
+    /// <repo>/dist mesmo cinco níveis acima — e desiste em paz fora da árvore.
+    #[test]
+    fn dist_na_arvore_sobe_ate_a_raiz_do_repo() {
+        let raiz = std::env::temp_dir().join(format!("aibot-dist-{}", std::process::id()));
+        let fundo = raiz.join("apps/desktop/src-tauri/target/debug");
+        std::fs::create_dir_all(&fundo).expect("criar árvore de teste");
+        std::fs::create_dir_all(raiz.join("dist")).expect("criar dist");
+        std::fs::write(raiz.join("dist").join("g.exe"), b"x").expect("gravar gateway falso");
+
+        let achado = dist_na_arvore(&fundo, "g.exe");
+        assert_eq!(achado, Some(raiz.join("dist").join("g.exe")));
+
+        // Fora do repositório (sem dist em nenhum nível próximo), a sonda
+        // esgota os oito níveis sem inventar caminho.
+        let sem = dist_na_arvore(&std::env::temp_dir(), "nao-existe-❤.exe");
+        assert_eq!(sem, None);
+
+        let _ = std::fs::remove_dir_all(&raiz);
     }
 
     /// Cortar no meio de um caractere multibyte faria pânico no `&texto[..n]`.

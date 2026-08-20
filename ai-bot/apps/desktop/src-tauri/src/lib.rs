@@ -353,7 +353,12 @@ pub fn run() {
             // possível criar um; sem ele não há `GatewayHandle` para gerenciar,
             // e uma janela cujo `gateway_status` entra em pânico ao ser chamado
             // é pior do que uma janela que não abre com o motivo escrito.
-            let gateway = gateway::start(&handle)?;
+            // O `?` daqui vira pânico do Tauri no stderr — invisível para quem
+            // abriu por duplo clique. O bilhete em boot-erro.log é o que separa
+            // "abre e fecha sozinho" de um motivo que dá para ler e corrigir.
+            let gateway = gateway::start(&handle).inspect_err(|reason| {
+                gateway::registrar_falha_de_boot(reason);
+            })?;
 
             // Registrado ANTES de conectar a ponte: a ponte emite evento para a
             // janela, a janela reage chamando `gateway_status`, e um estado
@@ -365,7 +370,8 @@ pub fn run() {
             // token JÁ resolvidos: é tudo de que ela precisa, e passar o handle
             // inteiro faria a thread da ponte segurar o `Child` do gateway que
             // o encerramento tem de colher.
-            let bridge = hostbridge::start(gateway.stream_url(), gateway.token())?;
+            let bridge = hostbridge::start(gateway.stream_url(), gateway.token())
+                .inspect_err(|reason| gateway::registrar_falha_de_boot(reason))?;
 
             // Gerenciado porque `hostbridge_follow` e `hostbridge_status` o
             // recebem como estado. Sem isto, a primeira troca de conversa na
