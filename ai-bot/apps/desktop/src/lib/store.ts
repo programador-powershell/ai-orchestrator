@@ -187,6 +187,16 @@ export interface AppData {
    * atenção, não histórico — perder no reinício é aceitável, inventar não.
    */
   atividadeDasConversas: Record<string, "trabalhando" | "naoLida">;
+  /**
+   * Quantas ENTREGAS DE REPLAY já assentaram nesta janela. O transporte reduz
+   * o histórico em lote e entrega num set() só (ver o flush em `connect`) — e
+   * esse flush chega DEPOIS de o `ready` remontar a superfície, então "linhas
+   * cresceram" não distingue histórico de turno vivo. Este contador distingue:
+   * quando ele anda junto com o crescimento, foi replay — as guardas de
+   * turno-vivo (editor/canvas ao vivo) só REANCORAM, sem abrir nem importar
+   * nada. Turno vivo entra envelope a envelope e não passa por aqui.
+   */
+  replaysAssentados: number;
   error: string;
 }
 
@@ -277,6 +287,7 @@ export function initialAppData(): AppData {
     input: "",
     attachments: [],
     atividadeDasConversas: {},
+    replaysAssentados: 0,
     error: ""
   };
 }
@@ -1300,7 +1311,10 @@ export const useApp = create<AppState>()(
               const pronto = acumulado;
               acumulado = null;
               acumuladoSessao = null;
-              set(pronto);
+              // O flush se ANUNCIA: o acumulado nasceu de um get() de antes do
+              // lote, então o contador é lido AGORA — é ele que diz às guardas
+              // de turno-vivo que este crescimento de linhas é histórico.
+              set({ ...pronto, replaysAssentados: get().replaysAssentados + 1 });
             };
             transport = createTransport({
               url: info.url,

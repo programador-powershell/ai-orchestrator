@@ -30,6 +30,7 @@ import { MASTER_ID } from "@aibot/contracts";
 import type {
   Avatar,
   ConversationLine,
+  Delegate,
   ProtocolError,
   Route,
   RouteReason,
@@ -76,6 +77,9 @@ function avatarOf(avatars: Record<string, Avatar>, spec: SpecialistDefinition): 
  */
 const REASON_TEXT: Record<RouteReason, string> = {
   explicit: "você escolheu",
+  // A rota que nasceu da OPÇÃO do cartão de clarificação: a decisão foi da
+  // pessoa, não do master — cair no genérico escondia exatamente isso.
+  clarified: "você escolheu no cartão",
   heuristic: "pelo texto do pedido, sem consultar modelo",
   needle: "o roteador local decidiu, nesta máquina",
   model: "o master classificou",
@@ -161,6 +165,55 @@ function Handoff({ route, spec }: { route: Route; spec: SpecialistDefinition }):
       </span>
       agora é <span className="handoff-name">{spec.name}</span>
     </div>
+  );
+}
+
+/**
+ * O ESPELHO CLICÁVEL da delegação — a faixa "Deleguei ao especialista X" na
+ * conversa de quem delegou, ancorada na primeira bolha do delegado.
+ *
+ * É a porta de volta para a janela onde o trabalho de verdade acontece: o
+ * popup da delegação some sozinho, mas a conversa da filha continua lá — e o
+ * id dela já viaja no envelope (`delegation.session`). BOTÃO de verdade, não
+ * div com onClick: Tab alcança, Enter/Espaço navegam, e o title diz o gesto —
+ * cursor e hover moram no CSS (.delegation-mirror).
+ */
+function DelegationMirror({
+  delegation,
+  spec,
+  onOpen
+}: {
+  delegation: Delegate;
+  spec: SpecialistDefinition;
+  onOpen: (id: string) => void;
+}): ReactNode {
+  const sessao = (delegation.session ?? "").trim();
+  const objetivo = (delegation.goal ?? "").trim();
+  const Icon = SPECIALIST_ICON[spec.id] ?? Bot;
+  const title =
+    objetivo !== ""
+      ? `abrir a conversa do ${spec.name} — ${objetivo}`
+      : `abrir a conversa do ${spec.name}`;
+  return (
+    <button
+      type="button"
+      className="delegation-mirror"
+      // `data-hue` não é decoração: é ele que faz tokens.css REFAZER as
+      // derivadas (--accent, --accent-soft…) a partir da matiz inline — sem
+      // ele o --accent-h do hueStyle não mudaria cor nenhuma (mesma lição do
+      // cartão da delegação).
+      data-hue={spec.id}
+      style={hueStyle(spec.hue)}
+      title={title}
+      aria-label={`Deleguei ao especialista ${spec.name} — ${title}`}
+      onClick={() => onOpen(sessao)}
+    >
+      <span className="handoff-icon">
+        <Icon aria-hidden="true" />
+      </span>
+      deleguei ao especialista <span className="handoff-name">{spec.name}</span>
+      <ChevronRight aria-hidden="true" />
+    </button>
   );
 }
 
@@ -543,6 +596,8 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
   const activeSpecialist = useApp((state) => state.activeSpecialist);
   const busy = useApp((state) => state.busy);
   const status = useApp((state) => state.status);
+  const delegations = useApp((state) => state.delegations);
+  const openSession = useApp((state) => state.openSession);
 
   const scroller = useRef<HTMLDivElement | null>(null);
   /**
@@ -579,6 +634,30 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
       }
     }
 
+    /*
+     * O espelho da delegação ancora na PRIMEIRA bolha do delegado que ainda
+     * não foi reivindicada: a delegação N deste log pega a N-ésima bolha
+     * daquele bot, então dois chamados ao mesmo especialista (dois turnos)
+     * ganham cada um a própria faixa clicável. Delegação sem `session`
+     * (gateway antigo, espelho falhado) fica de fora — faixa que promete
+     * navegar e não navega ensinaria a não acreditar na tela.
+     */
+    const espelhoPorLinha = new Map<string, Delegate>();
+    if (delegations.length > 0) {
+      const reivindicadas = new Set<number>();
+      for (const delegacao of delegations) {
+        if ((delegacao.session ?? "").trim() === "") continue;
+        const indice = lines.findIndex(
+          (line, posicao) =>
+            !reivindicadas.has(posicao) && line.role === "assistant" && line.specialist === delegacao.to
+        );
+        if (indice < 0) continue;
+        reivindicadas.add(indice);
+        const linha = lines[indice];
+        if (linha) espelhoPorLinha.set(linha.id, delegacao);
+      }
+    }
+
     let previous = "";
     return lines.map((line) => {
       const id = line.specialist ?? "";
@@ -591,11 +670,12 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
       return {
         line,
         handoff,
+        espelho: espelhoPorLinha.get(line.id) ?? null,
         podeRegenerar: ultimaResposta !== "" && line.id === ultimaResposta,
         podeEditar: ultimo !== null && line.id === ultimo.lineId
       };
     });
-  }, [lines, specialists, busy, status]);
+  }, [lines, specialists, busy, status, delegations]);
 
   const tail = lines.length > 0 ? lines[lines.length - 1] : undefined;
   const tailLength = tail ? tail.text.length : 0;
@@ -648,10 +728,17 @@ export function ConversationSurface({ compact = false }: ConversationSurfaceProp
           {items.length === 0 ? (
             <Hero compact={compact} />
           ) : (
-            items.map(({ line, handoff, podeRegenerar, podeEditar }) => {
+            items.map(({ line, handoff, espelho, podeRegenerar, podeEditar }) => {
               const spec = resolveSpecialist(specialists, line.specialist ?? "");
               return (
                 <div className="line-group" key={line.id}>
+                  {espelho ? (
+                    <DelegationMirror
+                      delegation={espelho}
+                      spec={resolveSpecialist(specialists, espelho.to)}
+                      onOpen={openSession}
+                    />
+                  ) : null}
                   {handoff ? <Handoff route={handoff.route} spec={handoff.spec} /> : null}
                   <Row
                     line={line}

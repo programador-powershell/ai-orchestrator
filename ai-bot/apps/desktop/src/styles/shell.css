@@ -1176,6 +1176,56 @@ select {
   color: var(--accent-strong);
 }
 
+/* --------------------- espelho clicável da delegação --------------------- */
+
+/*
+ * "Deleguei ao especialista X" na conversa de quem delegou. A MESMA faixa fina
+ * do handoff, só que BOTÃO: clicar (ou Enter, é <button>) abre a conversa da
+ * filha — cursor de ponteiro e hover no nome deixam o gesto óbvio, e o motivo
+ * (o objetivo delegado) vai no title.
+ */
+.delegation-mirror {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 8px 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-eyebrow);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.delegation-mirror::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.delegation-mirror:hover,
+.delegation-mirror:focus-visible {
+  color: var(--accent);
+}
+
+.delegation-mirror:hover .handoff-name,
+.delegation-mirror:focus-visible .handoff-name {
+  text-decoration: underline;
+}
+
+.delegation-mirror > svg {
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+
 /* ------------------------------ primeira tela --------------------------- */
 
 .hero {

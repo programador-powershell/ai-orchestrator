@@ -1,0 +1,106 @@
+// Testes das PERSONAS de trabalho — o texto do system é dado, não prosa.
+//
+// O defeito que este arquivo guarda foi flagrado em produção: pedido um site,
+// o Código respondeu com o HTML inteiro num bloco de markdown NO CHAT e a
+// janela do editor ficou em "nenhum arquivo aberto". A superfície de cada
+// especialista de trabalho só mostra o que as FERRAMENTAS produziram no
+// projeto — então a persona tem de mandar USAR a ferramenta, e a lista de
+// permitidas tem de cobrir o que a persona manda fazer. As duas metades andam
+// juntas: ordem sem permissão vira recusa no portão; permissão sem ordem vira
+// artefato colado no chat.
+package specialist
+
+import (
+	"strings"
+	"testing"
+)
+
+// persona busca o especialista compilado e falha alto se ele sumir — um teste
+// de conteúdo sobre uma Definition zerada passaria em silêncio.
+func persona(t *testing.T, id string) Definition {
+	t.Helper()
+	definition, ok := Get(id)
+	if !ok {
+		t.Fatalf("o especialista %q não existe no catálogo compilado", id)
+	}
+	return definition
+}
+
+// O Código GRAVA com ferramenta e não cola o arquivo no chat. As frases
+// verificadas são as que carregam a regra: o nome das ferramentas de escrita
+// (sem elas o modelo não sabe COMO gravar) e a proibição do arquivo inteiro
+// (sem ela o modelo grava E cola, ou só cola).
+func TestPersonaDoCodigoMandaGravarComFerramentaENaoColarNoChat(t *testing.T) {
+	code := persona(t, "code")
+
+	for _, want := range []string{"fs.write", "fs.patch"} {
+		if !strings.Contains(code.System, want) {
+			t.Errorf("a persona do código não cita a ferramenta %q — sem o nome, o modelo não sabe como gravar:\n%s",
+				want, code.System)
+		}
+		// A ordem só vale se a permissão cobre: mandar gravar sem liberar a
+		// ferramenta é recusa garantida no portão.
+		if !code.AllowsTool(want) {
+			t.Errorf("a persona manda usar %q e a lista de permitidas não cobre", want)
+		}
+	}
+	if !strings.Contains(code.System, "arquivo inteiro") {
+		t.Errorf("a persona do código não proíbe colar o arquivo inteiro no chat:\n%s", code.System)
+	}
+	if !strings.Contains(code.System, "trecho ilustrativo") {
+		t.Errorf("a persona do código não delimita o que PODE ir ao chat (trecho ilustrativo):\n%s", code.System)
+	}
+}
+
+// O Design LÊ o projeto (o index.html que o Código gravou mora no mesmo cwd) e
+// a permissão cobre a leitura — fs.read E fs.list, porque sem listar a pasta
+// ele não acha o arquivo que a persona manda ler.
+func TestPersonaDoDesignLeOProjetoEAPermissaoCobre(t *testing.T) {
+	design := persona(t, "design")
+
+	for _, want := range []string{"fs.read", "fs.list"} {
+		if !strings.Contains(design.System, want) {
+			t.Errorf("a persona do design não cita %q — é a leitura do projeto que a faz desenhar o front real:\n%s",
+				want, design.System)
+		}
+		if !design.AllowsTool(want) {
+			t.Errorf("a persona manda ler com %q e a lista de permitidas não cobre", want)
+		}
+	}
+	// O ofício continua sendo desenhar pelas ferramentas de design.
+	if !design.AllowsTool("design.replicate") {
+		t.Error("o design perdeu a própria ferramenta de ofício (design.replicate)")
+	}
+}
+
+// O Dados produz o schema pelo ferramental estruturado — é o JSON dessas
+// ferramentas que a tela transforma em diagrama; schema colado no chat deixa o
+// painel vazio.
+func TestPersonaDeDadosProduzPeloFerramentalEstruturado(t *testing.T) {
+	data := persona(t, "data")
+
+	for _, want := range []string{"schema.export", "sql.render"} {
+		if !strings.Contains(data.System, want) {
+			t.Errorf("a persona de dados não cita %q — sem o nome, o artefato volta como texto no chat:\n%s",
+				want, data.System)
+		}
+		if !data.AllowsTool(want) {
+			t.Errorf("a persona manda usar %q e a lista de permitidas não cobre", want)
+		}
+	}
+}
+
+// O ajuste das listas NÃO abre escrita para quem não escreve: os ofícios de
+// leitura continuam sem fs.write/fs.patch. Sem esta cerca, "cobrir a persona"
+// viraria a desculpa pela qual todo especialista ganha escrita no projeto.
+func TestOficiosDeLeituraContinuamSemEscrita(t *testing.T) {
+	for _, id := range []string{"chat", "office", "security"} {
+		definition := persona(t, id)
+		for _, forbidden := range []string{"fs.write", "fs.patch"} {
+			if definition.AllowsTool(forbidden) {
+				t.Errorf("o especialista %q ganhou %q — ele é de leitura, e escrita nova exige decisão própria",
+					id, forbidden)
+			}
+		}
+	}
+}

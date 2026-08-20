@@ -569,10 +569,18 @@ func (s *Supervisor) delegateMessages(
 		// filha é deste especialista e quem lê o resultado é a PESSOA. O briefing
 		// de bot-a-bot ("escreva para ELE ler") produziria o tom errado para a
 		// única audiência que existe aqui.
+		//
+		// O parágrafo da JANELA existe porque o master só delega para
+		// especialista de TRABALHO (masterDelegates), e a superfície dele — a
+		// IDE, o schema, o canvas — só mostra o que as FERRAMENTAS produziram no
+		// projeto. Sem o reforço, o bot devolvia o artefato inteiro no chat e a
+		// janela dele ficava vazia ("nenhum arquivo aberto").
 		fmt.Fprintf(&briefing, "O master do AI-BOT roteou para VOCÊ este pedido da pessoa:\n%s\n",
 			strings.TrimSpace(request.Goal))
-		briefing.WriteString("\nEsta conversa é sua: entregue o que foi pedido e responda direto à pessoa, " +
-			"sem se apresentar. Se faltar informação essencial, pergunte em uma linha em vez de adivinhar.")
+		briefing.WriteString("\nEsta conversa é sua e você está na SUA janela: produza NO PROJETO " +
+			"da sessão, com as suas ferramentas — a pessoa vê o resultado na sua superfície, " +
+			"não num artefato colado no chat. Entregue o que foi pedido e responda direto à pessoa, " +
+			"curto e sem se apresentar. Se faltar informação essencial, pergunte em uma linha em vez de adivinhar.")
 	} else {
 		fmt.Fprintf(&briefing, "O especialista %s (%s) está atendendo uma conversa e chamou VOCÊ para uma coisa.\n\n",
 			origin.Name, origin.ID)

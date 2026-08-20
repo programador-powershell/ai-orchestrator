@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ai-bot",
+      "name": "aibot-desktop-vite",
       "runtimeExecutable": "corepack",
-      "runtimeArgs": ["pnpm", "--dir", "ai-bot/apps/desktop", "dev"],
+      "runtimeArgs": ["pnpm", "--dir", "ai-bot/apps/desktop", "exec", "vite", "--port", "1421", "--strictPort"],
       "port": 1421
-    },
-    {
-      "name": "original",
-      "runtimeExecutable": "corepack",
-      "runtimeArgs": ["pnpm", "--dir", "apps/desktop", "dev"],
-      "port": 1420
     }
   ]
 }

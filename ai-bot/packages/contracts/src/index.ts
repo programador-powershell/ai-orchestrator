@@ -314,7 +314,19 @@ export interface Standby {
   why: string;
 }
 
-export type RouteReason = "explicit" | "heuristic" | "needle" | "model" | "sticky" | "fallback";
+/**
+ * `clarified` espelha o RouteClarified do gateway: a rota nasceu da OPÇÃO que a
+ * pessoa escolheu no cartão de clarificação (publicada na conversa filha, com
+ * confiança 1). Faltava na união e o rótulo em português caía no genérico.
+ */
+export type RouteReason =
+  | "explicit"
+  | "clarified"
+  | "heuristic"
+  | "needle"
+  | "model"
+  | "sticky"
+  | "fallback";
 
 export interface Route {
   specialist: string;

@@ -30,6 +30,7 @@ import {
   type UIEvent
 } from "react";
 import {
+  AlertTriangle,
   Check,
   FileCode2,
   GitCompare,
@@ -48,6 +49,7 @@ import { nomeBase, type EntradaProjeto, type OcorrenciaBusca } from "../lib/ide/
 import {
   abrirArquivo,
   abrirVindoDaConversa,
+  agendarAberturaDoBot,
   ativarArquivo,
   buscarNoProjeto,
   editarAtivo,
@@ -100,6 +102,34 @@ function coletarDaConversa(lines: ConversationLine[]): Array<{ path: string; con
     }
   }
   return [...mapa.entries()].map(([path, content]) => ({ path, content }));
+}
+
+/**
+ * As gravações CONFIRMADAS do bot nesta conversa, em ordem de chegada — o
+ * caminho vem do tool.call (o result só carrega callId e desfecho). Recusa
+ * (ok:false) fica de fora: gravação que não aconteceu não abre arquivo nenhum.
+ * É o gêmeo do contarGravacoesDoBot do FilesRail, só que com o PATH: a árvore
+ * só precisa saber QUE o disco mudou; o editor precisa saber ONDE.
+ */
+function coletarGravacoesDoBot(lines: ConversationLine[]): string[] {
+  const porCall = new Map<string, string>();
+  for (const line of lines) {
+    for (const call of line.toolCalls ?? []) {
+      if (call.tool !== "fs.write" && call.tool !== "fs.patch") continue;
+      const path = pathFromArgs(call.args);
+      if (path !== "") porCall.set(call.callId, path);
+    }
+  }
+  const out: string[] = [];
+  for (const line of lines) {
+    for (const resultado of line.toolResults ?? []) {
+      if (!resultado.ok) continue;
+      if (resultado.tool !== "fs.write" && resultado.tool !== "fs.patch") continue;
+      const path = porCall.get(resultado.callId);
+      if (path !== undefined) out.push(path);
+    }
+  }
+  return out;
 }
 
 interface OutputEntry {
@@ -155,6 +185,7 @@ export function EditorSurface(): ReactNode {
   const activePath = useIde((state) => state.activePath);
   const saveState = useIde((state) => state.saveState);
   const saveErro = useIde((state) => state.saveErro);
+  const avisoDoBot = useIde((state) => state.avisoDoBot);
 
   // O projeto é o da SESSÃO: trocar de conversa troca de projeto, e as abas da
   // anterior não podem sobreviver apontando para arquivos de outro workspace.
@@ -169,6 +200,36 @@ export function EditorSurface(): ReactNode {
   useEffect(() => {
     for (const item of daConversa) abrirVindoDaConversa(item.path, item.content);
   }, [daConversa]);
+
+  /*
+   * EDITOR AO VIVO: fs.write/fs.patch CONFIRMADO do bot na sessão aberta abre
+   * o arquivo no palco — é aqui que o "nenhum arquivo aberto" morre quando o
+   * especialista trabalha na janela dele. A guarda de turno-vivo é a mesma do
+   * FilesRail: a primeira observação (montagem) só ANCORA o contador, queda
+   * (troca de sessão zera as linhas) reancora, e só o AUMENTO abre. Reabrir
+   * uma conversa antiga não pode sair abrindo abas que ninguém pediu.
+   * A rajada vira UMA abertura (o último arquivo) — debounce no ideStore.
+   *
+   * Ancorar SÓ na montagem não basta: na ordem real do fio o `ready` remonta a
+   * superfície com as linhas zeradas e o histórico chega DEPOIS, num flush de
+   * replay (store.ts) — o crescimento pós-montagem é indistinguível de turno
+   * vivo pelas linhas. O flush se anuncia em `replaysAssentados`: quando o
+   * contador andou junto, foi histórico — só reancora.
+   */
+  const replays = useApp((state) => state.replaysAssentados);
+  const gravacoesDoBot = useMemo(() => coletarGravacoesDoBot(lines), [lines]);
+  const gravacoesVistas = useRef(-1);
+  const replaysVistos = useRef(-1);
+  useEffect(() => {
+    const antes = gravacoesVistas.current;
+    const replaysAntes = replaysVistos.current;
+    gravacoesVistas.current = gravacoesDoBot.length;
+    replaysVistos.current = replays;
+    if (antes < 0 || replaysAntes !== replays) return;
+    if (gravacoesDoBot.length <= antes) return;
+    const ultimo = gravacoesDoBot[gravacoesDoBot.length - 1];
+    if (ultimo !== undefined) agendarAberturaDoBot(ultimo);
+  }, [gravacoesDoBot, replays]);
 
   const active = files.find((arquivo) => arquivo.path === activePath);
   const buffer = active ? active.content : "";
@@ -422,6 +483,16 @@ export function EditorSurface(): ReactNode {
           >
             <Hourglass aria-hidden="true" />
             aguardando aprovação
+          </span>
+        )}
+        {avisoDoBot !== "" && (
+          <span
+            className="chip editor-chip editor-chip-bot"
+            data-tone="espera"
+            title={`O bot gravou ${avisoDoBot} no disco enquanto este arquivo tinha edições não salvas aqui. Seu rascunho local ficou intacto — salvar (Ctrl+S) sobrescreve a versão do bot.`}
+          >
+            <AlertTriangle aria-hidden="true" />
+            o bot gravou por cima no disco
           </span>
         )}
         <button

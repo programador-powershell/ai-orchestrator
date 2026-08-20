@@ -65,6 +65,16 @@ export interface IdeData {
   activePath: string;
   saveState: EstadoSalvar;
   saveErro: string;
+  /**
+   * Caminho que o BOT gravou no disco enquanto a aba dele estava SUJA aqui.
+   *
+   * O rascunho local da pessoa VENCE (regra do abrirVindoDaConversa), então o
+   * buffer não é recarregado — mas ficar calado seria pior: ela salvaria por
+   * cima do trabalho do bot sem saber que ele existiu. O chip discreto conta.
+   * Some quando a pessoa salva (a versão dela venceu de vez), fecha a aba ou
+   * troca de sessão. "" = sem aviso.
+   */
+  avisoDoBot: string;
 }
 
 export function estadoInicialIde(): IdeData {
@@ -75,7 +85,8 @@ export function estadoInicialIde(): IdeData {
     files: [],
     activePath: "",
     saveState: "parado",
-    saveErro: ""
+    saveErro: "",
+    avisoDoBot: ""
   };
 }
 
@@ -91,11 +102,21 @@ let indiceEmVoo: Promise<EntradaProjeto[]> | null = null;
 let raizEmVoo = false;
 /** O timer do debounce da atualização em lugar — ver agendarAtualizacaoDaArvore. */
 let atualizacaoAgendada = 0;
+/** O timer da abertura ao vivo e o alvo dela — ver agendarAberturaDoBot. */
+let aberturaAgendada = 0;
+let aberturaAlvo = "";
 
 /** Cancela a atualização agendada — a sessão trocou e ela era da anterior. */
 function cancelarAtualizacaoAgendada(): void {
   if (atualizacaoAgendada !== 0) window.clearTimeout(atualizacaoAgendada);
   atualizacaoAgendada = 0;
+}
+
+/** Cancela a abertura ao vivo pendente — o arquivo era do projeto anterior. */
+function cancelarAberturaAgendada(): void {
+  if (aberturaAgendada !== 0) window.clearTimeout(aberturaAgendada);
+  aberturaAgendada = 0;
+  aberturaAlvo = "";
 }
 
 /**
@@ -109,6 +130,7 @@ export function sincronizarSessao(session: string): void {
   indiceEmVoo = null;
   raizEmVoo = false;
   cancelarAtualizacaoAgendada();
+  cancelarAberturaAgendada();
   useIde.setState({ ...estadoInicialIde(), session });
 }
 
@@ -118,6 +140,7 @@ export function zerarIde(): void {
   indiceEmVoo = null;
   raizEmVoo = false;
   cancelarAtualizacaoAgendada();
+  cancelarAberturaAgendada();
   useIde.setState({ ...estadoInicialIde() });
 }
 
@@ -242,6 +265,34 @@ export function ativarArquivo(path: string): void {
  */
 const MARCA_DE_CORTE = "… (arquivo cortado:";
 
+/**
+ * Lê `path` do disco (fs.read) e assenta o conteúdo na aba. É o miolo comum de
+ * abrir e de RECARREGAR: a resposta de sessão trocada é descartada, e uma aba
+ * que ficou SUJA durante o await não é tocada — a pessoa pode ter começado a
+ * digitar enquanto a leitura viajava, e o rascunho local vence sempre.
+ */
+async function lerDoDisco(path: string, session: string): Promise<void> {
+  const resultado = await chamarFerramenta("fs.read", { path });
+  if (useIde.getState().session !== session) return;
+  if (!resultado.ok) {
+    patchArquivo(path, () => ({ loading: false, erro: resultado.error }));
+    return;
+  }
+  const cortado = resultado.output.includes(MARCA_DE_CORTE);
+  patchArquivo(path, (atual) =>
+    atual.dirty
+      ? {}
+      : {
+          content: resultado.output,
+          savedContent: resultado.output,
+          loading: false,
+          erro: cortado
+            ? "arquivo maior que o teto de leitura do gateway — aberto somente para leitura (salvar gravaria um arquivo cortado)"
+            : ""
+        }
+  );
+}
+
 export async function abrirArquivo(entrada: Pick<EntradaProjeto, "name" | "path">): Promise<void> {
   const { files, session } = useIde.getState();
   ativarArquivo(entrada.path);
@@ -260,21 +311,56 @@ export async function abrirArquivo(entrada: Pick<EntradaProjeto, "name" | "path"
       }
     ]
   }));
-  const resultado = await chamarFerramenta("fs.read", { path: entrada.path });
-  if (useIde.getState().session !== session) return;
-  if (!resultado.ok) {
-    patchArquivo(entrada.path, () => ({ loading: false, erro: resultado.error }));
+  await lerDoDisco(entrada.path, session);
+}
+
+/**
+ * O bot GRAVOU `path` (tool.result confirmado de fs.write/fs.patch) e a IDE
+ * está aberta na sessão: o arquivo entra no palco — é o que mata o "nenhum
+ * arquivo aberto" no primeiro arquivo do bot. Três casos, três destinos:
+ *
+ * - aba SUJA: nada de recarregar (o rascunho da pessoa vence, mesma regra do
+ *   abrirVindoDaConversa) — fica só o aviso `avisoDoBot`, para ela saber que o
+ *   disco mudou por baixo antes de salvar por cima;
+ * - aba limpa já aberta: ativa e RELÊ do disco — o buffer antigo é a versão de
+ *   antes da gravação, e mostrá-lo como atual seria mentira;
+ * - sem aba: abre pelo caminho normal (fs.read pela rota /v1/tools/call).
+ */
+export async function abrirGravadoPeloBot(path: string): Promise<void> {
+  const { files, session } = useIde.getState();
+  const aberto = files.find((arquivo) => arquivo.path === path);
+  if (aberto?.dirty) {
+    useIde.setState({ avisoDoBot: path });
     return;
   }
-  const cortado = resultado.output.includes(MARCA_DE_CORTE);
-  patchArquivo(entrada.path, () => ({
-    content: resultado.output,
-    savedContent: resultado.output,
-    loading: false,
-    erro: cortado
-      ? "arquivo maior que o teto de leitura do gateway — aberto somente para leitura (salvar gravaria um arquivo cortado)"
-      : ""
-  }));
+  if (!aberto) {
+    await abrirArquivo({ name: nomeBase(path), path });
+    return;
+  }
+  ativarArquivo(path);
+  // Carga em voo: a leitura que já corre vai assentar o conteúdo — pedir outra
+  // agora seria um POST a mais para o mesmo dado.
+  if (aberto.loading) return;
+  await lerDoDisco(path, session);
+}
+
+/**
+ * Agenda a abertura ao vivo com o MESMO debounce da árvore: uma rajada de
+ * gravações (o bot criando o projeto inteiro) abre só o ÚLTIMO arquivo, em vez
+ * de um fs.read por gravação e uma dança de abas. O timer mora no módulo pelo
+ * mesmo motivo do agendarAtualizacaoDaArvore — o cleanup de um efeito o
+ * cancelaria num re-render qualquer.
+ */
+export function agendarAberturaDoBot(path: string): void {
+  if (path === "") return;
+  aberturaAlvo = path;
+  if (aberturaAgendada !== 0) window.clearTimeout(aberturaAgendada);
+  aberturaAgendada = window.setTimeout(() => {
+    aberturaAgendada = 0;
+    const alvo = aberturaAlvo;
+    aberturaAlvo = "";
+    void abrirGravadoPeloBot(alvo);
+  }, ATRASO_DA_ATUALIZACAO_MS);
 }
 
 /**
@@ -324,7 +410,10 @@ export function fecharArquivo(path: string): void {
     const files = state.files.filter((arquivo) => arquivo.path !== path);
     return {
       files,
-      activePath: state.activePath === path ? files[files.length - 1]?.path ?? "" : state.activePath
+      activePath: state.activePath === path ? files[files.length - 1]?.path ?? "" : state.activePath,
+      // O aviso era sobre o rascunho desta aba; fechada ela, não há mais o que
+      // proteger — a próxima abertura lê o disco (a versão do bot).
+      avisoDoBot: state.avisoDoBot === path ? "" : state.avisoDoBot
     };
   });
 }
@@ -358,7 +447,12 @@ export async function salvarAtivo(): Promise<void> {
     dirty: atual.content !== conteudo,
     savedContent: conteudo
   }));
-  useIde.setState({ saveState: "salvo" });
+  useIde.setState((state) => ({
+    saveState: "salvo",
+    // A gravação da pessoa acabou de vencer a do bot no disco: o aviso de
+    // "gravou por cima" deste arquivo já contou o que tinha para contar.
+    avisoDoBot: state.avisoDoBot === arquivo.path ? "" : state.avisoDoBot
+  }));
   agendarLimpezaDoSalvo();
 }
 

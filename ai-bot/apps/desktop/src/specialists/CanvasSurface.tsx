@@ -97,6 +97,7 @@ import type {
   StencilId
 } from "../lib/canvas";
 import { activeTransport, useApp } from "../lib/store";
+import { structuredJson } from "../lib/toolJson";
 import { TopbarActions } from "../shell/TopbarActions";
 import { ConversationSurface } from "./ConversationSurface";
 import { VideoStudio } from "./VideoStudio";
@@ -138,16 +139,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value : "";
-}
-
-function safeJson(text: string): unknown {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 /** Cor chega como "#aabbcc" ou como objeto com nome e uso. */
@@ -262,7 +253,11 @@ function fromText(text: string): DesignSnapshot {
 
 function parse(result: ToolResult): DesignSnapshot {
   const raw = result.output ?? "";
-  const root = asRecord(safeJson(raw));
+  // structuredJson é o leitor da casa (lib/toolJson): JSON puro OU o bloco
+  // demarcado numa cerca ```json no fim do texto legível — o padrão anti-casca
+  // que as outras superfícies estruturadas já usam. O safeJson local só
+  // entendia JSON puro e deixava o bloco demarcado virar regex de fromText.
+  const root = asRecord(structuredJson(raw));
   if (!root) return fromText(raw);
 
   // A ferramenta pode aninhar tudo em `tokens` ou espalhar na raiz; os dois
@@ -276,6 +271,23 @@ function parse(result: ToolResult): DesignSnapshot {
     fonts: readFonts(source.fonts ?? source.typography ?? source.families),
     html: asText(root.html) || asText(root.markup) || asText(root.preview)
   };
+}
+
+/**
+ * TODOS os resultados confirmados de design.* da conversa, em ordem de
+ * chegada. É o sinal do CANVAS AO VIVO: o comprimento desta lista é o contador
+ * que a guarda de turno-vivo ancora (mesmo padrão do FilesRail), e o último
+ * item é o que a importação automática transforma em nós. Recusa (ok:false)
+ * fica de fora — resultado que não existiu não desenha nada.
+ */
+function coletarDesign(lines: ConversationLine[]): ToolResult[] {
+  const out: ToolResult[] = [];
+  for (const line of lines) {
+    for (const resultado of line.toolResults ?? []) {
+      if (resultado.ok && resultado.tool.startsWith("design.")) out.push(resultado);
+    }
+  }
+  return out;
 }
 
 /** O último resultado vence: replicar de novo troca a tela inteira. */
@@ -833,6 +845,47 @@ export function CanvasSurface(): ReactNode {
     previaVista.current = resultado;
     if (snapshot.html !== "") setModo("previa");
   }, [resultado, snapshot]);
+
+  /*
+   * CANVAS AO VIVO: resultado estruturado de design.* chegando na sessão
+   * aberta vira NÓS EDITÁVEIS no documento — o mesmo caminho do botão
+   * "Importar como nós" (registrar → nós → selecionar), então o Ctrl+Z desfaz
+   * a importação e o doc persistido é o da sessão (chaveDoDoc). Sem isto o
+   * trabalho do bot ficava só como texto no chat lateral — a casca que a
+   * regra de produto proíbe.
+   *
+   * A guarda de turno-vivo é a do FilesRail: a primeira observação (montagem)
+   * só ANCORA o contador, queda reancora, e só o AUMENTO importa. Reabrir uma
+   * conversa antiga com réplicas no histórico não pode despejar nós repetidos
+   * num desenho que a pessoa já editou. E como na ordem real do fio o `ready`
+   * remonta a superfície ANTES de o histórico chegar (o flush de replay do
+   * store), o crescimento que veio com `replaysAssentados` andando junto é
+   * histórico — só reancora, não importa.
+   *
+   * Este efeito vem DEPOIS do da prévia de propósito: os dois disparam no
+   * mesmo commit para um resultado novo com html, e o último setModo vence —
+   * o palco tem de ficar no canvas editável, com os nós, não na moldura.
+   */
+  const replays = useApp((state) => state.replaysAssentados);
+  const designs = useMemo(() => coletarDesign(lines), [lines]);
+  const designsVistos = useRef(-1);
+  const replaysVistos = useRef(-1);
+  useEffect(() => {
+    const antes = designsVistos.current;
+    const replaysAntes = replaysVistos.current;
+    designsVistos.current = designs.length;
+    replaysVistos.current = replays;
+    if (antes < 0 || replaysAntes !== replays) return;
+    if (designs.length <= antes) return;
+    const ultimo = designs[designs.length - 1];
+    if (ultimo === undefined) return;
+    importarPreviaComoNos(parse(ultimo));
+    setModo("editar");
+    flashNote("resultado do bot importado como nós");
+    // flashNote/setModo são estáveis o bastante (setter + timer local); o
+    // gatilho é a lista de resultados e o anúncio de replay.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [designs, replays]);
 
   function patchSelected(patch: Partial<Omit<CanvasNode, "id" | "type">>): void {
     if (!selectedId) return;

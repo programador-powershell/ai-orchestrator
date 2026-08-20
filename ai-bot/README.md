@@ -104,137 +104,47 @@
 
 ## :new: Releases Notes
 
-### :up: V.2.2
+### :up: V.2.3
 ### :warning: Latest Changes
 
-- **A Conversa — a tela padrão — ficou completa (Onda 5, a última da paridade).**
-  - **Medidor de contexto na topbar**: percentual estimado da janela do modelo em
-    uso, derivado das falas e saídas de ferramenta (~4 caracteres por token,
-    heurística declarada no próprio title). É um PISO honesto: prompts de
-    sistema e memórias que o cliente não vê não entram na conta — e isso está
-    dito ali mesmo.
-  - **Métricas por mensagem**: duração do turno (pelos timestamps dos envelopes,
-    então sobrevive ao replay) e tokens de saída no rodapé de cada resposta, com
-    botão copiar e feedback "copiado".
-  - **Markdown completo sem dependência nova**: links clicáveis (allowlist
-    https/mailto — `javascript:` vira texto), tabelas GFM com alinhamento,
-    blockquote aninhável e hr, no parser incremental da casa.
-  - **Raciocínio recolhível**: o gateway distinguiu raciocínio de rótulo de
-    etapa (campo novo no payload Thinking, decode tolerante ao antigo) e o texto
-    que antes era DESCARTADO agora chega num bloco fechado por padrão.
-  - **Regenerar a última resposta / editar a última pergunta**: rota nova de
-    truncar o log de forma durável (temp+rename, recusa turno em execução) —
-    sem ela, reenviar duplicava a pergunta para sempre.
-  - **Busca Ctrl+K por conteúdo** em todas as conversas (varredura
-    case-insensitive no gateway, snippet seguro para acentos) com navegação por
-    teclado.
-  - **Excluir conversa** pela lixeira em dois cliques (arma e desarma sozinha —
-    modal para linha de lista é interrupção demais) e **exportar .md/.json**.
-  - **/review, /explain e /testgen expandem no cliente** antes do envio — deixam
-    de ir literais ao modelo.
-- **As três telas-casca finalmente FUNCIONAM.** `flow.validate`, `secrets.scan`,
-  `osv.query` e `finetune.status` devolvem, além do relatório legível, um bloco
-  JSON demarcado que as superfícies detectam: o Fluxo desenha o grafo real
-  (@xyflow/react, homologado — e o "Exportar JSON" deixou de estar eternamente
-  desabilitado), Segurança vira cartões com chips "N críticos/altos" e link para
-  o advisory no osv.dev, e o Tuning sai do empty-state perpétuo. Bloco picotado
-  vira estado vazio digno, nunca cartão inventado.
-- **Botões superiores que faltavam**: ações de topbar no Trabalho (Board) e no
-  Tuning (Train) — tudo pelo composer, nada executa por fora do funil.
-- **Equipe no rodapé**: objetivo em curso fixado e estado "orquestrando…"
-  derivados no StatusBar — o único elemento que sobrevive à troca de tela,
-  porque a equipe continua rodando enquanto a pessoa olha outra superfície.
+- **Cada bot TRABALHA na própria janela — a regra do dono virou produto.**
+  O flagrante que motivou: o Código respondia com o HTML inteiro num bloco de
+  markdown no chat, com o editor parado em "nenhum arquivo aberto".
+  - **Personas que trabalham**: o Código agora é instruído a GRAVAR com
+    `fs.write`/`fs.patch` no projeto da sessão (pelo funil de aprovação, como
+    deve ser) e responder curto anunciando o que gravou — arquivo inteiro no
+    chat é proibido, só trecho ilustrativo. O Design LÊ o projeto (`fs.read`/
+    `fs.list` — o index.html que o Código gravou está no MESMO workspace) e
+    desenha pelas `design.*`. Dados produz pelo ferramental estruturado que a
+    tela desenha como ERD. O briefing do sub-turno reforça: "você está na SUA
+    janela; produza NO PROJETO — a pessoa vê o resultado na sua superfície".
+  - **Editor ao vivo**: gravação CONFIRMADA do bot abre o arquivo no painel
+    central — o "nenhum arquivo aberto" morre no primeiro arquivo. Rajada abre
+    só o último; recusa não abre; buffer com edição SUA não salva nunca é
+    recarregado (chip discreto "o bot gravou por cima no disco").
+  - **Canvas ao vivo**: resultado de `design.*` importa sozinho como nós
+    EDITÁVEIS (o caminho da Onda 3), com undo e persistência por sessão.
+  - **Espelho clicável**: na conversa do dono, a faixa "deleguei ao
+    especialista X" é botão de verdade — clicar navega para a janela da filha.
+  - **Rota da clarificação com rótulo próprio**: "você escolheu no cartão".
+  - **Verificado no fio de ponta a ponta**: um provedor roteirizado chamou
+    `fs.write` no sub-turno, o portão interceptou, a aprovação liberou e o
+    index.html apareceu byte a byte no projects/ compartilhado raiz↔filha —
+    a superfície viva NÃO criou nenhum bypass do funil.
 
 ### :pushpin: Fixes
 
-- **Escolher "Código" na clarificação DELEGAVA nada — virava o modo da conversa.**
-  A resposta do cartão de clarificação voltava como escolha explícita e a raiz era
-  sequestrada pela IDE, exatamente o que o sub-bot veio matar. Agora escolher um
-  especialista de trabalho no cartão é escolher QUEM TRABALHA: a raiz delega
-  (rota `clarified` publicada NA FILHA, confiança 1) e fica com o master. Só
-  `/mode` e conversa nascida no bot continuam convertendo.
-- **Nenhuma sessão tinha pasta de projeto — a árvore da IDE nascia morta.**
-  Agora o primeiro turno de trabalho PROVISIONA o workspace (pasta durável em
-  `projects/<slug>` dentro dos dados, slug saneado contra traversal), raiz e
-  filha compartilham o MESMO projeto (é o mesmo trabalho — é o que deixa o
-  Design ler o index.html que o Código escreveu), e a segunda delegação nunca
-  reprovisiona. "preparando a pasta do projeto…" aparece como etapa efêmera.
-- **A árvore da IDE ficou VIVA**: gravação confirmada do bot (`fs.write`/
-  `fs.patch` com ok) relista com debounce preservando pastas abertas — o
-  arquivo aparece sem clique; o erro "sem pasta de projeto" se recupera sozinho
-  quando o turno termina; recusa não relista; sem nenhum polling de relógio.
-
-- **O composer saiu de cima das telas: agora ele é RODAPÉ do palco, homogêneo
-  em toda superfície — o padrão do AI-Orchestrator.** O campo flutuava em
-  `position:absolute` sobre o palco e, na IDE, cobria o painel de saída, os
-  chips e a barra de status do editor. Virou irmão da superfície no fluxo da
-  coluna (`flex:none`, mesma largura centrada em todas as telas — o mesmo
-  desenho do dock do terminal), as três compensações de `padding-bottom` que
-  disfarçavam a flutuação sumiram, e cada superfície ganhou a altura real.
-  A cara do composer não mudou — só o ancoramento. Os backdrops de aprovação
-  e do laboratório continuam por cima de tudo, e o CSS morto do antigo seletor
-  de especialista (que o novo layout clipparia) foi removido. Dois testes
-  montam o App REAL e fixam a estrutura: composer como irmão no fluxo, e na
-  IDE a saída/status/terminal renderizados ANTES dele na ordem do documento.
-
-- **Pedido de trabalho não SEQUESTRA mais a conversa: o especialista nasce como SUB-BOT.**
-  "construa um html simples" fazia a conversa inteira virar o Código — a tela
-  virava a IDE e a pessoa ficava presa nela (a reclamação recorrente das telas).
-  Agora a raiz fica com o MASTER, na superfície de conversa, e o especialista de
-  trabalho (Código, Design, Dados…) nasce como conversa FILHA aninhada na barra
-  — retrato do bot, estado trabalhando, espelho do pedido e do resultado na
-  raiz — pela MESMA máquina da delegação bot-a-bot (uma filha por par; segundo
-  pedido ao mesmo bot continua na mesma filha, com a memória dela). Pergunta
-  simples continua respondida na raiz, sem filha. NADA muda para /mode
-  explícito, conversa nascida no bot ("novo schema") e conversas filhas. De
-  quebra, a filha herda a PASTA DO PROJETO da raiz — a árvore da IDE deixou de
-  nascer vazia. Nove testes de gateway e nove de cliente fixam o contrato.
-
-- **O app abria e fechava sozinho quando não havia gateway de pé.** O
-  bootstrapper procurava o `aibotd.exe` ao lado do app e no PATH — nunca no
-  `dist/` do repositório. Em dev isso sempre passou despercebido porque um
-  gateway antigo estava eternamente escutando na porta e era ADOTADO; no dia em
-  que o órfão morreu, o boot não achou binário nenhum, abortou o setup e a
-  janela fechou sem uma palavra (o motivo ia para o stderr, que não existe num
-  duplo clique). Agora: (1) o finder sobe a árvore procurando `dist/aibotd.exe`
-  — com teto de oito níveis, para um app instalado em Program Files não sair
-  varrendo o disco; e (2) toda falha de setup deixa o motivo em
-  `boot-erro.log` na pasta de dados — "fecha sozinho" nunca mais fica sem
-  rastro. Deliberadamente NÃO se copia o exe para o lado do app em dev: a
-  cópia sombrearia o `dist/` e recriaria o problema do binário defasado.
-
-- **Clicar numa conversa do histórico não abria nada — e a causa era um gateway
-  FANTASMA.** O processo do gateway de ontem sobrevivia ao fechamento do app,
-  segurava a pasta de dados (`.lock`) e a porta; o gateway novo desistia na
-  trava e o app conectava NO VELHO — recompilar não mudava nada, silenciosamente.
-  Como o binário antigo era de antes do re-hello, o clique trocava o título
-  (que é local) e o replay nunca vinha: hero + "0 linhas". Agora o aibotd que
-  encontra a trava ocupada verifica com o núcleo se o dono é um ÓRFÃO DE BUILD
-  VELHO — mesmo executável, iniciado ANTES da última escrita dele (impossível
-  estar rodando o binário atual) — e o derruba, assumindo a pasta. Qualquer
-  dúvida (outro exe, horário inconclusivo) preserva a trava: derrubar um
-  gateway legítimo faria dois donos numerarem `seq` nas mesmas sessões. Quatro
-  testes: a decisão de mesa pelos dois lados da faca, a sonda contra o próprio
-  processo, a recusa de ponta a ponta com um processo vivo que não é nosso, e
-  as travas estranhas (pid ilegível, pid próprio).
-
-- **Recusa do modelo contada como sucesso na Equipe.** "Não posso ajudar" saía
-  com ✓ e contaminava as tarefas dependentes. Agora recusa é FALHA do
-  trabalhador, com heurística conservadora (teto de 280 caracteres, prefixo com
-  verbo de recusa, nunca verbo técnico — resposta técnica contendo "não" passa)
-  e casos de mesa provando os dois lados.
-- **Documento trocado pelo relatório da edição.** O coletor aceitava qualquer
-  `office.*` e o relatório do `office.edit` ("N ocorrências trocadas…")
-  substituía o TEXTO do documento na tela. Agora só a saída do leitor real
-  (`office.open`) alimenta o corpo; edição bem-sucedida dispara releitura
-  automática, o histórico de trocas deriva das edições REAIS (não só do
-  formulário) e o cabeçalho ganhou chips de formato e somente-leitura.
+- **Replay contado como turno vivo** (pego pelo conferente ANTES de sair):
+  reabrir uma conversa antiga abria o último arquivo do histórico no editor e
+  DUPLICAVA os nós da réplica no canvas a cada reabertura, porque a guarda das
+  superfícies ancorava na montagem e o histórico chega DEPOIS, num flush de
+  lote. O flush de replay agora se anuncia (`replaysAssentados`) e as guardas
+  reancoram nele — com testes trancando a ordem real do fio.
+- **Regressão fixada em teste**: a sequência "nova conversa → voltar ao
+  histórico" (relato do dono) ganhou teste com envelopes verbatim de log real —
+  gateway e redução provados corretos; o fluxo não volta a quebrar calado.
 
 ### :construction_worker: Refactors
-
-- O bloco JSON demarcado das ferramentas ganhou helper único no gateway
-  (`tools_structured.go`) e extrator único no cliente (`lib/toolJson.ts`) — o
-  padrão anti-casca da Onda 1 virou peça reutilizável em vez de quatro cópias.
 
 ## :wrench: Instalação
 

@@ -242,11 +242,20 @@ var catalog = []Definition{
 		Hue:     210,
 		Surface: SurfaceEditor,
 		Rail:    RailFiles,
-		System: "Você é o especialista de código do AI-BOT. Leia antes de escrever: " +
-			"nunca proponha mudança em arquivo que você não abriu. Siga o estilo do " +
-			"código à volta (nomes, comentários, idioma). Entregue diff aplicável, não " +
-			"trecho solto. Depois de editar, diga o que rodar para verificar. Se a " +
-			"mudança quebrar contrato público, avise antes de fazer.",
+		// O "grave, não cole" nasceu de um flagrante: pedido um site, o Código
+		// respondeu com o HTML inteiro num bloco de markdown NO CHAT e a janela
+		// do editor ficou em "nenhum arquivo aberto". A superfície dele é a IDE:
+		// o trabalho só EXISTE para a pessoa quando o arquivo é gravado no
+		// projeto — e fs.write passa pelo funil de aprovação, que é o desejado.
+		System: "Você é o especialista de código do AI-BOT e trabalha NA SUA JANELA: " +
+			"o resultado é ARQUIVO NO PROJETO da sessão, não texto no chat. Crie e " +
+			"edite com as ferramentas fs.write e fs.patch — é isso que abre o código " +
+			"no editor da pessoa. NUNCA cole o arquivo inteiro na resposta: no chat " +
+			"só cabe trecho ilustrativo pequeno. Depois de gravar, responda CURTO " +
+			"anunciando o que gravou, onde e o que rodar para verificar. Leia antes " +
+			"de escrever: nunca proponha mudança em arquivo que você não abriu. Siga " +
+			"o estilo do código à volta (nomes, comentários, idioma). Se a mudança " +
+			"quebrar contrato público, avise antes de fazer.",
 		Placeholder: "Descreva a mudança de código…",
 		NewLabel:    "Nova sessão",
 		Actions: []Action{
@@ -351,7 +360,16 @@ var catalog = []Definition{
 		Hue:     282,
 		Surface: SurfaceCanvas,
 		Rail:    RailLayers,
-		System: "Você é o especialista de design do AI-BOT. Trabalhe em TOKENS " +
+		// A primeira frase existe porque o Design compartilha o MESMO projeto da
+		// conversa (o cwd desce da raiz à filha): o index.html que o Código
+		// acabou de gravar está ao alcance de um fs.read — desenhar "de cabeça"
+		// em vez de ler o que já existe produz um front que não é o do projeto.
+		System: "Você é o especialista de design do AI-BOT e trabalha NA SUA JANELA: " +
+			"desenhe pelas ferramentas (design.replicate e as de vídeo) — é o que a " +
+			"pessoa vê no seu canvas — em vez de colar o artefato inteiro no chat. " +
+			"LEIA o projeto da sessão com fs.read/fs.list antes de desenhar: o " +
+			"index.html que o Código gravou está no mesmo projeto, e é dele que você " +
+			"extrai o sistema para desenhar o front ao vivo. Trabalhe em TOKENS " +
 			"(cor, espaçamento, raio, tipo) antes de trabalhar em telas: valor solto " +
 			"em componente vira dívida no segundo componente. Ao replicar um layout de " +
 			"referência, extraia o sistema — não copie pixel. Verifique contraste " +
@@ -365,7 +383,11 @@ var catalog = []Definition{
 		// As cinco `video.*` moram aqui porque vídeo é entrega VISUAL — quem
 		// pede "corta a abertura e põe o título" está falando com o design,
 		// não com um décimo primeiro especialista que ninguém acharia.
-		Tools: []string{"fs.read", "fs.write", "web.fetch", "design.replicate", "image.generate",
+		//
+		// `fs.list` entrou junto com a ordem de LER o projeto no system: sem
+		// listar a pasta, o Design não acha o index.html que o Código gravou e a
+		// persona mandaria fazer o que a permissão recusa.
+		Tools: []string{"fs.read", "fs.list", "fs.write", "web.fetch", "design.replicate", "image.generate",
 			"video.probe", "video.trim", "video.concat", "video.text", "video.export"},
 		Triggers: []string{"design", "interface", "layout", "tela", "componente", "css", "cor", "paleta", "tipografia", "figma", "mockup", "tema", "espacamento", "icone", "logo", "responsiv",
 			"video", "corte de video", "legenda no video", "gif", "mp4"},
@@ -383,7 +405,13 @@ var catalog = []Definition{
 		Hue:     190,
 		Surface: SurfaceSchema,
 		Rail:    RailTables,
-		System: "Você é o especialista de dados do AI-BOT. Antes de responder, deixe " +
+		// A tela de Dados desenha o ERD a partir do RESULTADO das ferramentas
+		// (schema.export/sql.render devolvem JSON estruturado — ver
+		// supervisor/tools_data.go): schema colado no chat deixa o painel vazio.
+		System: "Você é o especialista de dados do AI-BOT e trabalha NA SUA JANELA: " +
+			"produza o schema e o SQL pelas ferramentas schema.export e sql.render — " +
+			"é o resultado delas que vira o diagrama na tela da pessoa — em vez de " +
+			"colar o artefato inteiro no chat. Antes de responder, deixe " +
 			"explícitas as premissas (período, granularidade, filtros). Em SQL: CTEs " +
 			"nomeadas, sem SELECT *, e uma linha dizendo o que cada etapa faz. Em " +
 			"schema: chave, índice e integridade referencial antes de conveniência. " +

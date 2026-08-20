@@ -417,3 +417,40 @@ func TestFalhaDaDelegacaoDoMasterFicaNaRaizSemFilha(t *testing.T) {
 		t.Errorf("a falha gravou o dono %q na raiz", meta.Specialist)
 	}
 }
+
+/* ------------------ 7. o briefing manda produzir no projeto ----------------- */
+
+// O briefing do sub-turno master→bot reforça a regra da JANELA: o bot de
+// trabalho produz NO PROJETO com as ferramentas, e a pessoa vê o resultado na
+// superfície dele. Sem o reforço, o Código devolvia o HTML inteiro num bloco
+// de markdown no chat e o editor ficava em "nenhum arquivo aberto".
+//
+// O bot-a-bot NÃO ganha o parágrafo: lá quem lê o resultado é o OUTRO bot, o
+// texto volta como contexto de ferramenta — mandar "mostrar na sua superfície"
+// para quem não tem audiência produziria o tom errado nos dois lados.
+func TestBriefingDoMasterMandaProduzirNoProjetoComAsFerramentas(t *testing.T) {
+	supervisor := New(Deps{
+		Gate:  permissions.NewGate(permissions.DefaultPolicy()),
+		Tools: NewRegistry(),
+	})
+	request := delegateRequest{Specialist: "code", Goal: pedidoDeTrabalho}
+
+	messages := supervisor.delegateMessages(specialist.Master,
+		specialist.GetOrDefault("code"), request, firstDelegationDepth, nil)
+	briefing := messages[len(messages)-1]
+	if briefing.Role != "user" {
+		t.Fatalf("o briefing tinha de ser a fala de usuário do sub-turno, veio %q", briefing.Role)
+	}
+	for _, want := range []string{"SUA janela", "NO PROJETO", "ferramentas", "superfície"} {
+		if !strings.Contains(briefing.Content, want) {
+			t.Errorf("o briefing do master não diz %q:\n%s", want, briefing.Content)
+		}
+	}
+
+	botABot := supervisor.delegateMessages(specialist.GetOrDefault("chat"),
+		specialist.GetOrDefault("code"), request, firstDelegationDepth, nil)
+	texto := botABot[len(botABot)-1].Content
+	if strings.Contains(texto, "SUA janela") {
+		t.Errorf("o parágrafo da janela vazou para o briefing bot-a-bot:\n%s", texto)
+	}
+}
